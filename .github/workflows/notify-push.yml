@@ -1,0 +1,29 @@
+name: Notify Push to Slack
+
+on:
+  push: # 🔥 This triggers the workflow on any push to the repository
+    branches:
+      - main # Specify your branch, or remove this to catch all branches
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.23.0
+        with:
+          payload: |
+            {
+              "text": "🎉 New push detected on *${{ github.ref }}* by *${{ github.actor }}*! 🚀",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "🎉 New push detected on *${{ github.ref }}* by *${{ github.actor }}*! 🚀"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
