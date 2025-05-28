@@ -1,0 +1,238 @@
+import React, { useState, useEffect } from 'react';
+import { Box, Button, TextField, Typography, CircularProgress, Alert } from '@mui/material';
+import { useParams, useNavigate } from 'react-router-dom';
+import { auth, db } from '../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
+import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
+
+// Allow recaptchaVerifier on the window object
+declare global {
+  interface Window {
+    recaptchaVerifier: RecaptchaVerifier;
+    recaptchaWidgetId: number;
+  }
+}
+
+const formatPhoneNumber = (value: string) => {
+  const cleaned = value.replace(/\D/g, '');
+  const match = cleaned.match(/(\d{0,3})(\d{0,3})(\d{0,4})/);
+  if (!match) return value;
+  const [, area, prefix, line] = match;
+  if (area && prefix && line) return `(${area}) ${prefix}-${line}`;
+  if (area && prefix) return `(${area}) ${prefix}`;
+  if (area) return `(${area}`;
+  return value;
+};
+
+const isValidPhoneNumber = (value: string) => {
+  const cleaned = value.replace(/\D/g, '');
+  return cleaned.length === 10;
+};
+
+const UserOnboarding = () => {
+  const { uid } = useParams();
+  const navigate = useNavigate();
+
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [address, setAddress] = useState({ street: '', city: '', state: '', zip: '' });
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!window.recaptchaVerifier) {
+      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+        size: 'invisible',
+        callback: (response: any) => {
+          console.log('reCAPTCHA solved:', response);
+        },
+      });
+
+      window.recaptchaVerifier.render().then((widgetId) => {
+        window.recaptchaWidgetId = widgetId;
+        console.log('reCAPTCHA rendered with widgetId:', widgetId);
+      });
+    }
+  }, []);
+
+  const resetRecaptcha = () => {
+    if (window.recaptchaVerifier && window.recaptchaWidgetId !== undefined) {
+      (window as any).grecaptcha?.reset(window.recaptchaWidgetId);
+      console.log('reCAPTCHA reset.');
+    }
+  };
+
+  const handleSendCode = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const numericPhone = phone.replace(/\D/g, '');
+      const formattedPhone = phone.startsWith('+') ? phone : `+1${numericPhone}`;
+      const result = await signInWithPhoneNumber(auth, formattedPhone, window.recaptchaVerifier);
+      setConfirmationResult(result);
+      setVerificationSent(true);
+      setMessage('Verification code sent to your phone.');
+    } catch (err: any) {
+      console.error('Verification failed:', err);
+      resetRecaptcha();
+      setError(err.message || 'Failed to send verification code.');
+    }
+    setLoading(false);
+  };
+
+  const handlePhoneChange = (value: string) => {
+    const formatted = formatPhoneNumber(value);
+    setPhone(formatted);
+    setPhoneError(!isValidPhoneNumber(formatted));
+  };
+
+  const handleVerifyCode = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      if (!confirmationResult) throw new Error('No verification in progress.');
+      await confirmationResult.confirm(verificationCode);
+      setMessage('Phone verified successfully.');
+    } catch (err) {
+      console.error(err);
+      setError('Invalid verification code.');
+    }
+    setLoading(false);
+  };
+
+  const handleSave = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      if (!uid) throw new Error('Missing user ID.');
+
+      const fullAddress = `${address.street}, ${address.city}, ${address.state} ${address.zip}`;
+      const geocodeRes = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+          fullAddress,
+        )}&key=AIzaSyDTFHyztKw2_WBO8znR6CT5lxPGPoXe5vs`,
+      );
+      const geocodeData = await geocodeRes.json();
+      const coords = geocodeData.results[0]?.geometry?.location || null;
+
+      if (!coords) throw new Error('Geocoding failed.');
+
+      const ref = doc(db, 'users', uid);
+      await updateDoc(ref, {
+        phone,
+        location: {
+          ...address,
+          lat: coords.lat,
+          lng: coords.lng,
+        },
+        onboarded: true,
+      });
+
+      setMessage('Profile completed. Redirecting...');
+      setTimeout(() => navigate('/'), 2000);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to save profile.');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <Box p={4} maxWidth={500} mx="auto">
+        <Typography variant="h5" gutterBottom>
+          Complete Your Profile
+        </Typography>
+
+        {message && <Alert severity="success">{message}</Alert>}
+        {error && <Alert severity="error">{error}</Alert>}
+
+        <TextField
+          label="Phone Number"
+          fullWidth
+          margin="normal"
+          value={phone}
+          error={phoneError}
+          helperText={phoneError ? 'Enter a valid 10-digit US phone number' : ''}
+          onChange={(e) => handlePhoneChange(e.target.value)}
+          disabled={verificationSent}
+        />
+
+        {!verificationSent ? (
+          <Button fullWidth onClick={handleSendCode} disabled={loading || !phone || phoneError}>
+            {loading ? <CircularProgress size={24} /> : 'Send Verification Code'}
+          </Button>
+        ) : (
+          <>
+            <TextField
+              label="Verification Code"
+              fullWidth
+              margin="normal"
+              value={verificationCode}
+              onChange={(e) => setVerificationCode(e.target.value)}
+            />
+            <Button fullWidth onClick={handleVerifyCode} disabled={loading || !verificationCode}>
+              {loading ? <CircularProgress size={24} /> : 'Verify Code'}
+            </Button>
+          </>
+        )}
+
+        <TextField
+          label="Street Address"
+          fullWidth
+          margin="normal"
+          value={address.street}
+          onChange={(e) => setAddress({ ...address, street: e.target.value })}
+        />
+        <TextField
+          label="City"
+          fullWidth
+          margin="normal"
+          value={address.city}
+          onChange={(e) => setAddress({ ...address, city: e.target.value })}
+        />
+        <TextField
+          label="State"
+          fullWidth
+          margin="normal"
+          value={address.state}
+          onChange={(e) => setAddress({ ...address, state: e.target.value })}
+        />
+        <TextField
+          label="Zip Code"
+          fullWidth
+          margin="normal"
+          value={address.zip}
+          onChange={(e) => setAddress({ ...address, zip: e.target.value })}
+        />
+
+        <Box mt={3}>
+          <Button
+            variant="contained"
+            fullWidth
+            onClick={handleSave}
+            disabled={
+              loading ||
+              !phone ||
+              phoneError ||
+              !address.street ||
+              !address.city ||
+              !address.state ||
+              !address.zip
+            }
+          >
+            {loading ? <CircularProgress size={24} /> : 'Save Profile'}
+          </Button>
+        </Box>
+      </Box>
+
+      <div id="recaptcha-container" style={{ zIndex: 9999 }} />
+    </>
+  );
+};
+
+export default UserOnboarding;
