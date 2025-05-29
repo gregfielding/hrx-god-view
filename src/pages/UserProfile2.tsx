@@ -12,21 +12,12 @@ import {
   Slider,
   Snackbar,
   Alert,
-  Grid
+  Grid,
 } from '@mui/material';
 import { useParams } from 'react-router-dom';
 import { db, storage } from '../firebase';
-import {
-  doc,
-  getDoc,
-  updateDoc
-} from 'firebase/firestore';
-import {
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject
-} from 'firebase/storage';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import Cropper, { Area } from 'react-easy-crop';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -42,7 +33,7 @@ const UserProfile = () => {
     email: '',
     phone: '',
     role: 'worker',
-    avatar: ''
+    avatar: '',
   });
   const [message, setMessage] = useState('');
   const [showCropModal, setShowCropModal] = useState(false);
@@ -116,10 +107,10 @@ const UserProfile = () => {
           0,
           0,
           crop.width,
-          crop.height
+          crop.height,
         );
 
-        canvas.toBlob(blob => {
+        canvas.toBlob((blob) => {
           if (!blob) return reject(new Error('Failed to create blob'));
           resolve(blob);
         }, 'image/jpeg');
@@ -140,7 +131,7 @@ const UserProfile = () => {
       const userRef = doc(db, 'users', uid!);
       await updateDoc(userRef, { avatar: avatarURL });
 
-      setForm(prev => ({ ...prev, avatar: avatarURL }));
+      setForm((prev) => ({ ...prev, avatar: avatarURL }));
       setMessage('Avatar updated!');
       setShowCropModal(false);
       setShowToast(true);
@@ -158,7 +149,7 @@ const UserProfile = () => {
       await deleteObject(avatarRef);
       const userRef = doc(db, 'users', uid!);
       await updateDoc(userRef, { avatar: '' });
-      setForm(prev => ({ ...prev, avatar: '' }));
+      setForm((prev) => ({ ...prev, avatar: '' }));
       setMessage('Avatar deleted!');
       setShowToast(true);
       if (setAvatarUrl) setAvatarUrl('');
@@ -173,14 +164,18 @@ const UserProfile = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" mb={2}>User Profile</Typography>
+      <Typography variant="h5" mb={2}>
+        User Profile
+      </Typography>
       <Box component="form" onSubmit={handleSubmit} noValidate sx={{ mt: 2 }}>
         <Grid container spacing={2}>
           <Grid item xs={12} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Avatar src={form.avatar} sx={{ width: 120, height: 120 }}>
               {!form.avatar && initials}
             </Avatar>
-            <Typography variant="h6">{form.firstName} {form.lastName}</Typography>
+            <Typography variant="h6">
+              {form.firstName} {form.lastName}
+            </Typography>
           </Grid>
           {form.avatar ? (
             <Grid item xs={12} sx={{ display: 'flex', gap: 1, mb: 2 }}>
@@ -194,26 +189,52 @@ const UserProfile = () => {
           ) : (
             <Grid item xs={12} sx={{ display: 'flex', gap: 1, mb: 2 }}>
               <Button variant="outlined" size="small" component="label">
-                Add
+                Add Avatar
                 <input type="file" accept="image/*" hidden onChange={handleImageUpload} />
               </Button>
             </Grid>
           )}
           <Grid item xs={12} sm={6}>
-            <TextField fullWidth name="firstName" label="First Name" value={form.firstName} onChange={handleChange} />
+            <TextField
+              fullWidth
+              name="firstName"
+              label="First Name"
+              value={form.firstName}
+              onChange={handleChange}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField fullWidth name="lastName" label="Last Name" value={form.lastName} onChange={handleChange} />
+            <TextField
+              fullWidth
+              name="lastName"
+              label="Last Name"
+              value={form.lastName}
+              onChange={handleChange}
+            />
           </Grid>
           <Grid item xs={12}>
-            <TextField fullWidth name="email" label="Email" value={form.email} onChange={handleChange} />
+            <TextField
+              fullWidth
+              name="email"
+              label="Email"
+              value={form.email}
+              onChange={handleChange}
+            />
           </Grid>
           <Grid item xs={12}>
-            <TextField fullWidth name="phone" label="Phone" value={form.phone} onChange={handleChange} />
+            <TextField
+              fullWidth
+              name="phone"
+              label="Phone"
+              value={form.phone}
+              onChange={handleChange}
+            />
           </Grid>
           {formChanged && (
             <Grid item xs={12}>
-              <Button type="submit" variant="contained">Save Changes</Button>
+              <Button type="submit" variant="contained">
+                Save Changes
+              </Button>
             </Grid>
           )}
         </Grid>
@@ -233,11 +254,21 @@ const UserProfile = () => {
               onCropComplete={onCropComplete}
             />
           </Box>
-          <Slider value={zoom} min={1} max={3} step={0.1} onChange={(_, value) => setZoom(value as number)} aria-label="Zoom" sx={{ mt: 2 }} />
+          <Slider
+            value={zoom}
+            min={1}
+            max={3}
+            step={0.1}
+            onChange={(_, value) => setZoom(value as number)}
+            aria-label="Zoom"
+            sx={{ mt: 2 }}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowCropModal(false)}>Cancel</Button>
-          <Button onClick={handleCropSave} variant="contained">Save</Button>
+          <Button onClick={handleCropSave} variant="contained">
+            Save
+          </Button>
         </DialogActions>
       </Dialog>
 
