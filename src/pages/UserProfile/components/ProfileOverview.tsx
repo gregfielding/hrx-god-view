@@ -14,6 +14,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     email: '',
     phone: '',
     role: 'worker',
+    securityLevel: '', // New field
     // Add future summary fields like tenant, lastLogin, etc.
   });
   const [originalForm, setOriginalForm] = useState(form);
@@ -29,8 +30,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data() as typeof form;
-          setForm(data);
-          setOriginalForm(data);
+          setForm({ ...data, securityLevel: data.securityLevel || '' });
+          setOriginalForm({ ...data, securityLevel: data.securityLevel || '' });
         }
       },
       (error) => {
@@ -107,10 +108,41 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               onChange={handleChange}
             />
           </Grid>
-          <Grid item xs={12}>
-            <Typography variant="body2" color="textSecondary">
-              Role: {form.role}
-            </Typography>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              select
+              fullWidth
+              name="role"
+              label="Role"
+              value={form.role}
+              onChange={handleChange}
+              SelectProps={{ native: true }}
+            >
+              <option value="Applicant">Applicant</option>
+              <option value="Employee">Employee</option>
+              <option value="Contractor">Contractor</option>
+              <option value="Tenant">Tenant</option>
+              <option value="Client">Client</option>
+              <option value="HRX">HRX</option>
+              <option value="Dismissed">Dismissed</option>
+            </TextField>
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
+              select
+              fullWidth
+              name="securityLevel"
+              label="Security Level"
+              value={form.securityLevel || ''}
+              onChange={handleChange}
+              SelectProps={{ native: true }}
+            >
+              <option value="">Select Security Level</option>
+              <option value="Admin">Admin</option>
+              <option value="Worker">Worker</option>
+              <option value="Manager">Manager</option>
+              <option value="Staffer">Staffer</option>
+            </TextField>
           </Grid>
 
           {hasChanges && (

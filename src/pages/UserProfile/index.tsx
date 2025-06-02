@@ -5,6 +5,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase'; // adjust path
 
 import ProfileOverview from './components/ProfileOverview';
+import AddressTab from './components/AddressTab/AddressTab';
 import UserProfileHeader from './components/UserProfileHeader';
 
 const UserProfilePage = () => {
@@ -62,16 +63,19 @@ const UserProfilePage = () => {
       >
         <Tab label="Overview" />
         <Tab label="Address" />
-        <Tab label="Activity Logs" />
-        <Tab label="Tenant Associations" />
+        <Tab label="Job Skills" />
+        <Tab label="Tenant" />
+        <Tab label="Client" />
         <Tab label="Shifts" />
         <Tab label="C1 Insights" />
         <Tab label="Reports & Scores" />
         <Tab label="Settings" />
+        <Tab label="Activity Logs" />
       </Tabs>
 
       <Box sx={{ mt: 2 }}>
         {tabIndex === 0 && <ProfileOverview uid={uid} />}
+        {tabIndex === 1 && <AddressTab uid={uid} />}
         {/* Future tabs here */}
       </Box>
     </Box>
