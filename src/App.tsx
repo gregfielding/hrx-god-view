@@ -26,7 +26,7 @@ function App() {
             <Route
               path="/"
               element={
-                <ProtectedRoute requiredRole="god">
+                <ProtectedRoute>
                   <Layout />
                 </ProtectedRoute>
               }

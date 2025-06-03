@@ -17,7 +17,7 @@ const Login = () => {
 
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
-    if (!loading && user && role === 'god') {
+    if (!loading && user && role === 'HRX') {
       navigate('/');
     }
   }, [user, role, loading, navigate]);

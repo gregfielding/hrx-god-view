@@ -42,7 +42,7 @@ const UsersTable = () => {
   const firstLoadRef = useRef(true);
 
   useEffect(() => {
-    if (role === 'god') {
+    if (role === 'HRX') {
       fetchUsers();
     }
   }, [role]);
@@ -118,7 +118,7 @@ const UsersTable = () => {
     fetchUsers(search, lastDoc);
   };
 
-  if (role !== 'god') {
+  if (role !== 'HRX') {
     return (
       <Box display="flex" justifyContent="center" mt={10}>
         <Typography>You do not have permission to view this page.</Typography>

@@ -33,6 +33,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
 
 import { useAuth } from '../contexts/AuthContext';
+import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -40,7 +41,7 @@ const appBarHeight = 64;
 
 const Layout: React.FC = () => {
   const { toggleMode, mode } = useThemeMode();
-  const { user, logout, avatarUrl } = useAuth(); // 👈 Added avatarUrl from context
+  const { user, role, securityLevel, logout, avatarUrl } = useAuth();
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();
@@ -52,6 +53,8 @@ const Layout: React.FC = () => {
 
   const drawerWidth = open ? drawerFullWidth : drawerCollapsedWidth;
   const isMenuOpen = Boolean(menuAnchorEl);
+
+  const userAccessRole = getAccessRole(role, securityLevel);
 
   useEffect(() => {
     setOpen(!isMobile);
@@ -73,31 +76,25 @@ const Layout: React.FC = () => {
   }, [user]);
 
   const toggleDrawer = () => setOpen((prev) => !prev);
-
-  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) => {
+  const handleMenuClick = (event: React.MouseEvent<HTMLElement>) =>
     setMenuAnchorEl(event.currentTarget);
-  };
-
   const handleMenuClose = () => setMenuAnchorEl(null);
-
   const handleLogout = async () => {
     await logout();
     handleMenuClose();
     navigate('/login');
   };
-
   const handleSettings = () => {
-    if (user) {
-      navigate(`/users/${user.uid}`);
-    }
+    if (user) navigate(`/users/${user.uid}`);
     handleMenuClose();
   };
 
+  // Menu items with multiple accessRoles support
   const menuItems = [
     { text: 'Dashboard', to: '/', icon: <DashboardIcon /> },
-    { text: 'Tenants', to: '/tenants', icon: <BusinessIcon /> },
-    { text: 'Users', to: '/users', icon: <PeopleIcon /> },
-    { text: 'Modules', to: '/modules', icon: <AppsIcon /> },
+    { text: 'Tenants', to: '/tenants', icon: <BusinessIcon />, accessRoles: ['hrx_1', 'tenant_1'] },
+    { text: 'Users', to: '/users', icon: <PeopleIcon />, accessRoles: ['hrx_1'] },
+    { text: 'Modules', to: '/modules', icon: <AppsIcon />, accessRoles: ['hrx_1'] },
   ];
 
   const initials = `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
@@ -163,32 +160,34 @@ const Layout: React.FC = () => {
         }}
       >
         <List sx={{ flexGrow: 1 }}>
-          {menuItems.map(({ text, to, icon }) => (
-            <ListItem key={text} disablePadding sx={{ display: 'block' }}>
-              <ListItemButton
-                component={Link}
-                to={to}
-                selected={location.pathname === to}
-                sx={{
-                  justifyContent: open ? 'initial' : 'center',
-                  px: 2.5,
-                  py: 1.25,
-                }}
-              >
-                <ListItemIcon
+          {menuItems.map(({ text, to, icon, accessRoles }) =>
+            !accessRoles || accessRoles.includes(userAccessRole) ? (
+              <ListItem key={text} disablePadding sx={{ display: 'block' }}>
+                <ListItemButton
+                  component={Link}
+                  to={to}
+                  selected={location.pathname === to}
                   sx={{
-                    minWidth: 0,
-                    mr: open ? 3 : 'auto',
-                    justifyContent: 'center',
-                    color: 'inherit',
+                    justifyContent: open ? 'initial' : 'center',
+                    px: 2.5,
+                    py: 1.25,
                   }}
                 >
-                  {icon}
-                </ListItemIcon>
-                {open && <ListItemText primary={text} />}
-              </ListItemButton>
-            </ListItem>
-          ))}
+                  <ListItemIcon
+                    sx={{
+                      minWidth: 0,
+                      mr: open ? 3 : 'auto',
+                      justifyContent: 'center',
+                      color: 'inherit',
+                    }}
+                  >
+                    {icon}
+                  </ListItemIcon>
+                  {open && <ListItemText primary={text} />}
+                </ListItemButton>
+              </ListItem>
+            ) : null,
+          )}
         </List>
 
         <Box

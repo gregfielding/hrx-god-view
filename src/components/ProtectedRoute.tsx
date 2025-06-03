@@ -2,14 +2,15 @@ import React, { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { CircularProgress, Box } from '@mui/material';
+import { getAccessRole, hasAccess } from '../utils/AccessRoles';
 
 type Props = {
   children: ReactNode;
-  requiredRole?: string;
+  requiredAccessRole?: string; // Optional, default access
 };
 
-const ProtectedRoute = ({ children, requiredRole = 'god' }: Props) => {
-  const { user, role, loading } = useAuth();
+const ProtectedRoute = ({ children, requiredAccessRole = 'hrx_1' }: Props) => {
+  const { user, role, securityLevel, loading } = useAuth();
 
   if (loading) {
     return (
@@ -26,7 +27,9 @@ const ProtectedRoute = ({ children, requiredRole = 'god' }: Props) => {
     );
   }
 
-  if (!user || role !== requiredRole) {
+  const userAccessRole = getAccessRole(role, securityLevel);
+
+  if (!user || !hasAccess(requiredAccessRole, role, securityLevel)) {
     return <Navigate to="/login" replace />;
   }
 
