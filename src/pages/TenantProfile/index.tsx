@@ -59,20 +59,23 @@ const UserProfilePage = () => {
         sx={{ mb: 2 }}
       >
         <Tab label="Overview" />
-        <Tab label="Address" />
-        <Tab label="Job Skills" />
-        <Tab label="Tenant" />
-        <Tab label="Client" />
+        <Tab label="Modules" />
+        <Tab label="Users" />
+        <Tab label="Cost Centers" />
+        <Tab label="Clients" />
+        <Tab label="Users" />
+        <Tab label="Job Orders" />
         <Tab label="Shifts" />
+        <Tab label="Timesheets" />
         <Tab label="C1 Insights" />
         <Tab label="Reports & Scores" />
-        <Tab label="Settings" />
+        <Tab label="AI Settings" />
         <Tab label="Activity Logs" />
       </Tabs>
 
       <Box sx={{ mt: 2 }}>
-        {tabIndex === 0 && <ProfileOverview uid={uid} />}
-        {tabIndex === 1 && <AddressTab uid={uid} />}
+        {tabIndex === 0 && <ProfileOverview tenantId={uid} />}
+        {tabIndex === 3 && <AddressTab uid={uid} />}
         {/* Future tabs here */}
       </Box>
     </Box>

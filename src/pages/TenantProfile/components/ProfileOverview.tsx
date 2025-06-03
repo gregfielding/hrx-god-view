@@ -2,45 +2,46 @@ import React, { useEffect, useState } from 'react';
 import { Box, TextField, Typography, Button, Snackbar, Alert, Grid } from '@mui/material';
 import { db } from '../../../firebase';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { formatPhoneNumber } from '../../../utils/formatPhone';
 
 type Props = {
-  uid: string;
+  tenantId: string;
 };
 
-const ProfileOverview: React.FC<Props> = ({ uid }) => {
+const TenantOverview: React.FC<Props> = ({ tenantId }) => {
   const [form, setForm] = useState({
-    firstName: '',
-    lastName: '',
+    companyName: '',
+    contactName: '',
     email: '',
     phone: '',
-    role: 'worker',
-    securityLevel: '', // New field
-    // Add future summary fields like tenant, lastLogin, etc.
+    address: '',
+    notes: '',
   });
+
   const [originalForm, setOriginalForm] = useState(form);
   const [message, setMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
 
   useEffect(() => {
-    if (!uid) return;
+    if (!tenantId) return;
 
-    const userRef = doc(db, 'users', uid);
+    const tenantRef = doc(db, 'tenants', tenantId);
     const unsubscribe = onSnapshot(
-      userRef,
+      tenantRef,
       (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data() as typeof form;
-          setForm({ ...data, securityLevel: data.securityLevel || '' });
-          setOriginalForm({ ...data, securityLevel: data.securityLevel || '' });
+          setForm(data);
+          setOriginalForm(data);
         }
       },
       (error) => {
-        console.error('Error fetching user data in real-time:', error);
+        console.error('Error fetching tenant data in real-time:', error);
       },
     );
 
     return () => unsubscribe();
-  }, [uid]);
+  }, [tenantId]);
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
 
@@ -48,45 +49,51 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    if (name === 'phone') {
+      setForm((prev) => ({ ...prev, phone: formatPhoneNumber(value) }));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const userRef = doc(db, 'users', uid);
-      await updateDoc(userRef, form);
-      setMessage('Profile updated successfully');
+      const tenantRef = doc(db, 'tenants', tenantId);
+      await updateDoc(tenantRef, form);
+      setMessage('Tenant profile updated successfully');
       setShowToast(true);
       setOriginalForm(form);
     } catch (error) {
-      console.error('Error updating user data:', error);
-      setMessage('Failed to update profile');
+      console.error('Error updating tenant data:', error);
+      setMessage('Failed to update tenant profile');
       setShowToast(true);
     }
   };
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* High-Level User Summary */}
       <Typography variant="h6" mb={2}>
-        Contact Information
+        Account Overview
       </Typography>
 
       <Box component="form" onSubmit={handleSubmit} noValidate>
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12}>
             <TextField
               fullWidth
-              name="firstName"
-              label="First Name"
-              value={form.firstName}
+              name="companyName"
+              label="Company Name"
+              value={form.companyName}
               onChange={handleChange}
             />
           </Grid>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12}>
             <TextField
               fullWidth
-              name="lastName"
-              label="Last Name"
-              value={form.lastName}
+              name="contactName"
+              label="Primary Contact"
+              value={form.contactName}
               onChange={handleChange}
             />
           </Grid>
@@ -106,45 +113,29 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               label="Phone"
               value={form.phone}
               onChange={handleChange}
+              onBlur={handleBlur}
             />
           </Grid>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12}>
             <TextField
-              select
               fullWidth
-              name="role"
-              label="Role"
-              value={form.role}
+              name="address"
+              label="Address"
+              value={form.address}
               onChange={handleChange}
-              SelectProps={{ native: true }}
-            >
-              <option value="Applicant">Applicant</option>
-              <option value="Employee">Employee</option>
-              <option value="Contractor">Contractor</option>
-              <option value="Tenant">Tenant</option>
-              <option value="Client">Client</option>
-              <option value="HRX">HRX</option>
-              <option value="Dismissed">Dismissed</option>
-            </TextField>
+            />
           </Grid>
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12}>
             <TextField
-              select
               fullWidth
-              name="securityLevel"
-              label="Security Level"
-              value={form.securityLevel || ''}
+              multiline
+              minRows={3}
+              name="notes"
+              label="Notes"
+              value={form.notes}
               onChange={handleChange}
-              SelectProps={{ native: true }}
-            >
-              <option value="">Select Security Level</option>
-              <option value="Admin">Admin</option>
-              <option value="Worker">Worker</option>
-              <option value="Manager">Manager</option>
-              <option value="Staffer">Staffer</option>
-            </TextField>
+            />
           </Grid>
-
           {hasChanges && (
             <Grid item xs={12}>
               <Button type="submit" variant="contained">
@@ -164,4 +155,4 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
   );
 };
 
-export default ProfileOverview;
+export default TenantOverview;

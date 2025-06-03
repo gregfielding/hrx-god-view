@@ -6,6 +6,9 @@ import { storage, db } from '../../../firebase';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
 
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import { useNavigate } from 'react-router-dom';
+
 interface TenantProfileHeaderProps {
   uid: string; // Firestore tenant document ID
   name: string;
@@ -83,65 +86,74 @@ const TenantProfileHeader: React.FC<TenantProfileHeaderProps> = ({
     .join('')
     .toUpperCase();
 
+  const navigate = useNavigate();
+
   return (
-    <Box display="flex" alignItems="center" gap={2} sx={{ mb: 2 }}>
-      <Box
-        position="relative"
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-      >
-        <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
-          {!avatarUrl && initials}
-        </Avatar>
+    <Box display="flex" justifyContent="space-between" alignItems="center">
+      <Box display="flex" alignItems="space-between" gap={2}>
+        <Box
+          position="relative"
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+        >
+          <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
+            {!avatarUrl && initials}
+          </Avatar>
 
-        <input
-          type="file"
-          accept="image/*"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          onChange={handleFileChange}
-        />
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
 
-        {hover && !avatarUrl && (
-          <Tooltip title="Upload avatar">
-            <IconButton
-              size="small"
-              onClick={handleAvatarClick}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
-              }}
-            >
-              <CameraAltIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )}
+          {hover && !avatarUrl && (
+            <Tooltip title="Upload avatar">
+              <IconButton
+                size="small"
+                onClick={handleAvatarClick}
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 0,
+                  backgroundColor: 'white',
+                  borderRadius: '50%',
+                }}
+              >
+                <CameraAltIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
 
-        {hover && avatarUrl && (
-          <Tooltip title="Remove avatar">
-            <IconButton
-              size="small"
-              onClick={handleDeleteAvatar}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
-              }}
-            >
-              <ClearIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )}
+          {hover && avatarUrl && (
+            <Tooltip title="Remove avatar">
+              <IconButton
+                size="small"
+                onClick={handleDeleteAvatar}
+                sx={{
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 0,
+                  backgroundColor: 'white',
+                  borderRadius: '50%',
+                }}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
+
+        <Box>
+          <h2>{name}</h2>
+        </Box>
       </Box>
-
-      <Box>
-        <h2>{name}</h2>
-      </Box>
+      <Tooltip title="Back to Tenants">
+        <IconButton onClick={() => navigate('/tenants')}>
+          <ArrowBackIcon sx={{ color: 'inherit' }} />
+        </IconButton>
+      </Tooltip>
     </Box>
   );
 };

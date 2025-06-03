@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, TextField, Typography, Button, Snackbar, Alert, Grid } from '@mui/material';
 import { db } from '../../../firebase';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { formatPhoneNumber } from '../../../utils/formatPhone'; // <- Ensure this exists
 
 type Props = {
   uid: string;
@@ -14,9 +15,9 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     email: '',
     phone: '',
     role: 'worker',
-    securityLevel: '', // New field
-    // Add future summary fields like tenant, lastLogin, etc.
+    securityLevel: '',
   });
+
   const [originalForm, setOriginalForm] = useState(form);
   const [message, setMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
@@ -29,13 +30,27 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
       userRef,
       (snapshot) => {
         if (snapshot.exists()) {
-          const data = snapshot.data() as typeof form;
-          setForm({ ...data, securityLevel: data.securityLevel || '' });
-          setOriginalForm({ ...data, securityLevel: data.securityLevel || '' });
+          const data = snapshot.data();
+          setForm({
+            firstName: data.firstName || '',
+            lastName: data.lastName || '',
+            email: data.email || '',
+            phone: data.phone || '',
+            role: data.role || 'worker',
+            securityLevel: data.securityLevel || '',
+          });
+          setOriginalForm({
+            firstName: data.firstName || '',
+            lastName: data.lastName || '',
+            email: data.email || '',
+            phone: data.phone || '',
+            role: data.role || 'worker',
+            securityLevel: data.securityLevel || '',
+          });
         }
       },
       (error) => {
-        console.error('Error fetching user data in real-time:', error);
+        console.error('Error fetching user data:', error);
       },
     );
 
@@ -46,6 +61,13 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    if (name === 'phone') {
+      setForm((prev) => ({ ...prev, phone: formatPhoneNumber(value) }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -65,7 +87,6 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* High-Level User Summary */}
       <Typography variant="h6" mb={2}>
         Contact Information
       </Typography>
@@ -106,6 +127,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               label="Phone"
               value={form.phone}
               onChange={handleChange}
+              onBlur={handleBlur}
             />
           </Grid>
           <Grid item xs={12} sm={6}>
@@ -133,7 +155,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               fullWidth
               name="securityLevel"
               label="Security Level"
-              value={form.securityLevel || ''}
+              value={form.securityLevel}
               onChange={handleChange}
               SelectProps={{ native: true }}
             >

@@ -166,12 +166,23 @@ const Layout: React.FC = () => {
                 <ListItemButton
                   component={Link}
                   to={to}
-                  selected={location.pathname === to}
+                  selected={location.pathname == to}
                   sx={{
-                    justifyContent: open ? 'initial' : 'center',
+                    backgroundColor: location.pathname.startsWith(to)
+                      ? 'rgba(255, 255, 255, 0.08)'
+                      : 'inherit',
+                    '&.Mui-selected': {
+                      borderLeft: '4px solid #FFD700',
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                    },
                     px: 2.5,
                     py: 1.25,
                   }}
+                  // sx={{
+                  //   justifyContent: open ? 'initial' : 'center',
+                  //   px: 2.5,
+                  //   py: 1.25,
+                  // }}
                 >
                   <ListItemIcon
                     sx={{
