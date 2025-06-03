@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "hrx1-d3beb"
+  },
+  "targets": {},
+  "etags": {
+    "hrx1-d3beb": {
+      "extensionInstances": {}
+    }
+  },
+  "dataconnectEmulatorConfig": {}
+}

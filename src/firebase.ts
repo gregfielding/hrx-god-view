@@ -1,16 +1,16 @@
-import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { initializeApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyD-VVEdpoYSW43XwBk025Doq5iCJ3z1FuY",
-  authDomain: "hrxone-5c786.firebaseapp.com",
-  projectId: "hrxone-5c786",
-  storageBucket: "hrxone-5c786.appspot.com",
-  messagingSenderId: "676143815605",
-  appId: "1:676143815605:web:e32c650012da9e126e97fc",
-  measurementId: "G-V7G1D4KLMT"
+  apiKey: 'AIzaSyBQA9bc25_7ncjvY75nAtIUv47C3w5jl6c',
+  authDomain: 'hrx1-d3beb.firebaseapp.com',
+  projectId: 'hrx1-d3beb',
+  storageBucket: 'hrx1-d3beb.firebasestorage.app',
+  messagingSenderId: '143752240496',
+  appId: '1:143752240496:web:e0b584983d4b04cb3983b5',
+  measurementId: 'G-LL20QKNT0W',
 };
 
 const app = initializeApp(firebaseConfig);

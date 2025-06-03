@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User profile access
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // HRX admins can read any user document
+      allow read: if request.auth != null &&
+                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+    }
+
+    // Tenants collection
+    match /tenants/{tenantId} {
+      // HRX admins can read any tenant document
+      allow read: if request.auth != null &&
+                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+
+      // (Optional) Allow tenant-assigned users to read their tenant
+      // Example: users with matching tenantId field in their user doc
+      allow read: if request.auth != null &&
+                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+    }
+
+    // You can add similar blocks for clients, modules, etc.
+  }
+}

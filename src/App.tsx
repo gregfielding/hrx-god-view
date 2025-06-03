@@ -3,9 +3,10 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { LoadScript } from '@react-google-maps/api'; // 🔥 Import LoadScript
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import Tenants from './pages/Tenants';
+import Tenants from './pages/TenantsTable';
 import UsersTable from './pages/UsersTable';
 import UserProfile from './pages/UserProfile';
+import TenantProfile from './pages/TenantProfile';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider } from './contexts/AuthContext';
@@ -32,10 +33,12 @@ function App() {
               }
             >
               <Route index element={<Dashboard />} />
-              <Route path="tenants" element={<Tenants />} />
+
               <Route path="users" element={<UsersTable />} />
               <Route path="users/:uid" element={<UserProfile />} />
               <Route path="users/:uid/onboarding" element={<UserOnboarding />} />
+              <Route path="tenants" element={<Tenants />} />
+              <Route path="tenants/:uid" element={<TenantProfile />} />
             </Route>
           </Routes>
         </LoadScript>{' '}

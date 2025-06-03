@@ -129,7 +129,7 @@ const UsersTable = () => {
   return (
     <Box p={0}>
       <Typography variant="h4" gutterBottom>
-        All Users
+        Users
       </Typography>
 
       <Box display="flex" gap={2} mb={3}>
@@ -175,7 +175,14 @@ const UsersTable = () => {
                         : ''}
                     </TableCell>
                     <TableCell>
-                      <Link to={`/users/${user.id}`}>View Profile</Link>
+                      <Button
+                        component={Link}
+                        to={`/users/${user.id}`}
+                        variant="outlined"
+                        size="small"
+                      >
+                        View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
