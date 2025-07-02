@@ -2,10 +2,9 @@
 
 export type Role =
   | 'Applicant'
-  | 'Employee'
-  | 'Contractor'
-  | 'Tenant'
-  | 'Client'
+  | 'Worker'
+  | 'Customer'
+  | 'Agency'
   | 'HRX'
   | 'Dismissed';
 export type SecurityLevel = 'Admin' | 'Manager' | 'Worker' | 'Staffer';
@@ -13,14 +12,14 @@ export type SecurityLevel = 'Admin' | 'Manager' | 'Worker' | 'Staffer';
 export const AccessRoleMap: Record<string, string> = {
   HRX_Admin: 'hrx_1',
   HRX_Manager: 'hrx_2',
-  Tenant_Admin: 'tenant_1',
-  Tenant_Manager: 'tenant_2',
-  Tenant_Staffer: 'tenant_3',
-  Tenant_Worker: 'tenant_4',
-  Client_Admin: 'client_1',
-  Client_Manager: 'client_2',
-  Client_Staffer: 'client_3',
-  Client_Worker: 'client_4',
+  Customer_Admin: 'customer_1',
+  Customer_Manager: 'customer_2',
+  Customer_Staffer: 'customer_3',
+  Customer_Worker: 'customer_4',
+  Agency_Admin: 'agency_1',
+  Agency_Manager: 'agency_2',
+  Agency_Staffer: 'agency_3',
+  Agency_Worker: 'agency_4',
   Employee_Worker: 'employee_3',
   Contractor_Worker: 'contractor_3',
   Applicant_Worker: 'applicant_3',

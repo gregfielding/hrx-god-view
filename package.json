@@ -16,6 +16,7 @@
     "@testing-library/user-event": "^13.5.0",
     "@types/jest": "^27.5.2",
     "@types/node": "^16.18.126",
+    "csv-parser": "^3.2.0",
     "date-fns": "^4.1.0",
     "firebase": "^11.7.3",
     "react": "^19.1.0",

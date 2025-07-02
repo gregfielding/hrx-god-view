@@ -31,6 +31,8 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import BusinessIcon from '@mui/icons-material/Business';
 import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
+import GroupWorkIcon from '@mui/icons-material/GroupWork';
+import SettingsIcon from '@mui/icons-material/Settings';
 
 import { useAuth } from '../contexts/AuthContext';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
@@ -92,9 +94,11 @@ const Layout: React.FC = () => {
   // Menu items with multiple accessRoles support
   const menuItems = [
     { text: 'Dashboard', to: '/', icon: <DashboardIcon /> },
-    { text: 'Tenants', to: '/tenants', icon: <BusinessIcon />, accessRoles: ['hrx_1', 'tenant_1'] },
+    { text: 'Customers', to: '/customers', icon: <BusinessIcon />, accessRoles: ['hrx_1', 'tenant_1'] },
+    { text: 'Agencies', to: '/agencies', icon: <GroupWorkIcon />, accessRoles: ['hrx_1', 'tenant_1'] },
     { text: 'Users', to: '/users', icon: <PeopleIcon />, accessRoles: ['hrx_1'] },
-    { text: 'Modules', to: '/modules', icon: <AppsIcon />, accessRoles: ['hrx_1'] },
+    { text: 'Modules', to: '/admin/modules', icon: <AppsIcon />, accessRoles: ['hrx_1'] },
+    { text: 'AI Context', to: '/admin/ai-context', icon: <SettingsIcon />, accessRoles: ['hrx_1'] },
   ];
 
   const initials = `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();

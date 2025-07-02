@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Tabs, Tab, Typography } from '@mui/material';
-import { useParams } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { Box, Tabs, Tab, Typography, Button } from '@mui/material';
+import { useParams, useNavigate } from 'react-router-dom';
+import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase'; // adjust path
+import onetSkills from '../../data/onetSkills.json';
+import onetJobTitles from '../../data/onetJobTitles.json';
 
 import ProfileOverview from './components/ProfileOverview';
 import AddressTab from './components/AddressTab/AddressTab';
 import UserProfileHeader from './components/UserProfileHeader';
+import SkillsTab from './components/SkillsTab';
+import BackgroundCheckTab from './components/SkillsTab/BackgroundCheckTab';
+import VaccinationStatusTab from './components/SkillsTab/VaccinationStatusTab';
+import CustomerWorksiteTab from './components/CustomerWorksiteTab';
+import UserAssignmentsTab from './components/UserAssignmentsTab';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -14,6 +21,8 @@ const UserProfilePage = () => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState<string>('');
+  const [skillsData, setSkillsData] = useState<any>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -31,8 +40,38 @@ const UserProfilePage = () => {
     fetchUserData();
   }, [uid]);
 
+  useEffect(() => {
+    if (!uid) return;
+    // Fetch skills data for SkillsTab
+    const userRef = doc(db, 'users', uid);
+    const unsubscribe = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setSkillsData({
+          primaryJobTitle: data.primaryJobTitle || '',
+          certifications: data.certifications || [],
+          skills: data.skills || [],
+          languages: data.languages || [],
+          yearsExperience: data.yearsExperience || '',
+          educationLevel: data.educationLevel || '',
+          backgroundCheckStatus: data.backgroundCheckStatus || '',
+          vaccinationStatus: data.vaccinationStatus || '',
+          specialTraining: data.specialTraining || '',
+          resume: data.resume || null,
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [uid]);
+
   const handleTabChange = (_: React.SyntheticEvent, newIndex: number) => {
     setTabIndex(newIndex);
+  };
+
+  const handleSkillsUpdate = async (updated: any) => {
+    if (!uid) return;
+    const userRef = doc(db, 'users', uid);
+    await updateDoc(userRef, updated);
   };
 
   if (!uid) {
@@ -51,6 +90,8 @@ const UserProfilePage = () => {
         lastName={lastName}
         avatarUrl={avatarUrl}
         onAvatarUpdated={setAvatarUrl}
+        showBackButton
+        onBack={() => navigate(-1)}
       />
 
       <Tabs
@@ -63,12 +104,16 @@ const UserProfilePage = () => {
       >
         <Tab label="Overview" />
         <Tab label="Address" />
-        <Tab label="Job Skills" />
-        <Tab label="Tenant" />
-        <Tab label="Client" />
+        <Tab label="Work ID" />
+        <Tab label="Background Check" />
+        <Tab label="Vaccination Status" />
+        <Tab label="Customer (Worksite)" />
+        <Tab label="Assignments" />
+        <Tab label="Agency" />
+        <Tab label="Skill Vault" />
         <Tab label="Shifts" />
-        <Tab label="C1 Insights" />
-        <Tab label="Reports & Scores" />
+        <Tab label="Behavioral IQ" />
+        <Tab label="Reports & Insights" />
         <Tab label="Settings" />
         <Tab label="Activity Logs" />
       </Tabs>
@@ -76,6 +121,17 @@ const UserProfilePage = () => {
       <Box sx={{ mt: 2 }}>
         {tabIndex === 0 && <ProfileOverview uid={uid} />}
         {tabIndex === 1 && <AddressTab uid={uid} />}
+        {tabIndex === 2 && skillsData && (
+          <SkillsTab
+            user={skillsData}
+            onUpdate={handleSkillsUpdate}
+            onetSkills={onetSkills}
+            onetJobTitles={onetJobTitles}
+          />
+        )}
+        {tabIndex === 3 && <BackgroundCheckTab uid={uid} />}
+        {tabIndex === 4 && <VaccinationStatusTab uid={uid} />}
+        {tabIndex === 6 && <UserAssignmentsTab userId={uid} />}
         {/* Future tabs here */}
       </Box>
     </Box>

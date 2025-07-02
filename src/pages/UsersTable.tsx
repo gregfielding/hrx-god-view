@@ -14,7 +14,7 @@ import {
   Button,
 } from '@mui/material';
 import { collection, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -40,6 +40,7 @@ const UsersTable = () => {
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [isEnd, setIsEnd] = useState(false);
   const firstLoadRef = useRef(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (role === 'HRX') {
@@ -128,9 +129,14 @@ const UsersTable = () => {
 
   return (
     <Box p={0}>
-      <Typography variant="h4" gutterBottom>
-        Users
-      </Typography>
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+        <Typography variant="h4" gutterBottom>
+          Users
+        </Typography>
+        <Button variant="contained" color="primary" onClick={() => navigate('/user/new')}>
+          Add User
+        </Button>
+      </Box>
 
       <Box display="flex" gap={2} mb={3}>
         <TextField label="Search" value={search} onChange={(e) => setSearch(e.target.value)} />

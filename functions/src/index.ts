@@ -1,19 +1,49 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * import {onCall} from "firebase-functions/v2/https";
- * import {onDocumentWritten} from "firebase-functions/v2/firestore";
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
+import { CallableContext } from "firebase-functions/lib/common/providers/https";
 
-import {onRequest} from "firebase-functions/v2/https";
-import * as logger from "firebase-functions/logger";
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+const { OpenAI } = require('openai');
 
-// Start writing functions
-// https://firebase.google.com/docs/functions/typescript
+admin.initializeApp();
+const db = admin.firestore();
 
-// export const helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+const openai = new OpenAI({
+  apiKey: functions.config().openai.key,
+});
+
+exports.analyzeAITraining = functions.https.onCall(
+  async (data: any, context: CallableContext) => {
+    const { customerId } = data;
+    if (!customerId) throw new functions.https.HttpsError('invalid-argument', 'customerId is required');
+
+    // Fetch global training
+    const globalSnap = await db.doc('aiTraining/global').get();
+    const globalData = globalSnap.exists ? globalSnap.data() : {};
+
+    // Fetch customer-specific training
+    const customerSnap = await db.doc(`customers/${customerId}/aiTraining/main`).get();
+    const customerData = customerSnap.exists ? customerSnap.data() : {};
+
+    // Build prompt
+    const prompt = `
+==== HRX-WIDE INSTRUCTIONS ====
+Mission: ${(globalData || {}).mission || ''}
+Core Values: ${(globalData || {}).coreValues || ''}
+Communication Style: ${(globalData || {}).communicationStyle || ''}
+...
+==== CUSTOMER-SPECIFIC INSTRUCTIONS ====
+Mission: ${(customerData || {}).mission || ''}
+Core Values: ${(customerData || {}).coreValues || ''}
+Communication Style: ${(customerData || {}).communicationStyle || ''}
+...
+`;
+
+    // Call OpenAI
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [{ role: 'system', content: prompt }]
+    });
+
+    return { result: response.choices[0].message.content };
+  }
+);

@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
+import { geocodeAddress } from '../utils/geocodeAddress';
 
 // Allow recaptchaVerifier on the window object
 declare global {
@@ -111,15 +112,7 @@ const UserOnboarding = () => {
       if (!uid) throw new Error('Missing user ID.');
 
       const fullAddress = `${address.street}, ${address.city}, ${address.state} ${address.zip}`;
-      const geocodeRes = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-          fullAddress,
-        )}&key=AIzaSyDTFHyztKw2_WBO8znR6CT5lxPGPoXe5vs`,
-      );
-      const geocodeData = await geocodeRes.json();
-      const coords = geocodeData.results[0]?.geometry?.location || null;
-
-      if (!coords) throw new Error('Geocoding failed.');
+      const coords = await geocodeAddress(fullAddress);
 
       const ref = doc(db, 'users', uid);
       await updateDoc(ref, {

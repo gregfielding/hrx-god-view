@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Avatar upload access
+    match /avatars/{fileName} {
+      // Allow users to upload/delete their own avatar
+      allow write, delete: if request.auth != null &&
+                           fileName.matches(request.auth.uid + '.*');
+
+      // TEMPORARY: Allow authenticated users to upload any avatar starting with 'tenant_'
+      allow write, delete: if request.auth != null &&
+                           fileName.matches('tenant_.*');
+
+      // Public read access (you can tighten later)
+      allow read: if true;
+    }
+
+    // Agency logo upload access
+    match /agency_logos/{fileName} {
+      // Allow any authenticated user to upload/delete agency logos
+      allow write, delete: if request.auth != null;
+      // Public read access (you can tighten later)
+      allow read: if true;
+    }
+
+    // Block everything else by default
+    match /{allPaths=**} {
+      allow read, write, delete: if false;
+    }
+    
+      // Allow authenticated users to upload to customer AI training docs
+      match /customers/{customerId}/aiTraining/{folder}/{allPaths=**} {
+        allow read, write: if request.auth != null;
+        // For production, restrict to HRX or customer admins
+        // allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+      }
+      // Block everything else by default
+      match /{allPaths=**} {
+        allow read, write: if false;
+      }
+  }
+}

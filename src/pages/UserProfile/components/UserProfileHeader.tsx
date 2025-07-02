@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Tooltip } from '@mui/material';
+import { Box, Avatar, IconButton, Tooltip, Button, Typography } from '@mui/material';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../../../firebase'; // adjust path
@@ -12,6 +12,8 @@ interface UserProfileHeaderProps {
   lastName: string;
   avatarUrl: string;
   onAvatarUpdated: (url: string) => void; // callback to update parent state
+  showBackButton?: boolean;
+  onBack?: () => void;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -20,6 +22,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   lastName,
   avatarUrl,
   onAvatarUpdated,
+  showBackButton,
+  onBack,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -51,60 +55,66 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
   return (
-    <Box display="flex" alignItems="center" gap={2} sx={{ mb: 2 }}>
-      <Box
-        position="relative"
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-      >
-        <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
-          {!avatarUrl && initials}
-        </Avatar>
+    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+      <Box display="flex" alignItems="center" gap={2}>
+        <Box
+          position="relative"
+          onMouseEnter={() => setHover(true)}
+          onMouseLeave={() => setHover(false)}
+        >
+          <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
+            {!avatarUrl && initials}
+          </Avatar>
 
-        <input
-          type="file"
-          accept="image/*"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          onChange={handleFileChange}
-        />
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
 
-        {hover && !avatarUrl && (
-          <IconButton
-            size="small"
-            onClick={handleAvatarClick}
-            sx={{
-              position: 'absolute',
-              bottom: 0,
-              right: 0,
-              backgroundColor: 'white',
-              borderRadius: '50%',
-            }}
-          >
-            <CameraAltIcon fontSize="small" />
-          </IconButton>
-        )}
+          {hover && !avatarUrl && (
+            <IconButton
+              size="small"
+              onClick={handleAvatarClick}
+              sx={{
+                position: 'absolute',
+                bottom: 0,
+                right: 0,
+                backgroundColor: 'white',
+                borderRadius: '50%',
+              }}
+            >
+              <CameraAltIcon fontSize="small" />
+            </IconButton>
+          )}
 
-        {hover && avatarUrl && (
-          <IconButton
-            size="small"
-            onClick={handleDeleteAvatar}
-            sx={{
-              position: 'absolute',
-              bottom: 0,
-              right: 0,
-              backgroundColor: 'white',
-              borderRadius: '50%',
-            }}
-          >
-            <ClearIcon fontSize="small" />
-          </IconButton>
-        )}
+          {hover && avatarUrl && (
+            <IconButton
+              size="small"
+              onClick={handleDeleteAvatar}
+              sx={{
+                position: 'absolute',
+                bottom: 0,
+                right: 0,
+                backgroundColor: 'white',
+                borderRadius: '50%',
+              }}
+            >
+              <ClearIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Box>
+
+        <Typography variant="h4" sx={{ mb: 0 }}>{`${firstName} ${lastName}`}</Typography>
       </Box>
 
-      <Box>
-        <h2>{`${firstName} ${lastName}`}</h2>
-      </Box>
+      {showBackButton && (
+        <Button variant="outlined" onClick={onBack}>
+          &larr; Back
+        </Button>
+      )}
     </Box>
   );
 };

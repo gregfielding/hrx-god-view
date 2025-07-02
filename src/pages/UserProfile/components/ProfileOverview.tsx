@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Box, TextField, Typography, Button, Snackbar, Alert, Grid } from '@mui/material';
+import { Box, TextField, Typography, Button, Snackbar, Alert, Grid, MenuItem, FormControl, InputLabel, Select } from '@mui/material';
 import { db } from '../../../firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { formatPhoneNumber } from '../../../utils/formatPhone'; // <- Ensure this exists
 
 type Props = {
@@ -14,13 +14,17 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     lastName: '',
     email: '',
     phone: '',
-    role: 'worker',
+    role: 'Worker',
     securityLevel: '',
+    jobTitle: '',
+    department: '',
   });
 
   const [originalForm, setOriginalForm] = useState(form);
   const [message, setMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState<string>('');
 
   useEffect(() => {
     if (!uid) return;
@@ -28,7 +32,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     const userRef = doc(db, 'users', uid);
     const unsubscribe = onSnapshot(
       userRef,
-      (snapshot) => {
+      async (snapshot) => {
         if (snapshot.exists()) {
           const data = snapshot.data();
           setForm({
@@ -36,17 +40,28 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
             lastName: data.lastName || '',
             email: data.email || '',
             phone: data.phone || '',
-            role: data.role || 'worker',
+            role: data.role || 'Worker',
             securityLevel: data.securityLevel || '',
+            jobTitle: data.jobTitle || '',
+            department: data.department || '',
           });
           setOriginalForm({
             firstName: data.firstName || '',
             lastName: data.lastName || '',
             email: data.email || '',
             phone: data.phone || '',
-            role: data.role || 'worker',
+            role: data.role || 'Worker',
             securityLevel: data.securityLevel || '',
+            jobTitle: data.jobTitle || '',
+            department: data.department || '',
           });
+          if (data.customerId) {
+            setCustomerId(data.customerId);
+            // Fetch departments for this customer
+            const q = collection(db, 'customers', data.customerId, 'departments');
+            const snapshot = await getDocs(q);
+            setDepartments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          }
         }
       },
       (error) => {
@@ -132,6 +147,31 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
           </Grid>
           <Grid item xs={12} sm={6}>
             <TextField
+              fullWidth
+              name="jobTitle"
+              label="Job Title"
+              value={form.jobTitle}
+              onChange={handleChange}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <FormControl fullWidth>
+              <InputLabel id="department-label">Department</InputLabel>
+              <Select
+                labelId="department-label"
+                name="department"
+                value={form.department}
+                onChange={e => setForm({ ...form, department: e.target.value })}
+                label="Department"
+              >
+                {departments.map((dept: any) => (
+                  <MenuItem key={dept.id} value={dept.id}>{dept.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={6}>
+            <TextField
               select
               fullWidth
               name="role"
@@ -141,16 +181,16 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               SelectProps={{ native: true }}
             >
               <option value="Applicant">Applicant</option>
-              <option value="Employee">Employee</option>
-              <option value="Contractor">Contractor</option>
-              <option value="Tenant">Tenant</option>
-              <option value="Client">Client</option>
+              <option value="Worker">Worker</option>
+              <option value="Customer">Customer</option>
+              <option value="Agency">Agency</option>
               <option value="HRX">HRX</option>
               <option value="Dismissed">Dismissed</option>
             </TextField>
           </Grid>
           <Grid item xs={12} sm={6}>
             <TextField
+              read-only
               select
               fullWidth
               name="securityLevel"

@@ -1,0 +1,142 @@
+[
+  {
+    "name": "Reading Comprehension",
+    "type": "O*NET"
+  },
+  {
+    "name": "Active Listening",
+    "type": "O*NET"
+  },
+  {
+    "name": "Writing",
+    "type": "O*NET"
+  },
+  {
+    "name": "Speaking",
+    "type": "O*NET"
+  },
+  {
+    "name": "Mathematics",
+    "type": "O*NET"
+  },
+  {
+    "name": "Science",
+    "type": "O*NET"
+  },
+  {
+    "name": "Critical Thinking",
+    "type": "O*NET"
+  },
+  {
+    "name": "Active Learning",
+    "type": "O*NET"
+  },
+  {
+    "name": "Learning Strategies",
+    "type": "O*NET"
+  },
+  {
+    "name": "Monitoring",
+    "type": "O*NET"
+  },
+  {
+    "name": "Social Perceptiveness",
+    "type": "O*NET"
+  },
+  {
+    "name": "Coordination",
+    "type": "O*NET"
+  },
+  {
+    "name": "Persuasion",
+    "type": "O*NET"
+  },
+  {
+    "name": "Negotiation",
+    "type": "O*NET"
+  },
+  {
+    "name": "Instructing",
+    "type": "O*NET"
+  },
+  {
+    "name": "Service Orientation",
+    "type": "O*NET"
+  },
+  {
+    "name": "Complex Problem Solving",
+    "type": "O*NET"
+  },
+  {
+    "name": "Operations Analysis",
+    "type": "O*NET"
+  },
+  {
+    "name": "Technology Design",
+    "type": "O*NET"
+  },
+  {
+    "name": "Equipment Selection",
+    "type": "O*NET"
+  },
+  {
+    "name": "Installation",
+    "type": "O*NET"
+  },
+  {
+    "name": "Programming",
+    "type": "O*NET"
+  },
+  {
+    "name": "Operations Monitoring",
+    "type": "O*NET"
+  },
+  {
+    "name": "Operation and Control",
+    "type": "O*NET"
+  },
+  {
+    "name": "Equipment Maintenance",
+    "type": "O*NET"
+  },
+  {
+    "name": "Troubleshooting",
+    "type": "O*NET"
+  },
+  {
+    "name": "Repairing",
+    "type": "O*NET"
+  },
+  {
+    "name": "Quality Control Analysis",
+    "type": "O*NET"
+  },
+  {
+    "name": "Judgment and Decision Making",
+    "type": "O*NET"
+  },
+  {
+    "name": "Systems Analysis",
+    "type": "O*NET"
+  },
+  {
+    "name": "Systems Evaluation",
+    "type": "O*NET"
+  },
+  {
+    "name": "Time Management",
+    "type": "O*NET"
+  },
+  {
+    "name": "Management of Financial Resources",
+    "type": "O*NET"
+  },
+  {
+    "name": "Management of Material Resources",
+    "type": "O*NET"
+  },
+  {
+    "name": "Management of Personnel Resources",
+    "type": "O*NET"
+  }
+]

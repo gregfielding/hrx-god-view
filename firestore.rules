@@ -2,27 +2,124 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // User profile access
+    // --- USERS ---
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-
-      // HRX admins can read any user document
-      allow read: if request.auth != null &&
-                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      allow read, write: if isHRX();
     }
 
-    // Tenants collection
+    // --- TENANTS ---
     match /tenants/{tenantId} {
-      // HRX admins can read any tenant document
-      allow read: if request.auth != null &&
-                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
+      allow read, write: if isHRX();
+      allow read: if isAssignedToTenant(tenantId);
 
-      // (Optional) Allow tenant-assigned users to read their tenant
-      // Example: users with matching tenantId field in their user doc
-      allow read: if request.auth != null &&
-                  get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+      // --- CONTACTS (Tenants) ---
+      match /contacts/{contactId} {
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // --- LOCATIONS (Tenants) ---
+      match /locations/{locationId} {
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
     }
 
-    // You can add similar blocks for clients, modules, etc.
+    // --- AGENCIES ---
+    match /agencies/{agencyId} {
+      allow read, write: if isHRX();
+
+      // --- CONTACTS (Agencies) ---
+      match /contacts/{contactId} {
+        allow read, write: if isHRX();
+      }
+
+      // --- LOCATIONS (Agencies) ---
+      match /locations/{locationId} {
+        allow read, write: if isHRX();
+      }
+    }
+
+    // --- CUSTOMERS ---
+    match /customers/{customerId} {
+      allow read, write: if isHRX();
+
+      // --- LOCATIONS (Customers) ---
+      match /locations/{locationId} {
+        allow read, write: if isHRX();
+        allow read: if isAssignedToCustomer(customerId);
+      }
+      
+      match /departments/{departmentId} {
+        allow read, write: if isHRX() || isCustomerAdmin(customerId);
+      }
+    }
+    
+    match /customers/{customerId}/aiSettings/{aiSettingsId} {
+      // Social Posts subcollection
+      match /socialPosts/{postId} {
+        allow read, write: if isHRX();
+        // Optionally, allow customer admins to write:
+        allow write: if isHRX() || isCustomerAdmin(customerId);
+      }
+      // Docs subcollection
+      match /docs/{docId} {
+        allow read, write: if isHRX();
+        // Optionally, allow customer admins to write:
+        allow read, write: if isHRX() || isCustomerAdmin(customerId);
+      }
+    }
+    
+    match /customers/{customerId}/aiTraining/{aiTrainingId} {
+      // Social Posts subcollection
+      match /socialPosts/{postId} {
+        allow read, write: if isHRX();
+        // Optionally, allow customer admins to write:
+        allow read, write: if isHRX() || isCustomerAdmin(customerId);
+      }
+      // Policy Docs subcollection
+      match /policyDocs/{docId} {
+        allow read, write: if isHRX();
+        // Optionally, allow customer admins to write:
+        allow read, write: if isHRX() || isCustomerAdmin(customerId);
+      }
+    }
+    
+    
+
+    // --- DEFAULT CATCH-ALL ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- FUNCTIONS ---
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isHRX() {
+      return isAuthenticated() && getUser().role == "HRX";
+    }
+
+    function isAssignedToTenant(tenantId) {
+      return isAuthenticated() && getUser().tenantId == tenantId;
+    }
+
+    function isTenantAdmin(tenantId) {
+      return isAssignedToTenant(tenantId) && getUser().securityLevel == "Admin";
+    }
+    
+    function isAssignedToCustomer(customerId) {
+      return isAuthenticated() && getUser().customerId == customerId;
+    }
+    
+    function isCustomerAdmin(customerId) {
+      return isAssignedToCustomer(customerId) && getUser().securityLevel == "Admin";
+    }
   }
 }

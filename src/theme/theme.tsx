@@ -1,67 +1,50 @@
-// theme.ts
-import { createTheme, ThemeOptions } from '@mui/material/styles';
-import { useMemo, useEffect, useState, createContext, useContext, ReactNode } from 'react';
-import { ThemeProvider, CssBaseline } from '@mui/material';
+import { createTheme, ThemeProvider } from '@mui/material/styles';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 
-const getTheme = (mode: 'light' | 'dark'): ThemeOptions => ({
-  palette: {
-    mode,
-    ...(mode === 'light'
-      ? {
-          primary: { main: '#287FA0' },
-          secondary: { main: '#FFC700' },
-          background: { default: '#f5f5f5', paper: '#ffffff' },
-        }
-      : {
-          primary: { main: '#FFC700' },
-          secondary: { main: '#287FA0' },
-          background: { default: '#121212', paper: '#1e1e1e' },
-        }),
-  },
-  typography: {
-    fontFamily: ['Helvetica', 'Arial', 'sans-serif'].join(','),
-    h1: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 800 },
-    h2: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 800 },
-    h3: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 600 },
-    h4: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 600 },
-    h5: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 600 },
-    h6: { fontFamily: 'Poppins, Helvetica, Arial, sans-serif', fontWeight: 400 },
-  },
-});
-
-type ThemeContextType = {
-  mode: 'light' | 'dark';
-  toggleMode: () => void;
-};
-
-const ThemeModeContext = createContext<ThemeContextType | undefined>(undefined);
-
-export const ThemeModeProvider = ({ children }: { children: ReactNode }) => {
-  const [mode, setMode] = useState<'light' | 'dark'>(() => {
-    const stored = localStorage.getItem('hrx-theme-mode');
-    if (stored === 'light' || stored === 'dark') return stored;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+const getTheme = (mode: 'light' | 'dark') =>
+  createTheme({
+    palette: {
+      mode,
+    },
+    components: {
+      MuiTableContainer: {
+        styleOverrides: {
+          root: {
+            background: 'transparent',
+            boxShadow: 'none',
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 2,
+          },
+        },
+      },
+      MuiTable: {
+        styleOverrides: {
+          root: {
+            background: 'transparent',
+          },
+        },
+      },
+    },
   });
 
-  useEffect(() => {
-    localStorage.setItem('hrx-theme-mode', mode);
-  }, [mode]);
+const ThemeModeContext = createContext({
+  mode: 'light' as 'light' | 'dark',
+  toggleMode: () => { /* intentionally left blank */ },
+});
 
-  const theme = useMemo(() => createTheme(getTheme(mode)), [mode]);
+export const ThemeModeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [mode, setMode] = useState<'light' | 'dark'>('dark');
+  const theme = useMemo(() => getTheme(mode), [mode]);
   const toggleMode = () => setMode((prev) => (prev === 'light' ? 'dark' : 'light'));
 
   return (
     <ThemeModeContext.Provider value={{ mode, toggleMode }}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        {children}
-      </ThemeProvider>
+      <ThemeProvider theme={theme}>{children}</ThemeProvider>
     </ThemeModeContext.Provider>
   );
 };
 
-export const useThemeMode = () => {
-  const context = useContext(ThemeModeContext);
-  if (!context) throw new Error('useThemeMode must be used within a ThemeModeProvider');
-  return context;
-};
+export const useThemeMode = () => useContext(ThemeModeContext);
+
+export default getTheme('dark'); 

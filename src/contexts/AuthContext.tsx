@@ -20,9 +20,9 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   currentUser: null,
-  role: 'Employee',
+  role: 'Worker',
   securityLevel: 'Worker',
-  accessRole: 'employee_3',
+  accessRole: 'worker_3',
   modules: [],
   loading: true,
   logout: async () => {
@@ -38,7 +38,7 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [role, setRole] = useState<Role>('Employee');
+  const [role, setRole] = useState<Role>('Worker');
   const [securityLevel, setSecurityLevel] = useState<SecurityLevel>('Worker');
   const [modules, setModules] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +56,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         const unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
-            const userRole = userData.role || 'Employee';
+            const userRole = userData.role || 'Worker';
             const userSecLevel = userData.securityLevel || 'Worker';
             const avatar = userData.avatar || '';
 
@@ -69,10 +69,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             // Load modules depending on accessRole
             let fetchedModules: string[] = [];
 
-            if (computedAccessRole.startsWith('tenant_')) {
-              const tenantRef = doc(db, 'tenants', user.uid);
-              const tenantSnap = await getDoc(tenantRef);
-              fetchedModules = tenantSnap.exists() ? tenantSnap.data().modules || [] : [];
+            if (computedAccessRole.startsWith('customer_')) {
+              const customerRef = doc(db, 'customers', user.uid);
+              const customerSnap = await getDoc(customerRef);
+              fetchedModules = customerSnap.exists() ? customerSnap.data().modules || [] : [];
             } else if (computedAccessRole.startsWith('client_')) {
               const clientRef = doc(db, 'clients', user.uid);
               const clientSnap = await getDoc(clientRef);
@@ -83,7 +83,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             setModules(fetchedModules);
           } else {
-            setRole('Employee');
+            setRole('Worker');
             setSecurityLevel('Worker');
             setModules([]);
             setAvatarUrl('');
@@ -94,7 +94,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
         return unsubscribeUser;
       } else {
-        setRole('Employee');
+        setRole('Worker');
         setSecurityLevel('Worker');
         setModules([]);
         setAvatarUrl('');
@@ -108,7 +108,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const logout = async () => {
     await signOut(auth);
     setCurrentUser(null);
-    setRole('Employee');
+    setRole('Worker');
     setSecurityLevel('Worker');
     setModules([]);
     setAvatarUrl('');
