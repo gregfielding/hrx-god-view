@@ -20,15 +20,18 @@ import UserGroupsTab from './components/UserGroupsTab';
 import SettingsTab from './components/SettingsTab';
 import JobOrdersTab from './components/JobOrdersTab';
 import AgencyAssignmentsTab from './components/AgencyAssignmentsTab';
+import AISettingsTab from './components/AISettingsTab';
 
-const noop = () => { /* intentionally left blank */ };
+const noop = () => {
+  /* intentionally left blank */
+};
 
 const AgencyProfilePage = () => {
   const location = useLocation();
   const { uid } = useParams<{ uid: string }>();
-  const matchLocation = useMatch('/agencies/:uid/locations/:locationId');
+  const matchLocation = useMatch('/tenants/:uid/locations/:locationId');
   const locationId = matchLocation?.params.locationId;
-  const matchContact = useMatch('/agencies/:uid/contacts/:contactId');
+  const matchContact = useMatch('/tenants/:uid/contacts/:contactId');
   const contactId = matchContact?.params.contactId;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -37,18 +40,18 @@ const AgencyProfilePage = () => {
   const [avatarUrl, setAvatarUrl] = useState<string>('');
 
   useEffect(() => {
-    const fetchAgencyData = async () => {
+    const fetchTenantData = async () => {
       if (uid) {
-        const agencyRef = doc(db, 'agencies', uid);
-        const agencySnap = await getDoc(agencyRef);
-        if (agencySnap.exists()) {
-          const data = agencySnap.data();
+        const tenantRef = doc(db, 'tenants', uid);
+        const tenantSnap = await getDoc(tenantRef);
+        if (tenantSnap.exists()) {
+          const data = tenantSnap.data();
           setName(data.name || '');
           setAvatarUrl(data.avatar || '');
         }
       }
     };
-    fetchAgencyData();
+    fetchTenantData();
 
     // Set tabIndex from query param on mount and when searchParams changes
     const tabParam = searchParams.get('tab');
@@ -60,7 +63,7 @@ const AgencyProfilePage = () => {
 
   const handleTabChange = (_: React.SyntheticEvent, newIndex: number) => {
     setTabIndex(newIndex);
-    navigate(`/agencies/${uid}?tab=${newIndex}`);
+    navigate(`/tenants/${uid}?tab=${newIndex}`);
   };
 
   if (uid === 'new') {
@@ -70,7 +73,7 @@ const AgencyProfilePage = () => {
   if (!uid) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography variant="h6">No Agency ID provided</Typography>
+        <Typography variant="h6">No Tenant ID provided</Typography>
       </Box>
     );
   }
@@ -102,7 +105,9 @@ const AgencyProfilePage = () => {
         <Tab label="Customers" />
         <Tab label="Job Orders" />
         <Tab label="Assignments" />
-        <Tab label="Shifts" />
+        {/* <Tab label="Shifts" /> */}
+
+        <Tab label="AI Settings" />
         <Tab label="Timesheets" />
         {/* <Tab label="Reports & Insights" />
         <Tab label="AI Settings" />
@@ -111,21 +116,30 @@ const AgencyProfilePage = () => {
 
       <Box sx={{ mt: 2 }}>
         {contactId ? (
-          <ContactDetails agencyId={uid} contactId={contactId} onBack={() => navigate(`/agencies/${uid}?tab=4`)} />
+          <ContactDetails
+            tenantId={uid}
+            contactId={contactId}
+            onBack={() => navigate(`/tenants/${uid}?tab=4`)}
+          />
         ) : locationId ? (
-          <LocationDetails agencyId={uid} locationId={locationId} onBack={() => navigate(`/agencies/${uid}?tab=2`)} />
+          <LocationDetails
+            tenantId={uid}
+            locationId={locationId}
+            onBack={() => navigate(`/tenants/${uid}?tab=2`)}
+          />
         ) : (
           <>
-            {tabIndex === 0 && <ProfileOverview agencyId={uid} />}
-            {tabIndex === 1 && <SettingsTab agencyId={uid} />}
-            {tabIndex === 2 && <LocationsTab agencyId={uid} />}
-            {tabIndex === 3 && <ModulesTab agencyId={uid} />}
-            {tabIndex === 4 && <ContactsTab agencyId={uid} />}
-            {tabIndex === 5 && <WorkforceTab agencyId={uid} />}
-            {tabIndex === 6 && <UserGroupsTab agencyId={uid} />}
-            {tabIndex === 7 && <CustomersTab agencyId={uid} />}
-            {tabIndex === 8 && <JobOrdersTab agencyId={uid} />}
-            {tabIndex === 9 && <AgencyAssignmentsTab agencyId={uid} />}
+            {tabIndex === 0 && <ProfileOverview tenantId={uid} />}
+            {tabIndex === 1 && <SettingsTab tenantId={uid} />}
+            {tabIndex === 2 && <LocationsTab tenantId={uid} />}
+            {tabIndex === 3 && <ModulesTab tenantId={uid} />}
+            {tabIndex === 4 && <ContactsTab tenantId={uid} />}
+            {tabIndex === 5 && <WorkforceTab tenantId={uid} />}
+            {tabIndex === 6 && <UserGroupsTab tenantId={uid} />}
+            {tabIndex === 7 && <CustomersTab tenantId={uid} />}
+            {tabIndex === 8 && <JobOrdersTab tenantId={uid} />}
+            {tabIndex === 9 && <AgencyAssignmentsTab tenantId={uid} />}
+            {tabIndex === 10 && <AISettingsTab tenantId={uid} />}
             {/* Future tabs here */}
           </>
         )}
@@ -137,4 +151,4 @@ const AgencyProfilePage = () => {
 export default AgencyProfilePage;
 
 export {};
-// ... existing code ... 
+// ... existing code ...

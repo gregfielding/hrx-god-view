@@ -12,7 +12,11 @@ import {
   Typography,
   TextField,
   Button,
+  Fab,
+  Tooltip,
 } from '@mui/material';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import UserInvitationDialog from '../components/UserInvitationDialog';
 import { collection, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
@@ -41,6 +45,7 @@ const UsersTable = () => {
   const [isEnd, setIsEnd] = useState(false);
   const firstLoadRef = useRef(true);
   const navigate = useNavigate();
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
 
   useEffect(() => {
     if (role === 'HRX') {
@@ -128,7 +133,7 @@ const UsersTable = () => {
   }
 
   return (
-    <Box p={0}>
+    <Box p={0} sx={{ position: 'relative' }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
         <Typography variant="h4" gutterBottom>
           Users
@@ -210,6 +215,32 @@ const UsersTable = () => {
           </Box>
         </>
       )}
+
+      {/* Floating Action Button for Invitations */}
+      {/* <Tooltip title="Invite User">
+        <Fab
+          color="primary"
+          aria-label="invite user"
+          sx={{
+            position: 'fixed',
+            bottom: 16,
+            right: 16,
+          }}
+          onClick={() => setInviteDialogOpen(true)}
+        >
+          <PersonAddIcon />
+        </Fab>
+      </Tooltip> */}
+
+      {/* Invitation Dialog */}
+      {/* <UserInvitationDialog
+        open={inviteDialogOpen}
+        onClose={() => setInviteDialogOpen(false)}
+        onSuccess={() => {
+          // Refresh the users list after successful invitation
+          fetchUsers();
+        }}
+      /> */}
     </Box>
   );
 };

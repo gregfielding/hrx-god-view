@@ -32,3 +32,50 @@ You're building the **admin web app for HRXOne**, which will power apps like Com
 /appAiSettings/globalDefaults
 /appAiSettings/contextJourneys
 /customerBenchmarks/{customerId}
+```
+
+## Notifications & Alerts System Design
+
+### Overview
+A centralized, extensible notifications system for HRX Admins (God View), Customers, and Agencies. Supports table views, actions, and role-based visibility.
+
+### Data Model
+- **Collection:** `notifications`
+- **Fields:**
+  - `recipientType`: 'hrx' | 'customer' | 'agency' | 'user'
+  - `recipientId`: string (null for global/HRX)
+  - `type`: string (e.g., 'moment', 'ai', 'system', 'manual')
+  - `message`: string
+  - `actions`: string[] (e.g., ['retry', 'thank', 'dig_deeper'])
+  - `status`: 'unread' | 'read' | 'actioned' | 'archived'
+  - `createdAt`: timestamp
+  - `relatedId`: string (optional, e.g., momentId, userId)
+
+### Permissions
+- **HRX Admins:** See all notifications.
+- **Customers/Agencies:** See only their own (matching `recipientId`).
+- **Users:** (optional/future) See only their own.
+
+### UI Table View
+- Columns: Date, Message, Type, Actions, Status
+- Action buttons: Retry, Thank, Dig Deeper, etc.
+- Filters: By type, status, recipient
+
+### Extensibility
+- Add new notification types and actions easily.
+- Support for future notification channels (email, SMS, in-app, etc.).
+- Can be triggered by AI, system events, or manual admin actions.
+
+### Example Firestore Document
+```json
+{
+  "recipientType": "customer",
+  "recipientId": "customer123",
+  "type": "moment",
+  "message": "A new moment is ready for review.",
+  "actions": ["thank", "dig_deeper"],
+  "status": "unread",
+  "createdAt": "2024-06-01T12:00:00Z",
+  "relatedId": "moment456"
+}
+```

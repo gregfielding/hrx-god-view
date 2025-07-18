@@ -1,13 +1,41 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Grid, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Snackbar, Alert, MenuItem, FormControl, InputLabel, Select, OutlinedInput, Chip, Autocomplete } from '@mui/material';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Snackbar,
+  Alert,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  OutlinedInput,
+  Chip,
+  Autocomplete,
+  ToggleButton,
+  ToggleButtonGroup,
+} from '@mui/material';
 import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
 import jobTitles from '../../../data/onetJobTitles.json';
+import AddWorkerForm from '../../../componentBlocks/AddWorkerForm';
+import CSVUpload from '../../../components/CSVUpload';
+import WorkersTable from '../../../componentBlocks/WorkersTable';
+import { CSVWorkerData } from '../../../utils/csvUpload';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface WorkforceTabProps {
-  agencyId?: string;
-  customerId?: string;
+  tenantId: string;
 }
 
 function formatPhoneNumber(value: string) {
@@ -23,9 +51,8 @@ function formatPhoneNumber(value: string) {
 
 const securityLevels = ['Admin', 'Manager', 'Staffer'];
 
-const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => {
-  const contextId = agencyId || customerId;
-  const isAgency = !!agencyId;
+const WorkforceTab: React.FC<WorkforceTabProps> = ({ tenantId, ...props }) => {
+  const isTenant = !!tenantId;
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -44,26 +71,31 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => 
   const [departments, setDepartments] = useState<any[]>([]);
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
+  const [selectedWorkers, setSelectedWorkers] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  // CSV import state
+  const [importMode, setImportMode] = useState<'form' | 'csv'>('form');
+  const [showCSVUpload, setShowCSVUpload] = useState(false);
 
   useEffect(() => {
-    if (customerId) {
+    if (tenantId) {
       fetchDepartments();
       fetchLocations().then(fetchContacts);
     }
     // eslint-disable-next-line
-  }, [customerId]);
+  }, [tenantId]);
 
   const fetchContacts = async () => {
-    if (!customerId) return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       const q = query(
         collection(db, 'users'),
         where('role', '==', 'Worker'),
-        where('customerId', '==', customerId)
+        where('tenantId', '==', tenantId),
       );
       const snapshot = await getDocs(q);
-      setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setContacts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       setError(err.message || 'Failed to fetch workers');
     }
@@ -71,15 +103,15 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => 
   };
 
   const fetchLocations = async () => {
-    if (!contextId) return;
+    if (!tenantId) return;
     setLocationsLoading(true);
     try {
-      const path = isAgency
-        ? ['agencies', contextId, 'locations']
-        : ['customers', contextId, 'locations'];
+      const path = isTenant
+        ? ['tenants', tenantId, 'locations']
+        : ['tenants', tenantId, 'locations'];
       const q = query(collection(db, ...(path as [string, ...string[]])));
       const snapshot = await getDocs(q);
-      setLocations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       // ignore for now
     }
@@ -87,11 +119,11 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => 
   };
 
   const fetchDepartments = async () => {
-    if (!customerId) return;
+    if (!tenantId) return;
     try {
-      const q = collection(db, 'customers', customerId, 'departments');
+      const q = collection(db, 'tenants', tenantId, 'departments');
       const snapshot = await getDocs(q);
-      setDepartments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setDepartments(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       // ignore for now
     }
@@ -105,24 +137,51 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => 
     handleChange('phone', formatPhoneNumber(e.target.value));
   };
 
-  const isFormValid = form.firstName && form.lastName && form.email && form.locationIds.length > 0 && form.departmentId;
+  const isFormValid = Boolean(
+    form.firstName &&
+    form.lastName &&
+    form.email &&
+    form.locationIds.length > 0 &&
+    form.departmentId
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerId) return;
+    if (!tenantId) return;
     setLoading(true);
     setError('');
     try {
-      await addDoc(collection(db, 'users'), {
-        ...form,
-        role: 'Worker',
-        securityLevel: 'Worker',
-        customerId,
+      // Call the inviteUserV2 function instead of directly adding to Firestore
+      const functions = getFunctions();
+      const inviteUser = httpsCallable(functions, 'inviteUserV2');
+      
+      // Build payload with the required structure
+      const payload: any = {
+        email: form.email,
+        firstName: form.firstName,
+        lastName: form.lastName,
+        phone: form.phone,
+        displayName: `${form.firstName} ${form.lastName}`,
+        jobTitle: form.jobTitle,
+        department: form.departmentId,
         locationIds: form.locationIds,
-        departmentId: form.departmentId,
-        createdAt: serverTimestamp(),
+        securityLevel: 'Worker',
+        role: 'Worker',
+        tenantId: tenantId,
+      };
+      
+      console.log('Sending inviteUserV2 payload:', payload);
+      const result = await inviteUser(payload);
+      console.log('InviteUserV2 result:', result);
+      setForm({
+        firstName: '',
+        lastName: '',
+        jobTitle: '',
+        phone: '',
+        email: '',
+        locationIds: [],
+        departmentId: '',
       });
-      setForm({ firstName: '', lastName: '', jobTitle: '', phone: '', email: '', locationIds: [], departmentId: '' });
       setSuccess(true);
       await fetchDepartments();
       await fetchLocations();
@@ -133,161 +192,198 @@ const WorkforceTab: React.FC<WorkforceTabProps> = ({ agencyId, customerId }) => 
     setLoading(false);
   };
 
+  const handleCSVImport = async (workers: CSVWorkerData[]) => {
+    setLoading(true);
+    setError('');
+    let successCount = 0;
+    let errorCount = 0;
+    const errors: string[] = [];
+
+    try {
+      const functions = getFunctions();
+      const inviteUser = httpsCallable(functions, 'inviteUserV2');
+      
+      for (const worker of workers) {
+        try {
+          // Check if email already exists
+          const emailQuery = query(collection(db, 'users'), where('email', '==', worker.email));
+          const emailSnapshot = await getDocs(emailQuery);
+          if (!emailSnapshot.empty) {
+            errors.push(`Email ${worker.email} already exists`);
+            errorCount++;
+            continue;
+          }
+
+          // Build payload for inviteUserV2
+          const payload: any = {
+            email: worker.email,
+            firstName: worker.firstName,
+            lastName: worker.lastName,
+            phone: worker.phone || '',
+            displayName: `${worker.firstName} ${worker.lastName}`,
+            jobTitle: worker.jobTitle || '',
+            department: worker.departmentId || '',
+            locationIds: worker.locationId ? [worker.locationId] : [],
+            securityLevel: 'Worker',
+            role: 'Worker',
+            tenantId: tenantId,
+          };
+
+          // Call inviteUserV2 function
+          await inviteUser(payload);
+          successCount++;
+        } catch (err: any) {
+          errors.push(`Failed to add ${worker.email}: ${err.message}`);
+          errorCount++;
+        }
+      }
+
+      // Show results
+      if (successCount > 0) {
+        setSuccess(true);
+        await fetchContacts();
+      }
+      
+      if (errorCount > 0) {
+        setError(`Import completed with ${errorCount} error(s): ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? '...' : ''}`);
+      }
+
+      setShowCSVUpload(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to import workers');
+    }
+    setLoading(false);
+  };
+
+  const handleWorkerSelection = (workerId: string) => {
+    setSelectedWorkers((prev) =>
+      prev.includes(workerId) ? prev.filter((id) => id !== workerId) : [...prev, workerId],
+    );
+  };
+  const handleSelectAll = () => {
+    if (selectedWorkers.length === contacts.length) {
+      setSelectedWorkers([]);
+    } else {
+      setSelectedWorkers(contacts.map((contact) => contact.id));
+    }
+  };
+
   return (
-    <Box sx={{ p: 2 }}>
-      {!showForm && (
-        <Button variant="contained" color="primary" sx={{ mb: 2 }} onClick={() => setShowForm(true)}>
+    <Box sx={{ p: 0 }}>
+      {/* Import Mode Toggle */}
+      {!showForm && !showCSVUpload && (
+        <Box sx={{ mb: 3 }}>
+          <ToggleButtonGroup
+            value={importMode}
+            exclusive
+            onChange={(_, newMode) => newMode && setImportMode(newMode)}
+            aria-label="import mode"
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="form" aria-label="individual form">
+              Individual Form
+            </ToggleButton>
+            <ToggleButton value="csv" aria-label="csv upload">
+              CSV Upload
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+      )}
+
+      {/* Individual Form Mode */}
+      {importMode === 'form' && !showForm && (
+        <Button
+          variant="contained"
+          color="primary"
+          sx={{ mb: 2 }}
+          onClick={() => setShowForm(true)}
+        >
           Add New Worker
         </Button>
       )}
       {showForm && (
-        <>
-          <Typography variant="h6" gutterBottom>Add New Worker</Typography>
-          <form onSubmit={handleSubmit}>
-            <Grid container spacing={2} mb={2}>
-              <Grid item xs={12} sm={3}>
-                <TextField label="First Name" fullWidth required value={form.firstName} onChange={e => handleChange('firstName', e.target.value)} />
-              </Grid>
-              <Grid item xs={12} sm={3}>
-                <TextField label="Last Name" fullWidth required value={form.lastName} onChange={e => handleChange('lastName', e.target.value)} />
-              </Grid>
-              <Grid item xs={12} sm={3}>
-                <Autocomplete
-                  options={jobTitles}
-                  value={form.jobTitle}
-                  onChange={(_, newValue) => handleChange('jobTitle', newValue || '')}
-                  renderInput={(params) => (
-                    <TextField {...params} label="Job Title" fullWidth />
-                  )}
-                  freeSolo
-                />
-              </Grid>
-              <Grid item xs={12} sm={3}>
-                <TextField label="Phone" fullWidth value={form.phone} onChange={handlePhoneChange} />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField label="Email" fullWidth required value={form.email} onChange={e => handleChange('email', e.target.value)} />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                {departments.length === 0 ? (
-                  <TextField label="Department" fullWidth disabled value="No departments available" />
-                ) : (
-                  <FormControl fullWidth required>
-                    <InputLabel id="department-label">Department</InputLabel>
-                    <Select
-                      labelId="department-label"
-                      value={form.departmentId || ''}
-                      onChange={e => handleChange('departmentId', e.target.value)}
-                      input={<OutlinedInput label="Department" />}
-                      required
-                    >
-                      {departments.map((dept: any) => (
-                        <MenuItem key={dept.id} value={dept.id}>{dept.name}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                )}
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                {locationsLoading ? (
-                  <TextField label="Location" fullWidth disabled value="Loading locations..." />
-                ) : locations.length === 0 ? (
-                  <TextField label="Location" fullWidth disabled value="No locations available" />
-                ) : (
-                  <FormControl fullWidth required>
-                    <InputLabel id="location-label">Location</InputLabel>
-                    <Select
-                      labelId="location-label"
-                      multiple
-                      value={form.locationIds}
-                      onChange={e => {
-                        const value = e.target.value;
-                        handleChange('locationIds', Array.isArray(value) ? value : [value]);
-                      }}
-                      input={<OutlinedInput label="Location" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {(selected as string[]).map((id) => {
-                            const loc = locations.find((l: any) => l.id === id);
-                            return (
-                              <Chip
-                                key={id}
-                                label={loc ? loc.nickname : id}
-                                onMouseDown={e => e.stopPropagation()}
-                                onDelete={() => {
-                                  const ids = Array.isArray(form.locationIds) ? form.locationIds : [form.locationIds];
-                                  handleChange('locationIds', ids.filter((lid: string) => lid !== id));
-                                }}
-                              />
-                            );
-                          })}
-                        </Box>
-                      )}
-                    >
-                      {locations.map((loc: any) => (
-                        <MenuItem key={loc.id} value={loc.id}>{loc.nickname}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                )}
-              </Grid>
-              <Grid item xs={12} display="flex" gap={2}>
-                <Button type="submit" variant="contained" color="primary" disabled={loading || !isFormValid}>
-                  {loading ? 'Adding...' : 'Add Worker'}
-                </Button>
-                <Button variant="outlined" color="secondary" onClick={() => setShowForm(false)}>
-                  Cancel
-                </Button>
-              </Grid>
-            </Grid>
-          </form>
-        </>
+        <AddWorkerForm
+          form={form}
+          onChange={handleChange}
+          onPhoneChange={handlePhoneChange}
+          onSubmit={handleSubmit}
+          loading={loading}
+          departments={departments}
+          locations={locations}
+          showForm={showForm}
+          setShowForm={setShowForm}
+          isFormValid={isFormValid}
+          jobTitles={jobTitles}
+          error={error}
+          success={success}
+          setError={setError}
+          setSuccess={setSuccess}
+          contextType="customer"
+        />
       )}
-      <Typography variant="h6" gutterBottom>Workers</Typography>
-      {locationsLoading ? (
-        <Typography>Loading locations...</Typography>
-      ) : locations.length === 0 ? (
-        <Typography color="warning.main">No locations available. Please add a location first.</Typography>
-      ) : (
-        <TableContainer component={Paper}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Email</TableCell>
-                <TableCell>Phone</TableCell>
-                <TableCell>Job Title</TableCell>
-                <TableCell>Location</TableCell>
-                <TableCell>Department</TableCell>
-                <TableCell>View</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {contacts.map((contact) => (
-                <TableRow key={contact.id} hover style={{ cursor: 'pointer' }} onClick={() => navigate(`/users/${contact.id}`)}>
-                  <TableCell>{contact.firstName} {contact.lastName}</TableCell>
-                  <TableCell>{contact.email}</TableCell>
-                  <TableCell>{contact.phone || '-'}</TableCell>
-                  <TableCell>{contact.jobTitle || '-'}</TableCell>
-                  <TableCell>{locations.filter((loc: any) => (contact.locationIds || []).includes(loc.id)).map((loc: any) => loc.nickname).join(', ') || '-'}</TableCell>
-                  <TableCell>{departments.find((dept: any) => dept.id === contact.departmentId)?.name || '-'}</TableCell>
-                  <TableCell>
-                    <Button size="small" variant="outlined" onClick={e => { e.stopPropagation(); navigate(`/users/${contact.id}`); }}>View</Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+
+      {/* CSV Upload Mode */}
+      {importMode === 'csv' && (
+        <Box>
+          {!showCSVUpload ? (
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() => setShowCSVUpload(true)}
+              sx={{ mb: 2 }}
+            >
+              Upload CSV File
+            </Button>
+          ) : (
+            <CSVUpload
+              onWorkersReady={handleCSVImport}
+              onCancel={() => setShowCSVUpload(false)}
+              departments={departments}
+              locations={locations}
+              divisions={[]}
+              managers={[]}
+            />
+          )}
+        </Box>
       )}
+      <Typography variant="h6" gutterBottom>
+        Workers
+      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+        <TextField
+          size="small"
+          variant="outlined"
+          placeholder="Search workers..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          sx={{ width: 300 }}
+        />
+      </Box>
+      <WorkersTable
+        contacts={contacts}
+        locations={locations}
+        departments={departments}
+        selectedWorkers={selectedWorkers}
+        handleWorkerSelection={handleWorkerSelection}
+        handleSelectAll={handleSelectAll}
+        navigateToUser={(userId) => navigate(`/users/${userId}`)}
+        contextType="customer"
+        loading={locationsLoading}
+        search={search}
+        onSearchChange={setSearch}
+      />
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Worker added!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Worker added!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default WorkforceTab; 
+export default WorkforceTab;

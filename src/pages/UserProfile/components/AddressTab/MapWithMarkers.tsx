@@ -61,7 +61,7 @@ const MapWithMarkers: React.FC<Props> = ({
     currentLng !== undefined;
 
   if (!hasHome && !hasWork && !hasCurrent) {
-    return <Typography>No location data available to display on the map.</Typography>;
+    return <Typography sx={{ width: '100%', marginTop: '24px' }}>No location data available to display on the map.</Typography>;
   }
 
   return (

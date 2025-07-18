@@ -1,5 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Grid, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Snackbar, Alert, IconButton } from '@mui/material';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Snackbar,
+  Alert,
+  IconButton,
+} from '@mui/material';
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import EditIcon from '@mui/icons-material/Edit';
@@ -7,10 +23,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AgencyTab from './AgencyTab';
 
 interface CompanySettingsTabProps {
-  customerId: string;
+  tenantId: string;
 }
 
-const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) => {
+const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ tenantId }) => {
   const [form, setForm] = useState({ name: '', code: '' });
   const [departments, setDepartments] = useState<any[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
@@ -23,14 +39,14 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
   useEffect(() => {
     fetchDepartments();
     // eslint-disable-next-line
-  }, [customerId]);
+  }, [tenantId]);
 
   const fetchDepartments = async () => {
     setLoading(true);
     try {
-      const q = collection(db, 'customers', customerId, 'departments');
+      const q = collection(db, 'tenants', tenantId, 'departments');
       const snapshot = await getDocs(q);
-      setDepartments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setDepartments(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       setError(err.message || 'Failed to fetch departments');
     }
@@ -50,7 +66,7 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
     setLoading(true);
     setError('');
     try {
-      await addDoc(collection(db, 'customers', customerId, 'departments'), {
+      await addDoc(collection(db, 'tenants', tenantId, 'departments'), {
         name: form.name,
         code: form.code,
       });
@@ -73,7 +89,7 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
     setLoading(true);
     setError('');
     try {
-      const deptRef = doc(db, 'customers', customerId, 'departments', editId);
+      const deptRef = doc(db, 'tenants', tenantId, 'departments', editId);
       await updateDoc(deptRef, { name: editForm.name, code: editForm.code });
       setEditId(null);
       setEditForm({ name: '', code: '' });
@@ -89,7 +105,7 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
     setLoading(true);
     setError('');
     try {
-      const deptRef = doc(db, 'customers', customerId, 'departments', deptId);
+      const deptRef = doc(db, 'tenants', tenantId, 'departments', deptId);
       await deleteDoc(deptRef);
       setSuccess(true);
       fetchDepartments();
@@ -100,25 +116,48 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
   };
 
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
+    <Box sx={{ p: 0, width: '100%' }}>
       {!showForm && (
-        <Button variant="contained" color="primary" sx={{ mb: 2 }} onClick={() => setShowForm(true)}>
+        <Button
+          variant="contained"
+          color="primary"
+          sx={{ mb: 2 }}
+          onClick={() => setShowForm(true)}
+        >
           Create New Department
         </Button>
       )}
       {showForm && (
         <>
-          <Typography variant="h6" gutterBottom>Company Departments</Typography>
+          <Typography variant="h6" gutterBottom>
+            Company Departments
+          </Typography>
           <form onSubmit={handleSubmit}>
             <Grid container spacing={2} mb={2}>
               <Grid item xs={12} sm={6}>
-                <TextField label="Department Name" fullWidth required value={form.name} onChange={e => handleChange('name', e.target.value)} />
+                <TextField
+                  label="Department Name"
+                  fullWidth
+                  required
+                  value={form.name}
+                  onChange={(e) => handleChange('name', e.target.value)}
+                />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField label="Department Code" fullWidth value={form.code} onChange={e => handleChange('code', e.target.value)} />
+                <TextField
+                  label="Department Code"
+                  fullWidth
+                  value={form.code}
+                  onChange={(e) => handleChange('code', e.target.value)}
+                />
               </Grid>
               <Grid item xs={12} display="flex" gap={2}>
-                <Button type="submit" variant="contained" color="primary" disabled={loading || !form.name}>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  color="primary"
+                  disabled={loading || !form.name}
+                >
                   {loading ? 'Adding...' : 'Add Department'}
                 </Button>
                 <Button variant="outlined" color="secondary" onClick={() => setShowForm(false)}>
@@ -129,7 +168,9 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
           </form>
         </>
       )}
-      <Typography variant="h6" gutterBottom>Departments</Typography>
+      <Typography variant="h6" gutterBottom>
+        Departments
+      </Typography>
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
@@ -142,33 +183,55 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
           </TableHead>
           <TableBody>
             {departments.length === 0 ? (
-              <TableRow><TableCell colSpan={4}>No departments yet.</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={4}>No departments yet.</TableCell>
+              </TableRow>
             ) : (
               departments.map((dept) => (
                 <TableRow key={dept.id}>
                   <TableCell>
                     {editId === dept.id ? (
-                      <TextField value={editForm.name} onChange={e => handleEditChange('name', e.target.value)} required size="small" />
+                      <TextField
+                        value={editForm.name}
+                        onChange={(e) => handleEditChange('name', e.target.value)}
+                        required
+                        size="small"
+                      />
                     ) : (
                       dept.name
                     )}
                   </TableCell>
                   <TableCell>
                     {editId === dept.id ? (
-                      <TextField value={editForm.code} onChange={e => handleEditChange('code', e.target.value)} size="small" />
+                      <TextField
+                        value={editForm.code}
+                        onChange={(e) => handleEditChange('code', e.target.value)}
+                        size="small"
+                      />
                     ) : (
                       dept.code || '-'
                     )}
                   </TableCell>
                   <TableCell>
                     {editId === dept.id ? (
-                      <Button size="small" variant="contained" onClick={handleEditSave} disabled={loading || !editForm.name}>Save</Button>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={handleEditSave}
+                        disabled={loading || !editForm.name}
+                      >
+                        Save
+                      </Button>
                     ) : (
-                      <IconButton onClick={() => handleEdit(dept)}><EditIcon /></IconButton>
+                      <IconButton onClick={() => handleEdit(dept)}>
+                        <EditIcon />
+                      </IconButton>
                     )}
                   </TableCell>
                   <TableCell>
-                    <IconButton color="error" onClick={() => handleDelete(dept.id)}><DeleteIcon /></IconButton>
+                    <IconButton color="error" onClick={() => handleDelete(dept.id)}>
+                      <DeleteIcon />
+                    </IconButton>
                   </TableCell>
                 </TableRow>
               ))
@@ -176,16 +239,18 @@ const CompanySettingsTab: React.FC<CompanySettingsTabProps> = ({ customerId }) =
           </TableBody>
         </Table>
       </TableContainer>
-      <Typography variant="h6" gutterBottom>Associated Agency</Typography>
-      <AgencyTab customerId={customerId} />
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Department updated!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Department updated!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default CompanySettingsTab; 
+export default CompanySettingsTab;

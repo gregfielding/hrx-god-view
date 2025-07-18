@@ -1,5 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Grid, Snackbar, Alert, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem } from '@mui/material';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Snackbar,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  MenuItem,
+} from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -18,12 +31,12 @@ function formatPhoneNumber(value: string) {
 const securityLevels = ['Admin', 'Manager', 'Staffer', 'Worker'];
 
 interface ContactDetailsProps {
-  agencyId: string;
+  tenantId: string;
   contactId: string;
   onBack?: () => void;
 }
 
-const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, onBack }) => {
+const ContactDetails: React.FC<ContactDetailsProps> = ({ tenantId, contactId, onBack }) => {
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -44,7 +57,7 @@ const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, on
     fetchContact();
     fetchLocations();
     // eslint-disable-next-line
-  }, [agencyId, contactId]);
+  }, [tenantId, contactId]);
 
   const fetchContact = async () => {
     if (!contactId) return;
@@ -66,9 +79,9 @@ const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, on
 
   const fetchLocations = async () => {
     try {
-      const q = collection(db, 'agencies', agencyId, 'locations');
+      const q = collection(db, 'tenants', tenantId, 'locations');
       const snapshot = await getDocs(q);
-      setLocations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       // ignore for now
     }
@@ -106,7 +119,7 @@ const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, on
       if (onBack) {
         onBack();
       } else {
-        navigate(`/agencies/${agencyId}?tab=4`);
+        navigate(`/tenants/${tenantId}?tab=4`);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to delete contact');
@@ -118,55 +131,116 @@ const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, on
   return (
     <Box sx={{ p: 2 }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-        <Typography variant="h5" gutterBottom>Contact Details</Typography>
-        <Button variant="outlined" onClick={onBack ? onBack : () => navigate(`/agencies/${agencyId}?tab=4`)}>
+        <Typography variant="h5" gutterBottom>
+          Contact Details
+        </Typography>
+        <Button
+          variant="outlined"
+          onClick={onBack ? onBack : () => navigate(`/tenants/${tenantId}?tab=4`)}
+        >
           &larr; Back to Contacts
         </Button>
       </Box>
       <Grid container spacing={2} mb={2}>
         <Grid item xs={12} sm={3}>
-          <TextField label="First Name" fullWidth required value={form.firstName} onChange={e => handleChange('firstName', e.target.value)} />
+          <TextField
+            label="First Name"
+            fullWidth
+            required
+            value={form.firstName}
+            onChange={(e) => handleChange('firstName', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={3}>
-          <TextField label="Last Name" fullWidth required value={form.lastName} onChange={e => handleChange('lastName', e.target.value)} />
+          <TextField
+            label="Last Name"
+            fullWidth
+            required
+            value={form.lastName}
+            onChange={(e) => handleChange('lastName', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={3}>
-          <TextField label="Job Title" fullWidth value={form.jobTitle} onChange={e => handleChange('jobTitle', e.target.value)} />
+          <TextField
+            label="Job Title"
+            fullWidth
+            value={form.jobTitle}
+            onChange={(e) => handleChange('jobTitle', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={3}>
           <TextField label="Phone" fullWidth value={form.phone} onChange={handlePhoneChange} />
         </Grid>
         <Grid item xs={12} sm={4}>
-          <TextField label="Email" fullWidth required value={form.email} onChange={e => handleChange('email', e.target.value)} />
+          <TextField
+            label="Email"
+            fullWidth
+            required
+            value={form.email}
+            onChange={(e) => handleChange('email', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={4}>
-          <TextField select label="Location" fullWidth value={form.location} onChange={e => handleChange('location', e.target.value)} required>
+          <TextField
+            select
+            label="Location"
+            fullWidth
+            value={form.location}
+            onChange={(e) => handleChange('location', e.target.value)}
+            required
+          >
             {locations.map((loc: any) => (
-              <MenuItem key={loc.id} value={loc.id}>{loc.nickname}</MenuItem>
+              <MenuItem key={loc.id} value={loc.id}>
+                {loc.nickname}
+              </MenuItem>
             ))}
           </TextField>
         </Grid>
         <Grid item xs={12} sm={4}>
-          <TextField select label="Security Level" fullWidth value={form.securityLevel} onChange={e => handleChange('securityLevel', e.target.value)} required>
-            {securityLevels.map(level => (
-              <MenuItem key={level} value={level}>{level}</MenuItem>
+          <TextField
+            select
+            label="Security Level"
+            fullWidth
+            value={form.securityLevel}
+            onChange={(e) => handleChange('securityLevel', e.target.value)}
+            required
+          >
+            {securityLevels.map((level) => (
+              <MenuItem key={level} value={level}>
+                {level}
+              </MenuItem>
             ))}
           </TextField>
         </Grid>
         <Grid item xs={12}>
-          <Button variant="contained" color="primary" onClick={handleSave} disabled={loading} sx={{ mr: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleSave}
+            disabled={loading}
+            sx={{ mr: 2 }}
+          >
             {loading ? 'Saving...' : 'Save'}
           </Button>
-          <Button variant="outlined" color="error" onClick={() => setDeleteDialog(true)} disabled={loading}>
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => setDeleteDialog(true)}
+            disabled={loading}
+          >
             Delete Contact
           </Button>
         </Grid>
       </Grid>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Contact updated!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Contact updated!
+        </Alert>
       </Snackbar>
       <Dialog open={deleteDialog} onClose={() => setDeleteDialog(false)}>
         <DialogTitle>Delete Contact</DialogTitle>
@@ -175,11 +249,13 @@ const ContactDetails: React.FC<ContactDetailsProps> = ({ agencyId, contactId, on
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialog(false)}>Cancel</Button>
-          <Button onClick={handleDelete} color="error">Delete</Button>
+          <Button onClick={handleDelete} color="error">
+            Delete
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
   );
 };
 
-export default ContactDetails; 
+export default ContactDetails;

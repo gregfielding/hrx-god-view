@@ -15,7 +15,7 @@ import {
 } from '@mui/material';
 import { collection, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
 import { Link, useNavigate } from 'react-router-dom';
-import { db } from '../firebase';
+import { db } from '../../firebase';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -36,8 +36,8 @@ type Agency = {
   };
 };
 
-const AgenciesTable = () => {
-  const [agencies, setAgencies] = useState<Agency[]>([]);
+const TenantsTable = () => {
+  const [tenants, setAgencies] = useState<Agency[]>([]);
   const [workforceCounts, setWorkforceCounts] = useState<Record<string, number>>({});
   const [logoUrls, setLogoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -57,7 +57,7 @@ const AgenciesTable = () => {
   const fetchAgencies = async (searchQuery = '', startDoc: any = null) => {
     setLoading(true);
     try {
-      const baseRef = collection(db, 'agencies');
+      const baseRef = collection(db, 'tenants');
       const constraints: any[] = [orderBy('createdAt', 'desc'), limit(PAGE_SIZE)];
 
       if (searchQuery.trim()) {
@@ -84,7 +84,13 @@ const AgenciesTable = () => {
         }) as Agency[];
         results.forEach(async (agency) => {
           try {
-            const usersSnap = await getDocs(query(collection(db, 'users'), where('agencyId', '==', agency.id), where('role', '==', 'Worker')));
+            const usersSnap = await getDocs(
+              query(
+                collection(db, 'users'),
+                where('tenantId', '==', agency.id),
+                where('role', '==', 'Worker'),
+              ),
+            );
             setWorkforceCounts((prev) => ({ ...prev, [agency.id]: usersSnap.size }));
           } catch {
             setWorkforceCounts((prev) => ({ ...prev, [agency.id]: 0 }));
@@ -102,7 +108,7 @@ const AgenciesTable = () => {
         setIsEnd(true);
       }
     } catch (error) {
-      console.error('Error fetching agencies:', error);
+      console.error('Error fetching tenants:', error);
     }
     setLoading(false);
   };
@@ -118,7 +124,10 @@ const AgenciesTable = () => {
     fetchAgencies('');
   };
 
-  const getSortValue = (agency: Agency & { workforceCount?: number; city?: string; state?: string }, field: string): string | number => {
+  const getSortValue = (
+    agency: Agency & { workforceCount?: number; city?: string; state?: string },
+    field: string,
+  ): string | number => {
     if (field === 'name') return agency.name || '';
     if (field === 'workforce') return workforceCounts[agency.id] ?? 0;
     if (field === 'city') return agency.city || '';
@@ -127,12 +136,14 @@ const AgenciesTable = () => {
   };
 
   const getSortedAgencies = () => {
-    if (!sortField) return agencies;
-    const sorted = [...agencies].sort((a, b) => {
+    if (!sortField) return tenants;
+    const sorted = [...tenants].sort((a, b) => {
       let aValue = getSortValue(a, sortField);
       let bValue = getSortValue(b, sortField);
       if (sortField === 'workforce') {
-        return sortDirection === 'asc' ? (aValue as number) - (bValue as number) : (bValue as number) - (aValue as number);
+        return sortDirection === 'asc'
+          ? (aValue as number) - (bValue as number)
+          : (bValue as number) - (aValue as number);
       } else {
         aValue = (aValue as string).toLowerCase();
         bValue = (bValue as string).toLowerCase();
@@ -152,7 +163,7 @@ const AgenciesTable = () => {
         <Typography variant="h4" gutterBottom>
           Agencies
         </Typography>
-        <Button variant="contained" color="primary" onClick={() => navigate('/agencies/new')}>
+        <Button variant="contained" color="primary" onClick={() => navigate('/tenants/new')}>
           Add Agency
         </Button>
       </Box>
@@ -202,9 +213,12 @@ const AgenciesTable = () => {
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   Name
-                  {sortField === 'name' && (
-                    sortDirection === 'asc' ? <ArrowDropUp fontSize="small" /> : <ArrowDropDown fontSize="small" />
-                  )}
+                  {sortField === 'name' &&
+                    (sortDirection === 'asc' ? (
+                      <ArrowDropUp fontSize="small" />
+                    ) : (
+                      <ArrowDropDown fontSize="small" />
+                    ))}
                 </TableCell>
                 <TableCell
                   onClick={() => {
@@ -218,9 +232,12 @@ const AgenciesTable = () => {
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   Workforce
-                  {sortField === 'workforce' && (
-                    sortDirection === 'asc' ? <ArrowDropUp fontSize="small" /> : <ArrowDropDown fontSize="small" />
-                  )}
+                  {sortField === 'workforce' &&
+                    (sortDirection === 'asc' ? (
+                      <ArrowDropUp fontSize="small" />
+                    ) : (
+                      <ArrowDropDown fontSize="small" />
+                    ))}
                 </TableCell>
                 <TableCell
                   onClick={() => {
@@ -234,9 +251,12 @@ const AgenciesTable = () => {
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   City
-                  {sortField === 'city' && (
-                    sortDirection === 'asc' ? <ArrowDropUp fontSize="small" /> : <ArrowDropDown fontSize="small" />
-                  )}
+                  {sortField === 'city' &&
+                    (sortDirection === 'asc' ? (
+                      <ArrowDropUp fontSize="small" />
+                    ) : (
+                      <ArrowDropDown fontSize="small" />
+                    ))}
                 </TableCell>
                 <TableCell
                   onClick={() => {
@@ -250,9 +270,12 @@ const AgenciesTable = () => {
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   State
-                  {sortField === 'state' && (
-                    sortDirection === 'asc' ? <ArrowDropUp fontSize="small" /> : <ArrowDropDown fontSize="small" />
-                  )}
+                  {sortField === 'state' &&
+                    (sortDirection === 'asc' ? (
+                      <ArrowDropUp fontSize="small" />
+                    ) : (
+                      <ArrowDropDown fontSize="small" />
+                    ))}
                 </TableCell>
                 <TableCell>View</TableCell>
               </TableRow>
@@ -265,7 +288,13 @@ const AgenciesTable = () => {
                       <img
                         src={logoUrls[agency.id]}
                         alt={agency.name}
-                        style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4, border: '1px solid #eee' }}
+                        style={{
+                          width: 40,
+                          height: 40,
+                          objectFit: 'cover',
+                          borderRadius: 4,
+                          border: '1px solid #eee',
+                        }}
                         onError={() => {
                           setLogoUrls((prev) => ({
                             ...prev,
@@ -276,13 +305,15 @@ const AgenciesTable = () => {
                     )}
                   </TableCell>
                   <TableCell>{agency.name}</TableCell>
-                  <TableCell>{workforceCounts[agency.id] !== undefined ? workforceCounts[agency.id] : '-'}</TableCell>
+                  <TableCell>
+                    {workforceCounts[agency.id] !== undefined ? workforceCounts[agency.id] : '-'}
+                  </TableCell>
                   <TableCell>{agency.city || '-'}</TableCell>
                   <TableCell>{agency.state || '-'}</TableCell>
                   <TableCell>
                     <Button
                       component={Link}
-                      to={`/agencies/${agency.id}`}
+                      to={`/tenants/${agency.id}`}
                       variant="outlined"
                       size="small"
                     >
@@ -307,7 +338,7 @@ const AgenciesTable = () => {
   );
 };
 
-export default AgenciesTable;
+export default TenantsTable;
 
 export {};
-// ... existing code ... 
+// ... existing code ...

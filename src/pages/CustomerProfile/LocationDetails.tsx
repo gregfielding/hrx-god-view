@@ -1,7 +1,35 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Grid, Snackbar, Alert, Dialog, DialogTitle, DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper } from '@mui/material';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Snackbar,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+} from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  getDocs,
+  query,
+  where,
+} from 'firebase/firestore';
 import { db } from '../../firebase';
 
 function formatPhoneNumber(value: string) {
@@ -16,13 +44,20 @@ function formatPhoneNumber(value: string) {
 }
 
 interface LocationDetailsProps {
-  customerId: string;
+  tenantId: string;
   locationId: string;
   onBack?: () => void;
 }
 
-const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationId, onBack }) => {
-  const [form, setForm] = useState({ nickname: '', street: '', city: '', state: '', zip: '', phone: '' });
+const LocationDetails: React.FC<LocationDetailsProps> = ({ tenantId, locationId, onBack }) => {
+  const [form, setForm] = useState({
+    nickname: '',
+    street: '',
+    city: '',
+    state: '',
+    zip: '',
+    phone: '',
+  });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -34,11 +69,11 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
     fetchLocation();
     fetchContactsForLocation();
     // eslint-disable-next-line
-  }, [customerId, locationId]);
+  }, [tenantId, locationId]);
 
   const fetchLocation = async () => {
-    if (!customerId || !locationId) return;
-    const locRef = doc(db, 'customers', customerId, 'locations', locationId);
+    if (!tenantId || !locationId) return;
+    const locRef = doc(db, 'tenants', tenantId, 'locations', locationId);
     const snap = await getDoc(locRef);
     if (snap.exists()) {
       const data = snap.data();
@@ -54,15 +89,15 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
   };
 
   const fetchContactsForLocation = async () => {
-    if (!customerId || !locationId) return;
+    if (!tenantId || !locationId) return;
     const q = query(
       collection(db, 'users'),
       where('role', '==', 'Agency'),
-      where('customerId', '==', customerId),
-      where('locationId', '==', locationId)
+      where('tenantId', '==', tenantId),
+      where('locationId', '==', locationId),
     );
     const snapshot = await getDocs(q);
-    setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    setContacts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   };
 
   const handleChange = (field: string, value: string) => {
@@ -74,11 +109,11 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
   };
 
   const handleSave = async () => {
-    if (!customerId || !locationId) return;
+    if (!tenantId || !locationId) return;
     setLoading(true);
     setError('');
     try {
-      const locRef = doc(db, 'customers', customerId, 'locations', locationId);
+      const locRef = doc(db, 'tenants', tenantId, 'locations', locationId);
       await updateDoc(locRef, form);
       setSuccess(true);
     } catch (err: any) {
@@ -88,16 +123,16 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
   };
 
   const handleDelete = async () => {
-    if (!customerId || !locationId) return;
+    if (!tenantId || !locationId) return;
     setLoading(true);
     setError('');
     try {
-      const locRef = doc(db, 'customers', customerId, 'locations', locationId);
+      const locRef = doc(db, 'tenants', tenantId, 'locations', locationId);
       await deleteDoc(locRef);
       if (onBack) {
         onBack();
       } else {
-        navigate(`/customers/${customerId}?tab=3`);
+        navigate(`/tenants/${tenantId}?tab=3`);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to delete location');
@@ -109,44 +144,99 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
   return (
     <Box sx={{ p: 2 }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-        <Typography variant="h5" gutterBottom>Location Details</Typography>
-        <Button variant="outlined" onClick={onBack ? onBack : () => navigate(`/customers/${customerId}?tab=3`)}>
+        <Typography variant="h5" gutterBottom>
+          Location Details
+        </Typography>
+        <Button
+          variant="outlined"
+          onClick={onBack ? onBack : () => navigate(`/tenants/${tenantId}?tab=3`)}
+        >
           &larr; Back to Locations
         </Button>
       </Box>
       <Grid container spacing={2} mb={2}>
         <Grid item xs={12} sm={4}>
-          <TextField label="Nickname" fullWidth required value={form.nickname} onChange={e => handleChange('nickname', e.target.value)} />
+          <TextField
+            label="Nickname"
+            fullWidth
+            required
+            value={form.nickname}
+            onChange={(e) => handleChange('nickname', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={8}>
-          <TextField label="Street Address" fullWidth required value={form.street} onChange={e => handleChange('street', e.target.value)} />
+          <TextField
+            label="Street Address"
+            fullWidth
+            required
+            value={form.street}
+            onChange={(e) => handleChange('street', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={4}>
-          <TextField label="City" fullWidth required value={form.city} onChange={e => handleChange('city', e.target.value)} />
+          <TextField
+            label="City"
+            fullWidth
+            required
+            value={form.city}
+            onChange={(e) => handleChange('city', e.target.value)}
+          />
         </Grid>
         <Grid item xs={6} sm={2}>
-          <TextField label="State" fullWidth required value={form.state} onChange={e => handleChange('state', e.target.value)} />
+          <TextField
+            label="State"
+            fullWidth
+            required
+            value={form.state}
+            onChange={(e) => handleChange('state', e.target.value)}
+          />
         </Grid>
         <Grid item xs={6} sm={2}>
-          <TextField label="Zip" fullWidth required value={form.zip} onChange={e => handleChange('zip', e.target.value)} />
+          <TextField
+            label="Zip"
+            fullWidth
+            required
+            value={form.zip}
+            onChange={(e) => handleChange('zip', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12} sm={4}>
-          <TextField label="Phone (optional)" fullWidth value={form.phone} onChange={handlePhoneChange} />
+          <TextField
+            label="Phone (optional)"
+            fullWidth
+            value={form.phone}
+            onChange={handlePhoneChange}
+          />
         </Grid>
         <Grid item xs={12}>
-          <Button variant="contained" color="primary" onClick={handleSave} disabled={loading} sx={{ mr: 2 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleSave}
+            disabled={loading}
+            sx={{ mr: 2 }}
+          >
             {loading ? 'Saving...' : 'Save'}
           </Button>
-          <Button variant="outlined" color="error" onClick={() => setDeleteDialog(true)} disabled={loading}>
+          <Button
+            variant="outlined"
+            color="error"
+            onClick={() => setDeleteDialog(true)}
+            disabled={loading}
+          >
             Delete Location
           </Button>
         </Grid>
       </Grid>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Location updated!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Location updated!
+        </Alert>
       </Snackbar>
       <Dialog open={deleteDialog} onClose={() => setDeleteDialog(false)}>
         <DialogTitle>Delete Location</DialogTitle>
@@ -155,10 +245,14 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialog(false)}>Cancel</Button>
-          <Button onClick={handleDelete} color="error">Delete</Button>
+          <Button onClick={handleDelete} color="error">
+            Delete
+          </Button>
         </DialogActions>
       </Dialog>
-      <Typography variant="h6" mt={4} mb={2}>Contacts</Typography>
+      <Typography variant="h6" mt={4} mb={2}>
+        Contacts
+      </Typography>
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
@@ -172,16 +266,34 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
           </TableHead>
           <TableBody>
             {contacts.length === 0 ? (
-              <TableRow><TableCell colSpan={5}>No contacts yet.</TableCell></TableRow>
+              <TableRow>
+                <TableCell colSpan={5}>No contacts yet.</TableCell>
+              </TableRow>
             ) : (
               contacts.map((contact) => (
-                <TableRow key={contact.id} hover style={{ cursor: 'pointer' }} onClick={() => navigate(`/users/${contact.id}`)}>
-                  <TableCell>{contact.firstName} {contact.lastName}</TableCell>
+                <TableRow
+                  key={contact.id}
+                  hover
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/users/${contact.id}`)}
+                >
+                  <TableCell>
+                    {contact.firstName} {contact.lastName}
+                  </TableCell>
                   <TableCell>{contact.email}</TableCell>
                   <TableCell>{contact.phone || '-'}</TableCell>
                   <TableCell>{contact.securityLevel || '-'}</TableCell>
                   <TableCell>
-                    <Button size="small" variant="outlined" onClick={e => { e.stopPropagation(); navigate(`/users/${contact.id}`); }}>View</Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/users/${contact.id}`);
+                      }}
+                    >
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -193,4 +305,4 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({ customerId, locationI
   );
 };
 
-export default LocationDetails; 
+export default LocationDetails;

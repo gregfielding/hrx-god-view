@@ -1,13 +1,155 @@
+/* HRX One Enterprise Design System - Global Styles */
+
+/* Import Inter font for better typography */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Helvetica', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* Global scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, #111111);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #2C2C2C);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #4A90E2);
+}
+
+/* Global focus styles */
+*:focus {
+  outline: 2px solid #4A90E2;
+  outline-offset: 2px;
+}
+
+/* Global link styles */
+a {
+  color: #4A90E2;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #6AA9F0;
+  text-decoration: underline;
+}
+
+/* Global button reset */
+button {
+  font-family: inherit;
+}
+
+/* Global input reset */
+input, textarea, select {
+  font-family: inherit;
+}
+
+/* HRX One logo animations */
+.hrx-logo {
+  transition: all 0.2s ease-in-out;
+}
+
+.hrx-logo:hover {
+  filter: brightness(1.1);
+  transform: scale(1.05);
+}
+
+/* Module-specific accent colors */
+.module-scheduler {
+  --accent-color: #F4B400;
+}
+
+.module-talent {
+  --accent-color: #2ECC71;
+}
+
+.module-intelligence {
+  --accent-color: #6C5CE7;
+}
+
+/* Tone-specific colors */
+.tone-positive {
+  color: #2ECC71;
+}
+
+.tone-informational {
+  color: #4A90E2;
+}
+
+.tone-concern {
+  color: #F39C12;
+}
+
+.tone-warning {
+  color: #E74C3C;
+}
+
+/* Utility classes */
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.square-avatar {
+  border-radius: 6px !important;
+}
+
+.rounded-card {
+  border-radius: 16px !important;
+}
+
+.no-shadow {
+  box-shadow: none !important;
+}
+
+/* Dark mode styles */
+[data-mui-color-scheme="dark"] {
+  --scrollbar-track: #111111;
+  --scrollbar-thumb: #2C2C2C;
+  --scrollbar-thumb-hover: #4A90E2;
+}
+
+/* Light mode styles */
+[data-mui-color-scheme="light"] {
+  --scrollbar-track: #F8F9FA;
+  --scrollbar-thumb: #DEE2E6;
+  --scrollbar-thumb-hover: #4A90E2;
+}
+
+/* Print styles */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
 }

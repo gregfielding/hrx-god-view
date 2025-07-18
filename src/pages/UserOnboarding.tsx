@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Button, TextField, Typography, CircularProgress, Alert } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { auth, db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
 import { geocodeAddress } from '../utils/geocodeAddress';
+import { Autocomplete } from '@react-google-maps/api';
 
 // Allow recaptchaVerifier on the window object
 declare global {
@@ -43,6 +44,7 @@ const UserOnboarding = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const autocompleteRef = useRef<any>(null);
 
   useEffect(() => {
     if (!window.recaptchaVerifier) {
@@ -105,31 +107,47 @@ const UserOnboarding = () => {
     setLoading(false);
   };
 
+  const handlePlaceChanged = () => {
+    const place = autocompleteRef.current.getPlace();
+    if (!place || !place.geometry) return;
+    const components = place.address_components || [];
+    const getComponent = (types: string[]) =>
+      components.find((comp: any) => types.every((t) => comp.types.includes(t)))?.long_name || '';
+    setAddress({
+      street: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
+      city: getComponent(['locality']),
+      state: getComponent(['administrative_area_level_1']),
+      zip: getComponent(['postal_code']),
+    });
+  };
+
   const handleSave = async () => {
-    setError('');
+    if (!phone || phoneError || !address.street || !address.city || !address.state || !address.zip) {
+      return;
+    }
+
     setLoading(true);
+    setError('');
     try {
-      if (!uid) throw new Error('Missing user ID.');
-
       const fullAddress = `${address.street}, ${address.city}, ${address.state} ${address.zip}`;
-      const coords = await geocodeAddress(fullAddress);
-
-      const ref = doc(db, 'users', uid);
-      await updateDoc(ref, {
+      const geo = await geocodeAddress(fullAddress);
+      
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
         phone,
-        location: {
+        addressInfo: {
           ...address,
-          lat: coords.lat,
-          lng: coords.lng,
+          homeLat: geo.lat,
+          homeLng: geo.lng,
         },
-        onboarded: true,
+        onboardingComplete: true,
+        updatedAt: serverTimestamp(),
       });
 
-      setMessage('Profile completed. Redirecting...');
-      setTimeout(() => navigate('/'), 2000);
-    } catch (err) {
-      console.error(err);
-      setError('Failed to save profile.');
+      setMessage('Profile saved successfully!');
+      setTimeout(() => navigate('/dashboard'), 2000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save profile');
     }
     setLoading(false);
   };
@@ -174,13 +192,18 @@ const UserOnboarding = () => {
           </>
         )}
 
-        <TextField
-          label="Street Address"
-          fullWidth
-          margin="normal"
-          value={address.street}
-          onChange={(e) => setAddress({ ...address, street: e.target.value })}
-        />
+        <Autocomplete
+          onLoad={(ref) => (autocompleteRef.current = ref)}
+          onPlaceChanged={handlePlaceChanged}
+        >
+          <TextField
+            label="Street Address"
+            fullWidth
+            margin="normal"
+            value={address.street}
+            onChange={(e) => setAddress({ ...address, street: e.target.value })}
+          />
+        </Autocomplete>
         <TextField
           label="City"
           fullWidth

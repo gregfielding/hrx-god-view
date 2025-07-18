@@ -6,87 +6,577 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
       allow read, write: if isHRX();
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+      
+      // --- USER SUBCOLLECTIONS ---
+      match /notes/{noteId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(resource.data.tenantId);
+      }
+      
+      match /moments/{momentId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(resource.data.tenantId);
+      }
+      
+      match /feedback/{feedbackId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(resource.data.tenantId);
+      }
+      
+      match /selfImprovement/{improvementId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(resource.data.tenantId);
+      }
+      
+      match /activityLogs/{logId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(resource.data.tenantId);
+      }
     }
 
-    // --- TENANTS ---
+    // --- TENANTS (Unified Agencies and Customers) ---
     match /tenants/{tenantId} {
       allow read, write: if isHRX();
       allow read: if isAssignedToTenant(tenantId);
+      allow create: if isHRX() && validateTenantSlug();
+      allow update: if isHRX() && (resource.data.slug == request.resource.data.slug || validateTenantSlug());
+
+      // --- DIVISIONS (Tenants) ---
+      match /divisions/{divisionId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // --- REGIONS (Tenants) ---
+      match /regions/{regionId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // --- DIVISION TYPES (Tenants) ---
+      match /divisionTypes/{divisionTypeId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // --- CUSTOMERS (Subcollection for tenants that have customers) ---
+      match /customers/{customerId} {
+        allow read, write: if isHRX();
+        allow read: if isAssignedToTenant(tenantId);
+        
+        // --- LOCATIONS (Customer Locations) ---
+        match /locations/{locationId} {
+          allow read, write: if isHRX();
+          allow read: if isAssignedToTenant(tenantId);
+        }
+        
+        // --- DEPARTMENTS (Customer Departments) ---
+        match /departments/{departmentId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        // --- AI SETTINGS (Customer AI Settings) ---
+        match /aiSettings/{settingName} {
+          allow read, write: if isHRX();
+          allow read, write: if isTenantAdmin(tenantId);
+        }
+        
+        // --- AI TRAINING (Customer AI Training) ---
+        match /aiTraining/{trainingId} {
+          allow read, write: if isHRX();
+          allow read, write: if isTenantAdmin(tenantId);
+        }
+
+        // --- CONTACTS (Customer Contacts) ---
+        match /contacts/{contactId} {
+          allow read, write: if isHRX();
+          allow read, write: if isTenantAdmin(tenantId);
+          allow read: if isAssignedToTenant(tenantId);
+        }
+      }
 
       // --- CONTACTS (Tenants) ---
       match /contacts/{contactId} {
-        allow read: if isAssignedToTenant(tenantId);
-        allow write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isHRX();
       }
 
       // --- LOCATIONS (Tenants) ---
       match /locations/{locationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
-        allow write: if isHRX() || isTenantAdmin(tenantId);
-      }
-    }
-
-    // --- AGENCIES ---
-    match /agencies/{agencyId} {
-      allow read, write: if isHRX();
-
-      // --- CONTACTS (Agencies) ---
-      match /contacts/{contactId} {
-        allow read, write: if isHRX();
-      }
-
-      // --- LOCATIONS (Agencies) ---
-      match /locations/{locationId} {
-        allow read, write: if isHRX();
-      }
-    }
-
-    // --- CUSTOMERS ---
-    match /customers/{customerId} {
-      allow read, write: if isHRX();
-
-      // --- LOCATIONS (Customers) ---
-      match /locations/{locationId} {
-        allow read, write: if isHRX();
-        allow read: if isAssignedToCustomer(customerId);
       }
       
+      // --- DEPARTMENTS (Tenants) ---
       match /departments/{departmentId} {
-        allow read, write: if isHRX() || isCustomerAdmin(customerId);
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- AI SETTINGS (Tenants) ---
+      match /aiSettings/{settingName} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- MODULES (Tenants) ---
+      match /modules/{moduleId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // --- HRX-FLEX MODULE SUBCOLLECTIONS ---
+        match /jobTitles/{jobTitleId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        match /uniformDefaults/{uniformId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        match /positions/{positionId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        // --- CATCH-ALL FOR HRX-FLEX SUBCOLLECTIONS ---
+        match /{subcollection}/{documentId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // --- AI TRAINING (Tenants) ---
+      match /aiTraining/{trainingId} {
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(tenantId);
+      }
+
+      // --- INTEGRATIONS (Tenants) ---
+      match /integrations/{integrationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // --- USER GROUPS (Tenants) ---
+      match /userGroups/{groupId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- SETTINGS (Tenants) ---
+      match /settings/{settingsId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- BRANDING (Tenants) ---
+      match /branding/{brandingId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- TENANTS (Subcollection for customer references) ---
+      match /tenants/{customerId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- JOB ORDERS (Tenants) ---
+      match /jobOrders/{jobOrderId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+
+        // --- SHIFTS (Job Orders) ---
+        match /shifts/{shiftId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read: if isAssignedToTenant(tenantId);
+        }
       }
     }
-    
-    match /customers/{customerId}/aiSettings/{aiSettingsId} {
-      // Social Posts subcollection
-      match /socialPosts/{postId} {
-        allow read, write: if isHRX();
-        // Optionally, allow customer admins to write:
-        allow write: if isHRX() || isCustomerAdmin(customerId);
-      }
-      // Docs subcollection
-      match /docs/{docId} {
-        allow read, write: if isHRX();
-        // Optionally, allow customer admins to write:
-        allow read, write: if isHRX() || isCustomerAdmin(customerId);
-      }
+
+    // Context Engine: Only HRX admins can read/write
+    match /settings/{docId} {
+      allow read, write: if isHRX();
+    }
+    match /settings/context/{docId} {
+      allow read, write: if isHRX();
+    }
+    match /settings/context/scenarios/{scenarioId} {
+      allow read, write: if isHRX();
+    }
+    match /context_versions/{versionId} {
+      allow read, write: if isHRX();
+    }
+    match /context_audit/{auditId} {
+      allow read, write: if isHRX();
     }
     
-    match /customers/{customerId}/aiTraining/{aiTrainingId} {
-      // Social Posts subcollection
-      match /socialPosts/{postId} {
-        allow read, write: if isHRX();
-        // Optionally, allow customer admins to write:
-        allow read, write: if isHRX() || isCustomerAdmin(customerId);
-      }
-      // Policy Docs subcollection
-      match /policyDocs/{docId} {
-        allow read, write: if isHRX();
-        // Optionally, allow customer admins to write:
-        allow read, write: if isHRX() || isCustomerAdmin(customerId);
-      }
+    // --- ASSIGNMENTS ---
+    match /assignments/{assignmentId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
     }
     
+    // --- SHIFTS ---
+    match /shifts/{shiftId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+    }
     
+    // --- JOB ORDERS ---
+    match /jobOrders/{jobOrderId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+    }
+    
+    // --- GLOBAL AI SETTINGS ---
+    match /appAiSettings/{documentId} {
+      allow read, write: if isHRX();
+    }
+
+    // Context Journeys subcollection
+    match /appAiSettings/global/contextJourneys/{journeyId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- AI MOMENTS ---
+    match /aiMoments/{momentId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- SCHEDULED MOMENTS ---
+    match /scheduledMoments/{scheduledMomentId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- FEEDBACK CAMPAIGNS ---
+    match /feedbackCampaigns/{campaignId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- FEEDBACK RESPONSES ---
+    match /feedbackResponses/{responseId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- AI LOGS ---
+    match /ai_logs/{logId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- MOMENT ANALYSIS ---
+    match /moment_analysis/{analysisId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isTenantAdmin(resource.data.tenantId);
+    }
+
+    // --- FEEDBACK ANALYSIS ---
+    match /feedback_analysis/{analysisId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isTenantAdmin(resource.data.tenantId);
+    }
+
+    // --- SELF IMPROVEMENT REPORTS ---
+    match /selfImprovementReports/{reportId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow read: if isTenantAdmin(resource.data.tenantId);
+    }
+
+    // --- VECTOR COLLECTIONS ---
+    match /vectorCollections/{collectionId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- CONTEXT ENGINES ---
+    match /contextEngines/{engineId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- CONTEXT SOURCES ---
+    match /contextSources/{sourceId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- RETRIEVAL FILTERS ---
+    match /retrievalFilters/{filterId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- PROMPT TEMPLATES ---
+    match /promptTemplates/{templateId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- AUTODEVOPS LOGS ---
+    match /autoDevOpsLogs/{logId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- AUTODEVOPS SETTINGS ---
+    match /autoDevOpsSettings/{settingId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- AI CHAT MODULE ---
+    match /modules/ai-chat {
+      allow read, write: if isHRX();
+    }
+
+    // --- CONVERSATIONS ---
+    match /conversations/{conversationId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.workerId;
+      allow create: if isAuthenticated();
+    }
+
+    // --- CHECKINS ---
+    match /checkins/{checkinId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.workerId;
+      allow create: if isAuthenticated();
+    }
+
+    // --- NOTIFICATIONS ---
+    match /notifications/{notificationId} {
+      allow read, write: if isHRX();
+      // TODO: Add tenant specific rules when implementing their notification views
+    }
+
+    // Broadcast Module Rules
+    match /broadcasts/{broadcastId} {
+      allow read: if request.auth != null && (
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+      allow create: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'tenant_admin'
+      );
+      allow update: if request.auth != null && (
+        resource.data.senderId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+      allow delete: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    match /broadcast_notifications/{notificationId} {
+      allow read: if request.auth != null && (
+        resource.data.recipientId == request.auth.uid ||
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+      allow create: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'tenant_admin'
+      );
+      allow update: if request.auth != null && (
+        resource.data.recipientId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+    }
+    
+    match /broadcast_replies/{replyId} {
+      allow read: if request.auth != null && (
+        resource.data.workerId == request.auth.uid ||
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+      allow create: if request.auth != null && (
+        resource.data.workerId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+      allow update: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    match /broadcast_templates/{templateId} {
+      allow read: if request.auth != null && (
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+      allow write: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'tenant_admin'
+      );
+    }
+
+    // Campaigns Module Rules
+    match /campaigns/{campaignId} {
+      allow read: if request.auth != null && (
+        resource.data.tenantId == request.auth.token.tenantId ||
+        resource.data.createdBy == 'HRX' ||
+        request.auth.token.role == 'admin'
+      );
+      allow create: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'tenant_admin'
+      );
+      allow update: if request.auth != null && (
+        resource.data.creatorUserId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+      allow delete: if request.auth != null && (
+        request.auth.token.role == 'admin' ||
+        resource.data.creatorUserId == request.auth.uid
+      );
+    }
+    
+    match /campaign_responses/{responseId} {
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+      allow create: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        request.auth.token.role == 'admin'
+      );
+      allow update: if request.auth != null && request.auth.token.role == 'admin';
+    }
+    
+    match /campaign_schedules/{scheduleId} {
+      allow read, write: if request.auth != null && (
+        resource.data.tenantId == request.auth.token.tenantId ||
+        request.auth.token.role == 'admin'
+      );
+    }
+    
+    match /campaign_analysis/{analysisId} {
+      allow read, write: if request.auth != null && request.auth.token.role == 'admin';
+    }
+
+    // --- JSI (Job Satisfaction Insights) ---
+    match /jsiScores/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    match /jsiLogs/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+    match /jsiPrompts/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    match /jsiAlerts/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+    match /jsiRiskFlags/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+    match /jsiSettings/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(docId);
+    }
+    match /jsiBaselines/{docId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+    match /aiActions/{docId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- HRX MODULES ---
+
+    // --- RESET MODE ---
+    match /resetMode/{resetId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /resetModeTriggers/{triggerId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /resetModeCheckIns/{checkInId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+
+    // --- MINI-LEARNING BOOSTS ---
+    match /learningBoosts/{boostId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && resource.data.isActive == true;
+    }
+    match /userLearningBoosts/{userBoostId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /userLearningProfiles/{userId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated();
+    }
+
+    // --- PROFESSIONAL GROWTH ---
+    match /careerGoals/{goalId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /careerJournal/{entryId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /skillsInventory/{userId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated();
+    }
+    match /growthMetrics/{metricId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    // --- WORK-LIFE BALANCE ---
+    match /balanceCheckIns/{checkInId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /wellbeingReflections/{reflectionId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow create: if isAuthenticated();
+    }
+    match /burnoutRiskIndex/{riskId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    match /balanceTrends/{trendId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    match /balanceAlerts/{alertId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      allow update: if isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    // --- MODULES CONFIGURATION ---
+    match /modules/{moduleId} {
+      allow read, write: if isHRX();
+    }
+
+    // --- MOTIVATIONS (Motivational Quotes) ---
+    match /motivations/{motivationId} {
+      allow read: if isAuthenticated();
+      allow write: if isHRX();
+    }
+
+    // --- HELP TOPICS ---
+    match /help_topics/{topicId} {
+      allow read: if isAuthenticated();
+      allow write: if isHRX();
+    }
+
+    // --- INVITES ---
+    match /invites/{inviteId} {
+      allow read, write: if isHRX();
+      allow read: if isAuthenticated() && resource.data.email == request.auth.token.email;
+    }
 
     // --- DEFAULT CATCH-ALL ---
     match /{document=**} {
@@ -107,19 +597,40 @@ service cloud.firestore {
     }
 
     function isAssignedToTenant(tenantId) {
-      return isAuthenticated() && getUser().tenantId == tenantId;
+      return isAuthenticated() && (
+        getUser().tenantIds != null && (
+          getUser().tenantIds.hasAny([tenantId]) ||
+          tenantId in getUser().tenantIds
+        ) ||
+        getUser().tenantId == tenantId ||
+        getUser().activeTenantId == tenantId
+      );
     }
-
+    
     function isTenantAdmin(tenantId) {
-      return isAssignedToTenant(tenantId) && getUser().securityLevel == "Admin";
+      let user = getUser();
+      return isAssignedToTenant(tenantId) && (
+        user.role == "HRX" ||
+        user.securityLevel == "Admin" ||
+        user.securityLevel == "6" ||
+        user.securityLevel == "7" ||
+        (user.tenantIds != null && 
+         tenantId in user.tenantIds && 
+         (user.tenantIds[tenantId].securityLevel == "Admin" || 
+          user.tenantIds[tenantId].securityLevel == "6" ||
+          user.tenantIds[tenantId].securityLevel == "7"))
+      );
     }
     
-    function isAssignedToCustomer(customerId) {
-      return isAuthenticated() && getUser().customerId == customerId;
-    }
-    
-    function isCustomerAdmin(customerId) {
-      return isAssignedToCustomer(customerId) && getUser().securityLevel == "Admin";
+    function validateTenantSlug() {
+      let slug = request.resource.data.slug;
+      return slug != null &&
+             slug != "" &&
+             slug.matches('^[a-z0-9-]+$') &&
+             slug.size() >= 3 &&
+             slug.size() <= 50 &&
+             !slug.matches('^-.*') &&
+             !slug.matches('.*-$');
     }
   }
 }

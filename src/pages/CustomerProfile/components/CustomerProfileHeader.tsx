@@ -35,7 +35,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
   //     const storageRef = ref(storage, `avatars/customer_${uid}.jpg`);
   //     await uploadBytes(storageRef, file);
   //     const downloadURL = await getDownloadURL(storageRef);
-  //     await updateDoc(doc(db, 'customers', uid), { avatar: downloadURL });
+  //     await updateDoc(doc(db, 'tenants', uid), { avatar: downloadURL });
   //     onAvatarUpdated(downloadURL);
   //   }
   // };
@@ -43,7 +43,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
   // const handleDeleteAvatar = async () => {
   //   const storageRef = ref(storage, `avatars/customer_${uid}.jpg`);
   //   await deleteObject(storageRef);
-  //   await updateDoc(doc(db, 'customers', uid), { avatar: '' });
+  //   await updateDoc(doc(db, 'tenants', uid), { avatar: '' });
   //   onAvatarUpdated('');
   // };
 
@@ -58,7 +58,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
         const downloadURL = await getDownloadURL(storageRef);
         console.log(downloadURL);
         console.log(uid);
-        await updateDoc(doc(db, 'customers', uid), { avatar: downloadURL });
+        await updateDoc(doc(db, 'tenants', uid), { avatar: downloadURL });
         onAvatarUpdated(downloadURL);
       } catch (error) {
         console.error('Error uploading avatar:', error);
@@ -72,7 +72,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
 
     try {
       await deleteObject(storageRef);
-      await updateDoc(doc(db, 'customers', uid), { avatar: '' });
+      await updateDoc(doc(db, 'tenants', uid), { avatar: '' });
       onAvatarUpdated('');
     } catch (error) {
       console.error('Error deleting avatar:', error);
@@ -150,7 +150,7 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
         </Box>
       </Box>
       <Tooltip title="Back to Customers">
-        <IconButton onClick={() => navigate('/customers')}>
+        <IconButton onClick={() => navigate('/tenants')}>
           <ArrowBackIcon sx={{ color: 'inherit' }} />
         </IconButton>
       </Tooltip>

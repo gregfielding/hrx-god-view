@@ -1,5 +1,31 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, Grid, TextField, Button, Chip, Snackbar, Alert, MenuItem, FormControl, InputLabel, Select, OutlinedInput, Tabs, Tab, TableContainer, Table, TableHead, TableBody, TableRow, TableCell, Paper, Autocomplete } from '@mui/material';
+import {
+  Box,
+  Typography,
+  Grid,
+  TextField,
+  Button,
+  Chip,
+  Snackbar,
+  Alert,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  OutlinedInput,
+  Tabs,
+  Tab,
+  TableContainer,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  Paper,
+  Autocomplete,
+  Switch,
+  FormControlLabel,
+} from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
@@ -9,13 +35,18 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import JobOrderShiftsTab from './JobOrderShiftsTab';
 
-const noop = () => { /* intentionally left blank */ };
+const noop = () => {
+  /* intentionally left blank */
+};
 
-const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ agencyId, jobOrderId }) => {
+const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string }> = ({
+  tenantId,
+  jobOrderId,
+}) => {
   const [jobOrder, setJobOrder] = useState<any>(null);
   const [editForm, setEditForm] = useState<any>(null);
   const [originalForm, setOriginalForm] = useState<any>(null);
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [tenants, setCustomers] = useState<any[]>([]);
   const [worksites, setWorksites] = useState<any[]>([]);
   const [jobTitles, setJobTitles] = useState<any[]>([]);
   const [jobTitleRates, setJobTitleRates] = useState<any[]>([]);
@@ -36,7 +67,8 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
   const [originalManagers, setOriginalManagers] = useState<string[]>([]);
   const [originalUniformId, setOriginalUniformId] = useState('');
   const [originalCustomUniform, setOriginalCustomUniform] = useState('');
-  const [originalAdditionalStaffInstructions, setOriginalAdditionalStaffInstructions] = useState('');
+  const [originalAdditionalStaffInstructions, setOriginalAdditionalStaffInstructions] =
+    useState('');
   const [userGroups, setUserGroups] = useState<any[]>([]);
   const [selectedUserGroups, setSelectedUserGroups] = useState<string[]>([]);
   const [originalUserGroups, setOriginalUserGroups] = useState<string[]>([]);
@@ -45,6 +77,10 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
   const [type, setType] = useState('Gig');
   const [originalType, setOriginalType] = useState('Gig');
   const [agencyCustomerIds, setAgencyCustomerIds] = useState<string[]>([]);
+  const [visibility, setVisibility] = useState('Hidden');
+  const [originalVisibility, setOriginalVisibility] = useState('Hidden');
+  const [showExactLocation, setShowExactLocation] = useState(false);
+  const [overstaff, setOverstaff] = useState('None');
 
   useEffect(() => {
     fetchJobOrder();
@@ -55,13 +91,13 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
     fetchUniformDefaults();
     fetchUserGroups();
     // eslint-disable-next-line
-  }, [agencyId, jobOrderId]);
+  }, [tenantId, jobOrderId]);
 
   useEffect(() => {
-    if (editForm && editForm.customerId) fetchWorksites(editForm.customerId);
+    if (editForm && editForm.tenantId) fetchWorksites(editForm.tenantId);
     else setWorksites([]);
     // eslint-disable-next-line
-  }, [editForm?.customerId]);
+  }, [editForm?.tenantId]);
 
   useEffect(() => {
     // Sync jobTitleRates with selected job titles
@@ -101,6 +137,13 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
     // eslint-disable-next-line
   }, [agencyCustomerIds]);
 
+  useEffect(() => {
+    if (editForm && editForm.visibility !== undefined) {
+      setVisibility(editForm.visibility);
+      setOriginalVisibility(editForm.visibility);
+    }
+  }, [editForm?.visibility]);
+
   const fetchJobOrder = async () => {
     setLoading(true);
     try {
@@ -115,10 +158,32 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
         setOriginalRates(data.jobTitleRates || []);
         setSelectedManagers(data.staffingManagerIds || []);
         setOriginalManagers(data.staffingManagerIds || []);
-        setSelectedUniformId(data.uniformInstructions && typeof data.uniformInstructions === 'string' && uniformDefaults.some((u: any) => u.title === data.uniformInstructions) ? data.uniformInstructions : '');
-        setOriginalUniformId(data.uniformInstructions && typeof data.uniformInstructions === 'string' && uniformDefaults.some((u: any) => u.title === data.uniformInstructions) ? data.uniformInstructions : '');
-        setCustomUniform(data.uniformInstructions && (!uniformDefaults.some((u: any) => u.title === data.uniformInstructions)) ? data.uniformInstructions : '');
-        setOriginalCustomUniform(data.uniformInstructions && (!uniformDefaults.some((u: any) => u.title === data.uniformInstructions)) ? data.uniformInstructions : '');
+        setSelectedUniformId(
+          data.uniformInstructions &&
+            typeof data.uniformInstructions === 'string' &&
+            uniformDefaults.some((u: any) => u.title === data.uniformInstructions)
+            ? data.uniformInstructions
+            : '',
+        );
+        setOriginalUniformId(
+          data.uniformInstructions &&
+            typeof data.uniformInstructions === 'string' &&
+            uniformDefaults.some((u: any) => u.title === data.uniformInstructions)
+            ? data.uniformInstructions
+            : '',
+        );
+        setCustomUniform(
+          data.uniformInstructions &&
+            !uniformDefaults.some((u: any) => u.title === data.uniformInstructions)
+            ? data.uniformInstructions
+            : '',
+        );
+        setOriginalCustomUniform(
+          data.uniformInstructions &&
+            !uniformDefaults.some((u: any) => u.title === data.uniformInstructions)
+            ? data.uniformInstructions
+            : '',
+        );
         setAdditionalStaffInstructions(data.additionalStaffInstructions || '');
         setOriginalAdditionalStaffInstructions(data.additionalStaffInstructions || '');
         setUserGroups(data.userGroupIds || []);
@@ -128,7 +193,11 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
         setOriginalStatus(data.status || 'Active');
         setType(data.type || 'Gig');
         setOriginalType(data.type || 'Gig');
-        if (data.customerId) fetchWorksites(data.customerId);
+        setVisibility(data.visibility || 'Hidden');
+        setOriginalVisibility(data.visibility || 'Hidden');
+        setShowExactLocation(data.showExactLocation || false);
+        setOverstaff(data.overstaff || 'None');
+        if (data.tenantId) fetchWorksites(data.tenantId);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch job order');
@@ -144,32 +213,32 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
       }
       const customerDocs = await Promise.all(
         agencyCustomerIds.map(async (id) => {
-          const snap = await getDoc(doc(db, 'customers', id));
+          const snap = await getDoc(doc(db, 'tenants', id));
           if (snap.exists()) {
             const data = snap.data();
             console.log('Fetched customer:', data.name, id);
             return { id, name: data.name || id, ...data };
           }
           return null;
-        })
+        }),
       );
       setCustomers(customerDocs.filter(Boolean));
     } catch (err) {
-      console.error('Error fetching customers:', err);
+      console.error('Error fetching tenants:', err);
     }
   };
 
-  const fetchWorksites = async (customerId: string) => {
+  const fetchWorksites = async (tenantId: string) => {
     try {
-      const q = collection(db, 'customers', customerId, 'locations');
+      const q = collection(db, 'tenants', tenantId, 'locations');
       const snapshot = await getDocs(q);
-      setWorksites(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setWorksites(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch {}
   };
 
   const fetchJobTitles = async () => {
     try {
-      const settingsRef = doc(db, 'agencies', agencyId, 'settings', 'main');
+      const settingsRef = doc(db, 'tenants', tenantId, 'settings', 'main');
       const snap = await getDoc(settingsRef);
       setJobTitles(snap.exists() ? snap.data().jobTitles || [] : []);
     } catch {}
@@ -177,11 +246,11 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
 
   const fetchAgency = async () => {
     try {
-      const agencyRef = doc(db, 'agencies', agencyId);
+      const agencyRef = doc(db, 'tenants', tenantId);
       const agencySnap = await getDoc(agencyRef);
       if (agencySnap.exists()) {
-        setAgency({ id: agencyId, ...agencySnap.data() });
-        setAgencyCustomerIds(agencySnap.data().customerIds || []);
+        setAgency({ id: tenantId, ...agencySnap.data() });
+        setAgencyCustomerIds(agencySnap.data().tenantIds || []);
       }
     } catch {}
   };
@@ -190,15 +259,21 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
     try {
       const q = collection(db, 'users');
       const snapshot = await getDocs(q);
-      setStaffingManagers(snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((user: any) => user.agencyId === agencyId && ['Admin', 'Manager', 'Staffer'].includes(user.securityLevel)));
+      setStaffingManagers(
+        snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter(
+            (user: any) =>
+              user.tenantId === tenantId &&
+              ['5', '4', '3'].includes(user.securityLevel),
+          ),
+      );
     } catch {}
   };
 
   const fetchUniformDefaults = async () => {
     try {
-      const settingsRef = doc(db, 'agencies', agencyId, 'settings', 'main');
+      const settingsRef = doc(db, 'tenants', tenantId, 'settings', 'main');
       const snap = await getDoc(settingsRef);
       setUniformDefaults(snap.exists() ? snap.data().uniformDefaults || [] : []);
     } catch {}
@@ -206,9 +281,9 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
 
   const fetchUserGroups = async () => {
     try {
-      const q = collection(db, 'agencies', agencyId, 'userGroups');
+      const q = collection(db, 'tenants', tenantId, 'userGroups');
       const snapshot = await getDocs(q);
-      setUserGroups(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setUserGroups(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch {}
   };
 
@@ -218,9 +293,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
 
   const handleRateChange = (title: string, field: 'payRate' | 'billRate', value: string) => {
     setJobTitleRates((prevRates) =>
-      prevRates.map((r: any) =>
-        r.title === title ? { ...r, [field]: value } : r
-      )
+      prevRates.map((r: any) => (r.title === title ? { ...r, [field]: value } : r)),
     );
   };
 
@@ -238,6 +311,9 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
         userGroupIds: selectedUserGroups,
         status,
         type,
+        visibility,
+        showExactLocation,
+        overstaff,
         aiPrompts: editForm.aiPrompts || '',
       });
       setSuccess(true);
@@ -252,14 +328,27 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
     setTabIndex(newIndex);
     // Navigate to the correct tab in AgencyProfile
     const tabRoutes = [
-      'overview', 'settings', 'locations', 'billing', 'contacts', 'workforce', 'userGroups', 'customers', 'jobOrders', 'shifts', 'timesheets', 'reports', 'aiSettings', 'activityLogs'
+      'overview',
+      'settings',
+      'locations',
+      'billing',
+      'contacts',
+      'workforce',
+      'userGroups',
+      'tenants',
+      'jobOrders',
+      'shifts',
+      'timesheets',
+      'reports',
+      'aiSettings',
+      'activityLogs',
     ];
     if (newIndex !== 8) {
-      navigate(`/agencies/${agencyId}?tab=${newIndex}`);
+      navigate(`/tenants/${tenantId}?tab=${newIndex}`);
     }
   };
 
-  const isChanged =
+  const isChanged = editForm && originalForm ? (
     JSON.stringify(editForm) !== JSON.stringify(originalForm) ||
     JSON.stringify(jobTitleRates) !== JSON.stringify(originalRates) ||
     JSON.stringify(selectedManagers) !== JSON.stringify(originalManagers) ||
@@ -268,46 +357,16 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
     additionalStaffInstructions !== originalAdditionalStaffInstructions ||
     JSON.stringify(selectedUserGroups) !== JSON.stringify(originalUserGroups) ||
     status !== originalStatus ||
-    type !== originalType;
+    type !== originalType ||
+    visibility !== originalVisibility ||
+    showExactLocation !== (editForm?.showExactLocation || false) ||
+    overstaff !== (editForm?.overstaff || 'None')
+  ) : false;
 
   if (!editForm) return <Typography>Loading...</Typography>;
 
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
-      {agency && (
-        <>
-          <AgencyProfileHeader
-            uid={agencyId}
-            name={agency.name}
-            avatarUrl={agency.avatar || ''}
-            onAvatarUpdated={noop}
-          />
-          <Tabs
-            value={8}
-            onChange={handleTabChange}
-            variant="scrollable"
-            scrollButtons="auto"
-            allowScrollButtonsMobile
-            sx={{ mb: 2 }}
-          >
-            <Tab label="Overview" />
-            <Tab label="Settings" />
-            <Tab label="Locations" />
-            <Tab label="Billing Info" />
-            <Tab label="Manage Users" />
-            <Tab label="Workforce" />
-            <Tab label="User Groups" />
-            <Tab label="Customers" />
-            <Tab label="Job Orders" />
-            <Tab label="Assignments" />
-            <Tab label="Shifts" />
-            <Tab label="Timesheets" />
-            {/* <Tab label="Reports & Insights" />
-            <Tab label="AI Settings" />
-            <Tab label="Activity Logs" /> */}
-          </Tabs>
-        </>
-      )}
+    <Box sx={{ p: 0, width: '100%' }}>
       <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
         <Box sx={{ width: 48, mr: 2 }}>
           <Tabs
@@ -317,9 +376,36 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
             sx={{ borderRight: 1, borderColor: 'divider', width: 48 }}
             TabIndicatorProps={{ sx: { left: 0, width: 4 } }}
           >
-            <Tab icon={<InfoIcon />} sx={{ minWidth: 0, maxWidth: 48, p: 0, justifyContent: 'center', alignItems: 'center' }} />
-            <Tab icon={<CalendarMonthIcon />} sx={{ minWidth: 0, maxWidth: 48, p: 0, justifyContent: 'center', alignItems: 'center' }} />
-            <Tab icon={<AccessTimeIcon />} sx={{ minWidth: 0, maxWidth: 48, p: 0, justifyContent: 'center', alignItems: 'center' }} />
+            <Tab
+              icon={<InfoIcon />}
+              sx={{
+                minWidth: 0,
+                maxWidth: 48,
+                p: 0,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            />
+            <Tab
+              icon={<CalendarMonthIcon />}
+              sx={{
+                minWidth: 0,
+                maxWidth: 48,
+                p: 0,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            />
+            <Tab
+              icon={<AccessTimeIcon />}
+              sx={{
+                minWidth: 0,
+                maxWidth: 48,
+                p: 0,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            />
           </Tabs>
         </Box>
         <Box sx={{ flex: 1 }}>
@@ -329,14 +415,20 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                 <Typography variant="h6" gutterBottom>
                   Details: Job Order {editForm.jobOrderId || jobOrderId}
                 </Typography>
-                <Button variant="outlined" onClick={() => navigate(`/agencies/${agencyId}?tab=8`)}>
+                <Button variant="outlined" onClick={() => navigate('/joborders')}>
                   &larr; Back to Job Orders
                 </Button>
               </Box>
               <Box component="form" mb={3}>
                 <Grid container spacing={2} mb={2}>
                   <Grid item xs={12} sm={4} md={4}>
-                    <TextField label="Title" fullWidth required value={editForm.title} onChange={e => handleEditChange('title', e.target.value)} />
+                    <TextField
+                      label="Title"
+                      fullWidth
+                      required
+                      value={editForm.title}
+                      onChange={(e) => handleEditChange('title', e.target.value)}
+                    />
                   </Grid>
                   <Grid item xs={12} sm={2} md={2}>
                     <FormControl fullWidth required>
@@ -345,7 +437,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         labelId="type-label"
                         value={type}
                         label="Type"
-                        onChange={e => setType(e.target.value)}
+                        onChange={(e) => setType(e.target.value)}
                       >
                         <MenuItem value="Gig">Gig</MenuItem>
                         <MenuItem value="Career">Career</MenuItem>
@@ -359,7 +451,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         labelId="status-label"
                         value={status}
                         label="Status"
-                        onChange={e => setStatus(e.target.value)}
+                        onChange={(e) => setStatus(e.target.value)}
                       >
                         <MenuItem value="Active">Active</MenuItem>
                         <MenuItem value="Closed">Closed</MenuItem>
@@ -368,15 +460,27 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                     </FormControl>
                   </Grid>
                   <Grid item xs={12}>
-                    <TextField label="Description" fullWidth required value={editForm.description} onChange={e => handleEditChange('description', e.target.value)} multiline minRows={2} />
+                    <TextField
+                      label="Description"
+                      fullWidth
+                      required
+                      value={editForm.description}
+                      onChange={(e) => handleEditChange('description', e.target.value)}
+                      multiline
+                      minRows={2}
+                    />
                   </Grid>
                   <Grid item xs={12} sm={4}>
                     <Autocomplete
-                      options={customers}
-                      getOptionLabel={c => c.name}
-                      value={customers.find(c => c.id === editForm.customerId) || null}
-                      onChange={(_, newValue) => handleEditChange('customerId', newValue ? newValue.id : '')}
-                      renderInput={params => <TextField {...params} label="Customer" fullWidth required />}
+                      options={tenants}
+                      getOptionLabel={(c) => c.name}
+                      value={tenants.find((c) => c.id === editForm.tenantId) || null}
+                      onChange={(_, newValue) =>
+                        handleEditChange('tenantId', newValue ? newValue.id : '')
+                      }
+                      renderInput={(params) => (
+                        <TextField {...params} label="Customer" fullWidth required />
+                      )}
                       isOptionEqualToValue={(option, value) => option.id === value.id}
                       clearOnEscape
                     />
@@ -388,13 +492,23 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                       fullWidth
                       required
                       value={editForm.worksiteId}
-                      onChange={e => handleEditChange('worksiteId', e.target.value)}
-                      disabled={!editForm.customerId}
+                      onChange={(e) => handleEditChange('worksiteId', e.target.value)}
+                      disabled={!editForm.tenantId}
                     >
                       {worksites.map((w) => (
-                        <MenuItem key={w.id} value={w.id}>{w.nickname}</MenuItem>
+                        <MenuItem key={w.id} value={w.id}>
+                          {w.nickname}
+                        </MenuItem>
                       ))}
                     </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      label="PO Number"
+                      fullWidth
+                      value={editForm.poNumber || ''}
+                      onChange={(e) => handleEditChange('poNumber', e.target.value)}
+                    />
                   </Grid>
                   <Grid item xs={12} sm={2}>
                     <TextField
@@ -403,7 +517,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                       fullWidth
                       required
                       value={editForm.startDate}
-                      onChange={e => handleEditChange('startDate', e.target.value)}
+                      onChange={(e) => handleEditChange('startDate', e.target.value)}
                       InputLabelProps={{ shrink: true }}
                     />
                   </Grid>
@@ -414,7 +528,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                       fullWidth
                       required
                       value={editForm.endDate}
-                      onChange={e => handleEditChange('endDate', e.target.value)}
+                      onChange={(e) => handleEditChange('endDate', e.target.value)}
                       InputLabelProps={{ shrink: true }}
                     />
                   </Grid>
@@ -425,7 +539,12 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         labelId="job-titles-label"
                         multiple
                         value={editForm.jobTitleIds}
-                        onChange={e => handleEditChange('jobTitleIds', Array.isArray(e.target.value) ? e.target.value : [e.target.value])}
+                        onChange={(e) =>
+                          handleEditChange(
+                            'jobTitleIds',
+                            Array.isArray(e.target.value) ? e.target.value : [e.target.value],
+                          )
+                        }
                         input={<OutlinedInput label="Job Titles" />}
                         renderValue={(selected) => (
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -435,8 +554,13 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                                 <Chip
                                   key={id}
                                   label={jt ? jt.title : id}
-                                  onMouseDown={e => e.stopPropagation()}
-                                  onDelete={() => handleEditChange('jobTitleIds', editForm.jobTitleIds.filter((jid: string) => jid !== id))}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onDelete={() =>
+                                    handleEditChange(
+                                      'jobTitleIds',
+                                      editForm.jobTitleIds.filter((jid: string) => jid !== id),
+                                    )
+                                  }
                                 />
                               );
                             })}
@@ -444,7 +568,9 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         )}
                       >
                         {jobTitles.map((jt: any) => (
-                          <MenuItem key={jt.title} value={jt.title}>{jt.title}</MenuItem>
+                          <MenuItem key={jt.title} value={jt.title}>
+                            {jt.title}
+                          </MenuItem>
                         ))}
                       </Select>
                     </FormControl>
@@ -456,7 +582,11 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         labelId="user-groups-label"
                         multiple
                         value={selectedUserGroups}
-                        onChange={e => setSelectedUserGroups(Array.isArray(e.target.value) ? e.target.value : [e.target.value])}
+                        onChange={(e) =>
+                          setSelectedUserGroups(
+                            Array.isArray(e.target.value) ? e.target.value : [e.target.value],
+                          )
+                        }
                         input={<OutlinedInput label="User Groups" />}
                         renderValue={(selected) => (
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -466,8 +596,12 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                                 <Chip
                                   key={id}
                                   label={group ? group.title : id}
-                                  onMouseDown={e => e.stopPropagation()}
-                                  onDelete={() => setSelectedUserGroups(selectedUserGroups.filter((gid: string) => gid !== id))}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onDelete={() =>
+                                    setSelectedUserGroups(
+                                      selectedUserGroups.filter((gid: string) => gid !== id),
+                                    )
+                                  }
                                 />
                               );
                             })}
@@ -475,13 +609,25 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         )}
                       >
                         {userGroups.map((g: any) => (
-                          <MenuItem key={g.id} value={g.id}>{g.title}</MenuItem>
+                          <MenuItem key={g.id} value={g.id}>
+                            {g.title}
+                          </MenuItem>
                         ))}
                       </Select>
                     </FormControl>
                   </Grid>
                   <Grid item xs={12}>
-                    <TableContainer component={Paper} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, boxShadow: 'none', background: 'transparent', mt: 2 }}>
+                    <TableContainer
+                      component={Paper}
+                      sx={{
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 2,
+                        boxShadow: 'none',
+                        background: 'transparent',
+                        mt: 2,
+                      }}
+                    >
                       <Table size="small">
                         <TableHead>
                           <TableRow>
@@ -497,7 +643,9 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                               <TableCell>
                                 <TextField
                                   value={rate.payRate}
-                                  onChange={e => handleRateChange(rate.title, 'payRate', e.target.value)}
+                                  onChange={(e) =>
+                                    handleRateChange(rate.title, 'payRate', e.target.value)
+                                  }
                                   size="small"
                                   placeholder="$"
                                 />
@@ -505,7 +653,9 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                               <TableCell>
                                 <TextField
                                   value={rate.billRate}
-                                  onChange={e => handleRateChange(rate.title, 'billRate', e.target.value)}
+                                  onChange={(e) =>
+                                    handleRateChange(rate.title, 'billRate', e.target.value)
+                                  }
                                   size="small"
                                   placeholder="$"
                                 />
@@ -520,13 +670,26 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                     <Autocomplete
                       multiple
                       options={staffingManagers}
-                      getOptionLabel={u => `${u.firstName} ${u.lastName}`}
-                      value={staffingManagers.filter(u => selectedManagers.includes(u.id))}
-                      onChange={(_, newValue) => setSelectedManagers(newValue.map((u: any) => u.id))}
-                      renderInput={params => <TextField {...params} label="Staffing Managers" placeholder="Select managers" fullWidth />}
+                      getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
+                      value={staffingManagers.filter((u) => selectedManagers.includes(u.id))}
+                      onChange={(_, newValue) =>
+                        setSelectedManagers(newValue.map((u: any) => u.id))
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Staffing Managers"
+                          placeholder="Select managers"
+                          fullWidth
+                        />
+                      )}
                       renderTags={(value, getTagProps) =>
                         value.map((option, index) => (
-                          <Chip label={`${option.firstName} ${option.lastName}`} {...getTagProps({ index })} key={option.id} />
+                          <Chip
+                            label={`${option.firstName} ${option.lastName}`}
+                            {...getTagProps({ index })}
+                            key={option.id}
+                          />
                         ))
                       }
                     />
@@ -538,22 +701,29 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                         labelId="uniform-default-label"
                         value={selectedUniformId}
                         label="Select Uniform Default"
-                        onChange={e => setSelectedUniformId(e.target.value)}
+                        onChange={(e) => setSelectedUniformId(e.target.value)}
                       >
                         {uniformDefaults.map((u: any) => (
-                          <MenuItem key={u.title} value={u.title}>{u.title}</MenuItem>
+                          <MenuItem key={u.title} value={u.title}>
+                            {u.title}
+                          </MenuItem>
                         ))}
                       </Select>
                     </FormControl>
                     {selectedUniformId && (
-                      <Button variant="outlined" color="error" sx={{ mb: 2 }} onClick={() => setSelectedUniformId('')}>
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        sx={{ mb: 2 }}
+                        onClick={() => setSelectedUniformId('')}
+                      >
                         Remove
                       </Button>
                     )}
                     <TextField
                       label="Or add custom uniform instructions"
                       value={customUniform}
-                      onChange={e => setCustomUniform(e.target.value)}
+                      onChange={(e) => setCustomUniform(e.target.value)}
                       fullWidth
                       multiline
                       minRows={2}
@@ -563,13 +733,24 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                     {selectedUniformId && (
                       <Box sx={{ mb: 2 }}>
                         <Typography variant="body2" color="textSecondary">
-                          {uniformDefaults.find((u: any) => u.title === selectedUniformId)?.description || ''}
+                          {uniformDefaults.find((u: any) => u.title === selectedUniformId)
+                            ?.description || ''}
                         </Typography>
-                        {uniformDefaults.find((u: any) => u.title === selectedUniformId)?.imageUrl && (
+                        {uniformDefaults.find((u: any) => u.title === selectedUniformId)
+                          ?.imageUrl && (
                           <img
-                            src={uniformDefaults.find((u: any) => u.title === selectedUniformId)?.imageUrl}
+                            src={
+                              uniformDefaults.find((u: any) => u.title === selectedUniformId)
+                                ?.imageUrl
+                            }
                             alt={selectedUniformId}
-                            style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 4, marginTop: 8 }}
+                            style={{
+                              width: 64,
+                              height: 64,
+                              objectFit: 'cover',
+                              borderRadius: 4,
+                              marginTop: 8,
+                            }}
                           />
                         )}
                       </Box>
@@ -579,7 +760,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                     <TextField
                       label="Additional Staff Instructions"
                       value={additionalStaffInstructions}
-                      onChange={e => setAdditionalStaffInstructions(e.target.value)}
+                      onChange={(e) => setAdditionalStaffInstructions(e.target.value)}
                       fullWidth
                       multiline
                       minRows={2}
@@ -590,7 +771,7 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                     <TextField
                       label="AI Prompts"
                       value={editForm?.aiPrompts || ''}
-                      onChange={e => handleEditChange('aiPrompts', e.target.value)}
+                      onChange={(e) => handleEditChange('aiPrompts', e.target.value)}
                       fullWidth
                       multiline
                       minRows={2}
@@ -615,33 +796,90 @@ const JobOrderDetails: React.FC<{ agencyId: string; jobOrderId: string }> = ({ a
                       }}
                     />
                   </Grid>
+                  <Grid item xs={12}>
+                    <FormControl fullWidth required>
+                      <InputLabel id="visibility-label">Job Board Visibility</InputLabel>
+                      <Select
+                        labelId="visibility-label"
+                        value={visibility}
+                        label="Visibility"
+                        onChange={(e) => setVisibility(e.target.value)}
+                      >
+                        <MenuItem value="Hidden">Hidden</MenuItem>
+                        <MenuItem value="Visible to Groups">Visible to Groups</MenuItem>
+                        <MenuItem value="Visible to All">Visible to All</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  {visibility !== 'Hidden' && (
+                    <>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={showExactLocation}
+                              onChange={(e) => setShowExactLocation(e.target.checked)}
+                            />
+                          }
+                          label={"Show Exact Location"}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <FormControl fullWidth>
+                          <InputLabel id="overstaff-label">Overstaff</InputLabel>
+                          <Select
+                            labelId="overstaff-label"
+                            value={overstaff}
+                            label="Overstaff"
+                            onChange={(e) => setOverstaff(e.target.value)}
+                          >
+                            <MenuItem value="None">None</MenuItem>
+                            <MenuItem value="25%">25%</MenuItem>
+                            <MenuItem value="50%">50%</MenuItem>
+                            <MenuItem value="No Limit">No Limit</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                    </>
+                  )}
                 </Grid>
-                <Button variant="contained" onClick={handleSave} disabled={loading || !isChanged}>Save Changes</Button>
+                <Button variant="contained" onClick={handleSave} disabled={loading || !isChanged}>
+                  Save Changes
+                </Button>
               </Box>
               <Typography variant="body2" color="textSecondary">
-                Job Order ID: {editForm.jobOrderId || '-'} | Created At: {editForm.createdAt?.toDate ? editForm.createdAt.toDate().toLocaleDateString() : '-'}
+                Job Order ID: {editForm.jobOrderId || '-'} | Created At:{' '}
+                {editForm.createdAt?.toDate
+                  ? editForm.createdAt.toDate().toLocaleDateString()
+                  : '-'}
               </Typography>
             </>
           )}
           {sideTab === 1 && (
-            <JobOrderShiftsTab agencyId={agencyId} jobOrderId={editForm.jobOrderId || jobOrderId} />
+            <JobOrderShiftsTab tenantId={tenantId} jobOrderId={jobOrder?.id || jobOrderId} />
           )}
           {sideTab === 2 && (
             <Box>
-              <Typography variant="h6" gutterBottom>Timesheets: Job Order {editForm.jobOrderId || jobOrderId}</Typography>
+              <Typography variant="h6" gutterBottom>
+                Timesheets: Job Order {editForm.jobOrderId || jobOrderId}
+              </Typography>
               <Typography>Timesheets content for this job order will go here.</Typography>
             </Box>
           )}
         </Box>
       </Box>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Job order updated!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Job order updated!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default JobOrderDetails; 
+export default JobOrderDetails;

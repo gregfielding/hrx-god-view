@@ -5,6 +5,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { geocodeAddress } from '../../utils/geocodeAddress';
 import { Autocomplete } from '@react-google-maps/api';
+import IndustrySelector from '../../components/IndustrySelector';
 
 const AddCustomerForm = () => {
   const [form, setForm] = useState({
@@ -13,6 +14,7 @@ const AddCustomerForm = () => {
     city: '',
     state: '',
     zip: '',
+    industry: '',
   });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -46,7 +48,7 @@ const AddCustomerForm = () => {
     try {
       const fullAddress = `${form.street}, ${form.city}, ${form.state} ${form.zip}`;
       const geo = await geocodeAddress(fullAddress);
-      const docRef = await addDoc(collection(db, 'customers'), {
+      const docRef = await addDoc(collection(db, 'tenants'), {
         name: form.name,
         address: {
           street: form.street,
@@ -54,11 +56,12 @@ const AddCustomerForm = () => {
           state: form.state,
           zip: form.zip,
         },
+        industry: form.industry,
         customerLat: geo.lat,
         customerLng: geo.lng,
         createdAt: serverTimestamp(),
       });
-      await addDoc(collection(db, 'customers', docRef.id, 'locations'), {
+      await addDoc(collection(db, 'tenants', docRef.id, 'locations'), {
         nickname: 'Default',
         street: form.street,
         city: form.city,
@@ -68,7 +71,7 @@ const AddCustomerForm = () => {
       });
       setSuccess(true);
       setTimeout(() => {
-        navigate(`/customers/${docRef.id}`);
+        navigate(`/tenants/${docRef.id}`);
       }, 1000);
     } catch (err: any) {
       setError(err.message || 'Failed to add customer');
@@ -79,15 +82,23 @@ const AddCustomerForm = () => {
   return (
     <Box sx={{ p: 2, maxWidth: 600, mx: 'auto' }}>
       <Box display="flex" justifyContent="flex-end" mb={2}>
-        <Button variant="outlined" onClick={() => navigate('/customers')}>
+        <Button variant="outlined" onClick={() => navigate('/tenants')}>
           &larr; Back
         </Button>
       </Box>
-      <Typography variant="h5" gutterBottom>Add New Customer</Typography>
+      <Typography variant="h5" gutterBottom>
+        Add New Customer
+      </Typography>
       <form onSubmit={handleSubmit}>
         <Grid container spacing={2}>
           <Grid item xs={12}>
-            <TextField label="Customer Name" fullWidth required value={form.name} onChange={e => handleChange('name', e.target.value)} />
+            <TextField
+              label="Customer Name"
+              fullWidth
+              required
+              value={form.name}
+              onChange={(e) => handleChange('name', e.target.value)}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
             <Autocomplete
@@ -99,18 +110,43 @@ const AddCustomerForm = () => {
                 fullWidth
                 required
                 value={form.street}
-                onChange={e => handleChange('street', e.target.value)}
+                onChange={(e) => handleChange('street', e.target.value)}
               />
             </Autocomplete>
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField label="City" fullWidth value={form.city} onChange={e => handleChange('city', e.target.value)} />
+            <TextField
+              label="City"
+              fullWidth
+              value={form.city}
+              onChange={(e) => handleChange('city', e.target.value)}
+            />
           </Grid>
           <Grid item xs={6} sm={3}>
-            <TextField label="State" fullWidth value={form.state} onChange={e => handleChange('state', e.target.value)} />
+            <TextField
+              label="State"
+              fullWidth
+              value={form.state}
+              onChange={(e) => handleChange('state', e.target.value)}
+            />
           </Grid>
           <Grid item xs={6} sm={3}>
-            <TextField label="Zip" fullWidth value={form.zip} onChange={e => handleChange('zip', e.target.value)} />
+            <TextField
+              label="Zip"
+              fullWidth
+              value={form.zip}
+              onChange={(e) => handleChange('zip', e.target.value)}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <IndustrySelector
+              value={form.industry}
+              onChange={(industryCode) => handleChange('industry', industryCode)}
+              label="Industry"
+              required
+              variant="autocomplete"
+              showCategory={true}
+            />
           </Grid>
           <Grid item xs={12}>
             <Button type="submit" variant="contained" color="primary" disabled={loading}>
@@ -120,13 +156,17 @@ const AddCustomerForm = () => {
         </Grid>
       </form>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000}>
-        <Alert severity="success" sx={{ width: '100%' }}>Customer added!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Customer added!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default AddCustomerForm; 
+export default AddCustomerForm;

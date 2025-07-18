@@ -1,12 +1,34 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Grid, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Snackbar, Alert, MenuItem, FormControl, InputLabel, Select, OutlinedInput, Chip, Autocomplete } from '@mui/material';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Snackbar,
+  Alert,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  OutlinedInput,
+  Chip,
+  Autocomplete,
+} from '@mui/material';
 import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
 import jobTitles from '../../../data/onetJobTitles.json';
 
 interface ContactsTabProps {
-  customerId?: string;
+  tenantId?: string;
 }
 
 function formatPhoneNumber(value: string) {
@@ -22,7 +44,7 @@ function formatPhoneNumber(value: string) {
 
 const securityLevels = ['Admin', 'Manager'];
 
-const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
+const ContactsTab: React.FC<ContactsTabProps> = ({ tenantId }) => {
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -42,23 +64,23 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
   const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
-    if (customerId) {
+    if (tenantId) {
       fetchLocations().then(fetchContacts);
     }
     // eslint-disable-next-line
-  }, [customerId]);
+  }, [tenantId]);
 
   const fetchContacts = async () => {
-    if (!customerId) return;
+    if (!tenantId) return;
     setLoading(true);
     try {
       const q = query(
         collection(db, 'users'),
         where('role', '==', 'Customer'),
-        where('customerId', '==', customerId)
+        where('tenantId', '==', tenantId),
       );
       const snapshot = await getDocs(q);
-      setContacts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setContacts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       setError(err.message || 'Failed to fetch contacts');
     }
@@ -66,12 +88,12 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
   };
 
   const fetchLocations = async () => {
-    if (!customerId) return;
+    if (!tenantId) return;
     setLocationsLoading(true);
     try {
-      const q = query(collection(db, 'customers', customerId, 'locations'));
+      const q = query(collection(db, 'tenants', tenantId, 'locations'));
       const snapshot = await getDocs(q);
-      setLocations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       // ignore for now
     }
@@ -86,22 +108,35 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
     handleChange('phone', formatPhoneNumber(e.target.value));
   };
 
-  const isFormValid = form.firstName && form.lastName && form.email && form.locationIds.length > 0 && form.securityLevel;
+  const isFormValid =
+    form.firstName &&
+    form.lastName &&
+    form.email &&
+    form.locationIds.length > 0 &&
+    form.securityLevel;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerId) return;
+    if (!tenantId) return;
     setLoading(true);
     setError('');
     try {
       await addDoc(collection(db, 'users'), {
         ...form,
         role: 'Customer',
-        customerId,
+        tenantId,
         locationIds: form.locationIds,
         createdAt: serverTimestamp(),
       });
-      setForm({ firstName: '', lastName: '', jobTitle: '', phone: '', email: '', locationIds: [], securityLevel: '' });
+      setForm({
+        firstName: '',
+        lastName: '',
+        jobTitle: '',
+        phone: '',
+        email: '',
+        locationIds: [],
+        securityLevel: '',
+      });
       setSuccess(true);
       await fetchLocations();
       await fetchContacts();
@@ -112,39 +147,67 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
   };
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box sx={{ p: 0 }}>
       {!showForm && (
-        <Button variant="contained" color="primary" sx={{ mb: 2 }} onClick={() => setShowForm(true)}>
+        <Button
+          variant="contained"
+          color="primary"
+          sx={{ mb: 2 }}
+          onClick={() => setShowForm(true)}
+        >
           Add New User
         </Button>
       )}
       {showForm && (
         <>
-          <Typography variant="h6" gutterBottom>Add New User</Typography>
+          <Typography variant="h6" gutterBottom>
+            Add New User
+          </Typography>
           <form onSubmit={handleSubmit}>
             <Grid container spacing={2} mb={2}>
               <Grid item xs={12} sm={3}>
-                <TextField label="First Name" fullWidth required value={form.firstName} onChange={e => handleChange('firstName', e.target.value)} />
+                <TextField
+                  label="First Name"
+                  fullWidth
+                  required
+                  value={form.firstName}
+                  onChange={(e) => handleChange('firstName', e.target.value)}
+                />
               </Grid>
               <Grid item xs={12} sm={3}>
-                <TextField label="Last Name" fullWidth required value={form.lastName} onChange={e => handleChange('lastName', e.target.value)} />
+                <TextField
+                  label="Last Name"
+                  fullWidth
+                  required
+                  value={form.lastName}
+                  onChange={(e) => handleChange('lastName', e.target.value)}
+                />
               </Grid>
               <Grid item xs={12} sm={3}>
                 <Autocomplete
                   options={jobTitles}
                   value={form.jobTitle}
                   onChange={(_, newValue) => handleChange('jobTitle', newValue || '')}
-                  renderInput={(params) => (
-                    <TextField {...params} label="Job Title" fullWidth />
-                  )}
+                  renderInput={(params) => <TextField {...params} label="Job Title" fullWidth />}
                   freeSolo
                 />
               </Grid>
               <Grid item xs={12} sm={3}>
-                <TextField label="Phone" fullWidth value={form.phone} onChange={handlePhoneChange} />
+                <TextField
+                  label="Phone"
+                  fullWidth
+                  value={form.phone}
+                  onChange={handlePhoneChange}
+                />
               </Grid>
               <Grid item xs={12} sm={4}>
-                <TextField label="Email" fullWidth required value={form.email} onChange={e => handleChange('email', e.target.value)} />
+                <TextField
+                  label="Email"
+                  fullWidth
+                  required
+                  value={form.email}
+                  onChange={(e) => handleChange('email', e.target.value)}
+                />
               </Grid>
               <Grid item xs={12} sm={4}>
                 {locationsLoading ? (
@@ -158,7 +221,7 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
                       labelId="location-label"
                       multiple
                       value={form.locationIds}
-                      onChange={e => {
+                      onChange={(e) => {
                         const value = e.target.value;
                         handleChange('locationIds', Array.isArray(value) ? value : [value]);
                       }}
@@ -171,10 +234,15 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
                               <Chip
                                 key={id}
                                 label={loc ? loc.nickname : id}
-                                onMouseDown={e => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onDelete={() => {
-                                  const ids = Array.isArray(form.locationIds) ? form.locationIds : [form.locationIds];
-                                  handleChange('locationIds', ids.filter((lid: string) => lid !== id));
+                                  const ids = Array.isArray(form.locationIds)
+                                    ? form.locationIds
+                                    : [form.locationIds];
+                                  handleChange(
+                                    'locationIds',
+                                    ids.filter((lid: string) => lid !== id),
+                                  );
                                 }}
                               />
                             );
@@ -183,21 +251,37 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
                       )}
                     >
                       {locations.map((loc: any) => (
-                        <MenuItem key={loc.id} value={loc.id}>{loc.nickname}</MenuItem>
+                        <MenuItem key={loc.id} value={loc.id}>
+                          {loc.nickname}
+                        </MenuItem>
                       ))}
                     </Select>
                   </FormControl>
                 )}
               </Grid>
               <Grid item xs={12} sm={4}>
-                <TextField select label="Security Level" fullWidth value={form.securityLevel} onChange={e => handleChange('securityLevel', e.target.value)} required>
-                  {securityLevels.map(level => (
-                    <MenuItem key={level} value={level}>{level}</MenuItem>
+                <TextField
+                  select
+                  label="Security Level"
+                  fullWidth
+                  value={form.securityLevel}
+                  onChange={(e) => handleChange('securityLevel', e.target.value)}
+                  required
+                >
+                  {securityLevels.map((level) => (
+                    <MenuItem key={level} value={level}>
+                      {level}
+                    </MenuItem>
                   ))}
                 </TextField>
               </Grid>
               <Grid item xs={12} display="flex" gap={2}>
-                <Button type="submit" variant="contained" color="primary" disabled={loading || !isFormValid}>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  color="primary"
+                  disabled={loading || !isFormValid}
+                >
                   {loading ? 'Adding...' : 'Add Contact'}
                 </Button>
                 <Button variant="outlined" color="secondary" onClick={() => setShowForm(false)}>
@@ -208,11 +292,15 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
           </form>
         </>
       )}
-      <Typography variant="h6" gutterBottom>Manage Users</Typography>
+      <Typography variant="h6" gutterBottom>
+        Manage Users
+      </Typography>
       {locationsLoading ? (
         <Typography>Loading locations...</Typography>
       ) : locations.length === 0 ? (
-        <Typography color="warning.main">No locations available. Please add a location first.</Typography>
+        <Typography color="warning.main">
+          No locations available. Please add a location first.
+        </Typography>
       ) : (
         <TableContainer component={Paper}>
           <Table size="small">
@@ -228,14 +316,33 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
             </TableHead>
             <TableBody>
               {contacts.map((contact) => (
-                <TableRow key={contact.id} hover style={{ cursor: 'pointer' }} onClick={() => navigate(`/users/${contact.id}`)}>
-                  <TableCell>{contact.firstName} {contact.lastName}</TableCell>
+                <TableRow
+                  key={contact.id}
+                  hover
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/users/${contact.id}`)}
+                >
+                  <TableCell>
+                    {contact.firstName} {contact.lastName}
+                  </TableCell>
                   <TableCell>{contact.email}</TableCell>
                   <TableCell>{contact.phone || '-'}</TableCell>
-                  <TableCell>{locations.find((loc: any) => loc.id === contact.locationIds[0])?.nickname || '-'}</TableCell>
+                  <TableCell>
+                    {locations.find((loc: any) => loc.id === contact.locationIds[0])?.nickname ||
+                      '-'}
+                  </TableCell>
                   <TableCell>{contact.securityLevel || '-'}</TableCell>
                   <TableCell>
-                    <Button size="small" variant="outlined" onClick={e => { e.stopPropagation(); navigate(`/users/${contact.id}`); }}>View</Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/users/${contact.id}`);
+                      }}
+                    >
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -244,13 +351,17 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ customerId }) => {
         </TableContainer>
       )}
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Contact added!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Contact added!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default ContactsTab; 
+export default ContactsTab;

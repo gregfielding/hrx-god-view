@@ -5,7 +5,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const roles = ['Agency', 'HRX', 'Employee', 'Contractor', 'Applicant', 'Customer', 'Dismissed'];
-const securityLevels = ['Admin', 'Manager', 'Staffer', 'Worker'];
+const securityLevels = ['7', '6', '5', '4', '3', '2', '1', '0'];
 
 const AddUserForm = () => {
   const [form, setForm] = useState({
@@ -51,32 +51,75 @@ const AddUserForm = () => {
           &larr; Back
         </Button>
       </Box>
-      <Typography variant="h5" gutterBottom>Add New User</Typography>
+      <Typography variant="h5" gutterBottom>
+        Add New User
+      </Typography>
       <form onSubmit={handleSubmit}>
         <Grid container spacing={2}>
           <Grid item xs={12} sm={6}>
-            <TextField label="First Name" fullWidth required value={form.firstName} onChange={e => handleChange('firstName', e.target.value)} />
+            <TextField
+              label="First Name"
+              fullWidth
+              required
+              value={form.firstName}
+              onChange={(e) => handleChange('firstName', e.target.value)}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField label="Last Name" fullWidth required value={form.lastName} onChange={e => handleChange('lastName', e.target.value)} />
+            <TextField
+              label="Last Name"
+              fullWidth
+              required
+              value={form.lastName}
+              onChange={(e) => handleChange('lastName', e.target.value)}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField label="Email" fullWidth required value={form.email} onChange={e => handleChange('email', e.target.value)} />
+            <TextField
+              label="Email"
+              fullWidth
+              required
+              value={form.email}
+              onChange={(e) => handleChange('email', e.target.value)}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField label="Phone" fullWidth value={form.phone} onChange={e => handleChange('phone', e.target.value)} />
+            <TextField
+              label="Phone"
+              fullWidth
+              value={form.phone}
+              onChange={(e) => handleChange('phone', e.target.value)}
+            />
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField select label="Role" fullWidth required value={form.role} onChange={e => handleChange('role', e.target.value)}>
-              {roles.map(role => (
-                <MenuItem key={role} value={role}>{role}</MenuItem>
+            <TextField
+              select
+              label="Role"
+              fullWidth
+              required
+              value={form.role}
+              onChange={(e) => handleChange('role', e.target.value)}
+            >
+              {roles.map((role) => (
+                <MenuItem key={role} value={role}>
+                  {role}
+                </MenuItem>
               ))}
             </TextField>
           </Grid>
           <Grid item xs={12} sm={6}>
-            <TextField select label="Security Level" fullWidth required value={form.securityLevel} onChange={e => handleChange('securityLevel', e.target.value)}>
-              {securityLevels.map(level => (
-                <MenuItem key={level} value={level}>{level}</MenuItem>
+            <TextField
+              select
+              label="Security Level"
+              fullWidth
+              required
+              value={form.securityLevel}
+              onChange={(e) => handleChange('securityLevel', e.target.value)}
+            >
+              {securityLevels.map((level) => (
+                <MenuItem key={level} value={level}>
+                  {level}
+                </MenuItem>
               ))}
             </TextField>
           </Grid>
@@ -88,13 +131,17 @@ const AddUserForm = () => {
         </Grid>
       </form>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
-        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>{error}</Alert>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
       <Snackbar open={success} autoHideDuration={2000}>
-        <Alert severity="success" sx={{ width: '100%' }}>User added!</Alert>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          User added!
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default AddUserForm; 
+export default AddUserForm;

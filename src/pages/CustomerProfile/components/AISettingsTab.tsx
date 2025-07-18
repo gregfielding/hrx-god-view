@@ -1,346 +1,595 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box, Typography, Accordion, AccordionSummary, AccordionDetails, Switch, TextField, Button, FormControlLabel, Select, MenuItem, InputLabel, FormControl, Snackbar, Alert, Slider, Tabs, Tab, Checkbox, OutlinedInput, TableContainer, Table, TableHead, TableBody, TableRow, Paper, TableCell
+  Box,
+  Typography,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Switch,
+  TextField,
+  Button,
+  FormControlLabel,
+  Select,
+  MenuItem,
+  InputLabel,
+  FormControl,
+  Snackbar,
+  Alert,
+  Slider,
+  Tabs,
+  Tab,
+  Checkbox,
+  OutlinedInput,
+  TableContainer,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  Paper,
+  TableCell,
+  Grid,
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction,
+  Chip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, deleteDoc } from 'firebase/firestore';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import DeleteIcon from '@mui/icons-material/Delete';
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  collection,
+  getDocs,
+  addDoc,
+  deleteDoc,
+} from 'firebase/firestore';
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from 'firebase/storage';
 import { db } from '../../../firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { app } from '../../../firebase';
+import { LoggableSlider, LoggableTextField, LoggableSelect } from '../../../components/LoggableField';
+import { useAuth } from '../../../contexts/AuthContext';
 
-const AISettingsTab: React.FC<{ customerId: string }> = ({ customerId }) => {
-  // Tab state
-  const [tabIndex, setTabIndex] = useState(0);
+interface AISettingsTabProps {
+  tenantId: string;
+}
 
-  // Company Profiling state
-  const [companyProfile, setCompanyProfile] = useState({
-    website: '',
-    linkedin: '',
-    social: '',
-    mediaFile: null as File | null,
-    autoGenerate: false,
-    preview: '',
+const toneTraits = [
+  { id: 'formality', label: 'Formality' },
+  { id: 'friendliness', label: 'Friendliness' },
+  { id: 'conciseness', label: 'Conciseness' },
+  { id: 'assertiveness', label: 'Assertiveness' },
+  { id: 'enthusiasm', label: 'Enthusiasm' },
+];
+
+const promptFrequencies = ['Low', 'Medium', 'High'];
+const goalOptions = ['Engagement', 'Retention', 'Wellness', 'Training'];
+
+const AISettingsTab: React.FC<AISettingsTabProps> = ({ tenantId }) => {
+  // Check if customer is managed by an agency
+  const [isAgencyManaged, setIsAgencyManaged] = useState(false);
+  const [agencyName, setAgencyName] = useState('');
+
+  // Tone sliders
+  const [tone, setTone] = useState<any>({
+    formality: 0.7,
+    friendliness: 0.9,
+    conciseness: 0.6,
+    assertiveness: 0.5,
+    enthusiasm: 0.8,
   });
-  const [originalCompanyProfile, setOriginalCompanyProfile] = useState(companyProfile);
-  const [uploading, setUploading] = useState(false);
+  const [originalTone, setOriginalTone] = useState<any>(tone);
+  const [toneSuccess, setToneSuccess] = useState(false);
+  const [toneError, setToneError] = useState('');
 
-  // Example state for a few settings
-  const [privacy, setPrivacy] = useState({
-    managersCanView: true,
-    workersCanView: false,
-  });
-  const [originalPrivacy, setOriginalPrivacy] = useState(privacy);
-  const [toneLevel, setToneLevel] = useState(5);
-  const [originalToneLevel, setOriginalToneLevel] = useState(5);
-  const [language, setLanguage] = useState('English');
-  const [promptFrequency, setPromptFrequency] = useState('Daily');
-  const [goalOrientation, setGoalOrientation] = useState('Retention');
-  const [success, setSuccess] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // Custom prompts
+  const [customPrompts, setCustomPrompts] = useState<string[]>(['', '', '']);
+  const [originalCustomPrompts, setOriginalCustomPrompts] = useState<string[]>(['', '', '']);
+  const [promptsSuccess, setPromptsSuccess] = useState(false);
 
-  // Social posts state
-  const [postForm, setPostForm] = useState({ title: '', body: '' });
-  const [socialPosts, setSocialPosts] = useState<any[]>([]);
-  // HR docs state
-  const [docForm, setDocForm] = useState({ title: '', file: null as File | null });
-  const [docs, setDocs] = useState<any[]>([]);
-  const storage = getStorage();
+  // Prompt frequency
+  const [promptFrequency, setPromptFrequency] = useState('Medium');
+  const [originalPromptFrequency, setOriginalPromptFrequency] = useState('Medium');
+  const [promptFrequencySuccess, setPromptFrequencySuccess] = useState(false);
 
-  // Fetch settings on mount
+  // Goal orientation (ordered)
+  const [goalOrder, setGoalOrder] = useState<string[]>(goalOptions);
+  const [originalGoalOrder, setOriginalGoalOrder] = useState<string[]>(goalOptions);
+  const [goalOrderSuccess, setGoalOrderSuccess] = useState(false);
+
+  // Context fields
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  const [originalWebsiteUrl, setOriginalWebsiteUrl] = useState('');
+  const [sampleSocialPosts, setSampleSocialPosts] = useState<string[]>(['', '', '']);
+  const [originalSampleSocialPosts, setOriginalSampleSocialPosts] = useState<string[]>([
+    '',
+    '',
+    '',
+  ]);
+  const [uploadedDocs, setUploadedDocs] = useState<string[]>([]);
+  const [originalUploadedDocs, setOriginalUploadedDocs] = useState<string[]>([]);
+  const [contextSuccess, setContextSuccess] = useState(false);
+
+  // Error
+  const [error, setError] = useState('');
+
+  const { currentUser } = useAuth();
+
+  // Check if customer is agency managed
   useEffect(() => {
-    const fetchSettings = async () => {
-      setLoading(true);
+    const checkAgencyStatus = async () => {
       try {
-        const settingsRef = doc(db, 'customers', customerId, 'aiSettings', 'settings');
-        const snap = await getDoc(settingsRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          const loadedPrivacy = {
-            managersCanView: data.privacy?.managersCanView ?? privacy.managersCanView,
-            workersCanView: data.privacy?.workersCanView ?? privacy.workersCanView,
-          };
-          setPrivacy(loadedPrivacy);
-          setOriginalPrivacy(loadedPrivacy);
-          setToneLevel(data.toneLevel || 5);
-          setOriginalToneLevel(data.toneLevel || 5);
-          setLanguage(data.language || language);
-          setPromptFrequency(data.promptFrequency || promptFrequency);
-          setGoalOrientation(data.goalOrientation || goalOrientation);
+        const customerRef = doc(db, 'tenants', tenantId);
+        const customerSnap = await getDoc(customerRef);
+        if (customerSnap.exists()) {
+          const data = customerSnap.data();
+          if (data.tenantId) {
+            setIsAgencyManaged(true);
+            // Fetch agency name
+            const agencyRef = doc(db, 'tenants', data.tenantId);
+            const agencySnap = await getDoc(agencyRef);
+            if (agencySnap.exists()) {
+              setAgencyName(agencySnap.data().name || 'Agency');
+            }
+          }
         }
-        // Fetch company profile
-        const profileRef = doc(db, 'customers', customerId, 'aiSettings', 'companyProfile');
-        const profileSnap = await getDoc(profileRef);
-        if (profileSnap.exists()) {
-          const pdata = profileSnap.data();
-          setCompanyProfile({
-            website: pdata.website || '',
-            linkedin: pdata.linkedin || '',
-            social: pdata.social || '',
-            mediaFile: null,
-            autoGenerate: pdata.autoGenerate || false,
-            preview: pdata.preview || '',
-          });
-          setOriginalCompanyProfile({
-            website: pdata.website || '',
-            linkedin: pdata.linkedin || '',
-            social: pdata.social || '',
-            mediaFile: null,
-            autoGenerate: pdata.autoGenerate || false,
-            preview: pdata.preview || '',
-          });
-        }
-        // Fetch social posts
-        const postsSnap = await getDocs(collection(db, 'customers', customerId, 'aiSettings', 'socialPosts'));
-        setSocialPosts(postsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        // Fetch docs
-        const docsSnap = await getDocs(collection(db, 'customers', customerId, 'aiSettings', 'docs'));
-        setDocs(docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       } catch (err) {
-        // ignore for now
+        console.error('Error checking agency status:', err);
       }
-      setLoading(false);
     };
-    fetchSettings();
+    checkAgencyStatus();
+  }, [tenantId]);
+
+  // Fetch all settings on mount
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        // Tone
+        const toneRef = doc(db, 'tenants', tenantId, 'aiSettings', 'toneSettings');
+        const toneSnap = await getDoc(toneRef);
+        if (toneSnap.exists()) {
+          setTone(toneSnap.data() || tone);
+          setOriginalTone(toneSnap.data() || tone);
+        }
+        // Custom Prompts
+        const promptsRef = doc(db, 'tenants', tenantId, 'aiSettings', 'customPrompts');
+        const promptsSnap = await getDoc(promptsRef);
+        if (promptsSnap.exists()) {
+          const arr = promptsSnap.data().prompts || ['', '', ''];
+          setCustomPrompts([arr[0] || '', arr[1] || '', arr[2] || '']);
+          setOriginalCustomPrompts([arr[0] || '', arr[1] || '', arr[2] || '']);
+        }
+        // Prompt Frequency & Goal Order
+        const settingsRef = doc(db, 'tenants', tenantId, 'aiSettings', 'settings');
+        const settingsSnap = await getDoc(settingsRef);
+        if (settingsSnap.exists()) {
+          setPromptFrequency(settingsSnap.data().promptFrequency || 'Medium');
+          setOriginalPromptFrequency(settingsSnap.data().promptFrequency || 'Medium');
+          setGoalOrder(settingsSnap.data().goalOrder || goalOptions);
+          setOriginalGoalOrder(settingsSnap.data().goalOrder || goalOptions);
+        }
+        // Context fields
+        const contextRef = doc(db, 'tenants', tenantId, 'aiSettings', 'context');
+        const contextSnap = await getDoc(contextRef);
+        if (contextSnap.exists()) {
+          setWebsiteUrl(contextSnap.data().websiteUrl || '');
+          setOriginalWebsiteUrl(contextSnap.data().websiteUrl || '');
+          const socialArr = contextSnap.data().sampleSocialPosts || ['', '', ''];
+          setSampleSocialPosts([socialArr[0] || '', socialArr[1] || '', socialArr[2] || '']);
+          setOriginalSampleSocialPosts([
+            socialArr[0] || '',
+            socialArr[1] || '',
+            socialArr[2] || '',
+          ]);
+          setUploadedDocs(contextSnap.data().uploadedDocs || []);
+          setOriginalUploadedDocs(contextSnap.data().uploadedDocs || []);
+        }
+      } catch (err) {
+        setError('Failed to fetch AI settings');
+      }
+    };
+    fetchAll();
     // eslint-disable-next-line
-  }, [customerId]);
+  }, [tenantId]);
 
-  // Save handler for company profile
-  const handleCompanyProfileSave = async () => {
-    setUploading(true);
+  // Handlers
+  const handleToneChange = (trait: string, value: number) => {
+    setTone((prev: any) => ({ ...prev, [trait]: value }));
+  };
+  const handlePromptChange = (idx: number, value: string) => {
+    setCustomPrompts((prev) => prev.map((p, i) => (i === idx ? value : p)));
+  };
+  const handleSocialPostChange = (idx: number, value: string) => {
+    setSampleSocialPosts((prev) => prev.map((p, i) => (i === idx ? value : p)));
+  };
+  const moveGoal = (idx: number, direction: 'up' | 'down') => {
+    setGoalOrder((prev) => {
+      const arr = [...prev];
+      if (direction === 'up' && idx > 0) {
+        [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+      } else if (direction === 'down' && idx < arr.length - 1) {
+        [arr[idx + 1], arr[idx]] = [arr[idx], arr[idx + 1]];
+      }
+      return arr;
+    });
+  };
+
+  // Universal AI Settings update function
+  const updateAISettings = async (settingsType: string, settings: any, onSuccess: () => void, onError: (msg: string) => void) => {
     try {
-      const profileRef = doc(db, 'customers', customerId, 'aiSettings', 'companyProfile');
-      // TODO: handle media upload if needed
-      await setDoc(profileRef, {
-        website: companyProfile.website,
-        linkedin: companyProfile.linkedin,
-        social: companyProfile.social,
-        autoGenerate: companyProfile.autoGenerate,
-        preview: companyProfile.preview,
-      }, { merge: true });
-      setOriginalCompanyProfile({ ...companyProfile });
-      setSuccess(true);
-    } catch (err) {
-      // handle error
+      const functions = getFunctions(app, 'us-central1');
+      const updateFn = httpsCallable(functions, 'updateCustomerAISettings');
+      await updateFn({ tenantId, settingsType, settings });
+      onSuccess();
+    } catch (err: any) {
+      onError(err.message || 'Failed to update AI settings');
     }
-    setUploading(false);
   };
 
-  // Save handler for all settings
-  const handleSave = async (fields?: Partial<any>) => {
-    setLoading(true);
-    try {
-      const settingsRef = doc(db, 'customers', customerId, 'aiSettings', 'settings');
-      await setDoc(settingsRef, {
-        privacy,
-        toneLevel,
-        language,
-        promptFrequency,
-        goalOrientation,
-        ...fields,
-      }, { merge: true });
-      setSuccess(true);
-    } catch (err) {
-      // handle error
-    }
-    setLoading(false);
+  // Save handlers
+  const handleToneSave = async () => {
+    await updateAISettings('toneSettings', tone, () => {
+      setOriginalTone(tone);
+      setToneSuccess(true);
+    }, (msg) => setToneError(msg));
   };
+  const isToneChanged = JSON.stringify(tone) !== JSON.stringify(originalTone);
 
-  // Company Profiling form change
-  const handleCompanyProfileChange = (field: string, value: any) => {
-    setCompanyProfile((prev) => ({ ...prev, [field]: value }));
+  const handlePromptsSave = async () => {
+    await updateAISettings('customPrompts', { prompts: customPrompts }, () => {
+      setOriginalCustomPrompts([...customPrompts]);
+      setPromptsSuccess(true);
+    }, (msg) => setError(msg));
   };
+  const isPromptsChanged = JSON.stringify(customPrompts) !== JSON.stringify(originalCustomPrompts);
 
-  // Company Profiling save button enabled only if changes
-  const isCompanyProfileChanged = JSON.stringify(companyProfile) !== JSON.stringify(originalCompanyProfile);
+  const handlePromptFrequencySave = async () => {
+    await updateAISettings('settings', { promptFrequency }, () => {
+      setOriginalPromptFrequency(promptFrequency);
+      setPromptFrequencySuccess(true);
+    }, (msg) => setError(msg));
+  };
+  const isPromptFrequencyChanged = promptFrequency !== originalPromptFrequency;
 
-  // Social post handlers
-  const handlePostSave = async () => {
-    if (!postForm.title || !postForm.body) return;
-    try {
-      await addDoc(collection(db, 'customers', customerId, 'aiSettings', 'socialPosts'), postForm);
-      setPostForm({ title: '', body: '' });
-      const postsSnap = await getDocs(collection(db, 'customers', customerId, 'aiSettings', 'socialPosts'));
-      setSocialPosts(postsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch {}
+  const handleGoalOrderSave = async () => {
+    await updateAISettings('settings', { goalOrder }, () => {
+      setOriginalGoalOrder([...goalOrder]);
+      setGoalOrderSuccess(true);
+    }, (msg) => setError(msg));
   };
-  const handlePostDelete = async (id: string) => {
-    try {
-      await deleteDoc(doc(db, 'customers', customerId, 'aiSettings', 'socialPosts', id));
-      setSocialPosts(socialPosts.filter(p => p.id !== id));
-    } catch {}
-  };
+  const isGoalOrderChanged = JSON.stringify(goalOrder) !== JSON.stringify(originalGoalOrder);
 
-  // HR doc handlers
-  const handleDocSave = async () => {
-    if (!docForm.title || !docForm.file) return;
-    try {
-      const fileRef = storageRef(storage, `customers/${customerId}/aiSettings/docs/${Date.now()}_${docForm.file.name}`);
-      await uploadBytes(fileRef, docForm.file);
-      const url = await getDownloadURL(fileRef);
-      await addDoc(collection(db, 'customers', customerId, 'aiSettings', 'docs'), {
-        title: docForm.title,
-        fileName: docForm.file.name,
-        url,
-        storagePath: fileRef.fullPath,
-      });
-      setDocForm({ title: '', file: null });
-      const docsSnap = await getDocs(collection(db, 'customers', customerId, 'aiSettings', 'docs'));
-      setDocs(docsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch {}
+  const handleContextSave = async () => {
+    await updateAISettings('context', {
+      websiteUrl,
+      sampleSocialPosts,
+      uploadedDocs,
+    }, () => {
+      setOriginalWebsiteUrl(websiteUrl);
+      setOriginalSampleSocialPosts([...sampleSocialPosts]);
+      setOriginalUploadedDocs([...uploadedDocs]);
+      setContextSuccess(true);
+    }, (msg) => setError(msg));
   };
-  const handleDocDelete = async (id: string, storagePath: string) => {
-    try {
-      await deleteDoc(doc(db, 'customers', customerId, 'aiSettings', 'docs', id));
-      await deleteObject(storageRef(storage, storagePath));
-      setDocs(docs.filter(d => d.id !== id));
-    } catch {}
-  };
+  const isContextChanged =
+    websiteUrl !== originalWebsiteUrl ||
+    JSON.stringify(sampleSocialPosts) !== JSON.stringify(originalSampleSocialPosts) ||
+    JSON.stringify(uploadedDocs) !== JSON.stringify(originalUploadedDocs);
 
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
-      <>
-      <Box mb={3}>
-        <Typography variant="subtitle1" fontWeight={600}>What information is collected?</Typography>
-        <ul>
-          <li>Identity & Profile Data</li>
-          <li>Engagement & Sentiment Data</li>
-          <li>Behavioral & Interaction Data</li>
-          <li>Professional Development</li>
-          <li>Workplace Support & Needs</li>
-          <li>Recognition & Achievement</li>
-          <li>Health & Wellness (optional)</li>
-        </ul>
-      </Box>
-      <Accordion defaultExpanded>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Privacy & Transparency Controls</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Admins will always have access to Reports and Insights.
+    <Box sx={{ p: 2, width: '100%', maxWidth: 900, mx: 'auto' }}>
+      {isAgencyManaged && (
+        <Paper sx={{ p: 3, mb: 4, bgcolor: 'info.light', color: 'info.contrastText' }}>
+          <Typography variant="h6" gutterBottom>
+            Managed by {agencyName}
           </Typography>
-          <FormControlLabel
-            control={<Switch checked={privacy.managersCanView} onChange={e => setPrivacy(p => ({ ...p, managersCanView: e.target.checked }))} />}
-            label="Managers can view Reports and Insights"
-          />
-          <FormControlLabel
-            control={<Switch checked={privacy.workersCanView} onChange={e => setPrivacy(p => ({ ...p, workersCanView: e.target.checked }))} />}
-            label="Workers can view their own Reports and Insights"
-          />
+          <Typography variant="body2">
+            This customer is managed by an agency. Tone settings and custom prompts are controlled
+            by the agency. You can still configure context information and other settings below.
+          </Typography>
+        </Paper>
+      )}
+
+      {!isAgencyManaged && (
+        <Paper sx={{ p: 3, mb: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Tone & Style Settings
+          </Typography>
+          <Grid container spacing={4} mb={2}>
+            {toneTraits.map((trait) => (
+              <Grid item xs={12} sm={6} md={4} key={trait.id}>
+                <LoggableSlider
+                  fieldPath={`tenants:${tenantId}.aiSettings.tone.${trait.id}`}
+                  trigger="update"
+                  destinationModules={['ToneEngine', 'ContextEngine']}
+                  value={tone[trait.id] || 0}
+                  onChange={(valueOrEvent: any, maybeValue?: any) => {
+                    const value = typeof valueOrEvent === 'number' ? valueOrEvent : maybeValue;
+                    handleToneChange(trait.id, value);
+                  }}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  label={trait.label}
+                  contextType="tone"
+                  urgencyScore={3}
+                  description={`Customer tone ${trait.id} setting`}
+                />
+              </Grid>
+            ))}
+          </Grid>
+          <Button variant="contained" onClick={handleToneSave} disabled={!isToneChanged}>
+            Save Tone & Style
+          </Button>
+        </Paper>
+      )}
+
+      {!isAgencyManaged && (
+        <Paper sx={{ p: 3, mb: 4 }}>
+          <Typography variant="h6" gutterBottom>
+            Custom Prompts (max 3)
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            These prompts will be used by the AI when engaging with your workers. Examples:
+            onboarding questions, shift feedback requests, wellness checks, or training follow-ups.
+          </Typography>
+          <Grid container spacing={2}>
+            {[0, 1, 2].map((idx) => (
+              <Grid item xs={12} key={idx}>
+                <LoggableTextField
+                  fieldPath={`tenants:${tenantId}.aiSettings.prompts.custom.${idx}`}
+                  trigger="update"
+                  destinationModules={['PromptEngine', 'ContextEngine']}
+                  value={customPrompts[idx]}
+                  onChange={(value: string) => handlePromptChange(idx, value)}
+                  label={`Prompt ${idx + 1}`}
+                  multiline
+                  rows={2}
+                  placeholder={
+                    idx === 0
+                      ? 'How are you feeling about your first week with us? Is there anything we can do to make your onboarding experience better?'
+                      : idx === 1
+                      ? 'What was the most challenging part of your shift today, and how did you handle it?'
+                      : "What's one thing you'd like to learn or improve in your role this month?"
+                  }
+                  contextType="prompts"
+                  urgencyScore={4}
+                  description={`Customer custom prompt ${idx + 1}`}
+                />
+              </Grid>
+            ))}
+          </Grid>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            💡 Tip: Focus on open-ended questions that encourage meaningful responses and help you
+            understand your workers better.
+          </Typography>
           <Button
             variant="contained"
-            sx={{ mt: 2 }}
-            onClick={handleSave}
-            disabled={loading || JSON.stringify(privacy) === JSON.stringify(originalPrivacy)}
+            color="secondary"
+            onClick={handlePromptsSave}
+            disabled={!isPromptsChanged}
           >
-            Save
+            Save Custom Prompts
           </Button>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Tone & Language of AI</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography gutterBottom>
-            Tone: {toneLevel <= 5 ? 'Friendly' : 'Formal'} ({toneLevel})
-          </Typography>
-          <Slider
-            value={toneLevel}
-            min={1}
-            max={10}
-            step={1}
-            marks={false}
-            onChange={(_, newValue) => setToneLevel(newValue as number)}
-            onChangeCommitted={(_, newValue) => handleSave({ toneLevel: newValue })}
-            sx={{ mb: 0, pb: 0, '&.MuiSlider-root': { paddingBottom: 0, marginBottom: 0 } }}
-          />
-          <Box display="flex" justifyContent="space-between" sx={{ mt: 0.5, mb: 1 }}>
-            <Typography variant="body2">Friendly</Typography>
-            <Typography variant="body2">Formal</Typography>
-          </Box>
-          <TextField
-            label="Language"
-            value="English"
-            fullWidth
-            disabled
-            helperText="Web app is English-only. Language options are available in the mobile app."
-            sx={{ mb: 2 }}
-          />
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Prompt Frequency & Focus</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel id="prompt-frequency-label">Prompt Frequency</InputLabel>
-            <Select labelId="prompt-frequency-label" value={promptFrequency} label="Prompt Frequency" onChange={e => setPromptFrequency(e.target.value)}>
-              <MenuItem value="Daily">Daily</MenuItem>
-              <MenuItem value="Weekly">Weekly</MenuItem>
-              <MenuItem value="Event-based">Event-based</MenuItem>
-            </Select>
-          </FormControl>
-          <Button variant="contained" sx={{ mt: 2 }} onClick={handleSave}>Save</Button>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Goal Orientation</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <FormControl fullWidth>
-            <InputLabel id="goal-orientation-label">Goal Orientation</InputLabel>
-            <Select labelId="goal-orientation-label" value={goalOrientation} label="Goal Orientation" onChange={e => setGoalOrientation(e.target.value)}>
-              <MenuItem value="Retention">Retention</MenuItem>
-              <MenuItem value="Engagement">Engagement</MenuItem>
-              <MenuItem value="Training">Training</MenuItem>
-              <MenuItem value="Wellness">Wellness</MenuItem>
-            </Select>
-          </FormControl>
-          <Button variant="contained" sx={{ mt: 2 }} onClick={handleSave}>Save</Button>
-        </AccordionDetails>
-      </Accordion>
-      {/* Scaffold for future sections */}
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Visual & Brand Settings</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography>Coming soon...</Typography>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Module Activation & Control</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography>Coming soon...</Typography>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Reporting & Alerts</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography>Coming soon...</Typography>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Custom Prompts Library</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography>Coming soon...</Typography>
-        </AccordionDetails>
-      </Accordion>
-      </>
-      <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
-        <Alert severity="success" sx={{ width: '100%' }}>Settings updated!</Alert>
+        </Paper>
+      )}
+
+      <Paper sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Prompt Frequency
+        </Typography>
+        <LoggableSelect
+          fieldPath={`tenants:${tenantId}.aiSettings.prompts.frequency`}
+          trigger="update"
+          destinationModules={['PromptEngine', 'Scheduler']}
+          value={promptFrequency}
+          onChange={(value: string) => setPromptFrequency(value)}
+          label="Prompt Frequency"
+          options={promptFrequencies.map(freq => ({ value: freq, label: freq }))}
+          contextType="prompts"
+          urgencyScore={3}
+          description="Customer prompt frequency setting"
+        />
+        <Button
+          variant="contained"
+          onClick={handlePromptFrequencySave}
+          disabled={!isPromptFrequencyChanged}
+        >
+          Save Prompt Frequency
+        </Button>
+      </Paper>
+
+      <Paper sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Goal Orientation (Preference Order)
+        </Typography>
+        <List>
+          {goalOrder.map((goal, idx) => (
+            <ListItem key={goal} sx={{ pl: 0 }}>
+              <ListItemText primary={goal} />
+              <ListItemSecondaryAction>
+                <IconButton
+                  edge="end"
+                  size="small"
+                  onClick={() => moveGoal(idx, 'up')}
+                  disabled={idx === 0}
+                >
+                  <ArrowUpwardIcon />
+                </IconButton>
+                <IconButton
+                  edge="end"
+                  size="small"
+                  onClick={() => moveGoal(idx, 'down')}
+                  disabled={idx === goalOrder.length - 1}
+                >
+                  <ArrowDownwardIcon />
+                </IconButton>
+              </ListItemSecondaryAction>
+            </ListItem>
+          ))}
+        </List>
+        <Button variant="contained" onClick={handleGoalOrderSave} disabled={!isGoalOrderChanged}>
+          Save Goal Orientation
+        </Button>
+      </Paper>
+
+      <Paper sx={{ p: 3, mb: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Context & Branding
+        </Typography>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <LoggableTextField
+              fieldPath={`tenants:${tenantId}.aiSettings.context.websiteUrl`}
+              trigger="update"
+              destinationModules={['ContextEngine', 'BrandingEngine']}
+              value={websiteUrl}
+              onChange={(value: string) => setWebsiteUrl(value)}
+              label="Website URL"
+              placeholder="https://example.com"
+              contextType="context"
+              urgencyScore={2}
+              description="Customer website URL for context"
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <Typography variant="subtitle1" gutterBottom>
+              Sample Social Media Posts (max 3)
+            </Typography>
+            {[0, 1, 2].map((idx) => (
+              <LoggableTextField
+                key={idx}
+                fieldPath={`tenants:${tenantId}.aiSettings.context.sampleSocialPosts.${idx}`}
+                trigger="update"
+                destinationModules={['ContextEngine', 'BrandingEngine']}
+                value={sampleSocialPosts[idx]}
+                onChange={(value: string) => handleSocialPostChange(idx, value)}
+                label={`Social Post ${idx + 1}`}
+                multiline
+                rows={2}
+                placeholder="Example: 'Excited to announce our new partnership with...'"
+                contextType="context"
+                urgencyScore={2}
+                description={`Customer sample social post ${idx + 1}`}
+              />
+            ))}
+          </Grid>
+          <Grid item xs={12}>
+            <Typography variant="subtitle1" gutterBottom>
+              Uploaded Documents
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+              <Button variant="outlined" startIcon={<CloudUploadIcon />} component="label">
+                Upload Document
+                <input
+                  type="file"
+                  hidden
+                  accept=".pdf,.doc,.docx"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setUploadedDocs((prev) => [...prev, file.name]);
+                    }
+                  }}
+                />
+              </Button>
+              <Typography variant="caption" color="text.secondary">
+                PDF, DOC, DOCX files only
+              </Typography>
+            </Box>
+            {uploadedDocs.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {uploadedDocs.map((doc, idx) => (
+                  <Chip
+                    key={idx}
+                    label={doc}
+                    onDelete={() => setUploadedDocs((prev) => prev.filter((_, i) => i !== idx))}
+                    deleteIcon={<DeleteIcon />}
+                  />
+                ))}
+              </Box>
+            )}
+            <Typography variant="caption" color="text.secondary">
+              Upload handbooks, policies, or other documents for worker reference
+            </Typography>
+          </Grid>
+        </Grid>
+        <Button
+          variant="contained"
+          onClick={handleContextSave}
+          disabled={!isContextChanged}
+          sx={{ mt: 2 }}
+        >
+          Save Context & Branding
+        </Button>
+      </Paper>
+
+      <Snackbar open={toneSuccess} autoHideDuration={2000} onClose={() => setToneSuccess(false)}>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Tone settings updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar open={toneError !== ''} autoHideDuration={4000} onClose={() => setToneError('')}>
+        <Alert severity="error" onClose={() => setToneError('')} sx={{ width: '100%' }}>
+          {toneError}
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={promptsSuccess}
+        autoHideDuration={2000}
+        onClose={() => setPromptsSuccess(false)}
+      >
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Custom prompts updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={promptFrequencySuccess}
+        autoHideDuration={2000}
+        onClose={() => setPromptFrequencySuccess(false)}
+      >
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Prompt frequency updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={goalOrderSuccess}
+        autoHideDuration={2000}
+        onClose={() => setGoalOrderSuccess(false)}
+      >
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Goal orientation updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar
+        open={contextSuccess}
+        autoHideDuration={2000}
+        onClose={() => setContextSuccess(false)}
+      >
+        <Alert severity="success" sx={{ width: '100%' }}>
+          Context & branding updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default AISettingsTab; 
+export default AISettingsTab;

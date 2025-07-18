@@ -13,7 +13,12 @@ interface AgencyProfileHeaderProps {
   onAvatarUpdated: (url: string) => void;
 }
 
-const AgencyProfileHeader: React.FC<AgencyProfileHeaderProps> = ({ uid, name, avatarUrl, onAvatarUpdated }) => {
+const AgencyProfileHeader: React.FC<AgencyProfileHeaderProps> = ({
+  uid,
+  name,
+  avatarUrl,
+  onAvatarUpdated,
+}) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
 
@@ -36,13 +41,13 @@ const AgencyProfileHeader: React.FC<AgencyProfileHeaderProps> = ({ uid, name, av
           break;
         } catch (error) {
           attempts++;
-          await new Promise(res => setTimeout(res, 500)); // wait 500ms
+          await new Promise((res) => setTimeout(res, 500)); // wait 500ms
         }
       }
       if (!downloadURL) {
         downloadURL = '/img/default-logo.png';
       }
-      await updateDoc(doc(db, 'agencies', uid), { avatar: downloadURL });
+      await updateDoc(doc(db, 'tenants', uid), { avatar: downloadURL });
       onAvatarUpdated(downloadURL);
     }
   };
@@ -50,11 +55,17 @@ const AgencyProfileHeader: React.FC<AgencyProfileHeaderProps> = ({ uid, name, av
   const handleDeleteAvatar = async () => {
     const storageRef = ref(storage, `agency_logos/${uid}.jpg`);
     await deleteObject(storageRef);
-    await updateDoc(doc(db, 'agencies', uid), { avatar: '' });
+    await updateDoc(doc(db, 'tenants', uid), { avatar: '' });
     onAvatarUpdated('');
   };
 
-  const initials = name ? name.split(' ').map(n => n[0]).join('').toUpperCase() : '';
+  const initials = name
+    ? name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+    : '';
 
   return (
     <Box display="flex" alignItems="center" gap={2} sx={{ mb: 2 }}>
@@ -120,4 +131,4 @@ const AgencyProfileHeader: React.FC<AgencyProfileHeaderProps> = ({ uid, name, av
   );
 };
 
-export default AgencyProfileHeader; 
+export default AgencyProfileHeader;

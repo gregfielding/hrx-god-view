@@ -13,7 +13,7 @@ const BackgroundCheckTab = ({ uid }: { uid: string }) => {
     date: '',
     expiry: '',
     file: null,
-    notes: ''
+    notes: '',
   });
   const [fileName, setFileName] = useState('');
 
@@ -48,23 +48,59 @@ const BackgroundCheckTab = ({ uid }: { uid: string }) => {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>Background Check</Typography>
+      <Typography variant="h6" gutterBottom>
+        Background Check
+      </Typography>
       <Grid container spacing={2}>
         <Grid item xs={12} sm={6}>
-          <TextField select label="Status" fullWidth value={form.status} onChange={e => handleChange('status', e.target.value)}>
-            {statusOptions.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
+          <TextField
+            select
+            label="Status"
+            fullWidth
+            value={form.status}
+            onChange={(e) => handleChange('status', e.target.value)}
+          >
+            {statusOptions.map((opt) => (
+              <MenuItem key={opt} value={opt}>
+                {opt}
+              </MenuItem>
+            ))}
           </TextField>
         </Grid>
         <Grid item xs={12} sm={6}>
-          <TextField select label="Type" fullWidth value={form.type} onChange={e => handleChange('type', e.target.value)}>
-            {typeOptions.map(opt => <MenuItem key={opt} value={opt}>{opt}</MenuItem>)}
+          <TextField
+            select
+            label="Type"
+            fullWidth
+            value={form.type}
+            onChange={(e) => handleChange('type', e.target.value)}
+          >
+            {typeOptions.map((opt) => (
+              <MenuItem key={opt} value={opt}>
+                {opt}
+              </MenuItem>
+            ))}
           </TextField>
         </Grid>
         <Grid item xs={6} sm={3}>
-          <TextField label="Date of Last Check" type="date" fullWidth value={form.date} onChange={e => handleChange('date', e.target.value)} InputLabelProps={{ shrink: true }} />
+          <TextField
+            label="Date of Last Check"
+            type="date"
+            fullWidth
+            value={form.date}
+            onChange={(e) => handleChange('date', e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
         </Grid>
         <Grid item xs={6} sm={3}>
-          <TextField label="Expiry Date" type="date" fullWidth value={form.expiry} onChange={e => handleChange('expiry', e.target.value)} InputLabelProps={{ shrink: true }} />
+          <TextField
+            label="Expiry Date"
+            type="date"
+            fullWidth
+            value={form.expiry}
+            onChange={(e) => handleChange('expiry', e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
         </Grid>
         <Grid item xs={12} sm={6}>
           <InputLabel>Upload File (PDF, image, etc.)</InputLabel>
@@ -75,14 +111,23 @@ const BackgroundCheckTab = ({ uid }: { uid: string }) => {
           {fileName && <Typography variant="body2">{fileName}</Typography>}
         </Grid>
         <Grid item xs={12}>
-          <TextField label="Notes" fullWidth multiline minRows={2} value={form.notes} onChange={e => handleChange('notes', e.target.value)} />
+          <TextField
+            label="Notes"
+            fullWidth
+            multiline
+            minRows={2}
+            value={form.notes}
+            onChange={(e) => handleChange('notes', e.target.value)}
+          />
         </Grid>
         <Grid item xs={12}>
-          <Button variant="contained" color="primary" onClick={handleSave}>Save Background Check</Button>
+          <Button variant="contained" color="primary" onClick={handleSave}>
+            Save Background Check
+          </Button>
         </Grid>
       </Grid>
     </Box>
   );
 };
 
-export default BackgroundCheckTab; 
+export default BackgroundCheckTab;

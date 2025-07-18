@@ -4,11 +4,12 @@ import { canAccessModule } from '../utils/canAccessModule';
 import { Box, Typography, Alert } from '@mui/material';
 
 const Dashboard: React.FC = () => {
+  console.log('Dashboard component rendering');
   const { modules } = useAuth();
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant="h3" gutterBottom>
         Welcome to the HRX Dashboard
       </Typography>
 

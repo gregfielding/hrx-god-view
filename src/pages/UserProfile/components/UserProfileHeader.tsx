@@ -65,7 +65,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
             {!avatarUrl && initials}
           </Avatar>
-
           <input
             type="file"
             accept="image/*"
@@ -112,7 +111,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 
       {showBackButton && (
         <Button variant="outlined" onClick={onBack}>
-          &larr; Back
+          &larr; Back to Workforce
         </Button>
       )}
     </Box>
