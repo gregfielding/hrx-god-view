@@ -18,6 +18,63 @@ import {
   getSlackConfig, updateSlackConfig, testSlackConnection,
   getIntegrationLogs, manualSync, getIntegrationStatuses
 } from './integrations';
+import { getUsersByTenant } from './getUsersByTenant';
+import { fetchCompanyNews } from './fetchCompanyNews';
+import { discoverCompanyLocations } from './discoverCompanyLocations';
+import { discoverCompanyUrls } from './discoverCompanyUrls';
+import { getSalespeople } from './getSalespeople';
+import { scrapeIndeedJobs } from './scrapeIndeedJobs';
+import { getCompanyLocations } from './getCompanyLocations';
+import { linkContactsToCompanies } from './linkContactsToCompanies';
+import { linkCRMEntities } from './linkCRMEntities';
+import { triggerAINoteReview } from './triggerAINoteReview';
+import { findDecisionMakers } from './findDecisionMakers';
+import { enhanceCompanyWithSerp } from './enhanceCompanyWithSerp';
+import { enhanceContactWithAI } from './enhanceContactWithAI';
+import { fetchFollowedCompanyNews } from './fetchFollowedCompanyNews';
+import { removeDuplicateCompanies } from './removeDuplicateCompanies';
+import { removeContactsWithoutNames } from './removeContactsWithoutNames';
+import { removeDuplicateContacts } from './removeDuplicateContacts';
+import { removePhoneNumberContacts } from './removePhoneNumberContacts';
+import { migrateContactSchema } from './migrateContactSchema';
+import { findTenantIds } from './findTenantIds';
+import { extractCompanyInfoFromUrls } from './extractCompanyInfoFromUrls';
+import { manageAssociations } from './manageAssociations';
+import { fixContactAssociations } from './fixContactAssociations';
+import { findContactEmail } from './findContactEmail';
+import { findContactPhone } from './findContactPhone';
+
+// 🎯 TASK ENGINE IMPORTS
+import {
+  createTask,
+  updateTask,
+  completeTask,
+  deleteTask,
+  getTasks,
+  getTasksForDate,
+  getTaskDashboard,
+  getAITaskSuggestions,
+  acceptAITaskSuggestion,
+  rejectAITaskSuggestion,
+  getDealStageAISuggestions,
+  generateTaskContent
+} from './taskEngine';
+
+// Export task functions
+export {
+  createTask,
+  updateTask,
+  completeTask,
+  deleteTask,
+  getTasks,
+  getTasksForDate,
+  getTaskDashboard,
+  getAITaskSuggestions,
+  acceptAITaskSuggestion,
+  rejectAITaskSuggestion,
+  getDealStageAISuggestions,
+  generateTaskContent
+};
 
 // Get SendGrid API key from environment variables
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
@@ -38,6 +95,17 @@ const db = admin.firestore();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
+});
+
+export const logAIActionCallable = onCall(async (request) => {
+  try {
+    const logData = request.data;
+    await logAIAction(logData);
+    return { success: true, message: 'AI action logged successfully' };
+  } catch (error) {
+    console.error('Error in logAIAction Cloud Function:', error);
+    throw new HttpsError('internal', 'Failed to log AI action');
+  }
 });
 
 export const analyzeAITraining = onCall(async (request) => {
@@ -7530,7 +7598,7 @@ export const resendInviteV2 = onCall(async (request) => {
       name: templateData.tenant_sender_name
     },
     subject: `Reminder: You're invited to join ${templateData.tenant_name} on HRX!`,
-    templateId: 'd-your-sendgrid-template-id-here', // Replace with your actual SendGrid template ID
+    templateId: 'd-36383cd72987421fa5335e9ea7db10d9', // Replace with your actual SendGrid template ID
     dynamicTemplateData: templateData
   };
   
@@ -7611,6 +7679,72 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
   return { success: true, link };
 });
 
+// Revoke Invite - 2nd Gen
+export const revokeInviteV2 = onCall(async (request) => {
+  const { email } = request.data;
+  const start = Date.now();
+  
+  try {
+    if (!email) {
+      throw new Error('Email is required');
+    }
+
+    // Get user record by email
+    const userRecord = await auth.getUserByEmail(email);
+    
+    // Update user document to mark invite as revoked
+    const updateData = removeUndefined({
+      inviteStatus: 'revoked',
+      inviteRevokedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    
+    await db.collection('users').doc(userRecord.uid).update(updateData);
+
+    // Log the AI action for successful revocation
+    await logAIAction({
+      userId: request.auth?.uid || undefined,
+      actionType: 'invite_revoked',
+      sourceModule: 'RevokeInviteV2',
+      success: true,
+      latencyMs: Date.now() - start,
+      versionTag: 'v2',
+      reason: `Revoked invite for ${email}`,
+      eventType: 'invite.revoked',
+      targetType: 'user',
+      targetId: userRecord.uid,
+      aiRelevant: false,
+      contextType: 'onboarding',
+      traitsAffected: null,
+      aiTags: null,
+      urgencyScore: null
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    // Log the AI action for failed revocation
+    await logAIAction({
+      userId: request.auth?.uid || undefined,
+      actionType: 'invite_revoked',
+      sourceModule: 'RevokeInviteV2',
+      success: false,
+      errorMessage: error.message,
+      latencyMs: Date.now() - start,
+      versionTag: 'v2',
+      reason: `Failed to revoke invite for ${email}`,
+      eventType: 'invite.revoked',
+      targetType: 'user',
+      targetId: email,
+      aiRelevant: false,
+      contextType: 'onboarding',
+      traitsAffected: null,
+      aiTags: null,
+      urgencyScore: null
+    });
+    
+    throw error;
+  }
+});
+
 export const activateCampaignTemplate = onCall(async (request) => {
   const { templateCampaignId, tenantId, creatorUserId, createdBy } = request.data;
   if (!templateCampaignId || !tenantId || !creatorUserId || !createdBy) {
@@ -7689,6 +7823,8 @@ export {
   firestoreLogAILogCreated,
   firestoreLogAILogUpdated,
   firestoreLogAILogDeleted,
+  firestoreLogTaskCreated,
+  firestoreLogTaskUpdated,
   firestoreLogTenantContactCreated,
   firestoreLogTenantContactUpdated,
   firestoreLogTenantContactDeleted,
@@ -9392,12 +9528,26 @@ export const toggleHrxFlex = onCall({ maxInstances: 10 }, async (request) => {
       });
       
       // Find existing Flex workers and assign them to the division
-      const flexWorkersQuery = db.collection('users')
+      // Note: Firestore doesn't support OR queries, so we need to query separately
+      const flexWorkersBySecurityLevel = db.collection('users')
         .where('tenantId', '==', tenantId)
         .where('securityLevel', '==', 'Flex');
       
-      const flexWorkersSnap = await flexWorkersQuery.get();
-      flexWorkerIds = flexWorkersSnap.docs.map(doc => doc.id);
+      const flexWorkersByEmploymentType = db.collection('users')
+        .where('tenantId', '==', tenantId)
+        .where('employmentType', '==', 'Flex');
+      
+      const [securityLevelSnap, employmentTypeSnap] = await Promise.all([
+        flexWorkersBySecurityLevel.get(),
+        flexWorkersByEmploymentType.get()
+      ]);
+      
+      // Combine and deduplicate the results
+      const allFlexWorkers = new Set<string>();
+      securityLevelSnap.docs.forEach(doc => allFlexWorkers.add(doc.id));
+      employmentTypeSnap.docs.forEach(doc => allFlexWorkers.add(doc.id));
+      
+      flexWorkerIds = Array.from(allFlexWorkers);
       
       if (flexWorkerIds.length > 0) {
         // Add existing Flex workers to the division
@@ -9408,7 +9558,8 @@ export const toggleHrxFlex = onCall({ maxInstances: 10 }, async (request) => {
         
         // Update divisionId for existing Flex workers
         const batch = db.batch();
-        flexWorkersSnap.docs.forEach(doc => {
+        const allFlexWorkerDocs = [...securityLevelSnap.docs, ...employmentTypeSnap.docs];
+        allFlexWorkerDocs.forEach((doc: any) => {
           batch.update(doc.ref, {
             divisionId: 'auto_flex',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -10019,6 +10170,75 @@ export {
   getHRISConfig, updateHRISConfig, syncHRISData,
   getSlackConfig, updateSlackConfig, testSlackConnection,
   getIntegrationLogs, manualSync, getIntegrationStatuses,
-  fixWorkerTenantIds
+  fixWorkerTenantIds,
+  getUsersByTenant
 };
+
+// Gmail Integration Functions
+export { 
+  getGmailConfig, 
+  updateGmailConfig, 
+  authenticateGmail, 
+  gmailOAuthCallback, 
+  syncGmailEmails, 
+  sendGmailEmail, 
+  scheduledGmailSync 
+} from './gmailIntegration';
+
+// Gmail-Tasks Integration Functions
+export {
+  syncGmailAndCreateTasks,
+  syncGmailCalendarAsTasks,
+  sendEmailTaskViaGmail
+} from './gmailTasksIntegration';
+
+// News Functions
+export { fetchCompanyNews };
+
+// Location Functions
+export { discoverCompanyLocations };
+
+// URL Discovery Functions
+export { discoverCompanyUrls };
+
+// User Management Functions
+export { getSalespeople };
+export { getSalespeopleForTenant } from './getSalespeopleForTenant';
+export { fixPendingUser } from './fixPendingUser';
+
+// Job Scraping Functions
+export { scrapeIndeedJobs };
+
+// Company Data Functions
+export { getCompanyLocations };
+
+// Location Association Functions
+export { getLocationAssociations } from './getLocationAssociations';
+export { updateLocationAssociation } from './updateLocationAssociation';
+
+// CRM Data Management Functions
+export { linkContactsToCompanies, linkCRMEntities, triggerAINoteReview };
+
+// Decision Maker Search Functions
+export { findDecisionMakers };
+
+// Company Enhancement Functions
+export { enhanceCompanyWithSerp };
+export { enhanceContactWithAI };
+
+// News Feed Functions
+export { fetchFollowedCompanyNews };
+
+// Company Management Functions
+export { removeDuplicateCompanies, findTenantIds };
+
+// Contact Management Functions
+export { removeContactsWithoutNames, removeDuplicateContacts, removePhoneNumberContacts, migrateContactSchema };
+
+// Company Info Extraction Functions
+export { extractCompanyInfoFromUrls };
+
+// Association Management Functions
+export { manageAssociations };
+export { fixContactAssociations, findContactEmail, findContactPhone };
 

@@ -32,6 +32,7 @@ import {
 import { collection, addDoc, getDocs, query, where, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../contexts/AuthContext';
 import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 
 // Department type options
@@ -164,6 +165,17 @@ interface DepartmentsTabProps {
 }
 
 const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
+  const { activeTenant } = useAuth();
+  
+  // Use activeTenant.id if available, otherwise fall back to prop
+  const effectiveTenantId = activeTenant?.id || tenantId;
+  
+  // Debug logging
+  console.log('DepartmentsTab Debug Info:', {
+    propTenantId: tenantId,
+    activeTenantId: activeTenant?.id,
+    effectiveTenantId
+  });
   const [form, setForm] = useState({
     name: '',
     description: '',
@@ -228,17 +240,19 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
   }, [departments, order, orderBy]);
 
   useEffect(() => {
-    fetchDepartments();
-    fetchDivisions();
-    fetchLocations();
-    fetchWorkforce();
+    if (effectiveTenantId) {
+      fetchDepartments();
+      fetchDivisions();
+      fetchLocations();
+      fetchWorkforce();
+    }
     // eslint-disable-next-line
-  }, [tenantId]);
+  }, [effectiveTenantId]);
 
   const fetchDepartments = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, 'tenants', tenantId, 'departments'));
+      const q = query(collection(db, 'tenants', effectiveTenantId, 'departments'));
       const snapshot = await getDocs(q);
       setDepartments(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
@@ -249,7 +263,7 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
 
   const fetchDivisions = async () => {
     try {
-      const q = query(collection(db, 'tenants', tenantId, 'divisions'));
+      const q = query(collection(db, 'tenants', effectiveTenantId, 'divisions'));
       const snapshot = await getDocs(q);
       setDivisions(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
@@ -259,7 +273,7 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
 
   const fetchLocations = async () => {
     try {
-      const q = query(collection(db, 'tenants', tenantId, 'locations'));
+      const q = query(collection(db, 'tenants', effectiveTenantId, 'locations'));
       const snapshot = await getDocs(q);
       setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
@@ -269,11 +283,18 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
 
   const fetchWorkforce = async () => {
     try {
-      const q = query(collection(db, 'tenants', tenantId, 'workforce'));
+      if (!effectiveTenantId) {
+        console.error('No effective tenant ID available for workforce fetch');
+        return;
+      }
+      
+      console.log('Fetching workforce for tenant:', effectiveTenantId);
+      const q = query(collection(db, 'tenants', effectiveTenantId, 'workforce'));
       const snapshot = await getDocs(q);
       setWorkforce(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
       console.error('Failed to fetch workforce:', err);
+      // Don't show error to user for workforce fetch as it's not critical
     }
   };
 
@@ -290,7 +311,7 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
     setLoading(true);
     setError('');
     try {
-      await addDoc(collection(db, 'tenants', tenantId, 'departments'), {
+      await addDoc(collection(db, 'tenants', effectiveTenantId, 'departments'), {
         ...form,
         createdAt: serverTimestamp(),
       });
@@ -339,7 +360,7 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
     setLoading(true);
     setError('');
     try {
-      await updateDoc(doc(db, 'tenants', tenantId, 'departments', departmentId), {
+      await updateDoc(doc(db, 'tenants', effectiveTenantId, 'departments', departmentId), {
         ...editForm,
         updatedAt: serverTimestamp(),
       });
@@ -437,11 +458,11 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
     try {
       if (deleteTarget === 'selected') {
         await Promise.all(
-          selectedRows.map(id => deleteDoc(doc(db, 'tenants', tenantId, 'departments', id)))
+          selectedRows.map(id => deleteDoc(doc(db, 'tenants', effectiveTenantId, 'departments', id)))
         );
         setSelectedRows([]);
       } else if (deleteTarget) {
-        await deleteDoc(doc(db, 'tenants', tenantId, 'departments', deleteTarget));
+        await deleteDoc(doc(db, 'tenants', effectiveTenantId, 'departments', deleteTarget));
       }
       fetchDepartments();
       setDeleteDialogOpen(false);
@@ -786,7 +807,7 @@ const DepartmentsTab: React.FC<DepartmentsTabProps> = ({ tenantId }) => {
                 key={dept.id}
                 hover
                 style={{ cursor: editingId === dept.id ? 'default' : 'pointer' }}
-                onClick={() => editingId !== dept.id && navigate(`/tenants/${tenantId}/departments/${dept.id}`)}
+                onClick={() => editingId !== dept.id && navigate(`/tenants/${effectiveTenantId}/departments/${dept.id}`)}
               >
                 <TableCell padding="checkbox">
                   <Checkbox

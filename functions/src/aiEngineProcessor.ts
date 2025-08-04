@@ -94,50 +94,97 @@ function determineEnginesToProcess(logData: any): string[] {
     if (logData.eventType.startsWith('campaign.')) {
       engines.push('CampaignsEngine');
     }
+    if (logData.eventType.startsWith('deal.') || logData.eventType.includes('deal')) {
+      engines.push('CRMEngine');
+    }
     if (logData.eventType.startsWith('tone.') || logData.eventType.includes('tone')) {
       engines.push('ToneEngine');
     }
-    if (logData.eventType.startsWith('traits.') || logData.traitsAffected) {
+    if (logData.eventType.startsWith('traits.') || logData.eventType.includes('traits')) {
       engines.push('TraitsEngine');
     }
-    if (logData.eventType.startsWith('weights.') || logData.weightsApplied) {
+    if (logData.eventType.startsWith('weights.') || logData.eventType.includes('weights')) {
       engines.push('WeightsEngine');
     }
-    if (logData.eventType.startsWith('vector.')) {
+    if (logData.eventType.startsWith('vector.') || logData.eventType.includes('vector')) {
       engines.push('VectorEngine');
+    }
+    if (logData.eventType.startsWith('priority.') || logData.eventType.includes('priority')) {
+      engines.push('PriorityEngine');
+    }
+    // Add Tasks AI Engine routing
+    if (logData.eventType.startsWith('task.') || 
+        logData.eventType.includes('task') || 
+        logData.eventType.startsWith('deal.stage_') ||
+        logData.eventType.startsWith('contact.interaction') ||
+        logData.eventType.startsWith('company.updated')) {
+      engines.push('TasksAIEngine');
+    }
+    
+    // Add Task Content AI Engine routing
+    if (logData.eventType.startsWith('task.content_') ||
+        logData.eventType.includes('content_generation') ||
+        logData.eventType.startsWith('task.created') ||
+        logData.eventType.startsWith('task.updated')) {
+      engines.push('TaskContentAIEngine');
+    }
+    
+    // Add Deal Stage AI Engine routing
+    if (logData.eventType.startsWith('deal.stage_') ||
+        logData.eventType.startsWith('deal.form_') ||
+        logData.eventType.startsWith('deal.field_') ||
+        logData.eventType.includes('deal_stage') ||
+        logData.eventType.includes('stage_form')) {
+      engines.push('DealStageAIEngine');
+    }
+  }
+
+  // Route based on targetType
+  if (logData.targetType) {
+    if (logData.targetType === 'task' || 
+        logData.targetType === 'deal' || 
+        logData.targetType === 'contact' || 
+        logData.targetType === 'company') {
+      engines.push('TasksAIEngine');
+    }
+    
+    if (logData.targetType === 'deal' || 
+        logData.targetType === 'deal_stage' || 
+        logData.targetType === 'stage_form') {
+      engines.push('DealStageAIEngine');
     }
   }
 
   // Route based on contextType
   if (logData.contextType) {
-    switch (logData.contextType) {
-      case 'feedback':
-        if (!engines.includes('FeedbackEngine')) engines.push('FeedbackEngine');
-        break;
-      case 'moment':
-        if (!engines.includes('MomentsEngine')) engines.push('MomentsEngine');
-        break;
-      case 'campaigns':
-        if (!engines.includes('CampaignsEngine')) engines.push('CampaignsEngine');
-        break;
-      case 'tone':
-        if (!engines.includes('ToneEngine')) engines.push('ToneEngine');
-        break;
-      case 'traits':
-        if (!engines.includes('TraitsEngine')) engines.push('TraitsEngine');
-        break;
-      case 'weights':
-        if (!engines.includes('WeightsEngine')) engines.push('WeightsEngine');
-        break;
-      case 'vector':
-        if (!engines.includes('VectorEngine')) engines.push('VectorEngine');
-        break;
+    if (logData.contextType === 'tasks' || 
+        logData.contextType === 'deals' || 
+        logData.contextType === 'contacts' || 
+        logData.contextType === 'companies') {
+      engines.push('TasksAIEngine');
+    }
+    
+    if (logData.contextType === 'deal_stages' || 
+        logData.contextType === 'stage_forms' || 
+        logData.contextType === 'deals') {
+      engines.push('DealStageAIEngine');
     }
   }
 
-  // Route based on urgency score
-  if (logData.urgencyScore && logData.urgencyScore > 7) {
-    engines.push('PriorityEngine');
+  // Route based on aiTags
+  if (logData.aiTags && Array.isArray(logData.aiTags)) {
+    if (logData.aiTags.includes('task') || 
+        logData.aiTags.includes('deal') || 
+        logData.aiTags.includes('contact') || 
+        logData.aiTags.includes('company')) {
+      engines.push('TasksAIEngine');
+    }
+    
+    if (logData.aiTags.includes('deal_stages') || 
+        logData.aiTags.includes('stage_forms') || 
+        logData.aiTags.includes('deal')) {
+      engines.push('DealStageAIEngine');
+    }
   }
 
   // Remove duplicates
@@ -175,6 +222,18 @@ async function processWithEngine(engine: string, logData: any, logId: string): P
     
     case 'PriorityEngine':
       return await processWithPriorityEngine(logData, logId);
+    
+    case 'CRMEngine':
+      return await processWithCRMEngine(logData, logId);
+    
+    case 'TasksAIEngine':
+      return await processWithTasksAIEngine(logData, logId);
+    
+    case 'TaskContentAIEngine':
+      return await processWithTaskContentAIEngine(logData, logId);
+    
+    case 'DealStageAIEngine':
+      return await processWithDealStageAIEngine(logData, logId);
     
     default:
       throw new Error(`Unknown engine: ${engine}`);
@@ -360,6 +419,78 @@ async function processWithPriorityEngine(logData: any, logId: string): Promise<a
   });
 
   return priorityAnalysis;
+}
+
+// CRM Engine Processing
+async function processWithCRMEngine(logData: any, logId: string): Promise<any> {
+  // Import the CRMEngine processing function
+  const { processWithCRMEngine: crmProcess } = await import('./crmEngine');
+  
+  // Process with CRM engine
+  const crmAnalysis = await crmProcess(logData, logId);
+
+  // Store CRM analysis
+  await db.collection('crm_analysis').add({
+    logId: logId,
+    analysis: crmAnalysis,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return crmAnalysis;
+}
+
+// Tasks AI Engine Processing
+async function processWithTasksAIEngine(logData: any, logId: string): Promise<any> {
+  // Import the TasksAIEngine processing function
+  const { processWithTasksAIEngine: tasksAIProcess } = await import('./taskAIEngine');
+  
+  // Process with Tasks AI engine
+  const tasksAIAnalysis = await tasksAIProcess(logData, logId);
+
+  // Store Tasks AI analysis
+  await db.collection('tasks_ai_analysis').add({
+    logId: logId,
+    analysis: tasksAIAnalysis,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return tasksAIAnalysis;
+}
+
+// Task Content AI Engine Processing
+async function processWithTaskContentAIEngine(logData: any, logId: string): Promise<any> {
+  // Import the TaskContentAIEngine processing function
+  const { processWithTaskContentAIEngine: taskContentAIProcess } = await import('./taskContentAIEngine');
+  
+  // Process with Task Content AI engine
+  const taskContentAIAnalysis = await taskContentAIProcess(logData, logId);
+
+  // Store Task Content AI analysis
+  await db.collection('task_content_ai_analysis').add({
+    logId: logId,
+    analysis: taskContentAIAnalysis,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return taskContentAIAnalysis;
+}
+
+// Deal Stage AI Engine Processing
+async function processWithDealStageAIEngine(logData: any, logId: string): Promise<any> {
+  // Import the DealStageAIEngine processing function
+  const { processWithDealStageAIEngine: dealStageAIProcess } = await import('./dealStageAIEngine');
+  
+  // Process with Deal Stage AI engine
+  const dealStageAIAnalysis = await dealStageAIProcess(logData, logId);
+
+  // Store Deal Stage AI analysis
+  await db.collection('deal_stage_ai_analysis').add({
+    logId: logId,
+    analysis: dealStageAIAnalysis,
+    timestamp: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return dealStageAIAnalysis;
 }
 
 // Helper functions for analysis

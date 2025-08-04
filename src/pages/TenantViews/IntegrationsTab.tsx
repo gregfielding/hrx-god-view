@@ -59,7 +59,13 @@ import {
   Key as KeyIcon,
   Group as GroupIcon,
   Person as PersonIcon,
-  Business as BusinessIcon
+  Business as BusinessIcon,
+  Email as EmailIcon,
+  Mail as MailIcon,
+  Send as SendIcon,
+  Drafts as DraftsIcon,
+  Archive as ArchiveIcon,
+  Label as LabelIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -145,9 +151,25 @@ interface SlackConfig {
   };
 }
 
+
+
 const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
-  const { user } = useAuth();
+  const { user, activeTenant, role, securityLevel } = useAuth();
   const functions = getFunctions();
+  
+  // Use activeTenant.id if available, otherwise fall back to prop
+  const effectiveTenantId = activeTenant?.id || tenantId;
+  
+  // Debug logging
+  console.log('IntegrationsTab Debug Info:', {
+    propTenantId: tenantId,
+    activeTenantId: activeTenant?.id,
+    effectiveTenantId,
+    user: user?.uid,
+    activeTenant,
+    userRole: role,
+    userSecurityLevel: securityLevel
+  });
   
   // State for configurations
   const [ssoConfig, setSsoConfig] = useState<SSOConfig | null>(null);
@@ -203,27 +225,46 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
   const getSlackConfigFn = httpsCallable(functions, 'getSlackConfig');
   const updateSlackConfigFn = httpsCallable(functions, 'updateSlackConfig');
   const testSlackConnectionFn = httpsCallable(functions, 'testSlackConnection');
+
+
   const getIntegrationLogsFn = httpsCallable(functions, 'getIntegrationLogs');
   const manualSyncFn = httpsCallable(functions, 'manualSync');
   const getIntegrationStatusesFn = httpsCallable(functions, 'getIntegrationStatuses');
 
   // Load configurations on mount
   useEffect(() => {
-    if (tenantId) {
+    if (effectiveTenantId && user) {
       loadAllConfigurations();
       loadIntegrationLogs();
     }
-  }, [tenantId]);
+  }, [effectiveTenantId, user]);
 
   const loadAllConfigurations = async () => {
     setLoading(true);
     setError(null); // Clear any previous errors
+    
+    if (!effectiveTenantId) {
+      console.error('No effective tenant ID available');
+      setError('No tenant ID available. Please ensure you have access to a tenant.');
+      setLoading(false);
+      return;
+    }
+    
+    if (!user) {
+      console.error('No authenticated user available');
+      setError('User not authenticated. Please log in again.');
+      setLoading(false);
+      return;
+    }
+    
+    console.log('Loading configurations for tenant:', effectiveTenantId);
+    
     try {
       const [ssoResult, scimResult, hrisResult, slackResult] = await Promise.all([
-        getSSOConfigFn({ tenantId }),
-        getSCIMConfigFn({ tenantId }),
-        getHRISConfigFn({ tenantId }),
-        getSlackConfigFn({ tenantId })
+        getSSOConfigFn({ tenantId: effectiveTenantId }),
+        getSCIMConfigFn({ tenantId: effectiveTenantId }),
+        getHRISConfigFn({ tenantId: effectiveTenantId }),
+        getSlackConfigFn({ tenantId: effectiveTenantId })
       ]);
 
       const ssoData = (ssoResult.data as any).config;
@@ -250,9 +291,12 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
       });
     } catch (error: any) {
       console.error('Error loading configurations:', error);
-      // Don't show error for default configurations - this is expected behavior
-      if (error.message && !error.message.includes('Failed to get')) {
-        setError('Failed to load integration configurations');
+      
+      // Check for specific Firebase permission errors
+      if (error.code === 'permission-denied' || error.message?.includes('Access denied')) {
+        setError(`Access denied to tenant ${effectiveTenantId}. You need admin-level permissions to access integration settings. Please contact your system administrator.`);
+      } else if (error.message && !error.message.includes('Failed to get')) {
+        setError(`Failed to load integration configurations: ${error.message}`);
       }
     } finally {
       setLoading(false);
@@ -261,7 +305,7 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
 
   const loadIntegrationLogs = async () => {
     try {
-      const result = await getIntegrationLogsFn({ tenantId, limit: 20 });
+      const result = await getIntegrationLogsFn({ tenantId: effectiveTenantId, limit: 20 });
       setSyncLogs((result.data as any).logs || []);
     } catch (error: any) {
       console.error('Error loading integration logs:', error);
@@ -305,10 +349,10 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
       let result;
       switch (integrationType) {
         case 'sso':
-          result = await testSSOConnectionFn({ tenantId });
+          result = await testSSOConnectionFn({ tenantId: effectiveTenantId });
           break;
         case 'slack':
-          result = await testSlackConnectionFn({ tenantId });
+          result = await testSlackConnectionFn({ tenantId: effectiveTenantId });
           break;
         default:
           throw new Error('Unsupported integration type for testing');
@@ -336,13 +380,13 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
       let result;
       switch (integrationType) {
         case 'scim':
-          result = await syncSCIMUsersFn({ tenantId });
+          result = await syncSCIMUsersFn({ tenantId: effectiveTenantId });
           break;
         case 'hris':
-          result = await syncHRISDataFn({ tenantId });
+          result = await syncHRISDataFn({ tenantId: effectiveTenantId });
           break;
         default:
-          result = await manualSyncFn({ tenantId, integrationType });
+          result = await manualSyncFn({ tenantId: effectiveTenantId, integrationType });
       }
       
       const syncResult = result.data as any;
@@ -368,21 +412,22 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
       let result;
       switch (integrationType) {
         case 'sso':
-          result = await updateSSOConfigFn({ tenantId, config });
+          result = await updateSSOConfigFn({ tenantId: effectiveTenantId, config });
           setSsoConfig((result.data as any).config);
           break;
         case 'scim':
-          result = await updateSCIMConfigFn({ tenantId, config });
+          result = await updateSCIMConfigFn({ tenantId: effectiveTenantId, config });
           setScimConfig((result.data as any).config);
           break;
         case 'hris':
-          result = await updateHRISConfigFn({ tenantId, config });
+          result = await updateHRISConfigFn({ tenantId: effectiveTenantId, config });
           setHrisConfig((result.data as any).config);
           break;
         case 'slack':
-          result = await updateSlackConfigFn({ tenantId, config });
+          result = await updateSlackConfigFn({ tenantId: effectiveTenantId, config });
           setSlackConfig((result.data as any).config);
           break;
+
         default:
           throw new Error('Unsupported integration type');
       }
@@ -395,6 +440,8 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
       setLoading(false);
     }
   };
+
+
 
   return (
     <Box sx={{ p: 0 }}>
@@ -618,6 +665,8 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
             </CardActions>
           </Card>
         </Grid>
+
+
       </Grid>
 
       {/* Integration Configuration Sections */}
@@ -1059,6 +1108,8 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
         </AccordionDetails>
       </Accordion>
 
+
+
       {/* Sync Logs */}
       <Accordion expanded={expandedSection === 'logs'} onChange={handleSectionChange('logs')}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -1149,6 +1200,8 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
           <Button variant="contained">Connect Slack</Button>
         </DialogActions>
       </Dialog>
+
+
     </Box>
   );
 };

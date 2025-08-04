@@ -1400,6 +1400,75 @@ export const firestoreLogSettingDeleted = onDocumentDeleted('settings/{settingId
   }
 }); 
 
+// Firestore trigger: Log task creation
+export const firestoreLogTaskCreated = onDocumentCreated('tasks/{taskId}', async (event) => {
+  const taskData = event.data?.data();
+  const taskId = event.params.taskId;
+  if (!taskData) return;
+  
+  try {
+    await logAIAction({
+      userId: taskData.createdBy || 'system',
+      actionType: 'task_created',
+      sourceModule: 'FirestoreTrigger',
+      success: true,
+      eventType: 'deal.task_created',
+      targetType: 'task',
+      targetId: taskData.dealId || taskId,
+      aiRelevant: true,
+      contextType: 'crm',
+      traitsAffected: null,
+      aiTags: ['task', 'creation', 'deal'],
+      urgencyScore: taskData.priority === 'urgent' ? 8 : taskData.priority === 'high' ? 6 : 4,
+      reason: `Task created: ${taskData.title}`,
+      versionTag: 'v1',
+      latencyMs: 0
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('firestoreLogTaskCreated error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Firestore trigger: Log task updates
+export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async (event) => {
+  const beforeData = event.data?.before.data();
+  const afterData = event.data?.after.data();
+  const taskId = event.params.taskId;
+  
+  if (!beforeData || !afterData) return;
+  
+  try {
+    // Determine what changed
+    const changedFields = Object.keys(afterData).filter(key => 
+      JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
+    );
+    
+    await logAIAction({
+      userId: afterData.createdBy || 'system',
+      actionType: 'task_updated',
+      sourceModule: 'FirestoreTrigger',
+      success: true,
+      eventType: 'deal.task_updated',
+      targetType: 'task',
+      targetId: afterData.dealId || taskId,
+      aiRelevant: true,
+      contextType: 'crm',
+      traitsAffected: null,
+      aiTags: ['task', 'update', 'deal', ...changedFields],
+      urgencyScore: afterData.priority === 'urgent' ? 8 : afterData.priority === 'high' ? 6 : 4,
+      reason: `Task updated: ${changedFields.join(', ')}`,
+      versionTag: 'v1',
+      latencyMs: 0
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error('firestoreLogTaskUpdated error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 // Firestore trigger: Log AI log creation (meta-logging)
 export const firestoreLogAILogCreated = onDocumentCreated('ai_logs/{logId}', async (event) => {
   const logData = event.data?.data();
@@ -2514,8 +2583,8 @@ export const firestoreAutoAssignFlexWorker = onDocumentCreated('users/{userId}',
   if (!userData) return;
   
   try {
-    // Check if user has securityLevel "Flex"
-    if (userData.securityLevel === 'Flex' && userData.tenantId) {
+    // Check if user has securityLevel "Flex" or employmentType "Flex"
+    if ((userData.securityLevel === 'Flex' || userData.employmentType === 'Flex') && userData.tenantId) {
       try {
         // Check if tenant has hrxFlex enabled and Flex division exists
         const tenantDoc = await admin.firestore()
@@ -2597,9 +2666,9 @@ export const firestoreHandleFlexWorkerUpdate = onDocumentUpdated('users/{userId}
   if (!beforeData || !afterData) return;
   
   try {
-    // Check if securityLevel changed to or from "Flex"
-    const wasFlex = beforeData.securityLevel === 'Flex';
-    const isFlex = afterData.securityLevel === 'Flex';
+    // Check if securityLevel or employmentType changed to or from "Flex"
+    const wasFlex = beforeData.securityLevel === 'Flex' || beforeData.employmentType === 'Flex';
+    const isFlex = afterData.securityLevel === 'Flex' || afterData.employmentType === 'Flex';
     const tenantId = afterData.tenantId;
     
     if (wasFlex !== isFlex && tenantId) {

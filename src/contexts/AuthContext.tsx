@@ -104,6 +104,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const createDefaultUserDoc = async (user: User) => {
     const userRef = doc(db, 'users', user.uid);
     
+    // Check if user document already exists to prevent overwriting
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+      console.log('User document already exists, not creating default document');
+      return userSnap.data();
+    }
+    
     const defaultUserDoc = {
       uid: user.uid,
       email: user.email || '',
@@ -161,7 +168,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             setAvatarUrl(avatar);
             setOrgType(userOrgType === 'HRX' ? 'HRX' : 'Tenant');
-            setTenantId(userData.activeTenantId || undefined);
+            setTenantId(userData.activeTenantId || primaryTenantId || undefined);
             setTenantIds(userTenantIds);
             setTenantRoles(tenantRolesMap);
 
@@ -169,23 +176,32 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (userData.activeTenantId && tenantRolesMap[userData.activeTenantId]) {
               setRole(tenantRolesMap[userData.activeTenantId].role || 'Tenant');
               setSecurityLevel(tenantRolesMap[userData.activeTenantId].securityLevel || '5');
+            } else if (primaryTenantId && tenantRolesMap[primaryTenantId]) {
+              // Use the primary tenant's role/security level if no activeTenantId
+              setRole(tenantRolesMap[primaryTenantId].role || 'Tenant');
+              setSecurityLevel(tenantRolesMap[primaryTenantId].securityLevel || '5');
+            } else if (userData.role && userData.securityLevel) {
+              // Fallback to the user's direct role/security level
+              setRole(userData.role);
+              setSecurityLevel(userData.securityLevel);
             } else {
               setRole('Tenant');
               setSecurityLevel('5');
             }
 
             // Set activeTenant object for context
-            if (userData.activeTenantId && userTenantIds.includes(userData.activeTenantId)) {
+            const tenantIdToUse = userData.activeTenantId || primaryTenantId;
+            if (tenantIdToUse && userTenantIds.includes(tenantIdToUse)) {
               try {
-                const tenantRef = doc(db, 'tenants', userData.activeTenantId);
+                const tenantRef = doc(db, 'tenants', tenantIdToUse);
                 const tenantSnap = await getDoc(tenantRef);
                 if (tenantSnap.exists()) {
                   setActiveTenant({ id: tenantSnap.id, ...tenantSnap.data() });
                 } else {
-                  setActiveTenant({ id: userData.activeTenantId });
+                  setActiveTenant({ id: tenantIdToUse });
                 }
               } catch (err) {
-                setActiveTenant({ id: userData.activeTenantId });
+                setActiveTenant({ id: tenantIdToUse });
               }
             } else if (userTenantIds.length > 0) {
               try {

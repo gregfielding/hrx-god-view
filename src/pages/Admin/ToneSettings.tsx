@@ -184,10 +184,7 @@ const ToneSettings: React.FC = () => {
                       trigger="update"
                       destinationModules={['ToneEngine', 'ContextEngine']}
                       value={toneSettings[key]}
-                      onChange={(valueOrEvent: any, maybeValue?: any) => {
-                        const value = typeof valueOrEvent === 'number' ? valueOrEvent : maybeValue;
-                        handleToneChange(key, value);
-                      }}
+                      onChange={(value: number) => handleToneChange(key, value)}
                       min={0}
                       max={1}
                       step={0.01}

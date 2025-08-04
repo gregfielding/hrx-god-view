@@ -150,12 +150,15 @@ export const LoggableTextField: React.FC<{
   urgencyScore,
   description
 }) => {
+  // Ensure value is always defined to prevent controlled/uncontrolled input warning
+  const safeValue = value ?? '';
+  
   return (
     <LoggableField
       fieldPath={fieldPath}
       trigger={trigger}
       destinationModules={destinationModules}
-      value={value}
+      value={safeValue}
       onChange={onChange}
       required={required}
       disabled={disabled}
@@ -172,7 +175,7 @@ export const LoggableTextField: React.FC<{
         )}
         {multiline ? (
           <textarea
-            value={value}
+            value={safeValue}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
             rows={rows}
@@ -189,7 +192,7 @@ export const LoggableTextField: React.FC<{
         ) : (
           <input
             type="text"
-            value={value}
+            value={safeValue}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
             disabled={disabled}
@@ -238,12 +241,15 @@ export const LoggableSlider: React.FC<{
   urgencyScore,
   description
 }) => {
+  // Ensure value is always defined to prevent controlled/uncontrolled input warning
+  const safeValue = value ?? 0;
+  
   return (
     <LoggableField
       fieldPath={fieldPath}
       trigger={trigger}
       destinationModules={destinationModules}
-      value={value}
+      value={safeValue}
       onChange={onChange}
       required={required}
       disabled={disabled}
@@ -254,7 +260,7 @@ export const LoggableSlider: React.FC<{
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {label && (
           <label style={{ fontWeight: '500', fontSize: '0.9rem' }}>
-            {label}: {value}
+            {label}: {safeValue}
             {required && <span style={{ color: 'red' }}> *</span>}
           </label>
         )}
@@ -263,7 +269,7 @@ export const LoggableSlider: React.FC<{
           min={min}
           max={max}
           step={step}
-          value={value}
+          value={safeValue}
           onChange={(e) => onChange(Number(e.target.value))}
           disabled={disabled}
           required={required}
@@ -369,12 +375,15 @@ export const LoggableSelect: React.FC<{
   urgencyScore,
   description
 }) => {
+  // Ensure value is always defined to prevent controlled/uncontrolled input warning
+  const safeValue = value ?? '';
+  
   return (
     <LoggableField
       fieldPath={fieldPath}
       trigger={trigger}
       destinationModules={destinationModules}
-      value={value}
+      value={safeValue}
       onChange={onChange}
       required={required}
       disabled={disabled}
@@ -390,7 +399,7 @@ export const LoggableSelect: React.FC<{
           </label>
         )}
         <select
-          value={value}
+          value={safeValue}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           required={required}

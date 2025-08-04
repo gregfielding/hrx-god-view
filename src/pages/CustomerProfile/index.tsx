@@ -17,6 +17,58 @@ import LocationDetails from './LocationDetails';
 import CompanySettingsTab from './components/CompanySettingsTab';
 import { useAuth } from '../../contexts/AuthContext';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
+
+const NewsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
+  const [tenant, setTenant] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTenant = async () => {
+      try {
+        const tenantRef = doc(db, 'tenants', tenantId);
+        const tenantSnap = await getDoc(tenantRef);
+        if (tenantSnap.exists()) {
+          setTenant({ id: tenantSnap.id, ...tenantSnap.data() });
+        }
+      } catch (error) {
+        console.error('Error fetching tenant:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTenant();
+  }, [tenantId]);
+
+  if (loading) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Typography>Loading company information...</Typography>
+      </Box>
+    );
+  }
+
+  if (!tenant) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Typography>Company not found</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 3 }}>
+      <NewsEnrichmentPanel
+        companyName={tenant.name || ''}
+        companyId={tenant.id}
+        tenantId={tenantId}
+        headquartersCity={tenant.address?.city}
+        industry={tenant.industry}
+      />
+    </Box>
+  );
+};
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -105,6 +157,7 @@ const UserProfilePage = () => {
         {tenantId && <Tab label="Timesheets" />} */}
         {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && <Tab label="AI Settings" />}
         {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && <Tab label="Reports & Insights" />}
+        {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && <Tab label="News" />}
         
         
         {/* <Tab label="AI Training" />
@@ -127,6 +180,7 @@ const UserProfilePage = () => {
             {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && tabIndex === 3 && <ContactsTab tenantId={uid} />}
             {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && tabIndex === 4 && <WorkforceTab tenantId={uid} />}
             {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && tabIndex === 5 &&  <AISettingsTab tenantId={uid} />}
+            {(orgType !== 'Tenant' || accessRole.startsWith('hrx_')) && tabIndex === 6 && <NewsTab tenantId={uid} />}
             {/* {tabIndex === 9 && <AITrainingTab tenantId={uid} />} */}
             {/* Future tabs here */}
             {/* {tenantId && tabIndex === 5 && <div>Job Orders content here</div>}

@@ -21,6 +21,27 @@ export interface ActivityLogData {
 }
 
 /**
+ * Clean object to remove undefined values for Firestore
+ */
+const cleanObjectForFirestore = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj !== 'object') return obj;
+  
+  if (Array.isArray(obj)) {
+    return obj.map(cleanObjectForFirestore).filter(item => item !== null);
+  }
+  
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const cleanedValue = cleanObjectForFirestore(value);
+    if (cleanedValue !== null && cleanedValue !== undefined) {
+      cleaned[key] = cleanedValue;
+    }
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : null;
+};
+
+/**
  * Log a user activity to Firestore
  * @param activityData - The activity data to log
  * @returns Promise<void>
@@ -29,8 +50,11 @@ export const logUserActivity = async (activityData: ActivityLogData): Promise<vo
   try {
     const { userId, ...logData } = activityData;
     
+    // Clean the log data to remove any undefined values
+    const cleanedLogData = cleanObjectForFirestore(logData);
+    
     await addDoc(collection(db, 'users', userId, 'activityLogs'), {
-      ...logData,
+      ...cleanedLogData,
       timestamp: serverTimestamp(),
       createdAt: serverTimestamp(),
     });

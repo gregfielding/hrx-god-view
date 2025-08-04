@@ -8,6 +8,7 @@ import UserProfile from './pages/UserProfile';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
@@ -21,6 +22,12 @@ import TenantModules from './pages/TenantViews/TenantModules';
 import TenantAISettings from './pages/TenantViews/TenantAISettings';
 import TenantFlex from './pages/TenantViews/TenantFlex';
 import JobsBoard from './pages/TenantViews/JobsBoard';
+import TenantCRM from './pages/TenantViews/TenantCRM';
+import CompanyDetails from './pages/TenantViews/CompanyDetails';
+import ContactDetails from './pages/TenantViews/ContactDetails';
+import DealDetails from './pages/TenantViews/DealDetails';
+import TenantSalesperson from './pages/TenantViews/TenantSalesperson';
+import LocationDetails from './pages/TenantViews/LocationDetails';
 import TenantUsers from './pages/TenantViews/TenantUsers';
 import AddUserForm from './pages/AddUserForm';
 import Customers from './pages/Customers';
@@ -168,6 +175,36 @@ function App() {
             <JobsBoard />
           </ProtectedRoute>
         } />
+        <Route path="crm" element={
+          <ProtectedRoute requiredSecurityLevel="3">
+            <TenantCRM />
+          </ProtectedRoute>
+        } />
+        <Route path="crm/companies/:companyId" element={
+          <ProtectedRoute requiredSecurityLevel="3">
+            <CompanyDetails />
+          </ProtectedRoute>
+        } />
+        <Route path="crm/contacts/:contactId" element={
+          <ProtectedRoute requiredSecurityLevel="3">
+            <ContactDetails />
+          </ProtectedRoute>
+        } />
+        <Route path="tenant/salesperson/:salespersonId" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <TenantSalesperson />
+          </ProtectedRoute>
+        } />
+        <Route path="crm/deals/:dealId" element={
+          <ProtectedRoute requiredSecurityLevel="3">
+            <DealDetails />
+          </ProtectedRoute>
+        } />
+        <Route path="crm/companies/:companyId/locations/:locationId" element={
+          <ProtectedRoute requiredSecurityLevel="3">
+            <LocationDetails />
+          </ProtectedRoute>
+        } />
         <Route path="workforce" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <TenantWorkforce />
@@ -184,7 +221,7 @@ function App() {
           </ProtectedRoute>
         } />
         <Route path="locations" element={
-          <ProtectedRoute requiredSecurityLevel="4">
+          <ProtectedRoute requiredSecurityLevel="3">
             <TenantLocations />
           </ProtectedRoute>
         } />
@@ -546,15 +583,17 @@ function App() {
   return (
     <Router>
       <AuthProvider>
-        {googleMapsApiKey ? (
-          <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
-            {routes}
-          </LoadScript>
-        ) : (
-          <div>
-            {routes}
-          </div>
-        )}
+        <AssociationsCacheProvider>
+          {googleMapsApiKey ? (
+            <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
+              {routes}
+            </LoadScript>
+          ) : (
+            <div>
+              {routes}
+            </div>
+          )}
+        </AssociationsCacheProvider>
       </AuthProvider>
     </Router>
   );

@@ -44,7 +44,7 @@ const TenantSettings: React.FC = () => {
           <Tab label="Locations" />
           <Tab label="Org Chart" />
           <Tab label="Branding" />
-          <Tab label="Defaults" />
+          {/* <Tab label="Defaults" /> */}
         </Tabs>
       </Paper>
       {/* Tab Panels */}
@@ -83,7 +83,7 @@ const TenantSettings: React.FC = () => {
           <BrandingTab tenantId={tenantId} />
         </Box>
       )}
-      {tabValue === 7 && (
+      {/* {tabValue === 7 && (
         <Box sx={{ p: 0 }}>
           <Typography variant="h6">Defaults</Typography>
           <Typography variant="body2" color="text.secondary">(Coming soon: Set your default preferences here.)</Typography>
@@ -92,10 +92,9 @@ const TenantSettings: React.FC = () => {
       {tabValue === 7 && (
         <Box sx={{ p: 0 }}>
           <Typography variant="h6">Defaults</Typography>
-          <SettingsTab tenantId={tenantId} />
           <Typography variant="body2" color="text.secondary">(Coming soon: Set your default preferences here.)</Typography>
         </Box>
-      )}
+      )} */}
     </Box>
   );
 };

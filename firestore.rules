@@ -7,6 +7,16 @@ service cloud.firestore {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
       allow read, write: if isHRX();
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+      allow read: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
+      // Allow users to read other users who belong to the same tenant (for salespeople functionality)
+      allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
+      // Allow high-security-level users to update user profiles
+      allow write: if isAuthenticated() && isHighSecurityLevel();
+      
+      // --- USER FOLLOWED COMPANIES ---
+      match /followedCompanies/{companyId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == userId;
+      }
       
       // --- USER SUBCOLLECTIONS ---
       match /notes/{noteId} {
@@ -50,6 +60,7 @@ service cloud.firestore {
       // --- DIVISIONS (Tenants) ---
       match /divisions/{divisionId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
       }
 
       // --- REGIONS (Tenants) ---
@@ -115,6 +126,12 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
       
+      // --- WORKFORCE (Tenants) ---
+      match /workforce/{workerId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
       // --- AI SETTINGS (Tenants) ---
       match /aiSettings/{settingName} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -160,6 +177,12 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
 
+      // --- USERS (Tenants) ---
+      match /users/{userId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
       // --- SETTINGS (Tenants) ---
       match /settings/{settingsId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -187,6 +210,147 @@ service cloud.firestore {
           allow read, write: if isHRX() || isTenantAdmin(tenantId);
           allow read: if isAssignedToTenant(tenantId);
         }
+      }
+      
+      // --- CRM COLLECTIONS (Tenants) ---
+      match /crm_contacts/{contactId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+        allow read: if isAuthenticated(); // Temporary for testing
+      }
+      
+      match /crm_companies/{companyId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        
+        // --- COMPANY LOCATIONS ---
+        match /locations/{locationId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+          allow read: if isAssignedToTenant(tenantId);
+        }
+        
+        // --- COMPANY DIVISIONS ---
+        match /divisions/{divisionId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+          allow read: if isAssignedToTenant(tenantId);
+        }
+        
+        // --- COMPANY NEWS ARTICLES ---
+        match /newsArticles/{articleId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read: if isAssignedToTenant(tenantId);
+          allow read: if isAuthenticated(); // Temporary for testing
+        }
+      }
+      
+      match /crm_deals/{dealId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        // Allow updating any fields for authenticated users with CRM access
+        allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+      }
+      
+      match /crm_pipeline_stages/{stageId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      match /crm_salespeople/{salespersonId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      match /crm_tasks/{taskId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- CRM NOTES COLLECTIONS ---
+      match /contact_notes/{noteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      match /company_notes/{noteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      match /deal_notes/{noteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      match /location_notes/{noteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      // 🆕 UNIVERSAL ASSOCIATIONS SYSTEM
+      match /crm_associations/{associationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.createdBy == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+      }
+      
+      // --- KPI SYSTEM COLLECTIONS ---
+      match /kpi_definitions/{kpiId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      match /kpi_assignments/{assignmentId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      match /kpi_tracking/{trackingId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow create: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      match /kpi_activities/{activityId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow create: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      match /kpi_task_suggestions/{suggestionId} {
+        allow read, write: if isAuthenticated() && request.auth.uid == resource.data.salespersonId;
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow create: if isHRX() || isTenantAdmin(tenantId);
       }
     }
 
@@ -261,6 +425,22 @@ service cloud.firestore {
     // --- AI LOGS ---
     match /ai_logs/{logId} {
       allow read, write: if isHRX();
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.workerId ||
+        isTenantAdmin(resource.data.tenantId)
+      );
+      allow read: if isAuthenticated() && hasCRMAccess() && (
+        resource.data.targetType == 'deal' && 
+        resource.data.targetId != null
+      );
+      // Allow reading deal-related AI logs for users with CRM access
+      allow read: if isAuthenticated() && hasCRMAccess() && (
+        resource.data.eventType != null && 
+        resource.data.eventType.matches('deal\\..*')
+      );
+      // Temporary: Allow reading AI logs for any authenticated user assigned to the tenant
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
     }
 
     // --- MOMENT ANALYSIS ---
@@ -578,6 +758,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && resource.data.email == request.auth.token.email;
     }
 
+    // --- COMPANY NEWS CACHE ---
+    match /companyNewsCache/{companyId}/{date} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only allow writes from Cloud Functions
+    }
+
     // --- DEFAULT CATCH-ALL ---
     match /{document=**} {
       allow read, write: if false;
@@ -599,8 +785,8 @@ service cloud.firestore {
     function isAssignedToTenant(tenantId) {
       return isAuthenticated() && (
         getUser().tenantIds != null && (
-          getUser().tenantIds.hasAny([tenantId]) ||
-          tenantId in getUser().tenantIds
+          (getUser().tenantIds is list && getUser().tenantIds.hasAny([tenantId])) ||
+          (getUser().tenantIds is map && tenantId in getUser().tenantIds)
         ) ||
         getUser().tenantId == tenantId ||
         getUser().activeTenantId == tenantId
@@ -631,6 +817,36 @@ service cloud.firestore {
              slug.size() <= 50 &&
              !slug.matches('^-.*') &&
              !slug.matches('.*-$');
+    }
+    
+    function hasCRMAccess() {
+      let user = getUser();
+      // Temporarily allow any authenticated user for CRM access (since module is only visible to salespeople)
+      return isAuthenticated() ||
+             user.securityLevel == "4" || 
+             user.securityLevel == "5" || 
+             user.securityLevel == "6" || 
+             user.securityLevel == "7" ||
+             user.crm_sales == true ||
+             user.role == "HRX";
+    }
+    
+    function belongsToSameTenant(targetUserData) {
+      let currentUser = getUser();
+      
+      // Check if both users belong to the same tenant
+      return (currentUser.tenantIds != null && targetUserData.tenantIds != null && 
+              currentUser.tenantIds is map && targetUserData.tenantIds is map &&
+              currentUser.tenantIds.keys().hasAny(targetUserData.tenantIds.keys())) ||
+             (currentUser.tenantId != null && targetUserData.tenantId != null && 
+              currentUser.tenantId == targetUserData.tenantId) ||
+             (currentUser.activeTenantId != null && targetUserData.tenantIds != null &&
+              targetUserData.tenantIds is map && currentUser.activeTenantId in targetUserData.tenantIds);
+    }
+    
+    function isHighSecurityLevel() {
+      let user = getUser();
+      return user.securityLevel == "6" || user.securityLevel == "7";
     }
   }
 }

@@ -26,6 +26,7 @@ import {
   Snackbar,
   Tooltip,
   Grid,
+  CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -34,6 +35,7 @@ import {
   Delete as DeleteIcon,
   Visibility as VisibilityIcon,
   Business as BusinessIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -46,6 +48,8 @@ import {
   query,
   orderBy,
   where,
+  limit,
+  startAfter,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -84,6 +88,11 @@ const Customers: React.FC = () => {
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   
+  // Pagination state
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [pageSize] = useState(20);
+  
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -107,25 +116,146 @@ const Customers: React.FC = () => {
   const autocompleteRef = useRef<any>(null);
 
   useEffect(() => {
-    loadCustomers();
     loadCompanyLocations();
   }, [tenantId]);
 
-  const loadCustomers = async () => {
+  // Load customers with pagination and search
+  const loadCustomers = async (searchQuery = '', startDoc: any = null, append = false) => {
     if (!tenantId) return;
     
+    setLoading(true);
     try {
-      setLoading(true);
       const customersRef = collection(db, 'tenants', tenantId, 'customers');
-      const q = query(customersRef, orderBy('createdAt', 'desc'));
-      const snapshot = await getDocs(q);
-      const customersData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-      })) as Customer[];
-      setCustomers(customersData);
+      const constraints: any[] = [orderBy('createdAt', 'desc'), limit(pageSize)];
+
+      if (searchQuery.trim()) {
+        // For search queries, we need to use client-side filtering since Firestore doesn't support
+        // substring searches. We'll fetch a larger batch and filter client-side.
+        const searchLower = searchQuery.toLowerCase();
+        
+        // Fetch more documents for search to ensure we get good results
+        const searchLimit = Math.max(pageSize * 3, 50); // Fetch more for search
+        
+        // Get all customers and filter client-side for better substring matching
+        const q = query(
+          customersRef,
+          orderBy('createdAt', 'desc'),
+          limit(searchLimit)
+        );
+        
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const customersData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate() || new Date(),
+            updatedAt: doc.data().updatedAt?.toDate() || new Date(),
+          })) as Customer[];
+          
+          // Filter client-side for substring matching
+          const filteredData = customersData.filter((customer: Customer) => {
+            const name = customer.name?.toLowerCase() || '';
+            const industry = customer.industry?.toLowerCase() || '';
+            const city = customer.address?.city?.toLowerCase() || '';
+            const state = customer.address?.state?.toLowerCase() || '';
+            
+            return name.includes(searchLower) ||
+                   industry.includes(searchLower) ||
+                   city.includes(searchLower) ||
+                   state.includes(searchLower);
+          });
+          
+          // Apply additional filters
+          let finalFilteredData = filteredData;
+          
+          if (companyLocationFilter) {
+            finalFilteredData = finalFilteredData.filter(customer => 
+              customer.companyLocationId === companyLocationFilter
+            );
+          }
+          
+          if (statusFilter) {
+            const statusBool = statusFilter === 'active';
+            finalFilteredData = finalFilteredData.filter(customer => 
+              customer.status === statusBool
+            );
+          }
+          
+          // Sort by relevance (exact matches first, then prefix matches, then substring matches)
+          finalFilteredData.sort((a: Customer, b: Customer) => {
+            const aName = a.name?.toLowerCase() || '';
+            const bName = b.name?.toLowerCase() || '';
+            
+            // Exact match gets highest priority
+            if (aName === searchLower && bName !== searchLower) return -1;
+            if (bName === searchLower && aName !== searchLower) return 1;
+            
+            // Prefix match gets second priority
+            if (aName.startsWith(searchLower) && !bName.startsWith(searchLower)) return -1;
+            if (bName.startsWith(searchLower) && !aName.startsWith(searchLower)) return 1;
+            
+            // Then sort by creation date
+            const aDate = a.createdAt || new Date(0);
+            const bDate = b.createdAt || new Date(0);
+            return bDate.getTime() - aDate.getTime();
+          });
+          
+          const limitedData = finalFilteredData.slice(0, pageSize);
+          
+          setCustomers(prev => append ? [...prev, ...limitedData] : limitedData);
+          setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setHasMore(finalFilteredData.length > pageSize);
+        } else {
+          if (!append) {
+            setCustomers([]);
+          }
+          setHasMore(false);
+        }
+        
+      } else {
+        // No search query - use normal pagination with filters
+        if (startDoc) {
+          constraints.push(startAfter(startDoc));
+        }
+
+        const q = query(customersRef, ...constraints);
+        const snapshot = await getDocs(q);
+
+        if (!snapshot.empty) {
+          const customersData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate() || new Date(),
+            updatedAt: doc.data().updatedAt?.toDate() || new Date(),
+          })) as Customer[];
+          
+          // Apply filters
+          let filteredData = customersData;
+          
+          if (companyLocationFilter) {
+            filteredData = filteredData.filter(customer => 
+              customer.companyLocationId === companyLocationFilter
+            );
+          }
+          
+          if (statusFilter) {
+            const statusBool = statusFilter === 'active';
+            filteredData = filteredData.filter(customer => 
+              customer.status === statusBool
+            );
+          }
+          
+          setCustomers(prev => append ? [...prev, ...filteredData] : filteredData);
+          setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setHasMore(snapshot.size === pageSize);
+        } else {
+          if (!append) {
+            setCustomers([]);
+          }
+          setHasMore(false);
+        }
+      }
     } catch (error) {
       console.error('Error loading customers:', error);
       setErrorMessage('Failed to load customers');
@@ -133,6 +263,29 @@ const Customers: React.FC = () => {
       setLoading(false);
     }
   };
+
+  const loadMoreCustomers = () => {
+    if (hasMore && !loading) {
+      loadCustomers(searchTerm, lastDoc, true);
+    }
+  };
+
+  // Handle search changes
+  const handleSearchChange = (newSearch: string) => {
+    setSearchTerm(newSearch);
+    // Reset pagination when search changes
+    setLastDoc(null);
+    setHasMore(true);
+  };
+
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      loadCustomers(searchTerm);
+    }, 300);
+    
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, companyLocationFilter, statusFilter]);
 
   const loadCompanyLocations = async () => {
     if (!tenantId) return;
@@ -203,7 +356,7 @@ const Customers: React.FC = () => {
       });
       setDialogOpen(false);
       setSuccessMessage('Customer created successfully!');
-      loadCustomers();
+      loadCustomers(searchTerm);
     } catch (error) {
       console.error('Error creating customer:', error);
       setErrorMessage('Failed to create customer');
@@ -219,7 +372,7 @@ const Customers: React.FC = () => {
       setLoading(true);
       await deleteDoc(doc(db, 'tenants', tenantId, 'customers', customerId));
       setSuccessMessage('Customer removed successfully!');
-      loadCustomers();
+      loadCustomers(searchTerm);
     } catch (error) {
       console.error('Error removing customer:', error);
       setErrorMessage('Failed to remove customer');
@@ -236,62 +389,6 @@ const Customers: React.FC = () => {
       setSortOrder('asc');
     }
   };
-
-  const filteredAndSortedCustomers = customers
-    .filter(customer => {
-      // Search filter
-      const searchMatch = 
-        customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.industry.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.address.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.address.state.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      // Company location filter
-      const locationMatch = !companyLocationFilter || customer.companyLocationId === companyLocationFilter;
-      
-      // Status filter
-      const statusMatch = !statusFilter || 
-        (statusFilter === 'active' && customer.status === true) ||
-        (statusFilter === 'inactive' && customer.status === false);
-      
-      return searchMatch && locationMatch && statusMatch;
-    })
-    .sort((a, b) => {
-      let aValue: any;
-      let bValue: any;
-      
-      switch (sortBy) {
-        case 'name':
-          aValue = a.name;
-          bValue = b.name;
-          break;
-        case 'industry':
-          aValue = a.industry;
-          bValue = b.industry;
-          break;
-        case 'city':
-          aValue = a.address.city;
-          bValue = b.address.city;
-          break;
-        case 'companyLocation':
-          aValue = getLocationNickname(a.companyLocationId || '');
-          bValue = getLocationNickname(b.companyLocationId || '');
-          break;
-        case 'createdAt':
-          aValue = a.createdAt;
-          bValue = b.createdAt;
-          break;
-        default:
-          aValue = a.name;
-          bValue = b.name;
-      }
-      
-      if (sortOrder === 'asc') {
-        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
-      } else {
-        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
-      }
-    });
 
   const getLocationNickname = (locationId: string) => {
     const location = companyLocations.find(loc => loc.id === locationId);
@@ -331,11 +428,20 @@ const Customers: React.FC = () => {
           <TextField
             placeholder="Search customers..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             size="small"
             sx={{ minWidth: 300 }}
             InputProps={{
               startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+              endAdornment: searchTerm && (
+                <IconButton
+                  size="small"
+                  onClick={() => handleSearchChange('')}
+                  sx={{ mr: 1 }}
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              ),
             }}
           />
           <FormControl size="small" sx={{ minWidth: 220 }}>
@@ -448,7 +554,7 @@ const Customers: React.FC = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredAndSortedCustomers.map((customer) => (
+            {customers.map((customer) => (
               <TableRow key={customer.id}>
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -531,6 +637,35 @@ const Customers: React.FC = () => {
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Pagination Controls */}
+      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, gap: 2 }}>
+        {loading && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CircularProgress size={20} />
+            <Typography variant="body2">Loading customers...</Typography>
+          </Box>
+        )}
+        {hasMore && !loading && (
+          <Button
+            variant="outlined"
+            onClick={loadMoreCustomers}
+            disabled={loading}
+          >
+            Load More Customers
+          </Button>
+        )}
+        {!hasMore && customers.length > 0 && (
+          <Typography variant="body2" color="text.secondary">
+            All customers loaded ({customers.length} total)
+          </Typography>
+        )}
+        {!hasMore && customers.length === 0 && !loading && (
+          <Typography variant="body2" color="text.secondary">
+            No customers found
+          </Typography>
+        )}
+      </Box>
 
       {/* Create Customer Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>

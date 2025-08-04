@@ -218,23 +218,35 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiCard: {
         styleOverrides: {
           root: {
-            borderRadius: '16px',
-            boxShadow: mode === 'light' ? '0 2px 8px rgba(0, 0, 0, 0.1)' : 'none',
-            border: `1px solid ${colors.border}`,
-            backgroundColor: colors.surface,
+            borderRadius: '0',
+            boxShadow: 'none',
+            border: 'none',
+            backgroundColor: 'transparent',
           },
         },
       },
-      MuiCardContent: {
-        styleOverrides: {
-          root: {
-            padding: '24px',
-            '&:last-child': {
-              paddingBottom: '24px',
-            },
-          },
-        },
-      },
+                    MuiCardContent: {
+                styleOverrides: {
+                  root: {
+                    padding: '0px 4px',
+                    '&:last-child': {
+                      paddingBottom: '0px 4px',
+                    },
+                    '&:first-of-type': {
+                      padding: '0px 4px',
+                    },
+                  },
+                },
+              },
+              MuiCardHeader: {
+                styleOverrides: {
+                  root: {
+                    padding: '0px',
+                    marginBottom: '16px',
+                    marginTop: '16px',
+                  },
+                },
+              },
       
       // Avatar Overrides
       MuiAvatar: {

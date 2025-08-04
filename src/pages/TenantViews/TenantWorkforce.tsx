@@ -57,8 +57,11 @@ function formatPhoneNumber(value: string) {
 }
 
 const TenantWorkforce: React.FC = () => {
-  const { tenantId } = useAuth();
+  const { tenantId, activeTenant } = useAuth();
   const navigate = useNavigate();
+  
+  // Use activeTenant.id if available, otherwise fall back to prop
+  const effectiveTenantId = activeTenant?.id || tenantId;
   
   const [form, setForm] = useState({
     // Basic Identity
@@ -123,20 +126,33 @@ const TenantWorkforce: React.FC = () => {
   const [pendingInvitesOrderBy, setPendingInvitesOrderBy] = useState<'name' | 'email' | 'department' | 'role' | 'inviteSentAt'>('inviteSentAt');
   const [pendingInvitesOrder, setPendingInvitesOrder] = useState<'asc' | 'desc'>('desc');
   const [flexModuleEnabled, setFlexModuleEnabled] = useState(false);
+  const [staffingModuleEnabled, setStaffingModuleEnabled] = useState(false);
 
   // Fetch pending invites
   const fetchPendingInvites = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     setLoading(true);
     try {
-      const q = query(
-        collection(db, 'users'),
-        where('tenantId', '==', tenantId),
-        where('inviteStatus', '==', 'pending')
-      );
-      const snapshot = await getDocs(q);
-      setPendingInvites(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      console.log('🔍 Fetching pending invites for tenant:', effectiveTenantId);
+      
+      // Use the same Cloud Function approach as fetchContacts
+      const functions = getFunctions();
+      const getUsersByTenantFn = httpsCallable(functions, 'getUsersByTenant');
+      
+      const result = await getUsersByTenantFn({ tenantId: effectiveTenantId });
+      const data = result.data as { users: any[], count: number };
+      
+      console.log('✅ Cloud Function returned users:', data.count);
+      
+      // Filter for users with inviteStatus: 'pending'
+      const pendingUsers = data.users.filter((user: any) => user.inviteStatus === 'pending');
+      
+      console.log('📋 Pending invites found:', pendingUsers.length);
+      console.log('📋 Pending users:', pendingUsers.map(u => ({ email: u.email, inviteStatus: u.inviteStatus })));
+      
+      setPendingInvites(pendingUsers);
     } catch (err: any) {
+      console.error('❌ Error fetching pending invites:', err);
       setError(err.message || 'Failed to fetch pending invites');
     }
     setLoading(false);
@@ -144,13 +160,18 @@ const TenantWorkforce: React.FC = () => {
 
   // Real-time listener for flex module status
   useEffect(() => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) {
+      setFlexModuleEnabled(false);
+      return;
+    }
 
-    const flexModuleRef = doc(db, 'tenants', tenantId, 'modules', 'hrx-flex');
+    console.log('Setting up flex module listener for tenant:', effectiveTenantId);
+    const flexModuleRef = doc(db, 'tenants', effectiveTenantId, 'modules', 'hrx-flex');
     const unsubscribe = onSnapshot(flexModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
         console.log('Flex module status changed:', isEnabled);
+        console.log('Flex module data:', doc.data());
         setFlexModuleEnabled(isEnabled);
       } else {
         console.log('Flex module document does not exist, defaulting to disabled');
@@ -161,153 +182,174 @@ const TenantWorkforce: React.FC = () => {
       setFlexModuleEnabled(false);
     });
 
-    return () => unsubscribe();
-  }, [tenantId]);
+    return () => {
+      console.log('Cleaning up flex module listener for tenant:', effectiveTenantId);
+      unsubscribe();
+    };
+  }, [effectiveTenantId]);
+
+  // Real-time listener for staffing module status
+  useEffect(() => {
+    if (!effectiveTenantId) {
+      setStaffingModuleEnabled(false);
+      return;
+    }
+
+    console.log('Setting up staffing module listener for tenant:', effectiveTenantId);
+    const staffingModuleRef = doc(db, 'tenants', effectiveTenantId, 'modules', 'hrx-staffing');
+    const unsubscribe = onSnapshot(staffingModuleRef, (doc) => {
+      if (doc.exists()) {
+        const isEnabled = doc.data()?.isEnabled || false;
+        console.log('Staffing module status changed:', isEnabled);
+        setStaffingModuleEnabled(isEnabled);
+      } else {
+        console.log('Staffing module document does not exist, defaulting to disabled');
+        setStaffingModuleEnabled(false);
+      }
+    }, (error) => {
+      console.error('Error listening to staffing module status:', error);
+      setStaffingModuleEnabled(false);
+    });
+
+    return () => {
+      console.log('Cleaning up staffing module listener for tenant:', effectiveTenantId);
+      unsubscribe();
+    };
+  }, [effectiveTenantId]);
 
   useEffect(() => {
-    if (tenantId) {
-      setIsStaffingCompany(checkIfStaffingCompany(tenantId));
-      fetchDepartments();
-      fetchDivisions();
-      fetchLocations().then(fetchContacts);
-      fetchUserGroups();
-      fetchManagers();
-      fetchPendingInvites();
+    if (effectiveTenantId) {
+      console.log('Effective tenant ID changed, fetching data for:', effectiveTenantId);
+      setIsStaffingCompany(checkIfStaffingCompany(effectiveTenantId));
+      
+      // Add a small delay to prevent rapid changes
+      const timeoutId = setTimeout(() => {
+        fetchDepartments();
+        fetchDivisions();
+        fetchLocations().then(fetchContacts);
+        fetchUserGroups();
+        fetchManagers();
+        fetchPendingInvites();
+      }, 100);
+      
+      return () => clearTimeout(timeoutId);
     }
     // eslint-disable-next-line
-  }, [tenantId]);
+  }, [effectiveTenantId]);
 
   const fetchContacts = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     setLoading(true);
     try {
-      console.log('Fetching contacts for tenantId:', tenantId);
+      console.log('=== FETCH CONTACTS START ===');
+      console.log('Fetching contacts for effectiveTenantId:', effectiveTenantId);
+      console.log('Current tenantId from useAuth():', tenantId);
+      console.log('Active tenant ID:', activeTenant?.id);
+      console.log('Effective tenant ID:', effectiveTenantId);
+      console.log('Expected Maria tenantId: BCiP2bQ9CgVOCTfV6MhD');
+      console.log('Do they match?', effectiveTenantId === 'BCiP2bQ9CgVOCTfV6MhD');
       
-      // First, let's see ALL users to understand whats in the database
-      console.log('=== DEBUGGING: Checking ALL users first ===');
-      const allUsersQuery = query(collection(db, 'users'));
-      const allUsersSnapshot = await getDocs(allUsersQuery);
-      console.log('ALL users in database:', allUsersSnapshot.docs.length);
-      console.log('Sample users:', allUsersSnapshot.docs.slice(0,3).map(doc => ({
-        id: doc.id,
-        firstName: doc.data().firstName,
-        lastName: doc.data().lastName,
-        role: doc.data().role,
-        inviteStatus: doc.data().inviteStatus,
-        email: doc.data().email
-      })));
+      // Use the new Cloud Function to get users by tenant
+      console.log('🔍 Calling getUsersByTenant Cloud Function...');
+      const functions = getFunctions();
+      const getUsersByTenantFn = httpsCallable(functions, 'getUsersByTenant');
       
-      // Now try the original query
-      console.log('=== DEBUGGING: Original query ===');
-      const q = query(
-        collection(db, 'users'),
-        where('role', '==', 'Tenant')
-        // Removed inviteStatus filter since users have undefined, not null
-      );
-      console.log('Firestore query:', q);
+      const result = await getUsersByTenantFn({ tenantId: effectiveTenantId });
+      const data = result.data as { users: any[], count: number };
       
-      const snapshot = await getDocs(q);
-      console.log('Firestore query result - total docs:', snapshot.docs.length);
+      console.log('✅ Cloud Function returned users:', data.count);
+      const allUsers = data.users;
       
-      console.log('Raw users from Firestore:', snapshot.docs.map(doc => ({
-        id: doc.id, 
-        firstName: doc.data().firstName,
-        lastName: doc.data().lastName,
-        role: doc.data().role,
-        inviteStatus: doc.data().inviteStatus,
-        tenantId: doc.data().tenantId,
-        tenantIds: doc.data().tenantIds,
-        securityLevel: doc.data().securityLevel
-      })));
-      
-      // Filter users that belong to this tenant (either direct tenantId or in tenantIds map)
-      const filteredContacts = snapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((user: any) => {
-          console.log(`Checking user ${user.firstName} ${user.lastName}:`, {
-            directTenantId: user.tenantId,
-            tenantIds: user.tenantIds,
-            matchesDirect: user.tenantId === tenantId,
-            matchesTenantIds: user.tenantIds && user.tenantIds[tenantId]
-          });
-          
-          // Check direct tenantId field (old structure)
-          if (user.tenantId === tenantId) {
-            console.log(`✅ User ${user.firstName} ${user.lastName} matches direct tenantId`);
-            return true;
-          }
-          
-          // Check tenantIds map (new structure)
-          if (user.tenantIds && user.tenantIds[tenantId]) {
-            console.log(`✅ User ${user.firstName} ${user.lastName} matches tenantIds map`);
-            return true;
-          }
-          
-          console.log(`❌ User ${user.firstName} ${user.lastName} does not match tenant`);
-          return false;
+      // Check if Maria is in the results
+      const mariaInResults = allUsers.find((u: any) => u.email === 'maria@gmail.com');
+      if (mariaInResults) {
+        console.log('✅ Maria found in Cloud Function results:', {
+          firstName: mariaInResults.firstName,
+          lastName: mariaInResults.lastName,
+          email: mariaInResults.email,
+          tenantId: mariaInResults.tenantId,
+          tenantIds: mariaInResults.tenantIds
         });
+      } else {
+        console.log('❌ Maria NOT found in Cloud Function results');
+        console.log('All user emails from Cloud Function:', allUsers.map((u: any) => u.email));
+      }
       
-      console.log('Filtered contacts:', filteredContacts);
+      // Since the Cloud Function already filtered users for this tenant, we can use allUsers directly
+      const filteredContacts = allUsers;
+      console.log('Using all users from Cloud Function as filtered contacts:', filteredContacts.length);
+      
+      console.log('Filtered contacts for tenant:', filteredContacts.length);
+      console.log('=== FETCH CONTACTS END ===');
       setContacts(filteredContacts);
     } catch (err: any) {
       console.error('Error fetching contacts:', err);
-      setError(err.message || 'Failed to fetch workers');
+      // Don't show error to user for now, just set empty contacts
+      setContacts([]);
     }
     setLoading(false);
   };
 
   const fetchLocations = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     setLocationsLoading(true);
     try {
-      const q = query(collection(db, 'tenants', tenantId, 'locations'));
+      const q = query(collection(db, 'tenants', effectiveTenantId, 'locations'));
       const snapshot = await getDocs(q);
       setLocations(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
-      // ignore for now
+      console.warn('Could not fetch locations:', err);
+      setLocations([]);
     }
     setLocationsLoading(false);
   };
 
   const fetchDepartments = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     try {
-      const q = collection(db, 'tenants', tenantId, 'departments');
+      const q = collection(db, 'tenants', effectiveTenantId, 'departments');
       const snapshot = await getDocs(q);
       setDepartments(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
-      // ignore for now
+      console.warn('Could not fetch departments:', err);
+      setDepartments([]);
     }
   };
 
   const fetchDivisions = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     try {
-      const q = collection(db, 'tenants', tenantId, 'divisions');
+      const q = collection(db, 'tenants', effectiveTenantId, 'divisions');
       const snapshot = await getDocs(q);
       setDivisions(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
-      // ignore for now
+      console.warn('Could not fetch divisions:', err);
+      setDivisions([]);
     }
   };
 
   const fetchManagers = async () => {
-    if (!tenantId) return;
+    if (!effectiveTenantId) return;
     try {
-      const q = collection(db, 'tenants', tenantId, 'managers');
+      const q = collection(db, 'tenants', effectiveTenantId, 'managers');
       const snapshot = await getDocs(q);
       setManagers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
-      // ignore for now
+      console.warn('Could not fetch managers:', err);
+      setManagers([]);
     }
   };
 
   const fetchUserGroups = async () => {
+    if (!effectiveTenantId) return;
     try {
-      const q = collection(db, 'tenants', tenantId, 'userGroups');
+      const q = collection(db, 'tenants', effectiveTenantId, 'userGroups');
       const snapshot = await getDocs(q);
       setUserGroups(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    } catch {}
+    } catch (err: any) {
+      console.warn('Could not fetch user groups:', err);
+      setUserGroups([]);
+    }
   };
 
   // Helper functions to filter workers by security level
@@ -336,30 +378,92 @@ const TenantWorkforce: React.FC = () => {
     });
   };
 
-  const getFlexWorkers = () => {
-    console.log(`Filtering for Flex workers, tenantId: ${tenantId}`);
+  // Helper function to get company directory workers (security levels 5, 6, 7)
+  const getCompanyDirectoryWorkers = () => {
+    console.log(`Filtering for Company Directory workers (levels 5,6,7), tenantId: ${tenantId}`);
     console.log('All contacts:', contacts);
     
     return contacts.filter((c: any) => {
-      console.log(`Checking worker ${c.firstName} ${c.lastName} for Flex:`, {
+      let workerLevel: any = null;
+      
+      // Check tenantIds map first (new structure)
+      if (c.tenantIds && c.tenantIds[tenantId]) {
+        workerLevel = c.tenantIds[tenantId].securityLevel;
+      }
+      // Fall back to direct securityLevel field (old structure)
+      else if (c.securityLevel) {
+        workerLevel = c.securityLevel;
+      }
+      
+      console.log(`Checking worker ${c.firstName} ${c.lastName}:`, {
+        workerLevel,
         directSecurityLevel: c.securityLevel,
         tenantIds: c.tenantIds,
         tenantSpecificLevel: c.tenantIds?.[tenantId]?.securityLevel
       });
+      
+      // Check if worker has security level 5, 6, or 7
+      if (workerLevel === 5 || workerLevel === 6 || workerLevel === 7 || 
+          workerLevel === '5' || workerLevel === '6' || workerLevel === '7') {
+        console.log(`✅ Worker ${c.firstName} ${c.lastName} matches Company Directory level (${workerLevel})`);
+        return true;
+      }
+      
+      return false;
+    });
+  };
+
+  const getFlexWorkers = () => {
+    console.log(`Filtering for Flex workers, effectiveTenantId: ${effectiveTenantId}`);
+    console.log('Flex module enabled:', flexModuleEnabled);
+    console.log('All contacts:', contacts);
+    
+    // Check if Maria is in the contacts array
+    const maria = contacts.find(c => c.email === 'maria@gmail.com');
+    if (maria) {
+      console.log('✅ Maria found in contacts:', {
+        firstName: maria.firstName,
+        lastName: maria.lastName,
+        email: maria.email,
+        employmentType: maria.employmentType,
+        securityLevel: maria.securityLevel,
+        tenantIds: maria.tenantIds,
+        directTenantId: maria.tenantId
+      });
+    } else {
+      console.log('❌ Maria NOT found in contacts array');
+    }
+    
+    return contacts.filter((c: any) => {
+      console.log(`Checking worker ${c.firstName} ${c.lastName} for Flex:`, {
+        directSecurityLevel: c.securityLevel,
+        employmentType: c.employmentType,
+        tenantIds: c.tenantIds,
+        tenantSpecificLevel: c.tenantIds?.[effectiveTenantId]?.securityLevel,
+        tenantIdKeys: c.tenantIds ? Object.keys(c.tenantIds) : [],
+        directTenantId: c.tenantId
+      });
+      
+      // Check employmentType field first (most specific)
+      if (c.employmentType === 'Flex') {
+        console.log(`✅ Worker ${c.firstName} ${c.lastName} matches employmentType Flex`);
+        return true;
+      }
       
       // Check direct securityLevel field (old structure)
       if (c.securityLevel === 3 || c.securityLevel === '3' || c.securityLevel === 'Flex') {
         console.log(`✅ Worker ${c.firstName} ${c.lastName} matches direct Flex securityLevel`);
         return true;
       }
+      
       // Check tenantIds map (new structure)
       if (
         c.tenantIds &&
-        c.tenantIds[tenantId] &&
+        c.tenantIds[effectiveTenantId] &&
         (
-          c.tenantIds[tenantId].securityLevel === 3 ||
-          c.tenantIds[tenantId].securityLevel === '3' ||
-          c.tenantIds[tenantId].securityLevel === 'Flex'
+          c.tenantIds[effectiveTenantId].securityLevel === 3 ||
+          c.tenantIds[effectiveTenantId].securityLevel === '3' ||
+          c.tenantIds[effectiveTenantId].securityLevel === 'Flex'
         )
       ) {
         console.log(`✅ Worker ${c.firstName} ${c.lastName} matches tenant-specific Flex securityLevel`);
@@ -623,8 +727,8 @@ const TenantWorkforce: React.FC = () => {
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
-    // Adjust the index for pending invites based on whether it's a staffing company and flex module is enabled
-    const pendingInvitesIndex = isStaffingCompany 
+    // Adjust the index for pending invites based on whether it's a staffing company, staffing module is enabled, and flex module is enabled
+    const pendingInvitesIndex = isStaffingCompany && staffingModuleEnabled
       ? (flexModuleEnabled ? 6 : 5) 
       : (flexModuleEnabled ? 5 : 4);
     if (newValue === pendingInvitesIndex) fetchPendingInvites();
@@ -651,12 +755,34 @@ const TenantWorkforce: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      // Set inviteStatus to 'revoked' in Firestore
-      await updateDoc(doc(db, 'users', invite.id), { inviteStatus: 'revoked', inviteRevokedAt: serverTimestamp() });
+      const functions = getFunctions();
+      const revokeInvite = httpsCallable(functions, 'revokeInviteV2');
+      await revokeInvite({ email: invite.email });
       setPendingInvites((prev) => prev.filter((i) => i.id !== invite.id));
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Failed to revoke invite');
+    }
+    setLoading(false);
+  };
+
+  // Fix pending user status
+  const handleFixPendingUser = async (invite: any) => {
+    setLoading(true);
+    setError('');
+    try {
+      const functions = getFunctions();
+      const fixPendingUser = httpsCallable(functions, 'fixPendingUser');
+      await fixPendingUser({ 
+        email: invite.email, 
+        tenantId: effectiveTenantId 
+      });
+      setPendingInvites((prev) => prev.filter((i) => i.id !== invite.id));
+      setSuccess(true);
+      // Refresh contacts to show the user as active
+      await fetchContacts();
+    } catch (err: any) {
+      setError(err.message || 'Failed to fix user status');
     }
     setLoading(false);
   };
@@ -697,7 +823,7 @@ const TenantWorkforce: React.FC = () => {
           aria-label="workforce management tabs"
         >
           <Tab label="Company Directory" />
-          {isStaffingCompany && <Tab label="Hired Staff" />}
+          {isStaffingCompany && staffingModuleEnabled && <Tab label="Hired Staff" />}
           {flexModuleEnabled && <Tab label="Flex Workers" />}
           <Tab label="User Groups" />
           <Tab label="Add Workers" />
@@ -710,7 +836,7 @@ const TenantWorkforce: React.FC = () => {
         <Box>
           {/* Company Directory header with search */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">Workers ({getWorkersBySecurityLevel(5).length})</Typography>
+            <Typography variant="h6">Workers ({getCompanyDirectoryWorkers().length})</Typography>
             <TextField
               size="small"
               variant="outlined"
@@ -721,7 +847,7 @@ const TenantWorkforce: React.FC = () => {
             />
           </Box>
           <WorkersTable
-            contacts={getWorkersBySecurityLevel(5)}
+            contacts={getCompanyDirectoryWorkers()}
             locations={locations}
             departments={departments}
             selectedWorkers={selectedWorkers}
@@ -735,7 +861,7 @@ const TenantWorkforce: React.FC = () => {
           />
         </Box>
       )}
-      {tabValue === 1 && isStaffingCompany && (
+      {tabValue === 1 && isStaffingCompany && staffingModuleEnabled && (
         <Box>
           {/* Hired Staff header with search */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -764,7 +890,7 @@ const TenantWorkforce: React.FC = () => {
           />
         </Box>
       )}
-      {tabValue === (isStaffingCompany ? 2 : 1) && flexModuleEnabled && (
+      {tabValue === (isStaffingCompany && staffingModuleEnabled ? 2 : 1) && flexModuleEnabled && (
         <Box>
           {/* Flex Workers header with search */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -793,12 +919,12 @@ const TenantWorkforce: React.FC = () => {
           />
         </Box>
       )}
-      {tabValue === (isStaffingCompany ? (flexModuleEnabled ? 3 : 2) : (flexModuleEnabled ? 2 : 1)) && (
+      {tabValue === (isStaffingCompany && staffingModuleEnabled ? (flexModuleEnabled ? 3 : 2) : (flexModuleEnabled ? 2 : 1)) && (
         <Box>
           <TenantUserGroups />
         </Box>
       )}
-      {tabValue === (isStaffingCompany ? (flexModuleEnabled ? 4 : 3) : (flexModuleEnabled ? 3 : 2)) && (
+      {tabValue === (isStaffingCompany && staffingModuleEnabled ? (flexModuleEnabled ? 4 : 3) : (flexModuleEnabled ? 3 : 2)) && (
         <Box>
           {/* Import Mode Toggle */}
           <Box sx={{ mb: 0 }}>
@@ -890,12 +1016,12 @@ const TenantWorkforce: React.FC = () => {
           )}
         </Box>
       )}
-      {tabValue === (isStaffingCompany ? (flexModuleEnabled ? 5 : 4) : (flexModuleEnabled ? 4 : 3)) && (
+      {tabValue === (isStaffingCompany && staffingModuleEnabled ? (flexModuleEnabled ? 5 : 4) : (flexModuleEnabled ? 4 : 3)) && (
         <Box sx={{ p: 0 }}>
           <IntegrationsTab tenantId={tenantId} />
         </Box>
       )}
-      {tabValue === (isStaffingCompany ? (flexModuleEnabled ? 6 : 5) : (flexModuleEnabled ? 5 : 4)) && (
+      {tabValue === (isStaffingCompany && staffingModuleEnabled ? (flexModuleEnabled ? 6 : 5) : (flexModuleEnabled ? 5 : 4)) && (
         <Box>
           {/* Pending Invites header with search */}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -971,7 +1097,8 @@ const TenantWorkforce: React.FC = () => {
                     <TableCell>{invite.inviteSentAt?.toDate ? invite.inviteSentAt.toDate().toLocaleString() : ''}</TableCell>
                     <TableCell>
                       <Button size="small" variant="outlined" onClick={() => handleResendInvite(invite)} sx={{ mr: 1 }}>Resend</Button>
-                      <Button size="small" variant="outlined" color="error" onClick={() => handleRevokeInvite(invite)}>Revoke</Button>
+                      <Button size="small" variant="outlined" color="error" onClick={() => handleRevokeInvite(invite)} sx={{ mr: 1 }}>Revoke</Button>
+                      <Button size="small" variant="contained" color="success" onClick={() => handleFixPendingUser(invite)}>Fix Status</Button>
                     </TableCell>
                   </TableRow>
                 ))}

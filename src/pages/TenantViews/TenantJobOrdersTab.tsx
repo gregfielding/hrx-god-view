@@ -46,6 +46,7 @@ import Autocomplete from '@mui/material/Autocomplete';
 import BroadcastDialog from '../../components/BroadcastDialog';
 import { useAuth } from '../../contexts/AuthContext';
 import JobOrdersTable from '../../componentBlocks/JobOrdersTable';
+import { getNextJobOrderId } from '../../utils/jobOrderUtils';
 
 const TenantJobOrdersTab: React.FC<{ onViewJobOrder?: (jobOrderId: string) => void }> = ({ onViewJobOrder }) => {
   const { tenantId, accessRole, orgType } = useAuth();
@@ -397,25 +398,9 @@ const TenantJobOrdersTab: React.FC<{ onViewJobOrder?: (jobOrderId: string) => vo
     }
   };
 
-  const getNextJobOrderId = async () => {
-    if (!tenantId) return 1000;
-    try {
-      console.log('🔍 Getting next job order ID for tenant:', tenantId);
-      const q = query(
-        collection(db, 'tenants', tenantId, 'jobOrders'),
-        orderBy('jobOrderId', 'desc'),
-        limit(1),
-      );
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        const lastId = snapshot.docs[0].data().jobOrderId;
-        return lastId + 1;
-      }
-      return 1000;
-    } catch (error) {
-      console.error('❌ Error in getNextJobOrderId:', error);
-      throw error;
-    }
+  // Using the centralized getNextJobOrderId function from utils
+  const getNextJobOrderIdLocal = async () => {
+    return await getNextJobOrderId(tenantId || '');
   };
 
   const isFormValid =
@@ -455,7 +440,7 @@ const TenantJobOrdersTab: React.FC<{ onViewJobOrder?: (jobOrderId: string) => vo
     setError('');
 
     try {
-      const jobOrderId = await getNextJobOrderId();
+      const jobOrderId = await getNextJobOrderIdLocal();
       const jobOrderData = {
         ...form,
         tenantId, // The actual tenant ID (current tenant)

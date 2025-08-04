@@ -33,7 +33,12 @@
       ],
       "predeploy": [
         "npm --prefix \"$RESOURCE_DIR\" run build"
-      ]
+      ],
+      "environmentVariables": {
+        "GNEWS_API_KEY": "82eb7721b0852a8dd71f5d0492c72596",
+        "OPENAI_API_KEY": "k-proj-Inyd35aLyriB-HZRjfYgIRWGP86ADIoIabrUuWALWnOfRZvU8iDnRZQgkZQLi6oR9azrwCi1imT3BlbkFJxtIQ_uJqkYypZpcu7kzYdcuxZFurQSWnemJ2MMEn5XD9Zj7zt6UNlx95P6kXEQJoc6ovkakR8A",
+        "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20"
+      }
     }
   ]
 }

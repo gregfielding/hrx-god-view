@@ -80,6 +80,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
   const [showExactLocation, setShowExactLocation] = useState(false);
   const [overstaff, setOverstaff] = useState('None');
   const [customersModuleEnabled, setCustomersModuleEnabled] = useState(false);
+  const [timesheetsEnabled, setTimesheetsEnabled] = useState(false);
   const [tenantName, setTenantName] = useState('');
   const [tenantLocations, setTenantLocations] = useState<any[]>([]);
 
@@ -112,6 +113,23 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
       setCustomersModuleEnabled(false);
     });
 
+    // Listen for timesheets setting in hrx-flex module
+    const flexModuleRef = doc(db, 'tenants', tenantId, 'modules', 'hrx-flex');
+    const flexUnsubscribe = onSnapshot(flexModuleRef, (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        const isEnabled = data?.settings?.enableTimesheets || false;
+        console.log('Timesheets setting in hrx-flex module changed:', isEnabled);
+        setTimesheetsEnabled(isEnabled);
+      } else {
+        console.log('hrx-flex module document does not exist, defaulting timesheets to disabled');
+        setTimesheetsEnabled(false);
+      }
+    }, (error) => {
+      console.error('Error listening to timesheets setting in hrx-flex module:', error);
+      setTimesheetsEnabled(false);
+    });
+
     // Get tenant name
     const tenantRef = doc(db, 'tenants', tenantId);
     const tenantUnsubscribe = onSnapshot(tenantRef, (doc) => {
@@ -128,6 +146,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
 
     return () => {
       customersUnsubscribe();
+      flexUnsubscribe();
       tenantUnsubscribe();
     };
   }, [tenantId]);
@@ -418,7 +437,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
         visibility,
         showExactLocation,
         overstaff,
-        aiPrompts: editForm.aiPrompts || '',
+        aiPrompts: editForm.aiInstructions || '',
       });
       setSuccess(true);
       fetchJobOrder();
@@ -500,16 +519,18 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                 alignItems: 'center',
               }}
             />
-            <Tab
-              icon={<AccessTimeIcon />}
-              sx={{
-                minWidth: 0,
-                maxWidth: 48,
-                p: 0,
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}
-            />
+            {timesheetsEnabled && (
+              <Tab
+                icon={<AccessTimeIcon />}
+                sx={{
+                  minWidth: 0,
+                  maxWidth: 48,
+                  p: 0,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              />
+            )}
           </Tabs>
         </Box>
         <Box sx={{ flex: 1 }}>
@@ -734,7 +755,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                         borderRadius: 2,
                         boxShadow: 'none',
                         background: 'transparent',
-                        mt: 2,
+                        mt: 0,
                       }}
                     >
                       <Table size="small">
@@ -836,7 +857,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                       fullWidth
                       multiline
                       minRows={2}
-                      sx={{ mb: 2 }}
+                      sx={{ mb: 0 }}
                       disabled={!!selectedUniformId}
                     />
                     {selectedUniformId && (
@@ -873,35 +894,35 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                       fullWidth
                       multiline
                       minRows={2}
-                      sx={{ mb: 2 }}
+                      sx={{ mb: 0 }}
                     />
                   </Grid>
                   <Grid item xs={12}>
                     <TextField
-                      label="AI Prompts"
-                      value={editForm?.aiPrompts || ''}
-                      onChange={(e) => handleEditChange('aiPrompts', e.target.value)}
+                      label="AI Instructions"
+                      value={editForm?.aiInstructions || ''}
+                      onChange={(e) => handleEditChange('aiInstructions', e.target.value)}
                       fullWidth
                       multiline
                       minRows={2}
                       sx={{
-                        mb: 2,
-                        border: '2px solid #ff69b4',
-                        boxShadow: '0 0 8px 2px #ff69b4',
-                        borderRadius: 2,
-                        '& .MuiOutlinedInput-root': {
-                          '& fieldset': {
-                            borderColor: '#ff69b4',
-                            boxShadow: '0 0 8px 2px #ff69b4',
-                          },
-                          '&:hover fieldset': {
-                            borderColor: '#ff69b4',
-                          },
-                          '&.Mui-focused fieldset': {
-                            borderColor: '#ff69b4',
-                            boxShadow: '0 0 12px 4px #ff69b4',
-                          },
-                        },
+                        mb: 0,
+                        // border: '2px solid #ff69b4',
+                        // boxShadow: '0 0 8px 2px #ff69b4',
+                        // borderRadius: 2,
+                        // '& .MuiOutlinedInput-root': {
+                        //   '& fieldset': {
+                        //     borderColor: '#ff69b4',
+                        //     boxShadow: '0 0 8px 2px #ff69b4',
+                        //   },
+                        //   '&:hover fieldset': {
+                        //     borderColor: '#ff69b4',
+                        //   },
+                        //   '&.Mui-focused fieldset': {
+                        //     borderColor: '#ff69b4',
+                        //     boxShadow: '0 0 12px 4px #ff69b4',
+                        //   },
+                        // },
                       }}
                     />
                   </Grid>
@@ -967,7 +988,7 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
           {sideTab === 1 && (
             <JobOrderShiftsTab tenantId={tenantId} jobOrderId={jobOrder?.id || jobOrderId} />
           )}
-          {sideTab === 2 && (
+          {sideTab === 2 && timesheetsEnabled && (
             <Box>
               <Typography variant="h6" gutterBottom>
                 Timesheets: Job Order {editForm.jobOrderId || jobOrderId}
