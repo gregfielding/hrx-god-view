@@ -752,7 +752,6 @@ const FlexPositions: React.FC = () => {
           <TableHead>
             <TableRow>
               <TableCell>Title</TableCell>
-              <TableCell>Description</TableCell>
               <TableCell>Experience</TableCell>
               <TableCell>Education</TableCell>
               <TableCell>Certifications</TableCell>
@@ -769,7 +768,7 @@ const FlexPositions: React.FC = () => {
           <TableBody>
             {jobTitles.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={13}>No job titles yet.</TableCell>
+                <TableCell colSpan={12}>No job titles yet.</TableCell>
               </TableRow>
             ) : (
               jobTitles.map((job) => (
@@ -783,17 +782,6 @@ const FlexPositions: React.FC = () => {
                       />
                     ) : (
                       job.title
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {editId === job.id ? (
-                      <TextField
-                        value={editForm.description}
-                        onChange={(e) => handleEditChange('description', e.target.value)}
-                        size="small"
-                      />
-                    ) : (
-                      job.description
                     )}
                   </TableCell>
                   <TableCell>

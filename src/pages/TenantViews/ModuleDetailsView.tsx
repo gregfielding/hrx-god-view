@@ -321,51 +321,7 @@ const ModuleDetailsView: React.FC<ModuleDetailsViewProps> = ({
                     />
                   </Box>
                   
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                    <Typography variant="body2" fontWeight="medium">
-                      Jobs Board
-                    </Typography>
-                    <Switch
-                      checked={localModule.settings?.enableJobsBoard || false}
-                      onChange={async (e) => {
-                        const newValue = e.target.checked;
-                        handleSettingChange('enableJobsBoard', newValue);
-                        
-                        // Auto-save to Firestore
-                        try {
-                          const moduleRef = doc(db, 'tenants', tenantId, 'modules', localModule.id);
-                          await setDoc(moduleRef, {
-                            isEnabled: localModule.isEnabled,
-                            settings: { ...localModule.settings, enableJobsBoard: newValue },
-                            customSettings: localModule.customSettings || {},
-                            lastUpdated: new Date().toISOString(),
-                          }, { merge: true });
-                          
-                          // Log the change
-                          await setDoc(doc(db, 'ai_logs', `${tenantId}_JobsBoardToggle_${Date.now()}`), {
-                            tenantId: tenantId,
-                            section: 'ModuleDetailsView',
-                            changed: 'jobs_board_setting',
-                            moduleId: localModule.id,
-                            newValue: newValue,
-                            timestamp: new Date().toISOString(),
-                            eventType: 'jobs_board_toggle',
-                            userId: currentUser?.uid || null,
-                            sourceModule: 'ModuleDetailsView',
-                          });
-                          
-                          setSuccess(true);
-                          setTimeout(() => setSuccess(false), 3000);
-                        } catch (err) {
-                          console.error('Error saving jobs board setting:', err);
-                          setError('Failed to save jobs board setting');
-                          // Revert the change
-                          handleSettingChange('enableJobsBoard', !newValue);
-                        }
-                      }}
-                      color="primary"
-                    />
-                  </Box>
+
                 </>
               )}
             </CardContent>

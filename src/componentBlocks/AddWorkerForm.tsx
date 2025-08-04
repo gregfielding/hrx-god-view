@@ -114,7 +114,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="First Name *"
+                  label="First Name"
                   fullWidth
                   required
                   value={form.firstName || ''}
@@ -124,7 +124,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Last Name *"
+                  label="Last Name"
                   fullWidth
                   required
                   value={form.lastName || ''}
@@ -143,7 +143,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Email *"
+                  label="Email"
                   fullWidth
                   required
                   type="email"
@@ -154,7 +154,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
-                  label="Phone *"
+                  label="Phone"
                   fullWidth
                   required
                   value={form.phone || ''}
@@ -207,11 +207,11 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth required>
-                  <InputLabel>Security Level *</InputLabel>
+                  <InputLabel>Security Level</InputLabel>
                   <Select
                     value={form.securityLevel || ''}
                     onChange={(e) => onChange('securityLevel', e.target.value)}
-                    input={<OutlinedInput label="Security Level *" />}
+                    input={<OutlinedInput label="Security Level" />}
                   >
                     <MenuItem value="7">Admin</MenuItem>
                     <MenuItem value="6">Manager</MenuItem>
@@ -226,7 +226,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
               </Grid>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Employment Type *</InputLabel>
+                  <InputLabel>Employment Type</InputLabel>
                   <Select
                     value={form.employmentType || ''}
                     onChange={(e) => onChange('employmentType', e.target.value)}
@@ -264,7 +264,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                       labelId="department-label"
                       value={form.departmentId || ''}
                       onChange={(e) => onChange('departmentId', e.target.value)}
-                      input={<OutlinedInput label="Department *" />}
+                      input={<OutlinedInput label="Department" />}
                     >
                       {departments.map((dept: any) => (
                         <MenuItem key={dept.id} value={dept.id}>

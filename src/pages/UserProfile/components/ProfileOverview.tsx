@@ -198,7 +198,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               email: data.email || '',
               phone: data.phone || '',
               dateOfBirth,
-              gender: data.gender,
+              gender: data.gender || undefined,
               securityLevel: data.securityLevel || '5',
               employmentType: data.employmentType || 'Full-Time',
               departmentId: data.departmentId || '',
@@ -211,7 +211,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               union: data.union || '',
               workEligibility: data.workEligibility !== false,
               languages: data.languages || [],
-              emergencyContact: data.emergencyContact,
+              emergencyContact: data.emergencyContact || undefined,
               transportMethod: data.transportMethod || null,
               role: data.role || 'Worker',
               jobTitle: data.jobTitle || '',
@@ -220,6 +220,11 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
             
             setForm(newForm);
             setOriginalForm(newForm);
+
+            // Load user groups
+            const userGroupIds = data.userGroupIds || [];
+            setUserGroupIds(userGroupIds);
+            setOriginalUserGroupIds(userGroupIds);
 
             // Load AI insights data
             setAiInsights({
@@ -261,56 +266,94 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     try {
       console.log('Loading tenant data for tenantId:', tenantId);
       
-      // Fetch tenant name
-      const tenantDoc = await getDocs(collection(db, 'tenants'));
-      const tenant = tenantDoc.docs.find((doc) => doc.id === tenantId);
-      setTenantName(tenant ? tenant.data().name || tenantId : tenantId);
+      // Set default tenant name as fallback
+      setTenantName(tenantId);
+      setCustomerName(tenantId);
       
-      // Fetch departments
-      const deptQuery = collection(db, 'tenants', tenantId, 'departments');
-      const deptSnap = await getDocs(deptQuery);
-      const deptData = deptSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log('Fetched departments:', deptData);
-      setDepartments(deptData);
+      // Try to fetch tenant name with error handling
+      try {
+        const tenantDoc = await getDocs(collection(db, 'tenants'));
+        const tenant = tenantDoc.docs.find((doc) => doc.id === tenantId);
+        if (tenant) {
+          setTenantName(tenant.data().name || tenantId);
+          setCustomerName(tenant.data().name || tenantId);
+        }
+      } catch (tenantError) {
+        console.warn('Could not fetch tenant name:', tenantError);
+      }
       
-      // Fetch divisions
-      const divQuery = collection(db, 'tenants', tenantId, 'divisions');
-      const divSnap = await getDocs(divQuery);
-      const divData = divSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log('Fetched divisions:', divData);
-      setDivisions(divData);
+      // Fetch departments with error handling
+      try {
+        const deptQuery = collection(db, 'tenants', tenantId, 'departments');
+        const deptSnap = await getDocs(deptQuery);
+        const deptData = deptSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        console.log('Fetched departments:', deptData);
+        setDepartments(deptData);
+      } catch (deptError) {
+        console.warn('Could not fetch departments:', deptError);
+        setDepartments([]);
+      }
       
-      // Fetch locations
-      const locQuery = collection(db, 'tenants', tenantId, 'locations');
-      const locSnap = await getDocs(locQuery);
-      const locData = locSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log('Fetched locations:', locData);
-      setLocations(locData);
+      // Fetch divisions with error handling
+      try {
+        const divQuery = collection(db, 'tenants', tenantId, 'divisions');
+        const divSnap = await getDocs(divQuery);
+        const divData = divSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        console.log('Fetched divisions:', divData);
+        setDivisions(divData);
+      } catch (divError) {
+        console.warn('Could not fetch divisions:', divError);
+        setDivisions([]);
+      }
       
-      // Fetch managers (users with security level 5 or higher - Worker, Manager, Admin)
-      const usersQuery = query(
-        collection(db, 'users'),
-        where('tenantId', '==', tenantId),
-                  where('securityLevel', 'in', ['5', '6', '7'])
-      );
-      const usersSnap = await getDocs(usersQuery);
-      const managerData = usersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log('Fetched managers:', managerData);
-      setManagers(managerData);
+      // Fetch locations with error handling
+      try {
+        const locQuery = collection(db, 'tenants', tenantId, 'locations');
+        const locSnap = await getDocs(locQuery);
+        const locData = locSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        console.log('Fetched locations:', locData);
+        setLocations(locData);
+      } catch (locError) {
+        console.warn('Could not fetch locations:', locError);
+        setLocations([]);
+      }
       
-      // Fetch user groups
-      const gq = collection(db, 'tenants', tenantId, 'userGroups');
-      const gSnap = await getDocs(gq);
-      const groupData = gSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log('Fetched user groups:', groupData);
-      setUserGroups(groupData);
+      // Fetch managers with error handling
+      try {
+        const usersQuery = query(
+          collection(db, 'users'),
+          where('tenantId', '==', tenantId),
+          where('securityLevel', 'in', ['5', '6', '7'])
+        );
+        const usersSnap = await getDocs(usersQuery);
+        const managerData = usersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        console.log('Fetched managers:', managerData);
+        setManagers(managerData);
+      } catch (managerError) {
+        console.warn('Could not fetch managers:', managerError);
+        setManagers([]);
+      }
       
-      // Fetch customer name
-      const customerDoc = await getDocs(collection(db, 'tenants'));
-      const customer = customerDoc.docs.find((doc) => doc.id === tenantId);
-      setCustomerName(customer ? customer.data().name || tenantId : tenantId);
+      // Fetch user groups with error handling
+      try {
+        const gq = collection(db, 'tenants', tenantId, 'userGroups');
+        const gSnap = await getDocs(gq);
+        const groupData = gSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        console.log('Fetched user groups:', groupData);
+        setUserGroups(groupData);
+      } catch (groupError) {
+        console.warn('Could not fetch user groups:', groupError);
+        setUserGroups([]);
+      }
+      
     } catch (error) {
       console.error('Error loading tenant data:', error);
+      // Set empty arrays as fallbacks
+      setDepartments([]);
+      setDivisions([]);
+      setLocations([]);
+      setManagers([]);
+      setUserGroups([]);
     }
   };
 
@@ -366,15 +409,45 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
       const userRef = doc(db, 'users', uid);
       
       // Convert form data back to proper format for Firestore
+      // Filter out undefined values to prevent Firestore errors
+      const cleanForm = Object.fromEntries(
+        Object.entries(form).filter(([_, value]) => value !== undefined)
+      );
+      
       const updateData = {
-        ...form,
+        ...cleanForm,
         dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth) : null,
         startDate: form.startDate ? new Date(form.startDate) : null,
         userGroupIds,
         updatedAt: new Date()
       };
       
-      await updateDoc(userRef, updateData);
+      // Remove null values as well to prevent Firestore errors
+      const finalUpdateData = Object.fromEntries(
+        Object.entries(updateData).filter(([key, value]) => {
+          // Filter out null, undefined, and empty strings for optional fields
+          if (value === null || value === undefined) return false;
+          if (typeof value === 'string' && value === '' && ['preferredName', 'divisionId', 'locationId', 'managerId', 'workerId', 'union', 'jobTitle', 'department'].includes(key)) return false;
+          
+          // Handle emergencyContact object - only include if it has valid data
+          if (key === 'emergencyContact') {
+            if (!value || typeof value !== 'object') return false;
+            const contact = value as any;
+            // Only include if at least one field has a non-empty value
+            return contact.name?.trim() || contact.relationship?.trim() || contact.phone?.trim();
+          }
+          
+          // Handle gender field - only include if it has a valid value
+          if (key === 'gender') {
+            return value && typeof value === 'string' && value !== '' && value !== 'undefined';
+          }
+          
+          return true;
+        })
+      );
+      
+      console.log('Submitting update data:', finalUpdateData);
+      await updateDoc(userRef, finalUpdateData);
       
       // Log the profile update activity
       const changes = {

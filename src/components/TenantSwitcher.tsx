@@ -110,8 +110,63 @@ const TenantSwitcher: React.FC<TenantSwitcherProps> = ({ tenants, activeTenant, 
   const avatarPadding = open ? 1 : 0;
   const avatarRadius = open ? 2 : 0;
 
+  // If no tenants or only one tenant, show just the active tenant logo/avatar
   if (!tenants || tenants.length <= 1) {
-    return null;
+    if (!activeTenant) {
+      return (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <CircularProgress size={20} />
+          <Typography variant="body2" color="text.secondary">
+            Loading tenant...
+          </Typography>
+        </Box>
+      );
+    }
+    
+    // Show single tenant logo/avatar without switcher functionality
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+        <Box
+          sx={{
+            p: avatarPadding,
+            borderRadius: avatarRadius,
+            border: '1px solid',
+            backgroundColor: 'white',
+            borderColor: 'divider',
+          }}
+        >
+          {activeTenant.avatar ? (
+            <Avatar
+              src={activeTenant.avatar}
+              alt={activeTenant.name}
+              sx={{ width: avatarSize, height: avatarSize, border: '0px solid #e0e0e0' }}
+              imgProps={{
+                onError: (e: any) => {
+                  e.target.onerror = null;
+                  e.target.src = '';
+                },
+              }}
+            >
+              {getTenantInitials(activeTenant.name)}
+            </Avatar>
+          ) : activeTenant.name ? (
+            <Avatar
+              sx={{
+                width: avatarSize,
+                height: avatarSize,
+                bgcolor: 'primary.main',
+                fontSize: open ? '0.875rem' : '0.75rem',
+                border: '1px solid #e0e0e0',
+              }}
+            >
+              {getTenantInitials(activeTenant.name)}
+            </Avatar>
+          ) : (
+            React.cloneElement(getTenantIcon(activeTenant.type), { sx: { fontSize: avatarSize } })
+          )}
+        </Box>
+      </Box>
+    );
   }
 
   if (!activeTenant) {

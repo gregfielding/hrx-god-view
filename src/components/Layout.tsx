@@ -252,6 +252,7 @@ const Layout: React.FC = () => {
   const [recruiterModuleEnabled, setRecruiterModuleEnabled] = useState(false);
   const [customersModuleEnabled, setCustomersModuleEnabled] = useState(false);
   const [jobsBoardModuleEnabled, setJobsBoardModuleEnabled] = useState(false);
+  const [crmModuleEnabled, setCrmModuleEnabled] = useState(false);
 
   // Real-time listener for flex module status
   useEffect(() => {
@@ -357,12 +358,38 @@ const Layout: React.FC = () => {
     return () => unsubscribe();
   }, [activeTenant?.id]);
 
+  // Real-time listener for CRM module status
+  useEffect(() => {
+    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // Not a tenant or is HRX, no need to listen for CRM module
+      setCrmModuleEnabled(false);
+      return;
+    }
+
+    const crmModuleRef = doc(db, 'tenants', activeTenant.id, 'modules', 'hrx-crm');
+    const unsubscribe = onSnapshot(crmModuleRef, (doc) => {
+      if (doc.exists()) {
+        const isEnabled = doc.data()?.isEnabled || false;
+        console.log('CRM module status changed:', isEnabled);
+        setCrmModuleEnabled(isEnabled);
+      } else {
+        console.log('CRM module document does not exist, defaulting to disabled');
+        setCrmModuleEnabled(false);
+      }
+    }, (error) => {
+      console.error('Error listening to CRM module status:', error);
+      setCrmModuleEnabled(false);
+    });
+
+    return () => unsubscribe();
+  }, [activeTenant?.id]);
+
   useEffect(() => {
     const generateMenu = async () => {
       setMenuLoading(true);
       try {
-        console.log('Generating menu with:', { userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled });
-        const items = await generateMenuItems(userAccessRole, (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), activeTenant?.id, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled);
+        console.log('Generating menu with:', { userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled });
+        const items = await generateMenuItems(userAccessRole, (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), activeTenant?.id, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled);
         console.log('Generated menu items:', items);
         setMenuItems(items);
       } catch (error) {
@@ -373,7 +400,7 @@ const Layout: React.FC = () => {
       }
     };
     generateMenu();
-  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled]);
+  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled]);
 
   const menuItemsWithIcons = menuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -387,6 +414,7 @@ const Layout: React.FC = () => {
       'Job Orders': <AssignmentIcon />,
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,
+      'Sales CRM': <BusinessIcon />,
       'My Assignments': <AssignmentTurnedInIcon />,
       'Locations': <LocationOnIcon />,
       'Schedules': <GroupWorkIcon />,
@@ -574,6 +602,43 @@ const Layout: React.FC = () => {
           ))
           )}
         </List>
+        
+        {/* Theme Toggle Button */}
+        <Box sx={{ px: 2, py: 1, mb: 8 }}>
+          <ListItem disablePadding sx={{ display: 'block' }}>
+            <ListItemButton
+              onClick={toggleMode}
+              sx={{
+                px: open ? 2.5 : 0,
+                py: 1,
+                justifyContent: open ? 'initial' : 'center',
+                borderRadius: '8px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                },
+              }}
+            >
+              <ListItemIcon
+                sx={open ? {
+                  minWidth: 0,
+                  mr: 3,
+                  color: 'inherit',
+                } : {
+                  minWidth: 0,
+                  width: '100%',
+                  mr: 0,
+                  justifyContent: 'center',
+                  display: 'flex',
+                  color: 'inherit',
+                }}
+              >
+                {mode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />}
+              </ListItemIcon>
+              {open && <ListItemText primary={mode === 'dark' ? 'Light Mode' : 'Dark Mode'} />}
+            </ListItemButton>
+          </ListItem>
+        </Box>
+        
         {/* Fixed Collapse button at the bottom */}
         <Box
           sx={{

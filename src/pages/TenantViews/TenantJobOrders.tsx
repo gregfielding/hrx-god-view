@@ -218,17 +218,26 @@ const TenantJobOrders: React.FC = () => {
 
   const getNextJobOrderId = async () => {
     if (!tenantId) return 1000;
-    const q = query(
-      collection(db, 'tenants', tenantId, 'jobOrders'),
-      orderBy('jobOrderId', 'desc'),
-      limit(1),
-    );
-    const snapshot = await getDocs(q);
-    if (!snapshot.empty) {
-      const lastId = snapshot.docs[0].data().jobOrderId;
-      return lastId + 1;
+    try {
+      console.log('🔍 Getting next job order ID for tenant:', tenantId);
+      const q = query(
+        collection(db, 'jobOrders'),
+        where('tenantId', '==', tenantId),
+        orderBy('jobOrderId', 'desc'),
+        limit(1),
+      );
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const lastId = snapshot.docs[0].data().jobOrderId;
+        console.log('✅ Found last job order ID:', lastId, 'Next will be:', lastId + 1);
+        return lastId + 1;
+      }
+      console.log('✅ No existing job orders found, starting with 1000');
+      return 1000;
+    } catch (error) {
+      console.error('❌ Error in getNextJobOrderId:', error);
+      throw error;
     }
-    return 1000;
   };
 
   const isFormValid =

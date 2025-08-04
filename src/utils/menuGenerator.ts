@@ -19,7 +19,8 @@ export async function generateMenuItems(
   flexModuleEnabled?: boolean,
   recruiterModuleEnabled?: boolean,
   customersModuleEnabled?: boolean,
-  jobsBoardModuleEnabled?: boolean
+  jobsBoardModuleEnabled?: boolean,
+  crmModuleEnabled?: boolean
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
 
@@ -36,7 +37,7 @@ export async function generateMenuItems(
       
       if (userDoc.exists()) {
         userData = userDoc.data();
-        activeTenantId = userData.activeTenantId;
+        activeTenantId = userData?.activeTenantId || null;
         
         // console.log('=== MENU GENERATOR DEBUG ===');
         // console.log('Current user data:', {
@@ -49,8 +50,8 @@ export async function generateMenuItems(
         // });
         
         // Get the security level for the active tenant
-        if (userData.activeTenantId && userData.tenantIds && userData.tenantIds[userData.activeTenantId]) {
-          activeTenantData = userData.tenantIds[userData.activeTenantId];
+        if (activeTenantId && userData?.tenantIds && userData.tenantIds[activeTenantId]) {
+          activeTenantData = userData.tenantIds[activeTenantId];
           // console.log('Active tenant data:', {
           //   tenantId: userData.activeTenantId,
           //   role: activeTenantData.role,
@@ -72,8 +73,8 @@ export async function generateMenuItems(
 
   console.log('Active tenant ID:', activeTenantId);
   console.log('Active tenant data:', activeTenantData);
-  console.log('Active tenant Role:', activeTenantData.role || 'No role found');
-  console.log('Active tenant Security Level:', activeTenantData.securityLevel || 'No security level found');
+  console.log('Active tenant Role:', activeTenantData?.role || 'No role found');
+  console.log('Active tenant Security Level:', activeTenantData?.securityLevel || 'No security level found');
 
   if (!isHRX) {
     // Add tenant-specific menu items
@@ -116,6 +117,13 @@ export async function generateMenuItems(
         text: 'Recruiter',
         to: '/recruiter',
         icon: 'people',
+        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+      }] : []),
+      // Only show Sales CRM if HRX CRM module is enabled
+      ...(crmModuleEnabled ? [{
+        text: 'Sales CRM',
+        to: '/crm',
+        icon: 'business',
         accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
       }] : []),
       {

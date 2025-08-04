@@ -36,6 +36,14 @@ service firebase.storage {
       allow read: if true;
     }
 
+    // Company logo upload access
+    match /companies/{tenantId}/{companyId}/{fileName} {
+      // Allow authenticated users to upload/delete company logos for their tenant
+      allow write, delete: if request.auth != null;
+      // Public read access for company logos
+      allow read: if true;
+    }
+
     // Allow authenticated users to upload to customer AI training docs
     match /customers/{customerId}/aiTraining/{folder}/{allPaths=**} {
       allow read, write: if request.auth != null;

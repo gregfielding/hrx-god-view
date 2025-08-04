@@ -196,7 +196,17 @@ const UserProfilePage = () => {
   const handleSkillsUpdate = async (updated: any) => {
     if (!uid) return;
     const userRef = doc(db, 'users', uid);
-    await updateDoc(userRef, updated);
+    
+    // Filter out undefined values to prevent Firestore errors
+    const cleanData = Object.fromEntries(
+      Object.entries(updated).filter(([_, value]) => {
+        if (value === null || value === undefined) return false;
+        if (typeof value === 'string' && value === '') return false;
+        return true;
+      })
+    );
+    
+    await updateDoc(userRef, cleanData);
   };
 
   if (!uid) {
