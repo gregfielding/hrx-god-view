@@ -1,10 +1,9 @@
 import { onCall } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
-import * as functions from 'firebase-functions';
 
 const db = getFirestore();
 
-export const findContactEmail = onCall(async (request) => {
+export const findContactInfo = onCall(async (request) => {
   try {
     const { firstName, lastName, companyDomain, tenantId, contactId } = request.data;
     
@@ -13,51 +12,100 @@ export const findContactEmail = onCall(async (request) => {
     }
 
     // Hunter.io API call
-    const hunterApiKey = functions.config().hunter?.api_key;
-    if (!hunterApiKey) {
-      throw new Error('Hunter.io API key not configured. Please set it with: firebase functions:config:set hunter.api_key="YOUR_API_KEY"');
+    const apiKey = process.env.HUNTER_API_KEY;
+    console.log('🔑 Environment variables:', {
+      HUNTER_API_KEY: apiKey ? 'SET' : 'NOT SET',
+      NODE_ENV: process.env.NODE_ENV
+    });
+    
+    if (!apiKey) {
+      throw new Error('Hunter.io API key not configured. Please set it as an environment variable HUNTER_API_KEY');
     }
 
-    const url = `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(companyDomain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${hunterApiKey}`;
+    // Try email finder first
+    const emailUrl = `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(companyDomain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${apiKey}`;
     
     console.log(`🔍 Searching Hunter.io for: ${firstName} ${lastName} at ${companyDomain}`);
     
-    const response = await fetch(url);
-    const data = await response.json();
+    const emailResponse = await fetch(emailUrl);
+    const emailData = await emailResponse.json();
     
-    console.log(`✅ Hunter.io response:`, data);
+    console.log(`✅ Hunter.io email response:`, emailData);
     
-    if (data.data?.email) {
-      // Get the best email (highest confidence)
-      const bestEmail = data.data.email;
-      const confidence = data.data.confidence;
+    // Try domain search for additional info (including phone)
+    const domainUrl = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(companyDomain)}&api_key=${apiKey}`;
+    const domainResponse = await fetch(domainUrl);
+    const domainData = await domainResponse.json();
+    
+    console.log(`✅ Hunter.io domain response:`, domainData);
+    
+    const results = {
+      success: false,
+      email: null,
+      phone: null,
+      confidence: 0,
+      sources: [],
+      alternatives: []
+    };
+    
+    // Process email results
+    if (emailData.data?.email) {
+      results.success = true;
+      results.email = emailData.data.email;
+      results.confidence = emailData.data.confidence;
+      results.sources = emailData.data.sources || [];
+      results.alternatives = emailData.data.alternatives || [];
+    }
+    
+    // Process domain search for phone numbers
+    if (domainData.data?.emails) {
+      const personEmails = domainData.data.emails.filter((email: any) => 
+        email.first_name?.toLowerCase() === firstName.toLowerCase() &&
+        email.last_name?.toLowerCase() === lastName.toLowerCase()
+      );
       
-      // Update the contact with the found email
-      if (tenantId && contactId) {
-        await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).update({
-          email: bestEmail,
-          updatedAt: new Date()
-        });
-        console.log(`✅ Updated contact ${contactId} with email: ${bestEmail} (${confidence}% confidence)`);
+      if (personEmails.length > 0) {
+        const person = personEmails[0];
+        if (person.phone && !results.phone) {
+          results.phone = person.phone;
+        }
+        if (person.email && !results.email) {
+          results.email = person.email;
+          results.confidence = person.confidence || 0;
+        }
+      }
+    }
+    
+    // Update the contact with found information
+    if (tenantId && contactId && (results.email || results.phone)) {
+      const updateData: any = {
+        updatedAt: new Date()
+      };
+      
+      if (results.email) {
+        updateData.email = results.email;
       }
       
-      return {
-        success: true,
-        email: bestEmail,
-        confidence: confidence,
-        sources: data.data.sources,
-        alternatives: data.data.alternatives || [] // Other possible emails
-      };
+      if (results.phone) {
+        updateData.phone = results.phone;
+      }
+      
+      await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).update(updateData);
+      console.log(`✅ Updated contact ${contactId} with:`, updateData);
+    }
+    
+    if (results.success) {
+      return results;
     } else {
       return {
         success: false,
-        message: 'No email found',
-        data: data
+        message: 'No contact information found',
+        data: { emailData, domainData }
       };
     }
     
   } catch (error: any) {
-    console.error('❌ Error finding contact email:', error);
-    throw new Error(`Failed to find contact email: ${error.message}`);
+    console.error('❌ Error finding contact info:', error);
+    throw new Error(`Failed to find contact info: ${error.message}`);
   }
 }); 

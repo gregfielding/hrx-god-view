@@ -41,8 +41,7 @@ import { findTenantIds } from './findTenantIds';
 import { extractCompanyInfoFromUrls } from './extractCompanyInfoFromUrls';
 import { manageAssociations } from './manageAssociations';
 import { fixContactAssociations } from './fixContactAssociations';
-import { findContactEmail } from './findContactEmail';
-import { findContactPhone } from './findContactPhone';
+import { findContactInfo } from './findContactEmail';
 
 // 🎯 TASK ENGINE IMPORTS
 import {
@@ -10240,5 +10239,5 @@ export { extractCompanyInfoFromUrls };
 
 // Association Management Functions
 export { manageAssociations };
-export { fixContactAssociations, findContactEmail, findContactPhone };
+export { fixContactAssociations, findContactInfo };
 

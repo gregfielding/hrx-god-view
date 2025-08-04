@@ -200,9 +200,8 @@ const ContactDetails: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
 
-  // Email and phone finding state
-  const [findingEmail, setFindingEmail] = useState(false);
-  const [findingPhone, setFindingPhone] = useState(false);
+  // Contact info finding state
+  const [findingContactInfo, setFindingContactInfo] = useState(false);
   const [emailOptions, setEmailOptions] = useState<any[]>([]);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
 
@@ -570,14 +569,15 @@ const ContactDetails: React.FC = () => {
     return hasCompanyId && !hasCompanyAssociations;
   };
 
-  // Check if Find Email button should be shown
-  const shouldShowFindEmailButton = () => {
-    // Show if contact has name and company but no email
+  // Check if Find Contact Info button should be shown
+  const shouldShowFindContactInfoButton = () => {
+    // Show if contact has name and company but missing email or phone
     const hasName = contact?.firstName || contact?.lastName || contact?.fullName;
     const hasCompany = contact?.companyName;
     const hasEmail = contact?.email && contact.email.trim() !== '';
+    const hasPhone = contact?.phone && contact.phone.trim() !== '';
     
-    return hasName && hasCompany && !hasEmail;
+    return hasName && hasCompany && (!hasEmail || !hasPhone);
   };
 
   // Extract domain from company name
@@ -589,13 +589,13 @@ const ContactDetails: React.FC = () => {
 
   // Handle Find Email
   
-  const handleFindEmail = async () => {
+  const handleFindContactInfo = async () => {
     if (!contact || !tenantId || !contactId) return;
     
-    setFindingEmail(true);
+    setFindingContactInfo(true);
     try {
-      const findContactEmail = httpsCallable(functions, 'findContactEmail');
-      const result = await findContactEmail({
+      const findContactInfo = httpsCallable(functions, 'findContactInfo');
+      const result = await findContactInfo({
         firstName: contact.firstName || contact.fullName?.split(' ')[0] || '',
         lastName: contact.lastName || contact.fullName?.split(' ').slice(1).join(' ') || '',
         companyDomain: extractDomain(contact.companyName || ''),
@@ -605,6 +605,17 @@ const ContactDetails: React.FC = () => {
       
       const resultData = result.data as any;
       if (resultData.success) {
+        let successMessage = '';
+        
+        if (resultData.email) {
+          successMessage += `Found email: ${resultData.email} (${resultData.confidence}% confidence)`;
+        }
+        
+        if (resultData.phone) {
+          if (successMessage) successMessage += '\n';
+          successMessage += `Found phone: ${resultData.phone}`;
+        }
+        
         // If multiple emails found, show dialog
         if (resultData.alternatives && resultData.alternatives.length > 0) {
           setEmailOptions([
@@ -617,18 +628,18 @@ const ContactDetails: React.FC = () => {
           ]);
           setShowEmailDialog(true);
         } else {
-          // Single email found, auto-save
-          setAiSuccess(`Found email: ${resultData.email} (${resultData.confidence}% confidence)`);
+          // Single result found, auto-save
+          setAiSuccess(successMessage);
           await loadContact();
         }
       } else {
-        setError('No email found for this contact');
+        setError('No contact information found for this contact');
       }
     } catch (err: any) {
-      console.error('Error finding email:', err);
-      setError(err.message || 'Failed to find email');
+      console.error('Error finding contact info:', err);
+      setError(err.message || 'Failed to find contact information');
     } finally {
-      setFindingEmail(false);
+      setFindingContactInfo(false);
     }
   };
 
@@ -644,35 +655,7 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Handle Find Phone
-  const handleFindPhone = async () => {
-    if (!contact || !tenantId || !contactId) return;
-    
-    setFindingPhone(true);
-    try {
-      const findContactPhone = httpsCallable(functions, 'findContactPhone');
-      const result = await findContactPhone({
-        firstName: contact.firstName || contact.fullName?.split(' ')[0] || '',
-        lastName: contact.lastName || contact.fullName?.split(' ').slice(1).join(' ') || '',
-        companyName: contact.companyName || '',
-        tenantId,
-        contactId
-      });
-      
-      const resultData = result.data as any;
-      if (resultData.success) {
-        setAiSuccess(`Found phone: ${resultData.phone}`);
-        await loadContact();
-      } else {
-        setError(resultData.message || 'No phone found for this contact');
-      }
-    } catch (err: any) {
-      console.error('Error finding phone:', err);
-      setError(err.message || 'Failed to find phone');
-    } finally {
-      setFindingPhone(false);
-    }
-  };
+
 
   return (
     <Box sx={{ p: 0 }}>
@@ -911,26 +894,15 @@ const ContactDetails: React.FC = () => {
             >
               Back to Contacts
             </Button>
-            {shouldShowFindEmailButton() && (
+            {shouldShowFindContactInfoButton() && (
               <Button
                 variant="outlined"
                 color="primary"
-                startIcon={findingEmail ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
-                onClick={handleFindEmail}
-                disabled={findingEmail}
+                startIcon={findingContactInfo ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
+                onClick={handleFindContactInfo}
+                disabled={findingContactInfo}
               >
-                {findingEmail ? 'Finding...' : 'Find Email'}
-              </Button>
-            )}
-            {contact?.firstName && contact?.companyName && !contact?.phone && (
-              <Button
-                variant="outlined"
-                color="primary"
-                startIcon={findingPhone ? <CircularProgress size={20} color="inherit" /> : <PhoneIcon />}
-                onClick={handleFindPhone}
-                disabled={findingPhone}
-              >
-                {findingPhone ? 'Finding...' : 'Find Phone'}
+                {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
               </Button>
             )}
             <Button
