@@ -10,207 +10,210 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Grid,
   Box,
   Typography,
   Chip,
-  Autocomplete,
+  ToggleButton,
+  ToggleButtonGroup,
+  Grid,
   FormControlLabel,
   Switch,
-  Divider,
-  Tabs,
-  Tab,
-  Alert
+  Alert,
+  CircularProgress
 } from '@mui/material';
-import TaskContentGenerator from './TaskContentGenerator';
-import { TaskType, TaskStatus, TaskCategory } from '../types/Tasks';
+import {
+  Assignment as AssignmentIcon,
+  Schedule as ScheduleIcon,
+  CheckCircle as CheckCircleIcon,
+  AutoAwesome as AutoAwesomeIcon
+} from '@mui/icons-material';
+import { TaskClassification } from '../types/Tasks';
 
 interface CreateTaskDialogProps {
   open: boolean;
   onClose: () => void;
   onSubmit: (taskData: any) => void;
-  salespersonId: string;
-  tenantId: string;
-  companies?: any[];
-  contacts?: any[];
-  deals?: any[];
-  salespeople?: any[];
-  preSelectedDeal?: string;
-  preSelectedCompany?: string;
-  preSelectedContacts?: string[];
-}
-
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
-
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`task-tabpanel-${index}`}
-      aria-labelledby={`task-tab-${index}`}
-      {...other}
-    >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
-    </div>
-  );
+  prefilledData?: any;
+  loading?: boolean;
 }
 
 const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
   open,
   onClose,
   onSubmit,
-  salespersonId,
-  tenantId,
-  companies = [],
-  contacts = [],
-  deals = [],
-  salespeople = [],
-  preSelectedDeal,
-  preSelectedCompany,
-  preSelectedContacts = []
+  prefilledData,
+  loading = false
 }) => {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    type: 'custom' as TaskType,
-    priority: 'medium' as 'low' | 'medium' | 'high',
-    status: 'scheduled' as TaskStatus,
+    type: 'custom',
+    priority: 'medium',
+    status: 'scheduled',
+    classification: 'todo' as TaskClassification, // NEW: Default to todo
+    startTime: '', // NEW: For appointments
+    duration: 30, // NEW: Duration in minutes for appointments
     scheduledDate: new Date().toISOString().split('T')[0],
-    scheduledTime: '09:00',
     dueDate: '',
-    dueTime: '',
     estimatedDuration: 30,
-    assignedTo: salespersonId,
-    category: 'follow_up' as TaskCategory,
-    quotaCategory: 'business_generating' as 'business_generating' | 'administrative' | 'training' | 'other',
-    selectedCompany: preSelectedCompany || '',
-    selectedLocation: '',
-    selectedContact: '',
-    selectedDeal: preSelectedDeal || '',
-    selectedSalesperson: salespersonId,
-    recipient: '',
-    subject: '',
-    draftContent: '',
+    category: 'general',
+    quotaCategory: 'business_generating',
     notes: '',
-    tags: []
+    tags: [] as string[],
+    aiSuggested: false,
+    aiPrompt: ''
   });
 
-  const [tabValue, setTabValue] = useState(0);
-  const [generatedContent, setGeneratedContent] = useState<any>(null);
+  const [errors, setErrors] = useState<{[key: string]: string}>({});
 
-  // Update form when pre-selected values change
   useEffect(() => {
-    setFormData(prev => ({
-      ...prev,
-      selectedDeal: preSelectedDeal || prev.selectedDeal,
-      selectedCompany: preSelectedCompany || prev.selectedCompany,
-      selectedContact: preSelectedContacts.length > 0 ? preSelectedContacts[0] : prev.selectedContact
-    }));
-  }, [preSelectedDeal, preSelectedCompany, preSelectedContacts]);
+    if (prefilledData) {
+      setFormData({
+        ...formData,
+        ...prefilledData,
+        classification: prefilledData.classification || 'todo',
+        startTime: prefilledData.startTime || '',
+        duration: prefilledData.duration || 30
+      });
+    }
+  }, [prefilledData]);
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => ({ ...prev, [field]: value }));
+    
+    // Clear errors when user starts typing
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: '' }));
+    }
+  };
+
+  const validateForm = () => {
+    const newErrors: {[key: string]: string} = {};
+
+    if (!formData.title.trim()) {
+      newErrors.title = 'Title is required';
+    }
+
+    if (formData.classification === 'appointment') {
+      if (!formData.startTime) {
+        newErrors.startTime = 'Start time is required for appointments';
+      }
+      if (!formData.duration || formData.duration <= 0) {
+        newErrors.duration = 'Duration must be greater than 0';
+      }
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = () => {
-    const scheduledDateTime = new Date(`${formData.scheduledDate}T${formData.scheduledTime}`);
-    const dueDateTime = formData.dueDate && formData.dueTime ? 
-      new Date(`${formData.dueDate}T${formData.dueTime}`) : null;
+    if (!validateForm()) return;
 
     const taskData = {
-      title: formData.title,
-      description: formData.description,
-      type: formData.type,
-      priority: formData.priority,
-      status: formData.status,
-      scheduledDate: scheduledDateTime.toISOString(),
-      dueDate: dueDateTime?.toISOString() || null,
-      estimatedDuration: formData.estimatedDuration,
-      assignedTo: formData.assignedTo,
-      createdBy: salespersonId,
-      tenantId,
-      category: formData.category,
-      quotaCategory: formData.quotaCategory,
-      associations: {
-        deals: formData.selectedDeal ? [formData.selectedDeal] : [],
-        companies: formData.selectedCompany ? [formData.selectedCompany] : [],
-        contacts: formData.selectedContact ? [formData.selectedContact] : [],
-        salespeople: formData.selectedSalesperson ? [formData.selectedSalesperson] : []
-      },
-      notes: formData.notes,
-      tags: formData.tags,
-      communicationDetails: formData.type === 'email' ? {
-        method: 'email' as const,
-        recipient: formData.recipient,
-        subject: formData.subject,
-        draftContent: formData.draftContent
-      } : undefined
+      ...formData,
+      // Convert duration to number
+      duration: parseInt(formData.duration.toString()),
+      estimatedDuration: parseInt(formData.estimatedDuration.toString())
     };
 
     onSubmit(taskData);
   };
 
-  // Filter contacts and deals based on selected company
-  const filteredContacts = formData.selectedCompany ? 
-    contacts.filter(contact => contact.companyId === formData.selectedCompany) : contacts;
-  
-  const filteredDeals = formData.selectedCompany ? 
-    deals.filter(deal => deal.companyId === formData.selectedCompany) : deals;
+  const handleClose = () => {
+    setFormData({
+      title: '',
+      description: '',
+      type: 'custom',
+      priority: 'medium',
+      status: 'scheduled',
+      classification: 'todo',
+      startTime: '',
+      duration: 30,
+      scheduledDate: new Date().toISOString().split('T')[0],
+      dueDate: '',
+      estimatedDuration: 30,
+      category: 'general',
+      quotaCategory: 'business_generating',
+      notes: '',
+      tags: [],
+      aiSuggested: false,
+      aiPrompt: ''
+    });
+    setErrors({});
+    onClose();
+  };
+
+  const durationOptions = [
+    { value: 15, label: '15 minutes' },
+    { value: 30, label: '30 minutes' },
+    { value: 45, label: '45 minutes' },
+    { value: 60, label: '1 hour' },
+    { value: 90, label: '1.5 hours' },
+    { value: 120, label: '2 hours' },
+    { value: 180, label: '3 hours' },
+    { value: 240, label: '4 hours' },
+    { value: 480, label: '8 hours' }
+  ];
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>Create New Task</DialogTitle>
+    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Box display="flex" alignItems="center" gap={1}>
+          <AssignmentIcon />
+          Create New Task
+        </Box>
+      </DialogTitle>
+      
       <DialogContent>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
-            <Tab label="Task Details" />
-            <Tab label="AI Content" />
-          </Tabs>
+        <Box sx={{ mb: 3 }}>
+          {/* Task Classification Toggle */}
+          <Typography variant="subtitle1" sx={{ mb: 2 }}>
+            Task Type
+          </Typography>
+          <ToggleButtonGroup
+            value={formData.classification}
+            exclusive
+            onChange={(_, value) => value && handleInputChange('classification', value)}
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="todo">
+              <CheckCircleIcon sx={{ mr: 1 }} />
+              To-Do Item
+            </ToggleButton>
+            <ToggleButton value="appointment">
+              <ScheduleIcon sx={{ mr: 1 }} />
+              Appointment
+            </ToggleButton>
+          </ToggleButtonGroup>
+          
+          {formData.classification === 'appointment' && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Appointments will sync to Google Calendar
+            </Alert>
+          )}
+          
+          {formData.classification === 'todo' && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              To-do items will sync to Google Tasks
+            </Alert>
+          )}
         </Box>
 
-        <TabPanel value={tabValue} index={0}>
-          <Grid container spacing={3}>
-          {/* Basic Task Info */}
+        <Grid container spacing={2}>
+          {/* Basic Information */}
           <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>Basic Task Info</Typography>
-          </Grid>
-          <Grid item xs={12} md={8}>
             <TextField
               fullWidth
               label="Task Title"
               value={formData.title}
               onChange={(e) => handleInputChange('title', e.target.value)}
+              error={!!errors.title}
+              helperText={errors.title}
               required
             />
           </Grid>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>Priority</InputLabel>
-              <Select
-                value={formData.priority}
-                onChange={(e) => handleInputChange('priority', e.target.value)}
-                label="Priority"
-              >
-                <MenuItem value="low">Low</MenuItem>
-                <MenuItem value="medium">Medium</MenuItem>
-                <MenuItem value="high">High</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
+
           <Grid item xs={12}>
             <TextField
               fullWidth
@@ -222,28 +225,96 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
             />
           </Grid>
 
-          {/* Task Type and Priority */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>Task Type and Priority</Typography>
+          {/* Appointment-specific fields */}
+          {formData.classification === 'appointment' && (
+            <>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  label="Start Time"
+                  type="datetime-local"
+                  value={formData.startTime}
+                  onChange={(e) => handleInputChange('startTime', e.target.value)}
+                  error={!!errors.startTime}
+                  helperText={errors.startTime}
+                  required
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              
+              <Grid item xs={6}>
+                <FormControl fullWidth error={!!errors.duration}>
+                  <InputLabel>Duration</InputLabel>
+                  <Select
+                    value={formData.duration}
+                    onChange={(e) => handleInputChange('duration', e.target.value)}
+                    label="Duration"
+                  >
+                    {durationOptions.map(option => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                    <MenuItem value="custom">Custom</MenuItem>
+                  </Select>
+                  {errors.duration && (
+                    <Typography variant="caption" color="error">
+                      {errors.duration}
+                    </Typography>
+                  )}
+                </FormControl>
+              </Grid>
+            </>
+          )}
+
+          {/* General fields */}
+          <Grid item xs={6}>
+            <TextField
+              fullWidth
+              label="Date"
+              type="date"
+              value={formData.scheduledDate}
+              onChange={(e) => handleInputChange('scheduledDate', e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
           </Grid>
-          <Grid item xs={12} md={6}>
+
+          <Grid item xs={6}>
             <FormControl fullWidth>
-              <InputLabel>Task Type</InputLabel>
+              <InputLabel>Priority</InputLabel>
+              <Select
+                value={formData.priority}
+                onChange={(e) => handleInputChange('priority', e.target.value)}
+                label="Priority"
+              >
+                <MenuItem value="low">Low</MenuItem>
+                <MenuItem value="medium">Medium</MenuItem>
+                <MenuItem value="high">High</MenuItem>
+                <MenuItem value="urgent">Urgent</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+
+          <Grid item xs={6}>
+            <FormControl fullWidth>
+              <InputLabel>Type</InputLabel>
               <Select
                 value={formData.type}
                 onChange={(e) => handleInputChange('type', e.target.value)}
-                label="Task Type"
+                label="Type"
               >
                 <MenuItem value="email">Email</MenuItem>
                 <MenuItem value="phone_call">Phone Call</MenuItem>
                 <MenuItem value="scheduled_meeting_virtual">Virtual Meeting</MenuItem>
                 <MenuItem value="scheduled_meeting_in_person">In-Person Meeting</MenuItem>
                 <MenuItem value="research">Research</MenuItem>
+                <MenuItem value="follow_up">Follow Up</MenuItem>
                 <MenuItem value="custom">Custom</MenuItem>
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={6}>
+
+          <Grid item xs={6}>
             <FormControl fullWidth>
               <InputLabel>Category</InputLabel>
               <Select
@@ -251,192 +322,21 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
                 onChange={(e) => handleInputChange('category', e.target.value)}
                 label="Category"
               >
-                <MenuItem value="prospecting">Prospecting</MenuItem>
-                <MenuItem value="qualification">Qualification</MenuItem>
-                <MenuItem value="proposal">Proposal</MenuItem>
-                <MenuItem value="negotiation">Negotiation</MenuItem>
-                <MenuItem value="closing">Closing</MenuItem>
+                <MenuItem value="general">General</MenuItem>
                 <MenuItem value="follow_up">Follow Up</MenuItem>
-                <MenuItem value="administrative">Administrative</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-
-          {/* Scheduling */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>Scheduling</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Scheduled Date"
-              type="date"
-              value={formData.scheduledDate}
-              onChange={(e) => handleInputChange('scheduledDate', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Scheduled Time"
-              type="time"
-              value={formData.scheduledTime}
-              onChange={(e) => handleInputChange('scheduledTime', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Due Date (Optional)"
-              type="date"
-              value={formData.dueDate}
-              onChange={(e) => handleInputChange('dueDate', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Estimated Duration (minutes)"
-              type="number"
-              value={formData.estimatedDuration}
-              onChange={(e) => handleInputChange('estimatedDuration', parseInt(e.target.value))}
-            />
-          </Grid>
-
-          {/* CRM Associations */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>CRM Associations</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Company</InputLabel>
-              <Select
-                value={formData.selectedCompany}
-                onChange={(e) => handleInputChange('selectedCompany', e.target.value)}
-                label="Company"
-              >
-                <MenuItem value="">None</MenuItem>
-                {companies.map((company) => (
-                  <MenuItem key={company.id} value={company.id}>
-                    {company.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Contact</InputLabel>
-              <Select
-                value={formData.selectedContact}
-                onChange={(e) => handleInputChange('selectedContact', e.target.value)}
-                label="Contact"
-              >
-                <MenuItem value="">None</MenuItem>
-                {filteredContacts.map((contact) => (
-                  <MenuItem key={contact.id} value={contact.id}>
-                    {contact.firstName} {contact.lastName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Deal</InputLabel>
-              <Select
-                value={formData.selectedDeal}
-                onChange={(e) => handleInputChange('selectedDeal', e.target.value)}
-                label="Deal"
-              >
-                <MenuItem value="">None</MenuItem>
-                {filteredDeals.map((deal) => (
-                  <MenuItem key={deal.id} value={deal.id}>
-                    {deal.title}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Assigned To</InputLabel>
-              <Select
-                value={formData.selectedSalesperson}
-                onChange={(e) => handleInputChange('selectedSalesperson', e.target.value)}
-                label="Assigned To"
-              >
-                {salespeople.map((salesperson) => (
-                  <MenuItem key={salesperson.id} value={salesperson.id}>
-                    {salesperson.firstName} {salesperson.lastName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-
-          {/* Email Details (conditional) */}
-          {formData.type === 'email' && (
-            <>
-              <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>Email Details</Typography>
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Recipient Email"
-                  value={formData.recipient}
-                  onChange={(e) => handleInputChange('recipient', e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Subject"
-                  value={formData.subject}
-                  onChange={(e) => handleInputChange('subject', e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Draft Content"
-                  value={formData.draftContent}
-                  onChange={(e) => handleInputChange('draftContent', e.target.value)}
-                  multiline
-                  rows={4}
-                />
-              </Grid>
-            </>
-          )}
-
-          {/* Quota Category */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>Quota Category</Typography>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Quota Category</InputLabel>
-              <Select
-                value={formData.quotaCategory}
-                onChange={(e) => handleInputChange('quotaCategory', e.target.value)}
-                label="Quota Category"
-              >
-                <MenuItem value="business_generating">Business Generating</MenuItem>
-                <MenuItem value="administrative">Administrative</MenuItem>
+                <MenuItem value="prospecting">Prospecting</MenuItem>
+                <MenuItem value="presentation">Presentation</MenuItem>
+                <MenuItem value="demo">Demo</MenuItem>
+                <MenuItem value="proposal">Proposal</MenuItem>
+                <MenuItem value="contract">Contract</MenuItem>
+                <MenuItem value="onboarding">Onboarding</MenuItem>
                 <MenuItem value="training">Training</MenuItem>
+                <MenuItem value="admin">Admin</MenuItem>
                 <MenuItem value="other">Other</MenuItem>
               </Select>
             </FormControl>
           </Grid>
 
-          {/* Notes */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom>Notes</Typography>
-          </Grid>
           <Grid item xs={12}>
             <TextField
               fullWidth
@@ -444,29 +344,53 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
               value={formData.notes}
               onChange={(e) => handleInputChange('notes', e.target.value)}
               multiline
-              rows={3}
+              rows={2}
             />
           </Grid>
-        </Grid>
-        </TabPanel>
 
-        <TabPanel value={tabValue} index={1}>
-          <TaskContentGenerator
-            taskId="new"
-            tenantId={tenantId}
-            task={formData}
-            onContentGenerated={setGeneratedContent}
-          />
-        </TabPanel>
+          {/* AI Fields */}
+          <Grid item xs={12}>
+            <Box display="flex" alignItems="center" gap={1}>
+              <AutoAwesomeIcon color="primary" />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.aiSuggested}
+                    onChange={(e) => handleInputChange('aiSuggested', e.target.checked)}
+                  />
+                }
+                label="AI Suggested"
+              />
+            </Box>
+          </Grid>
+
+          {formData.aiSuggested && (
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="AI Prompt"
+                value={formData.aiPrompt}
+                onChange={(e) => handleInputChange('aiPrompt', e.target.value)}
+                multiline
+                rows={2}
+                placeholder="What AI prompt was used to generate this task?"
+              />
+            </Grid>
+          )}
+        </Grid>
       </DialogContent>
+
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={handleClose} disabled={loading}>
+          Cancel
+        </Button>
         <Button 
           onClick={handleSubmit} 
-          variant="contained"
-          disabled={!formData.title}
+          variant="contained" 
+          disabled={loading}
+          startIcon={loading ? <CircularProgress size={16} /> : <AssignmentIcon />}
         >
-          Create Task
+          {loading ? 'Creating...' : 'Create Task'}
         </Button>
       </DialogActions>
     </Dialog>

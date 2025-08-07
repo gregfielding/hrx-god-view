@@ -4,14 +4,17 @@ import {
   Typography,
   Card,
   CardContent,
-  Grid,
   Button,
   Chip,
-  IconButton,
   List,
   ListItem,
   ListItemText,
   ListItemIcon,
+  Divider,
+  Alert,
+  CircularProgress,
+  IconButton,
+  Tooltip,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -21,43 +24,40 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Alert,
-  LinearProgress,
-  Badge,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
-  Paper
+  Grid,
+  Tabs,
+  Tab,
+  Paper,
+  Stack
 } from '@mui/material';
-import { createAssociationService } from '../utils/associationService';
 import {
   Add as AddIcon,
+  Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
   Schedule as ScheduleIcon,
-  PriorityHigh as PriorityHighIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
   Business as BusinessIcon,
-  Person as PersonIcon,
+  TrendingUp as TrendingUpIcon,
+  Task as TaskIcon,
   Psychology as PsychologyIcon,
-  Refresh as RefreshIcon,
-  ExpandMore as ExpandMoreIcon,
   Assignment as AssignmentIcon,
-  TrendingUp as TrendingUpIcon
+  PlayArrow as PlayArrowIcon,
+  Check as CheckIcon,
+  Cancel as CancelIcon,
+  Bedtime as BedtimeIcon,
+  Lightbulb as LightbulbIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { TaskService } from '../utils/taskService';
+import { createAssociationService } from '../utils/associationService';
 import { TaskStatus, TaskClassification } from '../types/Tasks';
 import CreateTaskDialog from './CreateTaskDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
 import TaskCard from './TaskCard';
 
-interface DealTasksDashboardProps {
-  dealId: string;
+interface UserTasksDashboardProps {
   tenantId: string;
-  deal: any; // Deal information
 }
 
 interface TaskDashboardData {
@@ -96,10 +96,8 @@ interface TaskDashboardData {
   };
 }
 
-const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
-  dealId,
-  tenantId,
-  deal
+const UserTasksDashboard: React.FC<UserTasksDashboardProps> = ({
+  tenantId
 }) => {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState<TaskDashboardData | null>(null);
@@ -109,12 +107,8 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState(0);
-  const [associatedCompany, setAssociatedCompany] = useState<any>(null);
-  const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
-  const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
-  const [loadingAssociations, setLoadingAssociations] = useState(false);
   const [prefilledTaskData, setPrefilledTaskData] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState(0);
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [completionTaskId, setCompletionTaskId] = useState<string | null>(null);
   const [completionNotes, setCompletionNotes] = useState('');
@@ -123,129 +117,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
   useEffect(() => {
     loadDashboardData();
-    loadAssociatedData();
-  }, [dealId, tenantId]);
-
-  const loadAssociatedData = async () => {
-    if (!user || !tenantId || !dealId) return;
-    
-    setLoadingAssociations(true);
-    try {
-      console.log('🔍 TESTING: Loading associations for deal:', dealId);
-      
-      // TEST: Use the new unified association service
-      try {
-        const { createUnifiedAssociationService } = await import('../utils/unifiedAssociationService');
-        const associationService = createUnifiedAssociationService(tenantId, user.uid);
-        
-        console.log('🔍 Loading unified associations for deal:', dealId);
-        const result = await associationService.getEntityAssociations('deal', dealId);
-        
-        console.log('📊 Unified association result:', result);
-        console.log('📊 Companies:', result.entities.companies);
-        console.log('📊 Contacts:', result.entities.contacts);
-        console.log('📊 Salespeople:', result.entities.salespeople);
-        
-        // Set company
-        if (result.entities.companies && result.entities.companies.length > 0) {
-          setAssociatedCompany(result.entities.companies[0]);
-        }
-        
-        // Set contacts
-        if (result.entities.contacts) {
-          setAssociatedContacts(result.entities.contacts);
-        }
-        
-        // Set salespeople
-        if (result.entities.salespeople) {
-          setAssociatedSalespeople(result.entities.salespeople);
-        }
-        
-        console.log('✅ Unified service test completed successfully');
-        return;
-        
-      } catch (unifiedError) {
-        console.error('❌ Unified service failed, falling back to old method:', unifiedError);
-      }
-      
-      // FALLBACK: Use the old association service
-      const associationService = createAssociationService(tenantId, user.uid);
-      
-      // Load company associated with the deal
-      const companyResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['company']
-      });
-      
-      if (companyResult.entities.companies && companyResult.entities.companies.length > 0) {
-        setAssociatedCompany(companyResult.entities.companies[0]);
-      }
-      
-      // Load contacts associated with the deal
-      const contactResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['contact']
-      });
-      
-      if (contactResult.entities.contacts) {
-        setAssociatedContacts(contactResult.entities.contacts);
-      }
-      
-      // Load salespeople associated with the deal
-      const salespeopleResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['salesperson']
-      });
-      
-      if (salespeopleResult.entities.salespeople) {
-        setAssociatedSalespeople(salespeopleResult.entities.salespeople);
-      }
-      
-    } catch (err) {
-      console.error('Error loading associated data:', err);
-    } finally {
-      setLoadingAssociations(false);
-    }
-  };
-
-  // Filter out AI suggestions that match existing tasks
-  const filterDuplicateSuggestions = (suggestions: any[], existingTasks: any[]) => {
-    if (!suggestions || suggestions.length === 0) return [];
-    if (!existingTasks || existingTasks.length === 0) return suggestions;
-
-    return suggestions.filter(suggestion => {
-      // Check if any existing task matches this suggestion
-      const isDuplicate = existingTasks.some(task => {
-        // Compare by title (case-insensitive)
-        const titleMatch = task.title?.toLowerCase() === suggestion.title?.toLowerCase();
-        
-        // Compare by type
-        const typeMatch = task.type === suggestion.type;
-        
-        // Compare by category
-        const categoryMatch = task.category === suggestion.category;
-        
-        // If title matches, it's definitely a duplicate
-        if (titleMatch) {
-          console.log('Debug: Filtering out duplicate suggestion by title:', suggestion.title);
-          return true;
-        }
-        
-        // If type and category match, it's likely a duplicate
-        if (typeMatch && categoryMatch) {
-          console.log('Debug: Filtering out duplicate suggestion by type/category:', suggestion.title);
-          return true;
-        }
-        
-        return false;
-      });
-      
-      return !isDuplicate;
-    });
-  };
+  }, [tenantId]);
 
   const loadDashboardData = async () => {
     if (!user) return;
@@ -254,106 +126,26 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     setError(null);
 
     try {
-      // Debug: Directly query tasks from Firestore
-      console.log('Debug: Loading tasks for deal:', dealId);
-      const { collection, query, where, getDocs } = await import('firebase/firestore');
-      const { db } = await import('../firebase');
-      
-      // Query all tasks for this deal
-      const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-      const tasksQuery = query(
-        tasksRef,
-        where('associations.deals', 'array-contains', dealId)
-      );
-      
-      const tasksSnapshot = await getDocs(tasksQuery);
-      const allTasks = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log('Debug: Found tasks for deal:', allTasks);
-
-      // Also check for tasks assigned to the current user
-      const userTasksQuery = query(
-        tasksRef,
-        where('assignedTo', '==', user.uid)
-      );
-      
-      const userTasksSnapshot = await getDocs(userTasksQuery);
-      const userTasks = userTasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log('Debug: Found tasks for user:', userTasks);
-
-      // Load deal-specific tasks
+      // Load task dashboard for the current user
       const dashboardResult = await taskService.getTaskDashboard(
         user.uid,
         new Date().toISOString(),
-        tenantId,
-        { dealId } // Filter by deal
+        tenantId
       );
 
       console.log('Debug: Dashboard result:', dashboardResult);
-      console.log('Debug: Today tasks count:', dashboardResult?.today?.tasks?.length || 0);
-      console.log('Debug: This week tasks count:', dashboardResult?.thisWeek?.tasks?.length || 0);
+      setDashboardData(dashboardResult);
 
-      // Load AI suggestions for this deal
+      // Load AI suggestions for the current user
       const suggestionsResult = await taskService.getAITaskSuggestions(
         user.uid,
-        tenantId,
-        { dealId, dealStage: deal?.stage }
+        tenantId
       );
 
-      // If dashboard result is empty but we found tasks directly, create a fallback structure
-      if ((!dashboardResult?.today?.tasks || dashboardResult.today.tasks.length === 0) && allTasks.length > 0) {
-        console.log('Debug: Creating fallback dashboard structure with', allTasks.length, 'tasks');
-        
-        // Create a simple dashboard structure with all tasks
-        const fallbackDashboard = {
-          today: {
-            totalTasks: allTasks.length,
-            completedTasks: allTasks.filter((t: any) => t.status === 'completed').length,
-            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed').length,
-            tasks: allTasks
-          },
-          thisWeek: {
-            totalTasks: allTasks.length,
-            completedTasks: allTasks.filter((t: any) => t.status === 'completed').length,
-            pendingTasks: allTasks.filter((t: any) => t.status !== 'completed').length,
-            quotaProgress: {
-              percentage: 0,
-              completed: allTasks.filter((t: any) => t.status === 'completed').length,
-              target: 30
-            },
-            tasks: allTasks
-          },
-          completed: {
-            totalTasks: allTasks.filter((t: any) => t.status === 'completed').length,
-            tasks: allTasks.filter((t: any) => t.status === 'completed')
-          },
-          priorities: {
-            high: allTasks.filter((t: any) => t.priority === 'high').length,
-            medium: allTasks.filter((t: any) => t.priority === 'medium').length,
-            low: allTasks.filter((t: any) => t.priority === 'low').length
-          },
-          types: {
-            email: allTasks.filter((t: any) => t.type === 'email').length,
-            phone_call: allTasks.filter((t: any) => t.type === 'phone_call').length,
-            scheduled_meeting_virtual: allTasks.filter((t: any) => t.type === 'scheduled_meeting_virtual').length,
-            research: allTasks.filter((t: any) => t.type === 'research').length,
-            custom: allTasks.filter((t: any) => t.type === 'custom').length
-          }
-        };
-        
-        setDashboardData(fallbackDashboard);
-      } else {
-        setDashboardData(dashboardResult);
-      }
-      
-      // Filter out AI suggestions that match existing tasks
-      const filteredSuggestions = filterDuplicateSuggestions(suggestionsResult || [], allTasks);
-      console.log('Debug: Original suggestions count:', suggestionsResult?.length || 0);
-      console.log('Debug: Filtered suggestions count:', filteredSuggestions.length);
-      
-      setAiSuggestions(filteredSuggestions);
+      setAiSuggestions(suggestionsResult || []);
     } catch (err) {
-      console.error('Error loading deal tasks dashboard:', err);
-      setError('Failed to load deal tasks');
+      console.error('Error loading user tasks dashboard:', err);
+      setError('Failed to load tasks');
     } finally {
       setLoading(false);
     }
@@ -363,22 +155,14 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     if (!user) return;
 
     try {
-      // Pre-select the deal association
-      const taskWithDeal = {
+      await taskService.createTask({
         ...taskData,
-        associations: {
-          ...taskData.associations,
-          deals: [dealId]
-        }
-      };
-
-      const result = await taskService.createTask(taskWithDeal);
+        assignedTo: user.uid,
+        tenantId: tenantId
+      });
       
-      if (result.success) {
-        setShowCreateDialog(false);
-        setPrefilledTaskData(null); // Clear pre-filled data
-        await loadDashboardData(); // Refresh data
-      }
+      await loadDashboardData(); // Refresh data
+      setShowCreateDialog(false);
     } catch (err) {
       console.error('Error creating task:', err);
       setError('Failed to create task');
@@ -423,7 +207,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       description: suggestion.description,
       type: suggestion.type || 'custom',
       priority: suggestion.priority || 'medium',
-      status: 'upcoming' as TaskStatus,
+      status: 'upcoming',
       classification: classification as TaskClassification,
       startTime: classification === 'appointment' ? new Date().toISOString() : null,
       duration: classification === 'appointment' ? 60 : null,
@@ -435,9 +219,9 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       assignedTo: user?.uid || '',
       category: suggestion.category || 'follow_up',
       quotaCategory: suggestion.category || 'business_generating',
-      selectedCompany: associatedCompany?.id || deal?.companyId || '',
+      selectedCompany: '',
       selectedContact: '',
-      selectedDeal: dealId,
+      selectedDeal: '',
       selectedSalesperson: user?.uid || '',
       recipient: '',
       subject: '',
@@ -452,22 +236,12 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     setShowCreateDialog(true);
   };
 
-  const handleRejectSuggestion = async (suggestionId: string) => {
-    try {
-      await taskService.rejectAITaskSuggestion(suggestionId, tenantId, user?.uid || '');
-      await loadDashboardData(); // Refresh data
-    } catch (err) {
-      console.error('Error rejecting suggestion:', err);
-      setError('Failed to reject suggestion');
-    }
-  };
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'success';
-      case 'due': return 'warning'; // Yellow for due today
-      case 'overdue': return 'error'; // Red for overdue
-      case 'upcoming': return 'success'; // Green for future
+      case 'due': return 'warning';
+      case 'overdue': return 'error';
+      case 'upcoming': return 'info';
       case 'postponed': return 'default';
       case 'cancelled': return 'error';
       default: return 'default';
@@ -489,11 +263,11 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
   const getTaskTypeIcon = (type: string) => {
     switch (type) {
-      case 'email': return <EmailIcon />;
-      case 'phone_call': return <PhoneIcon />;
-      case 'scheduled_meeting_virtual': return <ScheduleIcon />;
-      case 'research': return <PsychologyIcon />;
-      case 'business': return <BusinessIcon />;
+      case 'email': return <AssignmentIcon />;
+      case 'phone_call': return <AssignmentIcon />;
+      case 'scheduled_meeting_virtual': return <AssignmentIcon />;
+      case 'research': return <AssignmentIcon />;
+      case 'business': return <AssignmentIcon />;
       default: return <AssignmentIcon />;
     }
   };
@@ -511,21 +285,16 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
   if (loading) {
     return (
-      <Box sx={{ p: 0 }}>
-        <LinearProgress />
-        <Typography variant="body2" sx={{ mt: 2 }}>
-          Loading deal tasks...
-        </Typography>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
       </Box>
     );
   }
 
   if (error) {
     return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="error" onClose={() => setError(null)}>
-          {error}
-        </Alert>
+      <Box p={3}>
+        <Alert severity="error">{error}</Alert>
       </Box>
     );
   }
@@ -643,9 +412,6 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
           getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
         />
       )}
 
@@ -661,9 +427,6 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
           getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
         />
       )}
 
@@ -679,9 +442,6 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
           getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
         />
       )}
 
@@ -690,23 +450,18 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           <AISuggestionsList
             suggestions={aiSuggestions}
             onAccept={handleAcceptSuggestion}
-            getPriorityColor={getStatusColor}
+            getPriorityColor={(priority) => {
+              switch (priority) {
+                case 'high': return 'error';
+                case 'medium': return 'warning';
+                case 'low': return 'default';
+                default: return 'default';
+              }
+            }}
             getTaskIcon={getTaskTypeIcon}
           />
-          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={loadDashboardData}
-              disabled={loading}
-            >
-              Refresh AI Suggestions
-            </Button>
-          </Box>
         </Box>
       )}
-
-
 
       {/* Dialogs */}
       {showCreateDialog && (
@@ -783,9 +538,6 @@ interface TasksListProps {
   getTaskTypeIcon: (type: string) => React.ReactNode;
   calculateUrgency: (task: any) => string;
   getTaskStatusDisplay: (task: any) => string;
-  deal?: any;
-  associatedContacts?: any[];
-  associatedSalespeople?: any[];
 }
 
 const TasksList: React.FC<TasksListProps> = ({
@@ -795,10 +547,7 @@ const TasksList: React.FC<TasksListProps> = ({
   getStatusColor,
   getTaskTypeIcon,
   calculateUrgency,
-  getTaskStatusDisplay,
-  deal,
-  associatedContacts = [],
-  associatedSalespeople = []
+  getTaskStatusDisplay
 }) => {
   if (tasks.length === 0) {
     return (
@@ -822,14 +571,10 @@ const TasksList: React.FC<TasksListProps> = ({
           onQuickComplete={onQuickComplete}
           getStatusColor={getStatusColor}
           getTaskStatusDisplay={getTaskStatusDisplay}
-          // In Deal Details context, we hide company and deal since we already know them
-          showCompany={false}
-          showDeal={false}
-          showContacts={true}
-          // Pass the deal context data
-          deal={deal}
-          contacts={associatedContacts}
-          salespeople={associatedSalespeople}
+          // Show company and deal information for main tasks view
+          showCompany={true}
+          showDeal={true}
+          showContacts={false}
         />
       ))}
     </Box>
@@ -889,13 +634,14 @@ const AISuggestionsList: React.FC<AISuggestionsListProps> = ({
                 )}
               </Box>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                <IconButton
+                <Button
                   size="small"
+                  variant="contained"
                   color="success"
                   onClick={() => onAccept(suggestion)}
                 >
-                  <AddIcon />
-                </IconButton>
+                  Accept
+                </Button>
               </Box>
             </Box>
           </CardContent>
@@ -905,77 +651,4 @@ const AISuggestionsList: React.FC<AISuggestionsListProps> = ({
   );
 };
 
-interface TasksAnalyticsProps {
-  dashboardData: TaskDashboardData | null;
-}
-
-const TasksAnalytics: React.FC<TasksAnalyticsProps> = ({ dashboardData }) => {
-  return (
-    <Grid container spacing={3}>
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Priority Breakdown
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">High Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.high || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.high || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="error"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Medium Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.medium || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.medium || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="warning"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Low Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.low || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.low || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="success"
-              />
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-      
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Task Types
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              {Object.entries(dashboardData?.types || {}).map(([type, count]) => (
-                <Box key={type} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                    {type.replace('_', ' ')}
-                  </Typography>
-                  <Typography variant="body2">{count}</Typography>
-                </Box>
-              ))}
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-    </Grid>
-  );
-};
-
-export default DealTasksDashboard; 
+export default UserTasksDashboard; 

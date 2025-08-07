@@ -48,10 +48,10 @@ export class TaskService {
     }
   }
 
-  async updateTask(taskId: string, updates: Partial<CRMTask>): Promise<{ success: boolean }> {
+  async updateTask(taskId: string, updates: Partial<CRMTask>, tenantId: string): Promise<{ success: boolean }> {
     try {
       const updateTaskFunction = httpsCallable(functions, 'updateTask');
-      const result = await updateTaskFunction({ taskId, updates });
+      const result = await updateTaskFunction({ taskId, updates, tenantId });
       const response = result.data as { success: boolean };
       
       // Log activity
@@ -79,7 +79,7 @@ export class TaskService {
   async completeTask(taskId: string, completionData: { outcome: string; notes?: string }, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
       const completeTaskFunction = httpsCallable(functions, 'completeTask');
-      const result = await completeTaskFunction({ taskId, completionData });
+      const result = await completeTaskFunction({ taskId, completionData, tenantId });
       const response = result.data as { success: boolean };
       
       // Log activity
@@ -105,7 +105,7 @@ export class TaskService {
   async deleteTask(taskId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
       const deleteTaskFunction = httpsCallable(functions, 'deleteTask');
-      const result = await deleteTaskFunction({ taskId });
+      const result = await deleteTaskFunction({ taskId, tenantId });
       const response = result.data as { success: boolean };
       
       // Log activity
@@ -515,7 +515,7 @@ export class TaskService {
 
   calculateTaskUrgency(task: CRMTask): number {
     const now = new Date();
-    const dueDate = task.dueDateTime ? new Date(task.dueDateTime) : new Date(task.scheduledDate);
+    const dueDate = task.dueDate ? new Date(task.dueDate) : new Date(task.scheduledDate);
     const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
     
     let urgency = 5; // Base urgency
