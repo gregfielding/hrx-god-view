@@ -2,169 +2,104 @@
 // Integrates with existing CRM entities, AI logging, and activity tracking
 
 // 🏗️ CORE TASK TYPES
-export interface CRMTask {
+export type TaskStatus = 'scheduled' | 'upcoming' | 'due' | 'overdue' | 'completed' | 'cancelled';
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type TaskType = 'email' | 'phone_call' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
+export type TaskCategory = 'general' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
+export type QuotaCategory = 'business_generating' | 'business_maintaining' | 'business_developing' | 'non_business';
+
+// New task classification types
+export type TaskClassification = 'todo' | 'appointment';
+
+export interface Task {
   id: string;
   title: string;
-  description: string;
-  
-  // 🎯 Task Classification
+  description?: string;
   type: TaskType;
-  category: TaskCategory;
-  subcategory?: string; // For specific task reasons like "contract negotiation", "vacation follow-up"
-  reason?: string; // Free text or dropdown reason (e.g., "Follow-up after vacation")
-  
-  // 📅 Scheduling & Timing
-  scheduledDate: string; // ISO date string
-  dueDate?: string; // Optional due date
-  dueDateTime?: string; // Full timestamp for precise scheduling
-  estimatedDuration?: number; // In minutes
-  timeZone?: string; // Default to user's timezone
-  
-  // 🎯 Priority & Status
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  priority: TaskPriority;
   status: TaskStatus;
+  classification: TaskClassification; // NEW: todo or appointment
   
-  // 👤 Assignment & Ownership
-  assignedTo: string; // User ID
-  assignedByName?: string; // Cached name for display
+  // Time fields for appointments
+  startTime?: string; // ISO string for appointments
+  endTime?: string; // Calculated from startTime + duration
+  duration?: number; // Duration in minutes for appointments
+  
+  // Existing fields
+  scheduledDate: string; // Date only (YYYY-MM-DD)
+  dueDate?: string;
+  estimatedDuration?: number; // Legacy field, use duration for appointments
+  
+  // Assignment fields
+  assignedTo: string;
+  assignedToName?: string; // Optimized field
   createdBy: string;
-  createdByName?: string;
+  createdByName?: string; // Optimized field
   
-  // 🔗 Associations (Universal Association System)
-  associations: {
-    deals?: string[];
+  // Organization fields
+  tenantId: string;
+  category: TaskCategory;
+  quotaCategory: QuotaCategory;
+  
+  // Associations
+  associations?: {
     companies?: string[];
     contacts?: string[];
+    deals?: string[];
     salespeople?: string[];
     locations?: string[];
-    campaigns?: string[]; // For campaign-based tasks
+    divisions?: string[];
+    tasks?: string[];
+    relatedTo?: {
+      type: 'deal' | 'company' | 'contact';
+      id: string;
+    };
+    relatedToName?: string; // Optimized field
   };
   
-  // 📝 Content & Context
+  // Additional fields
+  tags?: string[];
   notes?: string;
-  actionItems?: string[]; // Specific actions to take
-  expectedOutcome?: string;
-  actionResult?: string; // Summary of what was done or what to do next (used by AI and reporting)
+  reason?: string;
   
-  // 🤖 AI Integration
+  // AI fields
+  aiSuggested?: boolean;
+  aiPrompt?: string;
   aiGenerated?: boolean;
-  aiSuggested?: boolean; // Whether AI created it
-  aiReason?: string; // Why AI suggested this task
-  aiConfidence?: number; // 0-100 confidence score
-  aiContext?: string; // AI context used for generation
-  aiPrompt?: string; // Optional—what prompt AI used to suggest or generate task
+  aiReason?: string;
+  aiConfidence?: number;
+  aiContext?: any;
   
-  // 📊 KPI & Quota Tracking
-  quotaCategory?: 'business_generating' | 'relationship_building' | 'administrative' | 'research';
-  estimatedValue?: number; // Potential deal value
-  kpiContribution?: {
-    kpiId: string;
-    contributionValue: number;
-  }[];
+  // Google Calendar/Tasks sync fields
+  googleCalendarEventId?: string; // For appointments
+  googleTaskId?: string; // For todos
+  lastGoogleSync?: string; // ISO timestamp of last sync
+  syncStatus?: 'pending' | 'synced' | 'failed';
   
-  // 🔄 Recurring & Campaign Tasks
-  isRecurring?: boolean;
-  recurrencePattern?: {
-    frequency: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'custom';
-    interval?: number; // Every X days/weeks/months
-    endDate?: string;
-    customDays?: number[]; // For custom frequency
-  };
-  
-  // 📧 Communication Tasks
-  communicationDetails?: {
-    method: 'email' | 'phone' | 'linkedin' | 'in_person' | 'virtual_meeting';
-    recipient?: string; // Contact ID or email
-    subject?: string; // For emails
-    template?: string; // AI-generated template
-    draftContent?: string; // AI-drafted content
-    sendTime?: string; // Optimal send time
-  };
-  
-  // 🎁 Gift & Gesture Tasks
-  giftDetails?: {
-    type: 'gift' | 'card' | 'lunch' | 'event_invitation';
-    recipient?: string;
-    budget?: number;
-    occasion?: string;
-    message?: string;
-  };
-  
-  // 📍 Location & Travel
-  locationDetails?: {
-    address?: string;
-    coordinates?: { lat: number; lng: number };
-    isVirtual?: boolean;
-    meetingUrl?: string;
-    travelTime?: number; // In minutes
-  };
-  
-  // 🔔 Reminders & Notifications
-  reminders?: {
-    enabled: boolean;
-    times: string[]; // Array of reminder times (e.g., ["1h", "1d", "1w"])
-    lastReminderSent?: string;
-  };
-  
-  // 📈 Completion & Follow-up
+  // Timestamps
+  createdAt: string;
+  updatedAt: string;
   completedAt?: string;
-  completionNotes?: string;
-  outcome?: 'positive' | 'neutral' | 'negative';
-  followUpRequired?: boolean;
-  followUpTaskId?: string; // ID of follow-up task
   
-  // 🏷️ Organization
-  tags: string[];
-  tenantId: string;
-  createdAt: any;
-  updatedAt: any;
+  // Action tracking
+  actionResult?: any;
+  estimatedValue?: number;
+  kpiContribution?: any;
+  
+  // Communication details (for email/phone tasks)
+  communicationDetails?: {
+    method: 'email' | 'phone';
+    subject?: string;
+    draftContent?: string;
+    recipient?: string;
+  };
 }
 
-// 🎯 TASK TYPES (Enhanced to match ChatGPT specification)
-export type TaskType = 
-  | 'email' 
-  | 'phone_call' 
-  | 'in_person_drop_by' // Physical stop at company
-  | 'scheduled_meeting_in_person' // Future dated in-person
-  | 'scheduled_meeting_virtual' // Zoom/Google Meet, etc
-  | 'linkedin_message' 
-  | 'send_gift' 
-  | 'custom' // Catch-all option with editable label
-  | 'research' 
-  | 'proposal_preparation' 
-  | 'contract_review' 
-  | 'follow_up' 
-  | 'check_in' 
-  | 'presentation' 
-  | 'demo' 
-  | 'negotiation' 
-  | 'closing' 
-  | 'administrative';
+export interface CRMTask extends Task {
+  // Additional CRM-specific fields if needed
+}
 
-// 📂 TASK CATEGORIES
-export type TaskCategory = 
-  | 'prospecting' 
-  | 'qualification' 
-  | 'proposal' 
-  | 'negotiation' 
-  | 'closing' 
-  | 'relationship_building' 
-  | 'account_management' 
-  | 'research' 
-  | 'administrative' 
-  | 'campaign' 
-  | 'follow_up' 
-  | 'custom';
 
-// 📊 TASK STATUS (Enhanced to match ChatGPT specification)
-export type TaskStatus = 
-  | 'upcoming' // Light Blue
-  | 'due' // Orange
-  | 'completed' // Green
-  | 'postponed' // Gray
-  | 'cancelled' // Red
-  | 'in_progress'
-  | 'draft';
 
 // 🎯 TASK CAMPAIGNS (Recurring Task Sequences)
 export interface TaskCampaign {

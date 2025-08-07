@@ -19,79 +19,145 @@ export const createTask = onCall({
     priority, 
     status, 
     scheduledDate, 
-    dueDate, 
-    estimatedDuration, 
     assignedTo, 
     createdBy, 
     tenantId, 
     category, 
     quotaCategory, 
     associations, 
-    tags, 
-    notes, 
-    reason,
-    aiSuggested,
-    aiPrompt
+    aiSuggested, 
+    aiPrompt,
+    classification = 'todo', // Default to todo if not specified
+    startTime = null,
+    duration = null,
+    dueDate = null
   } = request.data;
 
   try {
-    if (!title || !assignedTo || !tenantId) {
-      throw new Error('Missing required fields: title, assignedTo, tenantId');
+    if (!title || !assignedTo || !createdBy || !tenantId) {
+      throw new Error('Missing required fields: title, assignedTo, createdBy, tenantId');
+    }
+
+    // Validate appointment fields
+    if (classification === 'appointment') {
+      if (!startTime) {
+        throw new Error('Start time is required for appointments');
+      }
+      if (!duration) {
+        throw new Error('Duration is required for appointments');
+      }
+    }
+
+    // Get user names for optimization
+    let assignedToName = 'Unknown User';
+    let createdByName = 'Unknown User';
+    
+    try {
+      // Get assigned user name
+      const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(assignedTo).get();
+      if (assignedUserDoc.exists) {
+        const assignedUserData = assignedUserDoc.data();
+        assignedToName = assignedUserData?.displayName || 
+                        assignedUserData?.fullName || 
+                        `${assignedUserData?.firstName || ''} ${assignedUserData?.lastName || ''}`.trim() || 
+                        assignedUserData?.email || 
+                        'Unknown User';
+      }
+    } catch (userError) {
+      console.warn(`Could not fetch assigned user name for ${assignedTo}:`, (userError as Error).message);
+    }
+    
+    try {
+      // Get creator name
+      const creatorUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(createdBy).get();
+      if (creatorUserDoc.exists) {
+        const creatorUserData = creatorUserDoc.data();
+        createdByName = creatorUserData?.displayName || 
+                       creatorUserData?.fullName || 
+                       `${creatorUserData?.firstName || ''} ${creatorUserData?.lastName || ''}`.trim() || 
+                       creatorUserData?.email || 
+                       'Unknown User';
+      }
+    } catch (userError) {
+      console.warn(`Could not fetch creator name for ${createdBy}:`, (userError as Error).message);
+    }
+
+    // Get related entity names for optimization
+    let relatedToName = '';
+    if (associations?.relatedTo) {
+      try {
+        const relatedEntityDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(associations.relatedTo).get();
+        if (relatedEntityDoc.exists) {
+          const relatedEntityData = relatedEntityDoc.data();
+          relatedToName = relatedEntityData?.companyName || relatedEntityData?.name || 'Unknown Company';
+        }
+      } catch (entityError) {
+        console.warn(`Could not fetch related entity name for ${associations.relatedTo}:`, (entityError as Error).message);
+      }
     }
 
     const taskData = {
       title,
       description: description || '',
-      type: type || 'custom',
-      priority: priority || 'medium',
-      status: status || 'scheduled',
-      scheduledDate: scheduledDate || new Date().toISOString(),
-      dueDate: dueDate || null,
-      estimatedDuration: estimatedDuration || 30,
+      type,
+      priority,
+      status,
+      classification, // Add classification field
+      startTime: classification === 'appointment' ? startTime : null,
+      duration: classification === 'appointment' ? duration : null,
+      endTime: classification === 'appointment' && startTime && duration ? 
+        new Date(new Date(startTime).getTime() + duration * 60000).toISOString() : null,
+      scheduledDate,
+      dueDate,
       assignedTo,
-      createdBy: createdBy || assignedTo,
-      tenantId,
-      category: category || 'general',
-      quotaCategory: quotaCategory || 'business_generating',
+      assignedToName, // Add user name for optimization
       associations: associations || {},
-      tags: tags || [],
-      notes: notes || '',
-      reason: reason || '',
+      notes: '',
+      quotaCategory,
+      estimatedDuration: duration || 30,
       aiSuggested: aiSuggested || false,
       aiPrompt: aiPrompt || '',
+      aiReason: aiPrompt || '',
+      aiConfidence: aiSuggested ? 85 : null,
+      aiContext: aiSuggested ? 'AI generated task' : null,
+      aiInsights: aiSuggested ? ['AI suggested based on context'] : [],
+      googleCalendarEventId: null,
+      googleTaskId: null,
+      lastGoogleSync: null,
+      syncStatus: 'pending',
+      tags: [],
+      relatedToName, // Add related entity name for optimization
+      tenantId,
+      createdBy,
+      createdByName, // Add creator name for optimization
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      completedAt: null,
-      actionResult: null
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
     const taskRef = await db.collection('tenants').doc(tenantId).collection('tasks').add(taskData);
-    const taskId = taskRef.id;
 
-    // Create AI log for task creation
-    await createTaskAILog(
-      'task.created',
-      taskId,
-      `Task "${title}" created by ${createdBy || assignedTo}`,
-      tenantId,
-      assignedTo,
-      associations,
-      JSON.stringify({
-        type,
-        priority,
-        category,
-        quotaCategory,
-        aiSuggested
-      })
-    );
+    // Log AI action if this is an AI-suggested task
+    if (aiSuggested) {
+      await logAIAction({
+        eventType: 'ai_task.created',
+        targetType: 'task',
+        targetId: taskRef.id,
+        reason: `AI created task: ${title}`,
+        contextType: 'task_creation',
+        aiTags: ['ai_suggestions', 'task_creation', type],
+        urgencyScore: getUrgencyScore(priority),
+        tenantId,
+        userId: createdBy,
+        aiResponse: JSON.stringify({
+          taskTitle: title,
+          taskType: type,
+          classification,
+          aiPrompt
+        })
+      });
+    }
 
-    console.log(`✅ Task created: ${taskId} - ${title}`);
-
-    return { 
-      taskId, 
-      success: true,
-      message: 'Task created successfully'
-    };
+    return { taskId: taskRef.id, success: true };
 
   } catch (error) {
     console.error('❌ Error creating task:', error);
@@ -125,6 +191,87 @@ export const updateTask = onCall({
       ...updates,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
+
+    // If assignedTo is being updated, fetch the user name for optimization
+    if (updates.assignedTo && typeof updates.assignedTo === 'string') {
+      try {
+        const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(updates.assignedTo).get();
+        if (assignedUserDoc.exists) {
+          const assignedUserData = assignedUserDoc.data();
+          const assignedToName = assignedUserData?.displayName || 
+                                assignedUserData?.fullName || 
+                                `${assignedUserData?.firstName || ''} ${assignedUserData?.lastName || ''}`.trim() || 
+                                assignedUserData?.email || 
+                                'Unknown User';
+          
+          updateData.assignedToName = assignedToName;
+          console.log(`✅ Updated assignedToName to: ${assignedToName}`);
+        }
+      } catch (userError) {
+        console.warn(`Could not fetch assigned user name for ${updates.assignedTo}:`, (userError as Error).message);
+        updateData.assignedToName = 'Unknown User';
+      }
+    }
+
+    // If createdBy is being updated, fetch the user name for optimization
+    if (updates.createdBy && typeof updates.createdBy === 'string') {
+      try {
+        const createdUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(updates.createdBy).get();
+        if (createdUserDoc.exists) {
+          const createdUserData = createdUserDoc.data();
+          const createdByName = createdUserData?.displayName || 
+                              createdUserData?.fullName || 
+                              `${createdUserData?.firstName || ''} ${createdUserData?.lastName || ''}`.trim() || 
+                              createdUserData?.email || 
+                              'Unknown User';
+          
+          updateData.createdByName = createdByName;
+          console.log(`✅ Updated createdByName to: ${createdByName}`);
+        }
+      } catch (userError) {
+        console.warn(`Could not fetch creator name for ${updates.createdBy}:`, (userError as Error).message);
+        updateData.createdByName = 'Unknown User';
+      }
+    }
+
+    // If relatedTo is being updated, fetch the entity name for optimization
+    if (updates.associations?.relatedTo?.type && updates.associations?.relatedTo?.id) {
+      try {
+        const entityType = updates.associations.relatedTo.type;
+        const entityId = updates.associations.relatedTo.id;
+        
+        let entityDoc;
+        if (entityType === 'deal') {
+          entityDoc = await db.collection('tenants').doc(tenantId).collection('crm_deals').doc(entityId).get();
+        } else if (entityType === 'company') {
+          entityDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(entityId).get();
+        } else if (entityType === 'contact') {
+          entityDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(entityId).get();
+        }
+        
+        if (entityDoc?.exists) {
+          const entityData = entityDoc.data();
+          let relatedToName = 'Unknown';
+          
+          if (entityType === 'deal') {
+            relatedToName = entityData?.name || entityData?.title || 'Untitled Deal';
+          } else if (entityType === 'company') {
+            relatedToName = entityData?.name || 'Untitled Company';
+          } else if (entityType === 'contact') {
+            relatedToName = entityData?.fullName || 
+                           entityData?.name || 
+                           `${entityData?.firstName || ''} ${entityData?.lastName || ''}`.trim() || 
+                           'Untitled Contact';
+          }
+          
+          updateData.relatedToName = relatedToName;
+          console.log(`✅ Updated relatedToName to: ${relatedToName}`);
+        }
+      } catch (entityError) {
+        console.warn(`Could not fetch related entity name:`, (entityError as Error).message);
+        updateData.relatedToName = 'Unknown';
+      }
+    }
 
     await taskRef.update(updateData);
 
@@ -208,10 +355,34 @@ export const completeTask = onCall({
     // Create follow-up task if specified
     if (followUpTask) {
       try {
+        // Get user names for optimization
+        let assignedToName = 'Unknown User';
+        let createdByName = 'Unknown User';
+        
+        try {
+          // Get assigned user name
+          const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(taskData?.assignedTo).get();
+          if (assignedUserDoc.exists) {
+            const assignedUserData = assignedUserDoc.data();
+            assignedToName = assignedUserData?.displayName || 
+                            assignedUserData?.fullName || 
+                            `${assignedUserData?.firstName || ''} ${assignedUserData?.lastName || ''}`.trim() || 
+                            assignedUserData?.email || 
+                            'Unknown User';
+          }
+        } catch (userError) {
+          console.warn(`Could not fetch assigned user name for follow-up task:`, (userError as Error).message);
+        }
+        
+        // For follow-up tasks, creator is usually the same as assigned user
+        createdByName = assignedToName;
+
         const followUpData = {
           ...followUpTask,
           assignedTo: taskData?.assignedTo,
+          assignedToName, // Add user name for optimization
           createdBy: taskData?.assignedTo,
+          createdByName, // Add creator name for optimization
           tenantId,
           associations: taskData?.associations || {},
           aiSuggested: true,
@@ -249,6 +420,71 @@ export const completeTask = onCall({
     console.error('❌ Error completing task:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to complete task: ${errorMessage}`);
+  }
+});
+
+export const quickCompleteTask = onCall({
+  cors: true
+}, async (request) => {
+  const { taskId } = request.data;
+
+  try {
+    if (!taskId) {
+      throw new Error('Missing required field: taskId');
+    }
+
+    // Get the task to find tenantId and other details
+    const taskQuery = await db.collectionGroup('tasks').where('__name__', '==', taskId).get();
+    
+    if (taskQuery.empty) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const taskDoc = taskQuery.docs[0];
+    const taskData = taskDoc.data();
+    const tenantId = taskData.tenantId;
+
+    if (!tenantId) {
+      throw new Error('Task has no tenantId');
+    }
+
+    const taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId);
+    
+    const updateData: any = {
+      status: 'completed',
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await taskRef.update(updateData);
+
+    // Create AI log for quick task completion
+    await createTaskAILog(
+      'task.quick_completed',
+      taskId,
+      `Task "${taskData?.title}" quickly completed`,
+      tenantId,
+      taskData?.assignedTo,
+      taskData?.associations,
+      JSON.stringify({
+        quickComplete: true,
+        originalType: taskData?.type,
+        originalPriority: taskData?.priority,
+        quotaCategory: taskData?.quotaCategory
+      })
+    );
+
+    console.log(`✅ Task quickly completed: ${taskId}`);
+
+    return { 
+      success: true,
+      message: 'Task quickly completed successfully'
+    };
+
+  } catch (error) {
+    console.error('❌ Error quick completing task:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to quick complete task: ${errorMessage}`);
   }
 });
 
@@ -475,14 +711,15 @@ export const getTaskDashboard = onCall({
     let todayTasks: any[] = [];
     let weekTasks: any[] = [];
 
-    // Get today's tasks
-    const todayStart = new Date(date);
-    todayStart.setHours(0, 0, 0, 0);
+    // Get today's tasks (including overdue tasks that are not completed)
+    // Convert the date parameter to local timezone for proper day boundaries
+    const inputDate = new Date(date);
+    const todayStart = new Date(inputDate.getFullYear(), inputDate.getMonth(), inputDate.getDate(), 0, 0, 0, 0);
     
-    const todayEnd = new Date(date);
-    todayEnd.setHours(23, 59, 59, 999);
+    const todayEnd = new Date(inputDate.getFullYear(), inputDate.getMonth(), inputDate.getDate(), 23, 59, 59, 999);
 
     try {
+      // First, get tasks scheduled for today
       let todayQuery = db.collection('tenants').doc(tenantId).collection('tasks')
         .where('scheduledDate', '>=', todayStart.toISOString())
         .where('scheduledDate', '<=', todayEnd.toISOString())
@@ -495,15 +732,30 @@ export const getTaskDashboard = onCall({
 
       const todaySnapshot = await todayQuery.get();
       todayTasks = todaySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Then, get overdue tasks that are not completed
+      let overdueQuery = db.collection('tenants').doc(tenantId).collection('tasks')
+        .where('scheduledDate', '<', todayStart.toISOString())
+        .where('assignedTo', '==', userId)
+        .where('status', '!=', 'completed');
+
+      // Apply filters if provided
+      if (filters?.dealId) {
+        overdueQuery = overdueQuery.where('associations.deals', 'array-contains', filters.dealId);
+      }
+
+      const overdueSnapshot = await overdueQuery.get();
+      const overdueTasks = overdueSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+      // Combine today's tasks and overdue tasks
+      todayTasks = [...todayTasks, ...overdueTasks];
     } catch (indexError: any) {
       console.warn('Index not ready for today tasks query, returning empty results:', indexError.message);
       todayTasks = [];
     }
     
     // Get this week's tasks
-    const weekStart = new Date(date);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    weekStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(inputDate.getFullYear(), inputDate.getMonth(), inputDate.getDate() - inputDate.getDay(), 0, 0, 0, 0);
     
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekEnd.getDate() + 6);
@@ -527,8 +779,27 @@ export const getTaskDashboard = onCall({
       weekTasks = [];
     }
 
+    // Get completed tasks
+    let completedTasks: any[] = [];
+    try {
+      let completedQuery = db.collection('tenants').doc(tenantId).collection('tasks')
+        .where('assignedTo', '==', userId)
+        .where('status', '==', 'completed');
+
+      // Apply filters if provided
+      if (filters?.dealId) {
+        completedQuery = completedQuery.where('associations.deals', 'array-contains', filters.dealId);
+      }
+
+      const completedSnapshot = await completedQuery.get();
+      completedTasks = completedSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (indexError: any) {
+      console.warn('Index not ready for completed tasks query, returning empty results:', indexError.message);
+      completedTasks = [];
+    }
+
     // Calculate analytics
-    const allTasks = [...todayTasks, ...weekTasks];
+    const allTasks = [...todayTasks, ...weekTasks, ...completedTasks];
     const priorities = {
       high: allTasks.filter((t: any) => t.priority === 'high').length,
       medium: allTasks.filter((t: any) => t.priority === 'medium').length,
@@ -543,11 +814,11 @@ export const getTaskDashboard = onCall({
       custom: allTasks.filter((t: any) => t.type === 'custom').length
     };
 
-    const completedTasks = allTasks.filter((t: any) => t.status === 'completed').length;
+    const completedTasksCount = allTasks.filter((t: any) => t.status === 'completed').length;
     const totalTasks = allTasks.length;
     const quotaProgress = {
-      percentage: totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0,
-      completed: completedTasks,
+      percentage: totalTasks > 0 ? Math.round((completedTasksCount / totalTasks) * 100) : 0,
+      completed: completedTasksCount,
       target: 30 // Default daily quota
     };
 
@@ -564,6 +835,10 @@ export const getTaskDashboard = onCall({
         pendingTasks: weekTasks.filter((t: any) => t.status !== 'completed').length,
         quotaProgress,
         tasks: weekTasks
+      },
+      completed: {
+        totalTasks: completedTasks.length,
+        tasks: completedTasks
       },
       priorities,
       types
@@ -619,10 +894,529 @@ export const getAITaskSuggestions = onCall({
   }
 });
 
+export const getUnifiedAISuggestions = onCall({
+  cors: true
+}, async (request) => {
+  const { userId, tenantId, filters } = request.data;
+
+  try {
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    // Get comprehensive context
+    const pipelineData = await getUserPipelineData(userId, tenantId);
+    const userContext = await getUserContext(userId, tenantId);
+    
+    // Apply filters
+    let dealContext = null;
+    if (filters?.dealId) {
+      dealContext = await getDealContext(filters.dealId, tenantId, userId);
+      pipelineData.deals = pipelineData.deals.filter((deal: any) => deal.id === filters.dealId);
+    }
+
+    // Generate unified suggestions
+    const suggestions = await generateUnifiedSuggestions(pipelineData, userContext, dealContext, filters);
+
+    return {
+      success: true,
+      suggestions: suggestions
+    };
+
+  } catch (error) {
+    console.error('❌ Error fetching unified AI suggestions:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to fetch unified AI suggestions: ${errorMessage}`);
+  }
+});
+
+async function generateUnifiedSuggestions(pipelineData: any, userContext: any, dealContext: any, filters: any) {
+  const suggestions: any[] = [];
+  
+  try {
+    // 1. Deal Stage Requirements (if deal-specific)
+    if (dealContext && dealContext.deal) {
+      const stageAnalysis = await analyzeCurrentStage(dealContext);
+      const stageSuggestions = await generateStageBasedSuggestions(dealContext, stageAnalysis);
+      suggestions.push(...stageSuggestions);
+    }
+
+    // 2. General Productivity Suggestions
+    const productivitySuggestions = await generateProductivitySuggestions(pipelineData, userContext);
+    suggestions.push(...productivitySuggestions);
+
+    // 3. Deal-Specific Context Suggestions
+    if (dealContext) {
+      const dealSpecificSuggestions = await generateDealSpecificSuggestions(dealContext, pipelineData);
+      suggestions.push(...dealSpecificSuggestions);
+    }
+
+    // 4. Quota and KPI Suggestions
+    const quotaSuggestions = await generateQuotaSuggestions(userContext, pipelineData);
+    suggestions.push(...quotaSuggestions);
+
+    // 5. Remove duplicates and prioritize
+    const uniqueSuggestions = removeDuplicateSuggestions(suggestions);
+    const prioritizedSuggestions = prioritizeSuggestions(uniqueSuggestions, dealContext, userContext);
+
+    return prioritizedSuggestions;
+
+  } catch (error) {
+    console.error('Error generating unified suggestions:', error);
+    return [];
+  }
+}
+
+async function generateStageBasedSuggestions(dealContext: any, stageAnalysis: any) {
+  const suggestions: any[] = [];
+  
+  try {
+    const missingFields = stageAnalysis.missingFields;
+    const currentStage = stageAnalysis.currentStage;
+
+    // Generate tasks for missing stage fields
+    Object.entries(missingFields).forEach(([field, description]: [string, any]) => {
+      suggestions.push({
+        id: `stage_${field}_${Date.now()}`,
+        title: `Complete ${field.replace(/([A-Z])/g, ' $1').toLowerCase()}`,
+        description: `Required for ${currentStage} stage: ${description}`,
+        type: 'field_completion',
+        priority: 'high',
+        category: 'business_generating',
+        estimatedDuration: 30,
+        associations: {
+          deals: [dealContext.deal.id],
+          companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+        },
+        aiGenerated: true,
+        aiReason: `Missing required field for ${currentStage} stage`,
+        aiConfidence: 95,
+        source: 'stage_requirements',
+        fieldName: field,
+        stage: currentStage
+      });
+    });
+
+    // Generate stage-specific tasks
+    const stageTasks = await getStageRequiredTasks(currentStage, dealContext.deal);
+    stageTasks.forEach((task: any) => {
+      suggestions.push({
+        ...task,
+        id: `stage_task_${Date.now()}_${Math.random()}`,
+        aiGenerated: true,
+        aiReason: `Required for ${currentStage} stage progression`,
+        aiConfidence: 90,
+        source: 'stage_requirements',
+        stage: currentStage
+      });
+    });
+
+    return suggestions;
+  } catch (error) {
+    console.error('Error generating stage-based suggestions:', error);
+    return [];
+  }
+}
+
+// Import the missing functions from dealStageAIEngine
+async function analyzeCurrentStage(dealContext: any): Promise<any> {
+  // Simplified version for task engine
+  const analysis: any = {
+    currentStage: dealContext.deal?.stage || 'discovery',
+    missingFields: {},
+    stageProgress: 0
+  };
+
+  try {
+    const currentStage = analysis.currentStage;
+    
+    // Define basic stage requirements
+    const stageRequirements = getStageRequirements(currentStage);
+    
+    // Analyze completed fields (simplified)
+    const stageForms = dealContext.stageForms?.[currentStage] || {};
+    
+    // Identify missing fields
+    const missingFields: any = {};
+    Object.keys(stageRequirements).forEach(field => {
+      if (!stageForms[field] || stageForms[field] === '') {
+        missingFields[field] = stageRequirements[field];
+      }
+    });
+    analysis.missingFields = missingFields;
+
+    return analysis;
+  } catch (error) {
+    console.error('Error analyzing current stage:', error);
+    return analysis;
+  }
+}
+
+function getStageRequirements(stage: string): any {
+  const requirements: any = {
+    discovery: {
+      'currentStaffCount': 'Current staff count at the company',
+      'currentAgencyCount': 'Number of staffing agencies currently used',
+      'jobTitlesNeeded': 'Specific job titles they need to fill',
+      'satisfactionLevel': 'Satisfaction level with current staffing',
+      'shiftsNeeded': 'Shifts they need to cover',
+      'currentStruggles': 'Current challenges with staffing',
+      'budgetRange': 'Budget range for staffing services',
+      'timeline': 'Timeline for implementation',
+      'decisionMakers': 'Key decision makers involved'
+    },
+    qualification: {
+      'painPoints': 'Specific pain points identified',
+      'budgetConfirmed': 'Budget has been confirmed',
+      'decisionProcess': 'Decision-making process',
+      'timelineConfirmed': 'Implementation timeline confirmed',
+      'stakeholders': 'All stakeholders identified',
+      'currentSolutions': 'Current solutions being used',
+      'evaluationCriteria': 'Evaluation criteria for vendors',
+      'successMetrics': 'Success metrics defined'
+    },
+    proposal: {
+      'requirements': 'Detailed requirements gathered',
+      'solutionDesign': 'Solution design completed',
+      'pricingStructure': 'Pricing structure defined',
+      'implementationPlan': 'Implementation plan created',
+      'timeline': 'Detailed timeline established',
+      'teamAssigned': 'Implementation team assigned',
+      'riskAssessment': 'Risk assessment completed',
+      'valueProposition': 'Value proposition refined'
+    },
+    negotiation: {
+      'pricingNegotiated': 'Pricing has been negotiated',
+      'termsAgreed': 'Terms and conditions agreed',
+      'contractDrafted': 'Contract has been drafted',
+      'legalReview': 'Legal review completed',
+      'finalApproval': 'Final approval obtained',
+      'implementationSchedule': 'Implementation schedule set',
+      'successMetrics': 'Success metrics finalized',
+      'goLiveDate': 'Go-live date confirmed'
+    },
+    closing: {
+      'contractSigned': 'Contract has been signed',
+      'paymentTerms': 'Payment terms finalized',
+      'implementationStarted': 'Implementation has started',
+      'teamOnboarded': 'Team has been onboarded',
+      'successMetrics': 'Success metrics tracking in place',
+      'relationshipEstablished': 'Relationship manager assigned',
+      'expansionOpportunities': 'Expansion opportunities identified',
+      'referralPotential': 'Referral potential assessed'
+    }
+  };
+
+  return requirements[stage] || {};
+}
+
+async function getStageRequiredTasks(stage: string, deal: any): Promise<any[]> {
+  const stageTasks: any[] = [];
+  
+  try {
+    switch (stage) {
+      case 'discovery':
+        stageTasks.push({
+          type: 'research',
+          title: `Research ${deal?.name || 'company'}`,
+          description: 'Gather information about company, decision makers, and needs',
+          priority: 'high',
+          category: 'business_generating'
+        });
+        break;
+        
+      case 'qualification':
+        stageTasks.push({
+          type: 'meeting',
+          title: `Qualification meeting with ${deal?.name || 'company'}`,
+          description: 'Assess fit and budget alignment',
+          priority: 'high',
+          category: 'business_generating'
+        });
+        break;
+        
+      case 'proposal':
+        stageTasks.push({
+          type: 'proposal_preparation',
+          title: `Prepare proposal for ${deal?.name || 'company'}`,
+          description: 'Create detailed proposal based on requirements',
+          priority: 'high',
+          category: 'business_generating'
+        });
+        break;
+        
+      case 'negotiation':
+        stageTasks.push({
+          type: 'negotiation',
+          title: `Negotiate terms with ${deal?.name || 'company'}`,
+          description: 'Finalize pricing and terms',
+          priority: 'high',
+          category: 'business_generating'
+        });
+        break;
+        
+      case 'closing':
+        stageTasks.push({
+          type: 'closing',
+          title: `Close deal with ${deal?.name || 'company'}`,
+          description: 'Finalize contract and close the deal',
+          priority: 'high',
+          category: 'business_generating'
+        });
+        break;
+    }
+    
+    return stageTasks;
+  } catch (error) {
+    console.error('Error getting stage required tasks:', error);
+    return [];
+  }
+}
+
+async function generateProductivitySuggestions(pipelineData: any, userContext: any) {
+  const suggestions: any[] = [];
+  
+  try {
+    // Follow-up suggestions for high-value deals
+    const highValueDeals = pipelineData.deals.filter((deal: any) => 
+      deal.estimatedRevenue && deal.estimatedRevenue > 50000
+    );
+
+    highValueDeals.forEach((deal: any) => {
+      suggestions.push({
+        id: `followup_${deal.id}_${Date.now()}`,
+        title: `Follow up with ${deal.name}`,
+        description: `High-value deal ($${deal.estimatedRevenue}) needs attention`,
+        type: 'phone_call',
+        priority: 'high',
+        category: 'business_generating',
+        estimatedDuration: 15,
+        associations: { deals: [deal.id] },
+        aiGenerated: true,
+        aiReason: `High-value deal requires follow-up`,
+        aiConfidence: 85,
+        source: 'productivity'
+      });
+    });
+
+    // Relationship building for contacts
+    const contactsNeedingFollowUp = pipelineData.contacts.filter((contact: any) => {
+      const lastContact = contact.lastContactDate;
+      if (!lastContact) return true;
+      const daysSinceContact = (Date.now() - new Date(lastContact).getTime()) / (1000 * 60 * 60 * 24);
+      return daysSinceContact > 7;
+    });
+
+    contactsNeedingFollowUp.forEach((contact: any) => {
+      suggestions.push({
+        id: `relationship_${contact.id}_${Date.now()}`,
+        title: `Check in with ${contact.fullName}`,
+        description: `Maintain relationship with key contact`,
+        type: 'email',
+        priority: 'medium',
+        category: 'relationship_building',
+        estimatedDuration: 10,
+        associations: { contacts: [contact.id] },
+        aiGenerated: true,
+        aiReason: `Contact needs relationship maintenance`,
+        aiConfidence: 75,
+        source: 'productivity'
+      });
+    });
+
+    return suggestions;
+  } catch (error) {
+    console.error('Error generating productivity suggestions:', error);
+    return [];
+  }
+}
+
+async function generateDealSpecificSuggestions(dealContext: any, pipelineData: any) {
+  const suggestions: any[] = [];
+  
+  try {
+    const deal = dealContext.deal;
+    if (!deal) return suggestions;
+    
+    // Research tasks for deal company
+    if (deal?.companyId && !dealContext.company?.researched) {
+      suggestions.push({
+        id: `research_${deal.companyId}_${Date.now()}`,
+        title: `Research ${dealContext.company?.name || 'company'}`,
+        description: `Gather information about company background and needs`,
+        type: 'research',
+        priority: 'medium',
+        category: 'business_generating',
+        estimatedDuration: 30,
+        associations: { 
+          deals: [deal.id],
+          companies: [deal.companyId]
+        },
+        aiGenerated: true,
+        aiReason: `Company research needed for deal`,
+        aiConfidence: 80,
+        source: 'deal_specific'
+      });
+    }
+
+    // Contact engagement tasks
+    if (dealContext.contacts.length > 0) {
+      dealContext.contacts.forEach((contact: any) => {
+        suggestions.push({
+          id: `engagement_${contact.id}_${Date.now()}`,
+          title: `Engage with ${contact.fullName}`,
+          description: `Build relationship with key decision maker`,
+          type: 'meeting',
+          priority: 'high',
+          category: 'business_generating',
+          estimatedDuration: 45,
+          associations: { 
+            deals: [deal?.id || ''],
+            contacts: [contact.id]
+          },
+          aiGenerated: true,
+          aiReason: `Key contact needs engagement`,
+          aiConfidence: 85,
+          source: 'deal_specific'
+        });
+      });
+    }
+
+    return suggestions;
+  } catch (error) {
+    console.error('Error generating deal-specific suggestions:', error);
+    return [];
+  }
+}
+
+async function generateQuotaSuggestions(userContext: any, pipelineData: any) {
+  const suggestions: any[] = [];
+  
+  try {
+    const quota = userContext.quota;
+    
+    if (quota && quota.remainingToday > 0) {
+      suggestions.push({
+        id: `quota_${Date.now()}`,
+        title: `Complete ${quota.remainingToday} quota activities`,
+        description: `Focus on business-generating activities to meet daily quota`,
+        type: 'quota_fill',
+        priority: 'high',
+        category: 'business_generating',
+        estimatedDuration: 60,
+        associations: {},
+        aiGenerated: true,
+        aiReason: `Daily quota needs completion`,
+        aiConfidence: 90,
+        source: 'quota'
+      });
+    }
+
+    return suggestions;
+  } catch (error) {
+    console.error('Error generating quota suggestions:', error);
+    return [];
+  }
+}
+
+function removeDuplicateSuggestions(suggestions: any[]) {
+  const seen = new Set();
+  return suggestions.filter(suggestion => {
+    const key = `${suggestion.title}_${suggestion.type}_${suggestion.associations?.deals?.[0] || ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function prioritizeSuggestions(suggestions: any[], dealContext: any, userContext: any) {
+  return suggestions.sort((a, b) => {
+    // Stage requirements get highest priority
+    if (a.source === 'stage_requirements' && b.source !== 'stage_requirements') return -1;
+    if (b.source === 'stage_requirements' && a.source !== 'stage_requirements') return 1;
+    
+    // High priority over medium/low
+    if (a.priority === 'high' && b.priority !== 'high') return -1;
+    if (b.priority === 'high' && a.priority !== 'high') return 1;
+    
+    // Higher AI confidence
+    if (a.aiConfidence > b.aiConfidence) return -1;
+    if (b.aiConfidence > a.aiConfidence) return 1;
+    
+    return 0;
+  });
+}
+
+async function getDealContext(dealId: string, tenantId: string, userId: string) {
+  try {
+    const dealDoc = await db.collection('tenants').doc(tenantId).collection('crm_deals').doc(dealId).get();
+    if (!dealDoc.exists) return null;
+
+    const deal = dealDoc.data();
+    if (!deal) return null;
+    
+    // Get associated company
+    let company = null;
+    if (deal.companyId) {
+      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(deal.companyId).get();
+      if (companyDoc.exists) {
+        company = companyDoc.data();
+      }
+    }
+
+    // Get associated contacts
+    const contacts = [];
+    if (deal.contactIds && deal.contactIds.length > 0) {
+      for (const contactId of deal.contactIds) {
+        const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).get();
+        if (contactDoc.exists) {
+          contacts.push(contactDoc.data());
+        }
+      }
+    }
+
+    return {
+      deal,
+      company,
+      contacts
+    };
+  } catch (error) {
+    console.error('Error getting deal context:', error);
+    return null;
+  }
+}
+
+async function getUserContext(userId: string, tenantId: string) {
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) return {};
+
+    const user = userDoc.data();
+    if (!user) return {};
+    
+    // Get user's quota and KPI data
+    const quota = {
+      daily: user.dailyQuota || 10,
+      completed: 0, // Would need to calculate from today's activities
+      remainingToday: 10 // Would need to calculate
+    };
+
+    return {
+      user,
+      quota
+    };
+  } catch (error) {
+    console.error('Error getting user context:', error);
+    return {};
+  }
+}
+
 export const acceptAITaskSuggestion = onCall({
   cors: true
 }, async (request) => {
-  const { suggestionId, tenantId, userId } = request.data;
+  const { suggestionId, tenantId, userId, classification = 'todo' } = request.data;
 
   try {
     if (!suggestionId || !tenantId || !userId) {
@@ -642,19 +1436,67 @@ export const acceptAITaskSuggestion = onCall({
       throw new Error('Suggestion data not found');
     }
 
-    // Create the task
+    // Determine classification based on task type and context
+    let suggestedClassification = classification;
+    if (classification === 'todo') {
+      // AI logic to determine if this should be an appointment
+      const appointmentTypes = ['scheduled_meeting_virtual', 'scheduled_meeting_in_person', 'demo', 'presentation'];
+      if (appointmentTypes.includes(suggestion.type)) {
+        suggestedClassification = 'appointment';
+      }
+    }
+
+    // Get user names for optimization
+    let assignedToName = 'Unknown User';
+    let createdByName = 'Unknown User';
+    
+    try {
+      // Get assigned user name
+      const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(suggestion.suggestedFor).get();
+      if (assignedUserDoc.exists) {
+        const assignedUserData = assignedUserDoc.data();
+        assignedToName = assignedUserData?.displayName || 
+                        assignedUserData?.fullName || 
+                        `${assignedUserData?.firstName || ''} ${assignedUserData?.lastName || ''}`.trim() || 
+                        assignedUserData?.email || 
+                        'Unknown User';
+      }
+    } catch (userError) {
+      console.warn(`Could not fetch assigned user name for ${suggestion.suggestedFor}:`, (userError as Error).message);
+    }
+    
+    try {
+      // Get creator name
+      const creatorUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(userId).get();
+      if (creatorUserDoc.exists) {
+        const creatorUserData = creatorUserDoc.data();
+        createdByName = creatorUserData?.displayName || 
+                       creatorUserData?.fullName || 
+                       `${creatorUserData?.firstName || ''} ${creatorUserData?.lastName || ''}`.trim() || 
+                       creatorUserData?.email || 
+                       'Unknown User';
+      }
+    } catch (userError) {
+      console.warn(`Could not fetch creator name for ${userId}:`, (userError as Error).message);
+    }
+
     const taskData = {
       title: suggestion.title,
-      description: suggestion.description,
+      description: suggestion.description || '',
       type: suggestion.type,
-      category: suggestion.category,
       priority: suggestion.priority,
       scheduledDate: suggestion.suggestedDate,
       status: 'upcoming',
+      classification: suggestedClassification, // Add classification
+      startTime: suggestedClassification === 'appointment' ? suggestion.suggestedTime || null : null,
+      duration: suggestedClassification === 'appointment' ? 60 : null, // Default 1 hour for appointments
+      endTime: suggestedClassification === 'appointment' && suggestion.suggestedTime ? 
+        new Date(new Date(suggestion.suggestedDate + 'T' + suggestion.suggestedTime).getTime() + 60 * 60000).toISOString() : null,
       assignedTo: suggestion.suggestedFor,
+      assignedToName, // Add user name for optimization
       associations: suggestion.associations,
       notes: suggestion.aiReason,
-      aiGenerated: true,
+      aiSuggested: true,
       aiReason: suggestion.aiReason,
       aiConfidence: suggestion.aiConfidence,
       aiContext: suggestion.aiContext,
@@ -667,6 +1509,7 @@ export const acceptAITaskSuggestion = onCall({
       } : undefined,
       tenantId,
       createdBy: userId,
+      createdByName, // Add creator name for optimization
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -678,7 +1521,8 @@ export const acceptAITaskSuggestion = onCall({
       status: 'accepted',
       acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
       acceptedBy: userId,
-      createdTaskId: taskResult.id
+      createdTaskId: taskResult.id,
+      classification: suggestedClassification // Store the classification used
     });
 
     // Log AI action
@@ -688,14 +1532,15 @@ export const acceptAITaskSuggestion = onCall({
       targetId: taskResult.id,
       reason: `Accepted AI task suggestion: ${suggestion.title}`,
       contextType: 'ai_suggestions',
-      aiTags: ['ai_suggestions', 'acceptance', suggestion.type],
+      aiTags: ['ai_suggestions', 'acceptance', suggestion.type, suggestedClassification],
       urgencyScore: getUrgencyScore(suggestion.priority),
       tenantId,
       userId,
       aiResponse: JSON.stringify({
         suggestionId,
         taskTitle: suggestion.title,
-        taskType: suggestion.type
+        taskType: suggestion.type,
+        classification: suggestedClassification
       })
     });
 
@@ -838,71 +1683,72 @@ export const generateTaskContent = onCall({
       throw new Error('Missing required fields: taskId, tenantId, userId');
     }
 
-    // Create AI log to trigger the Task Content AI Engine
+    // Get task information
+    let taskData = null;
+    if (taskId === 'new') {
+      // For new tasks, use the task data passed in the request
+      taskData = request.data.task || {};
+    } else {
+      // For existing tasks, fetch from database
+      const taskDoc = await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).get();
+      if (!taskDoc.exists) {
+        throw new Error('Task not found');
+      }
+      taskData = taskDoc.data();
+    }
+
+    // Get associated data for context
+    const associations = taskData.associations || {};
+    let companyData = null;
+    let contactData = null;
+    let dealData = null;
+
+    if (associations.companies && associations.companies.length > 0) {
+      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(associations.companies[0]).get();
+      if (companyDoc.exists) {
+        companyData = companyDoc.data();
+      }
+    }
+
+    if (associations.contacts && associations.contacts.length > 0) {
+      const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(associations.contacts[0]).get();
+      if (contactDoc.exists) {
+        contactData = contactDoc.data();
+      }
+    }
+
+    if (associations.deals && associations.deals.length > 0) {
+      const dealDoc = await db.collection('tenants').doc(tenantId).collection('crm_deals').doc(associations.deals[0]).get();
+      if (dealDoc.exists) {
+        dealData = dealDoc.data();
+      }
+    }
+
+    // Generate content based on task type
+    const generatedContent = await generateContentByType(taskData, companyData, contactData, dealData);
+
+    // Create AI log for tracking
     await createTaskAILog(
-      'task.content_generation_requested',
+      'task.content_generated',
       taskId,
-      `AI content generation requested for task`,
+      `AI content generated for ${taskData.type} task`,
       tenantId,
       userId,
-      {},
+      associations,
       JSON.stringify({
-        requestType: 'content_generation',
-        contentTypes: ['email', 'call_script', 'meeting_agenda', 'follow_up']
+        taskType: taskData.type,
+        contentGenerated: Object.keys(generatedContent),
+        companyContext: !!companyData,
+        contactContext: !!contactData,
+        dealContext: !!dealData
       })
     );
 
-    // Wait a moment for the AI engine to process
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    // Get the latest content analysis for this task
-    const contentQuery = db.collection('task_content_ai_analysis')
-      .where('analysis.targetId', '==', taskId)
-      .orderBy('timestamp', 'desc')
-      .limit(1);
-
-    const contentSnapshot = await contentQuery.get();
-    
-    if (contentSnapshot.empty) {
-      // Return default content if no AI analysis is available yet
-      return {
-        success: true,
-        content: {
-          email: {
-            subject: 'Sample Email Subject',
-            greeting: 'Hi there,',
-            body: 'This is a sample email body. AI content generation is being processed.',
-            callToAction: 'Schedule a call'
-          },
-          callScript: {
-            opening: 'Sample call opening',
-            agenda: ['Introduction', 'Discussion', 'Next steps'],
-            questions: ['What are your challenges?', 'What is your timeline?'],
-            closing: 'Thank you for your time.'
-          },
-          meetingAgenda: {
-            title: 'Sample Meeting Agenda',
-            duration: '30 minutes',
-            agenda: ['Introduction (5 min)', 'Discussion (20 min)', 'Next steps (5 min)'],
-            objectives: ['Understand needs', 'Present solution', 'Get commitment']
-          }
-        },
-        insights: [
-          'AI content generation is being processed. Please refresh in a moment to see generated content.',
-          'Content will be personalized based on deal context and contact information.'
-        ]
-      };
-    }
-
-    const latestContent = contentSnapshot.docs[0].data();
-    const results = latestContent.analysis;
-
     return {
       success: true,
-      content: results.generatedContent,
-      suggestions: results.contentSuggestions,
-      insights: results.aiInsights,
-      nextSteps: results.nextSteps
+      content: generatedContent,
+      suggestions: generateContentSuggestions(taskData, generatedContent),
+      insights: generateContentInsights(taskData, companyData, contactData, dealData)
     };
 
   } catch (error) {
@@ -1190,4 +2036,216 @@ function getUrgencyScore(priority: string): number {
     low: 2
   };
   return scores[priority as keyof typeof scores] || 3;
+}
+
+// 🎯 CONTENT GENERATION FUNCTIONS
+
+async function generateContentByType(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const taskType = taskData.type || 'custom';
+  const content: any = {};
+
+  switch (taskType) {
+    case 'email':
+      content.email = generateEmailContent(taskData, companyData, contactData, dealData);
+      break;
+    case 'phone_call':
+      content.callScript = generateCallScript(taskData, companyData, contactData, dealData);
+      break;
+    case 'scheduled_meeting_virtual':
+    case 'scheduled_meeting_in_person':
+      content.meetingAgenda = generateMeetingAgenda(taskData, companyData, contactData, dealData);
+      break;
+    case 'research':
+      content.researchPlan = generateResearchPlan(taskData, companyData, contactData, dealData);
+      break;
+    default:
+      content.generalContent = generateGeneralContent(taskData, companyData, contactData, dealData);
+  }
+
+  return content;
+}
+
+function generateEmailContent(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const contactName = contactData?.fullName || contactData?.firstName || 'there';
+  const companyName = companyData?.companyName || companyData?.name || 'your company';
+  const dealName = dealData?.name || 'our discussion';
+
+  return {
+    subject: `Follow up: ${taskData.title || 'our conversation'}`,
+    greeting: `Hi ${contactName},`,
+    body: `I hope this email finds you well. I wanted to follow up on ${dealName} and see if you had any questions or if there's anything else I can help you with.
+
+${taskData.description || 'I appreciate your time and look forward to continuing our conversation.'}`,
+    callToAction: `Please let me know if you'd like to schedule a call or if you have any questions. I'm here to help!`,
+    personalization: {
+      contactName,
+      companyName,
+      dealName,
+      taskContext: taskData.description
+    }
+  };
+}
+
+function generateCallScript(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const contactName = contactData?.fullName || contactData?.firstName || 'there';
+
+  return {
+    opening: `Hi ${contactName}, this is [Your Name] from [Your Company]. I hope I'm catching you at a good time.`,
+    agenda: [
+      'Brief introduction and purpose of call',
+      'Discuss current situation and needs',
+      'Explore potential solutions',
+      'Next steps and follow-up'
+    ],
+    questions: [
+      'What are your current challenges with staffing?',
+      "What's your timeline for making a decision?",
+      'Who else should be involved in this conversation?',
+      'What would success look like for you?'
+    ],
+    closing: `Thank you for your time today. I'll follow up with the information we discussed and look forward to our next conversation.`,
+    notes: `Focus on understanding their needs and building rapport. Be prepared to address common objections.`
+  };
+}
+
+function generateMeetingAgenda(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const companyName = companyData?.companyName || companyData?.name || 'the company';
+
+  return {
+    title: `${taskData.title || 'Meeting'} - ${companyName}`,
+    duration: '30 minutes',
+    agenda: [
+      'Introduction and meeting objectives',
+      'Current situation and challenges',
+      'Potential solutions and approach',
+      'Next steps and timeline',
+      'Questions and discussion'
+    ],
+    objectives: [
+      'Understand their specific needs and challenges',
+      'Present relevant solutions and approach',
+      'Establish next steps and timeline',
+      'Build relationship and trust'
+    ],
+    preparation: [
+      'Research company and contact background',
+      'Review previous interactions and notes',
+      'Prepare relevant case studies or examples',
+      'Set up meeting materials and agenda'
+    ]
+  };
+}
+
+function generateResearchPlan(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return {
+    objectives: [
+      'Understand company structure and decision-making process',
+      'Identify key stakeholders and influencers',
+      'Research current challenges and pain points',
+      'Explore competitive landscape and opportunities'
+    ],
+    researchAreas: [
+      'Company website and recent news',
+      'LinkedIn profiles of key contacts',
+      'Industry reports and market analysis',
+      'Competitor analysis and positioning'
+    ],
+    sources: [
+      'Company website and social media',
+      'LinkedIn and professional networks',
+      'Industry publications and reports',
+      'News articles and press releases'
+    ],
+    deliverables: [
+      'Company profile and key insights',
+      'Stakeholder map and decision-making process',
+      'Pain points and opportunity analysis',
+      'Competitive positioning and recommendations'
+    ]
+  };
+}
+
+function generateGeneralContent(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return {
+    title: taskData.title || 'Task',
+    description: taskData.description || 'General task content',
+    keyPoints: [
+      'Understand the specific requirements',
+      'Gather necessary information and context',
+      'Prepare relevant materials and resources',
+      'Follow up with appropriate stakeholders'
+    ],
+    nextSteps: [
+      'Complete the task as outlined',
+      'Document progress and outcomes',
+      'Update relevant systems and records',
+      'Schedule follow-up if needed'
+    ]
+  };
+}
+
+function generateContentSuggestions(taskData: any, generatedContent: any) {
+  const suggestions = [];
+  
+  if (generatedContent.email) {
+    suggestions.push({
+      type: 'email',
+      title: 'Use email template',
+      description: 'Copy the generated email content to your email client',
+      action: 'copy_email'
+    });
+  }
+  
+  if (generatedContent.callScript) {
+    suggestions.push({
+      type: 'call_script',
+      title: 'Use call script',
+      description: 'Use the generated script for your phone call',
+      action: 'copy_script'
+    });
+  }
+  
+  if (generatedContent.meetingAgenda) {
+    suggestions.push({
+      type: 'meeting',
+      title: 'Use meeting agenda',
+      description: 'Use the generated agenda for your meeting',
+      action: 'copy_agenda'
+    });
+  }
+  
+  return suggestions;
+}
+
+function generateContentInsights(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const insights = [];
+  
+  if (contactData) {
+    insights.push({
+      type: 'contact',
+      title: 'Contact Context',
+      description: `Based on ${contactData.fullName || contactData.firstName}'s role and background`,
+      value: contactData.jobTitle || contactData.title || 'Unknown role'
+    });
+  }
+  
+  if (companyData) {
+    insights.push({
+      type: 'company',
+      title: 'Company Context',
+      description: `Tailored for ${companyData.companyName || companyData.name}`,
+      value: companyData.industry || 'Unknown industry'
+    });
+  }
+  
+  if (dealData) {
+    insights.push({
+      type: 'deal',
+      title: 'Deal Context',
+      description: `Connected to deal: ${dealData.name}`,
+      value: dealData.stage || 'Unknown stage'
+    });
+  }
+  
+  return insights;
 } 
