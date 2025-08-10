@@ -141,7 +141,7 @@ export const createCareerGoal = onCall(async (request) => {
     const goal: CareerGoal = {
       id: goalId,
       userId,
-      customerId,
+      customerId: customerId || 'unknown',
       agencyId,
       regionId,
       divisionId,
@@ -151,7 +151,7 @@ export const createCareerGoal = onCall(async (request) => {
       description,
       category,
       timeline,
-      targetDate: targetDate ? new Date(targetDate) : undefined,
+      ...(targetDate ? { targetDate: new Date(targetDate) } : {}),
       status: 'active',
       priority,
       progress: 0,

@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   TextField,
   Button,
   Dialog,
@@ -19,7 +17,6 @@ import {
   useTheme,
   useMediaQuery,
   Paper,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -30,12 +27,8 @@ import {
   Reply as ReplyIcon,
   Close as CloseIcon,
   Send as SendIcon,
-  SmartToy as BotIcon,
-  Person as PersonIcon,
-  Schedule as ScheduleIcon,
 } from '@mui/icons-material';
-import { httpsCallable } from 'firebase/functions';
-import { getFunctions } from 'firebase/functions';
+import { httpsCallable , getFunctions } from 'firebase/functions';
 
 interface BroadcastNotification {
   id: string;
@@ -49,14 +42,14 @@ interface BroadcastNotification {
   escalationEmail?: string;
 }
 
-interface BroadcastReply {
-  id: string;
-  reply: string;
-  aiResponse?: string;
-  escalated: boolean;
-  escalationReason?: string;
-  timestamp: Date;
-}
+// interface BroadcastReply {
+//   id: string;
+//   reply: string;
+//   aiResponse?: string;
+//   escalated: boolean;
+//   escalationReason?: string;
+//   timestamp: Date;
+// }
 
 interface BroadcastNotificationProps {
   workerId: string;
@@ -70,7 +63,7 @@ const BroadcastNotification: React.FC<BroadcastNotificationProps> = ({
   onNotificationCountChange,
 }) => {
   const [notifications, setNotifications] = useState<BroadcastNotification[]>([]);
-  const [replies, setReplies] = useState<BroadcastReply[]>([]);
+  // const [replies, setReplies] = useState<BroadcastReply[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showReplyDialog, setShowReplyDialog] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<BroadcastNotification | null>(
@@ -113,7 +106,7 @@ const BroadcastNotification: React.FC<BroadcastNotificationProps> = ({
   const loadReplies = async () => {
     try {
       // Load replies from Firestore
-      setReplies([]);
+      // Replies state disabled; no-op
     } catch (error) {
       console.error('Failed to load replies:', error);
     }
@@ -147,19 +140,10 @@ const BroadcastNotification: React.FC<BroadcastNotificationProps> = ({
         broadcastId: selectedNotification.broadcastId,
       });
 
-      const { aiResponse, escalated, escalationReason } = result.data as any;
+      const { escalated } = result.data as any;
 
-      // Add reply to local state
-      const newReply: BroadcastReply = {
-        id: Date.now().toString(),
-        reply: replyText,
-        aiResponse,
-        escalated,
-        escalationReason,
-        timestamp: new Date(),
-      };
-
-      setReplies((prev) => [...prev, newReply]);
+      // Add reply to local state (disabled)
+      // no-op
 
       // Update notification status
       setNotifications((prev) =>

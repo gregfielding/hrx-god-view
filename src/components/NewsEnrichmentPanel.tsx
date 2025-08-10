@@ -8,7 +8,6 @@ import {
   Button,
   CircularProgress,
   Alert,
-  Link,
   Grid,
   IconButton,
   Tooltip,
@@ -24,6 +23,7 @@ import {
   Work as WorkIcon,
 } from '@mui/icons-material';
 import { httpsCallable } from 'firebase/functions';
+
 import { functions } from '../firebase';
 
 interface NewsArticle {
@@ -33,7 +33,7 @@ interface NewsArticle {
   summary: string;
   tags: string[];
   date: string;
-  source: string;
+  source: string | { name: string; icon?: string; authors?: string[] };
   relevance: number;
 }
 
@@ -145,6 +145,14 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  // Helper function to safely get source name
+  const getSourceName = (source: string | { name: string; icon?: string; authors?: string[] }) => {
+    if (typeof source === 'string') {
+      return source;
+    }
+    return source?.name || 'Unknown Source';
+  };
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
@@ -192,13 +200,11 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
           {articles.map((article) => (
             <Grid item xs={12} key={article.id}>
               <Card sx={{ 
-                border: '1px solid',
-                borderColor: 'divider',
-                '&:hover': {
-                  boxShadow: 2,
-                  borderColor: 'primary.main',
-                },
-                transition: 'all 0.2s ease-in-out',
+                border: 'none',
+                boxShadow: 'none',
+                borderBottom: '1px solid',
+                borderBottomColor: 'divider',
+                paddingBottom: '16px',
               }}>
                 <CardContent>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
@@ -255,7 +261,7 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
                     
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Typography variant="caption" color="text.secondary">
-                        {article.source}
+                        {getSourceName(article.source)}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         • {formatDate(article.date)}

@@ -22,8 +22,9 @@ import {
   Alert,
 } from '@mui/material';
 import { Settings, CheckCircle, Warning, Info, VisibilityOff, Block } from '@mui/icons-material';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+
 import { useAuth } from '../../contexts/AuthContext';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 // Copy of defaultModules from ModulesDashboard.tsx

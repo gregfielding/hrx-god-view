@@ -1,8 +1,9 @@
 // /utils/autoFixLogs.ts - Main AutoDevOps fix engine
 
 import { LogEntry, LogFixResult, AutoDevOpsStats } from '../types/LogEntry';
-import { getSortedRules, getAutoApplyRules } from './logErrorTypemap';
 import { fixLogEntry } from '../firebase/fixLogEntry';
+
+import { getSortedRules, getAutoApplyRules } from './logErrorTypemap';
 
 export async function autoFixLogs(logs: LogEntry[]): Promise<{
   fixedLogs: LogEntry[];
@@ -26,7 +27,7 @@ export async function autoFixLogs(logs: LogEntry[]): Promise<{
   for (const log of logs) {
     let logFixed = false;
     let appliedRule: string | null = null;
-    let originalLog = { ...log };
+    const originalLog = { ...log };
 
     try {
       // Apply rules in priority order

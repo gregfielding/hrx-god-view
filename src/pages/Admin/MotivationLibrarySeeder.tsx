@@ -6,10 +6,6 @@ import {
   Typography,
   Button,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
   CircularProgress,
   Grid,
@@ -35,6 +31,7 @@ import {
   Tag,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { useAuth } from '../../contexts/AuthContext';
 import { app } from '../../firebase';
 

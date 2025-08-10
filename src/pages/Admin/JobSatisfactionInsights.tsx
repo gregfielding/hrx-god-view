@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -40,16 +39,10 @@ import {
   ListItemIcon,
   Snackbar,
   Accordion,
-  AccordionSummary,
   AccordionDetails,
-  CardHeader,
   Avatar,
-  Badge,
-  FormGroup,
   Checkbox,
   Slider,
-  ToggleButton,
-  ToggleButtonGroup,
   Stepper,
   Step,
   StepLabel,
@@ -57,10 +50,7 @@ import {
   FormHelperText,
 } from '@mui/material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
-import { useModuleAccess } from '../../utils/useModuleAccess';
+import { collection, getDocs } from 'firebase/firestore';
 import {
   ArrowBack,
   TrendingUp,
@@ -70,10 +60,7 @@ import {
   Info,
   Settings,
   Download,
-  FilterList,
   Refresh,
-  Visibility,
-  VisibilityOff,
   Assessment,
   Psychology,
   Work,
@@ -81,27 +68,16 @@ import {
   Favorite,
   ExitToApp,
   Timeline,
-  BarChart,
-  PieChart,
   TableChart,
-  ExpandMore,
   Help,
   Book,
-  Person,
-  LocationOn,
-  Business,
   Schedule,
-  Notifications,
-  Security,
   Analytics,
   PictureAsPdf,
   TableView,
   Code,
-  DateRange,
-  TrendingFlat,
   Report,
   Print,
-  Share,
   Chat,
   Close,
   SmartToy as AutomationIcon,
@@ -121,6 +97,10 @@ import {
   Cell,
   ReferenceLine,
 } from 'recharts';
+
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
+import { useModuleAccess } from '../../utils/useModuleAccess';
 import JSICustomReportBuilder from '../../components/JSICustomReportBuilder';
 import { generatePDFReport, generateExcelReport } from '../../utils/exportUtils';
 

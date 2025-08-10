@@ -5,67 +5,40 @@ import {
   Card,
   CardContent,
   CardHeader,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Chip,
-  Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  IconButton,
-  Grid,
-  Alert,
-  CircularProgress,
-  Divider,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Badge,
-  Tooltip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Paper,
-  Stack,
-  Avatar
+  CircularProgress,
+  Alert,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Chip,
+  IconButton
 } from '@mui/material';
 import {
-  Timeline,
-  TimelineItem,
-  TimelineSeparator,
-  TimelineConnector,
-  TimelineContent,
-  TimelineDot,
-  TimelineOppositeContent
-} from '@mui/lab';
-import {
-  Add as AddIcon,
-  Email as EmailIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
+  Timeline as TimelineIcon,
   Task as TaskIcon,
   Note as NoteIcon,
-  Timeline as TimelineIcon,
-  Psychology as PsychologyIcon,
-  Lightbulb as LightbulbIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
-  Person as PersonIcon,
+  Email as EmailIcon,
+  Phone as PhoneIcon,
   Business as BusinessIcon,
+  Person as PersonIcon,
   AttachMoney as MoneyIcon,
-  ExpandMore as ExpandMoreIcon,
-  Send as SendIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
-  Refresh as RefreshIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Phone as PhoneIcon
+  Psychology as PsychologyIcon
 } from '@mui/icons-material';
-import { collection, query, where, orderBy, getDocs, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, limit } from 'firebase/firestore';
+
 import { db } from '../firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../contexts/AuthContext';
+// import { useAuth } from '../contexts/AuthContext';
 
 interface DealActivityTabProps {
   dealId: string;
@@ -73,42 +46,18 @@ interface DealActivityTabProps {
   dealName: string;
 }
 
-interface ActivityItem {
-  id: string;
-  type: 'task' | 'email_sent' | 'email_received' | 'phone_call' | 'meeting' | 'note' | 'ai_log' | 'stage_change' | 'proposal_sent' | 'contract_signed';
-  title: string;
-  description?: string;
-  timestamp: any;
-  status: 'completed' | 'pending' | 'in_progress' | 'cancelled';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  assignedTo?: string;
-  dueDate?: any;
-  aiInsights?: string[];
-  aiSuggestions?: string[];
-  metadata?: any;
-}
-
-interface AILog {
+interface ActivityLog {
   id: string;
   eventType: string;
   actionType: string;
   reason: string;
   timestamp: any;
   success: boolean;
-  aiInsights?: any;
-  processingResults?: any[];
-  engineTouched?: string[];
-}
-
-interface DealInsights {
-  insights: string[];
-  suggestions: string[];
-  riskFactors: string[];
-  nextActions: string[];
-  dealSummary?: any;
-  stageRecommendations: string[];
-  emailDrafts: any[];
-  taskSuggestions: any[];
+  entityType: string;
+  entityId: string;
+  userId?: string;
+  userName?: string;
+  metadata?: any;
 }
 
 const DealActivityTab: React.FC<DealActivityTabProps> = ({
@@ -116,154 +65,122 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({
   tenantId,
   dealName
 }) => {
-  const { user } = useAuth();
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [aiLogs, setAiLogs] = useState<AILog[]>([]);
-  const [dealInsights, setDealInsights] = useState<DealInsights | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [showAILogs, setShowAILogs] = useState(false);
-  const [selectedActivity, setSelectedActivity] = useState<ActivityItem | null>(null);
-  const [showActivityDialog, setShowActivityDialog] = useState(false);
+  // const { user } = useAuth();
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedEventType, setSelectedEventType] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [sortField] = useState<'timestamp' | 'eventType' | 'actionType'>('timestamp');
+  const [sortOrder] = useState<'asc' | 'desc'>('desc');
 
-  useEffect(() => {
-    loadDealActivity();
-  }, [dealId, tenantId]);
-
-  const loadDealActivity = async () => {
+  const loadActivities = async () => {
+    if (!dealId || !tenantId) return;
+    
+    setLoading(true);
+    setError(null);
+    
     try {
-      setLoading(true);
+      // Query ai_logs collection for activities related to this deal
+      const logsRef = collection(db, 'ai_logs');
+      const logsQuery = query(
+        logsRef,
+        where('entityType', '==', 'deal'),
+        where('entityId', '==', dealId),
+        orderBy('timestamp', 'desc'),
+        limit(100)
+      );
       
-      // Load AI logs for this deal (if any exist)
-      let logs: AILog[] = [];
-      try {
-        console.log('Querying AI logs for dealId:', dealId);
-        const logsQuery = query(
-          collection(db, 'ai_logs'),
-          where('targetId', '==', dealId),
-          orderBy('timestamp', 'desc')
-        );
-        
-        const logsSnapshot = await getDocs(logsQuery);
-        console.log('Found', logsSnapshot.docs.length, 'AI logs for deal');
-        logs = logsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as AILog[];
-        
-        // Debug: Log the first few logs
-        if (logs.length > 0) {
-          console.log('First log:', logs[0]);
-        }
-      } catch (error) {
-        // This is expected when AI logging is disabled or no logs exist yet
-        console.log('AI logs query skipped - logging disabled or no logs exist:', error);
-      }
+      const snapshot = await getDocs(logsQuery);
+      const logs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as ActivityLog[];
       
-      setAiLogs(logs);
-
-      // Load deal insights from deal document
-      try {
-        const dealDoc = await getDocs(query(
-          collection(db, 'tenants', tenantId, 'crm_deals'),
-          where('__name__', '==', dealId)
-        ));
-        
-        if (!dealDoc.empty) {
-          const dealData = dealDoc.docs[0].data();
-          if (dealData.aiInsights) {
-            setDealInsights(dealData.aiInsights);
-          }
-        }
-      } catch (error) {
-        console.log('No deal insights found yet:', error);
-      }
-
-      // Convert AI logs to activity items
-      const activityItems: ActivityItem[] = logs.map(log => ({
-        id: log.id,
-        type: 'ai_log',
-        title: `${log.actionType} - ${log.eventType}`,
-        description: log.reason,
-        timestamp: log.timestamp,
-        status: log.success ? 'completed' : 'pending',
-        priority: 'medium',
-        aiInsights: log.aiInsights?.insights || [],
-        aiSuggestions: log.aiInsights?.suggestions || [],
-        metadata: {
-          eventType: log.eventType,
-          actionType: log.actionType,
-          engineTouched: log.engineTouched,
-          processingResults: log.processingResults
-        }
-      }));
-
-      console.log('Created', activityItems.length, 'activity items from logs');
-      setActivities(activityItems);
-      
-    } catch (error) {
-      console.error('Error loading deal activity:', error);
+      setActivities(logs);
+    } catch (err) {
+      console.error('Error loading activities:', err);
+      setError('Failed to load activities');
     } finally {
       setLoading(false);
     }
   };
 
+  // Filter and sort activities
+  const filteredAndSortedActivities = React.useMemo(() => {
+    const filtered = activities.filter(activity => {
+      const matchesSearch = !searchTerm || 
+        activity.eventType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        activity.actionType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        activity.reason.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesEventType = selectedEventType === 'all' || 
+        activity.eventType === selectedEventType;
+      
+      const matchesStatus = selectedStatus === 'all' || 
+        (selectedStatus === 'success' && activity.success) ||
+        (selectedStatus === 'error' && !activity.success);
+      
+      return matchesSearch && matchesEventType && matchesStatus;
+    });
 
+    // Sort activities
+    const sorted = [...filtered].sort((a, b) => {
+      let aValue: any, bValue: any;
+      
+      switch (sortField) {
+        case 'timestamp':
+          aValue = a.timestamp?.toDate?.() || a.timestamp;
+          bValue = b.timestamp?.toDate?.() || b.timestamp;
+          break;
+        case 'eventType':
+          aValue = a.eventType;
+          bValue = b.eventType;
+          break;
+        case 'actionType':
+          aValue = a.actionType;
+          bValue = b.actionType;
+          break;
+        default:
+          return 0;
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
 
-  const getActivityIcon = (type: string) => {
-    switch (type) {
+    return sorted;
+  }, [activities, searchTerm, selectedEventType, selectedStatus, sortField, sortOrder]);
+
+  const getEventTypeIcon = (eventType: string) => {
+    switch (eventType) {
       case 'task':
-        return <TaskIcon />;
-      case 'email_sent':
-        return <SendIcon />;
-      case 'email_received':
-        return <EmailIcon />;
-      case 'phone_call':
-        return <PhoneIcon />;
-      case 'meeting':
-        return <PersonIcon />;
+        return <TaskIcon fontSize="small" />;
       case 'note':
-        return <NoteIcon />;
-      case 'ai_log':
-        return <PsychologyIcon />;
-      case 'stage_change':
-        return <TimelineIcon />;
-      case 'proposal_sent':
-        return <BusinessIcon />;
-      case 'contract_signed':
-        return <MoneyIcon />;
+        return <NoteIcon fontSize="small" />;
+      case 'email':
+        return <EmailIcon fontSize="small" />;
+      case 'phone':
+        return <PhoneIcon fontSize="small" />;
+      case 'company':
+        return <BusinessIcon fontSize="small" />;
+      case 'contact':
+        return <PersonIcon fontSize="small" />;
+      case 'deal':
+        return <MoneyIcon fontSize="small" />;
+      case 'ai':
+        return <PsychologyIcon fontSize="small" />;
       default:
-        return <TimelineIcon />;
+        return <TimelineIcon fontSize="small" />;
     }
   };
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'urgent':
-        return 'error';
-      case 'high':
-        return 'warning';
-      case 'medium':
-        return 'info';
-      case 'low':
-        return 'default';
-      default:
-        return 'default';
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return 'success';
-      case 'in_progress':
-        return 'warning';
-      case 'pending':
-        return 'info';
-      case 'cancelled':
-        return 'error';
-      default:
-        return 'default';
-    }
+  const getStatusColor = (success: boolean) => {
+    return success ? 'success' : 'error';
   };
 
   const formatTimestamp = (timestamp: any) => {
@@ -271,6 +188,10 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return date.toLocaleString();
   };
+
+  useEffect(() => {
+    loadActivities();
+  }, [dealId, tenantId]);
 
   if (loading) {
     return (
@@ -282,263 +203,145 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({
 
   return (
     <Box>
-      {/* Header with AI Insights */}
+      {/* Header */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <TimelineIcon />
-            Deal Activity & AI Intelligence
+            Activity Log
           </Typography>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={loadDealActivity}
-          >
-            Refresh
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <TextField
+              size="small"
+              placeholder="Search activities..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              }}
+              sx={{ width: 200 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Event Type</InputLabel>
+              <Select
+                value={selectedEventType}
+                onChange={(e) => setSelectedEventType(e.target.value)}
+                label="Event Type"
+              >
+                <MenuItem value="all">All Types</MenuItem>
+                <MenuItem value="task">Task</MenuItem>
+                <MenuItem value="note">Note</MenuItem>
+                <MenuItem value="email">Email</MenuItem>
+                <MenuItem value="phone">Phone</MenuItem>
+                <MenuItem value="company">Company</MenuItem>
+                <MenuItem value="contact">Contact</MenuItem>
+                <MenuItem value="deal">Deal</MenuItem>
+                <MenuItem value="ai">AI</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 100 }}>
+              <InputLabel>Status</InputLabel>
+              <Select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                label="Status"
+              >
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="success">Success</MenuItem>
+                <MenuItem value="error">Error</MenuItem>
+              </Select>
+            </FormControl>
+            <IconButton onClick={loadActivities} title="Refresh">
+              <RefreshIcon />
+            </IconButton>
+          </Box>
         </Box>
-
       </Box>
 
-      {/* Activity Timeline */}
+      {/* Activity Table */}
       <Card>
         <CardHeader
           title={
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <TimelineIcon />
-              Activity Timeline
-              <Badge badgeContent={activities.length} color="primary" sx={{ ml: 1 }} />
+              Deal Activities
             </Box>
           }
         />
         <CardContent>
-          {activities.length === 0 ? (
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+
+          {filteredAndSortedActivities.length === 0 ? (
             <Box sx={{ textAlign: 'center', py: 4 }}>
               <Typography color="text.secondary" gutterBottom>
-                No activity recorded yet.
+                No activities found.
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                AI logging is now enabled. Deal activities will appear here automatically as you interact with the deal.
+                AI logging is enabled. Deal activities will appear here automatically as you interact with the deal.
               </Typography>
             </Box>
           ) : (
-            <Timeline>
-              {activities.map((activity, index) => (
-                <TimelineItem key={activity.id}>
-                  <TimelineOppositeContent sx={{ m: 'auto 0' }} variant="body2" color="text.secondary">
-                    {formatTimestamp(activity.timestamp)}
-                  </TimelineOppositeContent>
-                  <TimelineSeparator>
-                    <TimelineDot color={getStatusColor(activity.status) as any}>
-                      {getActivityIcon(activity.type)}
-                    </TimelineDot>
-                    {index < activities.length - 1 && <TimelineConnector />}
-                  </TimelineSeparator>
-                  <TimelineContent sx={{ py: '12px', px: 2 }}>
-                    <Paper elevation={1} sx={{ p: 2 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                        <Typography variant="h6" component="span">
-                          {activity.title}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                          <Chip
-                            label={activity.priority}
-                            color={getPriorityColor(activity.priority) as any}
-                            size="small"
-                          />
-                          <Chip
-                            label={activity.status}
-                            color={getStatusColor(activity.status) as any}
-                            size="small"
-                          />
-                        </Box>
+            <TableContainer component={Paper} variant="outlined">
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <TimelineIcon fontSize="small" />
+                        Event Type
                       </Box>
-                      
-                      {activity.description && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                          {activity.description}
+                    </TableCell>
+                    <TableCell>Action</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Timestamp</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredAndSortedActivities.map((activity) => (
+                    <TableRow key={activity.id} hover>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {getEventTypeIcon(activity.eventType)}
+                          <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
+                            {activity.eventType}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
+                          {activity.actionType}
                         </Typography>
-                      )}
-
-                      {/* AI Insights for this activity */}
-                      {activity.aiInsights && activity.aiInsights.length > 0 && (
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" color="primary" sx={{ fontWeight: 'bold' }}>
-                            AI Insights:
-                          </Typography>
-                          <List dense sx={{ py: 0 }}>
-                            {activity.aiInsights.map((insight, idx) => (
-                              <ListItem key={idx} sx={{ py: 0 }}>
-                                <ListItemIcon sx={{ minWidth: 24 }}>
-                                  <LightbulbIcon fontSize="small" color="primary" />
-                                </ListItemIcon>
-                                <ListItemText primary={insight} />
-                              </ListItem>
-                            ))}
-                          </List>
-                        </Box>
-                      )}
-
-                      {/* AI Suggestions for this activity */}
-                      {activity.aiSuggestions && activity.aiSuggestions.length > 0 && (
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" color="primary" sx={{ fontWeight: 'bold' }}>
-                            AI Suggestions:
-                          </Typography>
-                          <List dense sx={{ py: 0 }}>
-                            {activity.aiSuggestions.map((suggestion, idx) => (
-                              <ListItem key={idx} sx={{ py: 0 }}>
-                                <ListItemIcon sx={{ minWidth: 24 }}>
-                                  <PsychologyIcon fontSize="small" color="primary" />
-                                </ListItemIcon>
-                                <ListItemText primary={suggestion} />
-                              </ListItem>
-                            ))}
-                          </List>
-                        </Box>
-                      )}
-
-                      <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                        <Button
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {activity.reason}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={activity.success ? 'Success' : 'Error'}
+                          color={getStatusColor(activity.success)}
                           size="small"
-                          startIcon={<VisibilityIcon />}
-                          onClick={() => {
-                            setSelectedActivity(activity);
-                            setShowActivityDialog(true);
-                          }}
-                        >
-                          View Details
-                        </Button>
-                      </Box>
-                    </Paper>
-                  </TimelineContent>
-                </TimelineItem>
-              ))}
-            </Timeline>
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {formatTimestamp(activity.timestamp)}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </CardContent>
       </Card>
-
-      {/* AI Logs Section (Collapsible) */}
-      {showAILogs && (
-        <Card sx={{ mt: 3 }}>
-          <CardHeader
-            title={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PsychologyIcon />
-                AI Processing Logs
-                <Badge badgeContent={aiLogs.length} color="secondary" sx={{ ml: 1 }} />
-              </Box>
-            }
-          />
-          <CardContent>
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography>View AI Processing Details</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <List>
-                  {aiLogs.map((log) => (
-                    <ListItem key={log.id} divider>
-                      <ListItemIcon>
-                        <PsychologyIcon color={log.success ? 'success' : 'error'} />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={`${log.actionType} - ${log.eventType}`}
-                        secondary={
-                          <Box>
-                            <Typography variant="body2" color="text.secondary">
-                              {log.reason}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {formatTimestamp(log.timestamp)}
-                            </Typography>
-                            {log.engineTouched && (
-                              <Box sx={{ mt: 1 }}>
-                                <Typography variant="caption" color="primary">
-                                  Engines: {log.engineTouched.join(', ')}
-                                </Typography>
-                              </Box>
-                            )}
-                          </Box>
-                        }
-                      />
-                      <Chip
-                        label={log.success ? 'Success' : 'Error'}
-                        color={log.success ? 'success' : 'error'}
-                        size="small"
-                      />
-                    </ListItem>
-                  ))}
-                </List>
-              </AccordionDetails>
-            </Accordion>
-          </CardContent>
-        </Card>
-      )}
-
-
-
-      {/* Activity Details Dialog */}
-      <Dialog open={showActivityDialog} onClose={() => setShowActivityDialog(false)} maxWidth="md" fullWidth>
-        <DialogTitle>
-          Activity Details
-          {selectedActivity && (
-            <Typography variant="body2" color="text.secondary">
-              {selectedActivity.title}
-            </Typography>
-          )}
-        </DialogTitle>
-        <DialogContent>
-          {selectedActivity && (
-            <Box>
-              <Typography variant="h6" gutterBottom>
-                Details
-              </Typography>
-              <Typography variant="body2" paragraph>
-                <strong>Type:</strong> {selectedActivity.type}
-              </Typography>
-              <Typography variant="body2" paragraph>
-                <strong>Status:</strong> {selectedActivity.status}
-              </Typography>
-              <Typography variant="body2" paragraph>
-                <strong>Priority:</strong> {selectedActivity.priority}
-              </Typography>
-              <Typography variant="body2" paragraph>
-                <strong>Timestamp:</strong> {formatTimestamp(selectedActivity.timestamp)}
-              </Typography>
-              
-              {selectedActivity.description && (
-                <Typography variant="body2" paragraph>
-                  <strong>Description:</strong> {selectedActivity.description}
-                </Typography>
-              )}
-
-              {selectedActivity.metadata && (
-                <>
-                  <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                    AI Processing Details
-                  </Typography>
-                  <Typography variant="body2" paragraph>
-                    <strong>Event Type:</strong> {selectedActivity.metadata.eventType}
-                  </Typography>
-                  <Typography variant="body2" paragraph>
-                    <strong>Action Type:</strong> {selectedActivity.metadata.actionType}
-                  </Typography>
-                  {selectedActivity.metadata.engineTouched && (
-                    <Typography variant="body2" paragraph>
-                      <strong>AI Engines:</strong> {selectedActivity.metadata.engineTouched.join(', ')}
-                    </Typography>
-                  )}
-                </>
-              )}
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowActivityDialog(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { TextField, Slider, Switch, FormControlLabel, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+
 import { useAIFieldLogging, isAIField } from '../utils/aiFieldLogging';
 
 // AI-Aware TextField Component
@@ -200,14 +201,14 @@ export const AISelect: React.FC<AISelectProps> = ({
   };
   
   return (
-    <FormControl fullWidth={props.fullWidth} error={props.error} required={props.required}>
+    <FormControl fullWidth={!!props.fullWidth} error={!!props.error} required={!!props.required}>
       {props.label && <InputLabel>{props.label}</InputLabel>}
       <Select
         value={value}
         label={props.label}
         onChange={(e) => handleChange(e.target.value)}
         onBlur={handleBlur}
-        disabled={props.disabled}
+        disabled={!!props.disabled}
       >
         {options.map((option) => (
           <MenuItem key={option.value} value={option.value}>
@@ -331,11 +332,11 @@ export const AIArrayInput: React.FC<AIArrayInputProps> = ({
           value={value[index] || ''}
           onChange={(e) => handleItemChange(index, e.target.value)}
           onBlur={handleBlur}
-          fullWidth={props.fullWidth}
-          disabled={props.disabled}
-          multiline={props.multiline}
-          minRows={props.minRows}
-          placeholder={props.placeholder}
+          fullWidth={!!props.fullWidth}
+          disabled={!!props.disabled}
+          multiline={props.multiline ?? false}
+          minRows={(props.minRows ?? 1) as number | string}
+          placeholder={props.placeholder ?? ''}
           sx={{ mb: 2 }}
         />
       ))}
@@ -363,7 +364,7 @@ export const AIObjectInput: React.FC<AIObjectInputProps> = ({
   fields,
   disabled = false
 }) => {
-  const [originalValue, setOriginalValue] = useState<Record<string, any>>(value);
+  const [originalValue] = useState<Record<string, any>>(value);
   const logFieldChange = useAIFieldLogging(fieldName, contextId, contextType);
   
   const handleFieldChange = (key: string, newValue: any) => {
@@ -376,10 +377,10 @@ export const AIObjectInput: React.FC<AIObjectInputProps> = ({
     }
   };
   
-  const handleBlur = () => {
+  // const handleBlur = () => {
     // Update original value when any field loses focus
-    setOriginalValue(value);
-  };
+  //   setOriginalValue(value);
+  // };
   
   return (
     <div>

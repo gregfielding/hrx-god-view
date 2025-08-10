@@ -32,7 +32,6 @@ import {
   Card,
   CardContent,
   LinearProgress,
-  CircularProgress,
   Tooltip,
 } from '@mui/material';
 import {
@@ -45,7 +44,6 @@ import {
   ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
-  Warning as WarningIcon,
   Info as InfoIcon,
   TrendingUp as TrendingUpIcon,
   TrendingDown as TrendingDownIcon,
@@ -53,10 +51,10 @@ import {
   Psychology as PsychologyIcon,
   Replay as ReplayIcon,
   Settings as SettingsIcon,
-  BugReport as BugReportIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 
 interface AILog {

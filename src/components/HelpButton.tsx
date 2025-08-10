@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { IconButton, Tooltip, Badge } from '@mui/material';
+import { IconButton, Badge } from '@mui/material';
 import { Help as HelpIcon } from '@mui/icons-material';
+
 import HelpDrawer from './HelpDrawer';
 
 interface HelpButtonProps {

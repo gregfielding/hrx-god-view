@@ -2,13 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Paper,
   Switch,
   FormControlLabel,
   Card,
   CardContent,
   CardHeader,
-  Divider,
   Alert,
   Button,
   Grid,
@@ -17,11 +15,10 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Chip,
-  Autocomplete,
 } from '@mui/material';
-import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
+
+import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 
 const FlexSettings: React.FC = () => {

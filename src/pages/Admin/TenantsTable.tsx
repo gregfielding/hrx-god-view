@@ -13,11 +13,11 @@ import {
   TextField,
   Button,
 } from '@mui/material';
-import { collection, getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
+import { collection, getDocs, limit, orderBy, query, startAfter, where  } from 'firebase/firestore';
 import { Link, useNavigate } from 'react-router-dom';
-import { db } from '../../firebase';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
-import { doc, getDoc } from 'firebase/firestore';
+
+import { db } from '../../firebase';
 
 const PAGE_SIZE = 10;
 

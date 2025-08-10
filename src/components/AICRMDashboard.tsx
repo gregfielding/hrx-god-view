@@ -21,52 +21,32 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Autocomplete,
-  Badge,
   Tooltip,
-  Divider,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
 } from '@mui/material';
 import {
   TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon,
   AttachMoney as MoneyIcon,
   People as PeopleIcon,
   Business as BusinessIcon,
   Assignment as DealIcon,
   Psychology as PsychologyIcon,
-  Schedule as ScheduleIcon,
   Assessment as RiskIcon,
   CheckCircle as CheckIcon,
   Warning as WarningIcon,
   Info as InfoIcon,
   Add as AddIcon,
-  Edit as EditIcon,
   Visibility as ViewIcon,
-  Email as EmailIcon,
-  Phone as PhoneIcon,
-  CalendarToday as CalendarIcon,
-  Star as StarIcon,
-  ExpandMore as ExpandMoreIcon,
   Lightbulb as InsightIcon,
   Analytics as AnalyticsIcon,
-  Campaign as CampaignIcon,
 } from '@mui/icons-material';
-import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -78,6 +58,7 @@ import {
   AIDealInsight,
   AITaskSuggestion 
 } from '../types/CRM';
+
 import DealIntelligenceWizard from './DealIntelligenceWizard';
 import StageChip from './StageChip';
 
@@ -576,17 +557,19 @@ const AICRMDashboard: React.FC = () => {
       </Card>
 
       {/* Deal Intelligence Wizard */}
-      <DealIntelligenceWizard
-        open={showWizard}
-        onClose={() => setShowWizard(false)}
-        onSuccess={(dealId) => {
-          console.log('Deal Intelligence Wizard completed for deal:', dealId);
-          // Refresh insights after wizard completion
-          generateAIInsights();
-        }}
-        deal={selectedDeal || undefined}
-        onComplete={handleWizardComplete}
-      />
+      {selectedDeal && (
+        <DealIntelligenceWizard
+          open={showWizard}
+          onClose={() => setShowWizard(false)}
+          onSuccess={(dealId) => {
+            console.log('Deal Intelligence Wizard completed for deal:', dealId);
+            // Refresh insights after wizard completion
+            generateAIInsights();
+          }}
+          deal={selectedDeal}
+          onComplete={handleWizardComplete}
+        />
+      )}
 
       {/* Insight Detail Dialog */}
       <Dialog open={showInsightDialog} onClose={() => setShowInsightDialog(false)} maxWidth="md" fullWidth>

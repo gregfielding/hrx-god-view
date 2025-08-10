@@ -25,20 +25,14 @@ import {
   IconButton,
   Tooltip,
   LinearProgress,
-  Divider,
   Alert,
   Badge
 } from '@mui/material';
 import {
   Add as AddIcon,
   CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
-  Cancel as CancelIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
-  Refresh as RefreshIcon,
   CalendarToday as CalendarIcon,
-  TrendingUp as TrendingUpIcon,
   Lightbulb as LightbulbIcon,
   Assignment as AssignmentIcon,
   Email as EmailIcon,
@@ -48,13 +42,10 @@ import {
   VideoCall as VideoCallIcon,
   LinkedIn as LinkedInIcon,
   CardGiftcard as GiftIcon,
-  MoreVert as MoreVertIcon,
-  PriorityHigh as PriorityHighIcon,
-  MeetingRoom as MeetingRoomIcon,
-  Psychology as PsychologyIcon,
   Sync as SyncIcon,
   Mail as MailIcon
 } from '@mui/icons-material';
+
 import { TaskService } from '../utils/taskService';
 import { GmailTasksService } from '../utils/gmailTasksService';
 import { useAuth } from '../contexts/AuthContext';
@@ -64,7 +55,8 @@ import {
   AITaskSuggestion,
   TaskStatus,
   TaskType,
-  TaskCategory
+  TaskCategory,
+  TaskClassification
 } from '../types/Tasks';
 
 interface TasksDashboardProps {
@@ -391,7 +383,7 @@ export const TasksDashboard: React.FC<TasksDashboardProps> = ({ salespersonId, t
             <Card>
               <CardContent>
                 <Typography color="textSecondary" gutterBottom>
-                  Today's Tasks
+                  Today&apos;s Tasks
                 </Typography>
                 <Typography variant="h4">
                   {dashboardData.today?.totalTasks || 0}
@@ -626,7 +618,7 @@ const TasksList: React.FC<TasksListProps> = ({
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
                     <Typography variant="caption" color="textSecondary">
-                      Due: {new Date(task.scheduledDate).toLocaleDateString()}
+                      Due: {new Date((task.classification === 'todo' ? task.dueDate : task.scheduledDate) + 'T00:00:00').toLocaleDateString()}
                     </Typography>
                     <Typography variant="caption" color="textSecondary">
                       Priority: {task.priority}
@@ -899,9 +891,10 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
         type: formData.type,
         priority: formData.priority,
         status: 'upcoming' as const,
+        classification: 'todo' as TaskClassification,
         scheduledDate: formData.scheduledDate,
         estimatedDuration: formData.estimatedDuration,
-        quotaCategory: formData.category,
+        quotaCategory: 'business_generating' as const,
         category: 'follow_up' as TaskCategory, // Use a valid TaskCategory value
         assignedTo: formData.selectedSalesperson,
         createdBy: userId,
@@ -1305,9 +1298,11 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
               <Typography variant="body1">{task.priority}</Typography>
             </Box>
             <Box sx={{ mb: 2 }}>
-              <Typography variant="body2" color="textSecondary">Scheduled Date</Typography>
+              <Typography variant="body2" color="textSecondary">
+                {task.classification === 'todo' ? 'Due Date' : 'Scheduled Date'}
+              </Typography>
               <Typography variant="body1">
-                {new Date(task.scheduledDate).toLocaleDateString()}
+                {new Date((task.classification === 'todo' ? task.dueDate : task.scheduledDate) + 'T00:00:00').toLocaleDateString()}
               </Typography>
             </Box>
             {task.description && (

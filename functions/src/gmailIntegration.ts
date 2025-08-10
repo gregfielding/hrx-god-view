@@ -1,448 +1,459 @@
 import { onCall, onRequest } from 'firebase-functions/v2/https';
-import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { google } from 'googleapis';
 import { getFirestore } from 'firebase-admin/firestore';
-import * as functions from 'firebase-functions';
+import { google } from 'googleapis';
 
 const db = getFirestore();
 
-// Get Gmail OAuth configuration from Firebase Functions config
-const getGmailOAuthConfig = () => {
-  const config = functions.config();
-  return {
-    clientId: config.gmail?.client_id,
-    clientSecret: config.gmail?.client_secret,
-    redirectUri: config.gmail?.redirect_uri
-  };
-};
+// Gmail API configuration
+const GMAIL_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.modify'
+];
 
-// Gmail API OAuth2 configuration
-let oauth2Client: any = null;
+import { defineString } from 'firebase-functions/params';
 
-const initializeOAuth2Client = () => {
-  const config = getGmailOAuthConfig();
-  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
-    throw new Error('Gmail OAuth configuration is missing. Please set GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REDIRECT_URI in Firebase Functions config.');
-  }
-  
-  oauth2Client = new google.auth.OAuth2(
-    config.clientId,
-    config.clientSecret,
-    config.redirectUri
-  );
-  
-  return oauth2Client;
-};
+const clientId = defineString('GOOGLE_CLIENT_ID');
+const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
+const redirectUri = defineString('GOOGLE_REDIRECT_URI');
 
-interface GmailConfig {
-  enabled: boolean;
-  accountEmail?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  tokenExpiry?: Date;
-  labels?: string[];
-  autoSync: boolean;
-  syncInterval: number;
-  dealIntelligenceEnabled: boolean;
-  emailTemplates?: {
-    id: string;
-    name: string;
-    subject: string;
-    body: string;
-    dealStage: string;
-    triggerType: 'manual' | 'automatic';
-  }[];
-  lastSync?: Date;
-  status: 'active' | 'inactive' | 'error' | 'authenticating';
-  errorMessage?: string;
-  syncStats?: {
-    emailsSynced: number;
-    emailsSent: number;
-    contactsLinked: number;
-    dealsUpdated: number;
-    lastSyncTime: Date;
-  };
-}
+const oauth2Client = new google.auth.OAuth2(
+  clientId.value(),
+  clientSecret.value(),
+  redirectUri.value()
+);
 
-// Get Gmail configuration for a tenant
-export const getGmailConfig = onCall(async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
-  }
-
-  const { tenantId } = request.data;
-  if (!tenantId) {
-    throw new Error('Tenant ID is required');
-  }
-
+/**
+ * Get Gmail OAuth URL for user authentication
+ */
+export const getGmailAuthUrl = onCall({
+  cors: true
+}, async (request) => {
   try {
-    const configDoc = await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').get();
-    
-    if (configDoc.exists) {
-      return { config: configDoc.data() as GmailConfig };
-    } else {
-      // Return default config
-      const defaultConfig: GmailConfig = {
-        enabled: false,
-        autoSync: true,
-        syncInterval: 15,
-        dealIntelligenceEnabled: true,
-        emailTemplates: [],
-        status: 'inactive'
-      };
-      return { config: defaultConfig };
-    }
-  } catch (error) {
-    console.error('Error getting Gmail config:', error);
-    throw new Error('Failed to get Gmail configuration');
-  }
-});
+    const { userId, tenantId } = request.data;
 
-// Update Gmail configuration
-export const updateGmailConfig = onCall(async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
-  }
-
-  const { tenantId, config } = request.data;
-  if (!tenantId || !config) {
-    throw new Error('Tenant ID and config are required');
-  }
-
-  try {
-    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').set(config, { merge: true });
-    
-    // Log the configuration update
-    await db.collection('tenants').doc(tenantId).collection('integrationLogs').add({
-      type: 'gmail',
-      action: 'config_updated',
-      timestamp: new Date(),
-      userId: request.auth.uid,
-      details: { config }
-    });
-
-    return { success: true, config };
-  } catch (error) {
-    console.error('Error updating Gmail config:', error);
-    throw new Error('Failed to update Gmail configuration');
-  }
-});
-
-// Initiate Gmail OAuth authentication
-export const authenticateGmail = onCall(async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
-  }
-
-  const { tenantId } = request.data;
-  if (!tenantId) {
-    throw new Error('Tenant ID is required');
-  }
-
-  try {
-    // Check if Gmail OAuth configuration is available
-    const config = getGmailOAuthConfig();
-    if (!config.clientId || !config.clientSecret || !config.redirectUri) {
-      // Return a helpful error message instead of crashing
-      return {
-        error: true,
-        message: 'Gmail OAuth configuration is not set up. Please configure Gmail OAuth credentials in Firebase Functions config.',
-        setupRequired: true,
-        setupInstructions: [
-          '1. Go to Google Cloud Console',
-          '2. Create OAuth 2.0 credentials',
-          '3. Set Firebase Functions config:',
-          '   firebase functions:config:set gmail.client_id="YOUR_CLIENT_ID"',
-          '   firebase functions:config:set gmail.client_secret="YOUR_CLIENT_SECRET"',
-          '   firebase functions:config:set gmail.redirect_uri="YOUR_REDIRECT_URI"',
-          '4. Deploy functions: firebase deploy --only functions'
-        ]
-      };
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
     }
 
-    // Initialize OAuth2 client
-    const oauth2Client = initializeOAuth2Client();
-    
-    // Generate OAuth URL
-    const scopes = [
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/gmail.modify'
+    const state = JSON.stringify({ userId, tenantId });
+    // Include both Gmail and Calendar scopes for unified OAuth
+    const unifiedScopes = [
+      ...GMAIL_SCOPES,
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.settings.readonly'
     ];
-
+    
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
-      scope: scopes,
+      scope: unifiedScopes,
+      state,
       prompt: 'consent'
     });
-
-    // Update config status to authenticating
-    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').set({
-      status: 'authenticating',
-      lastAuthAttempt: new Date()
-    }, { merge: true });
 
     return { authUrl };
   } catch (error) {
     console.error('Error generating Gmail auth URL:', error);
-    throw new Error('Failed to generate authentication URL');
+    throw new Error(`Failed to generate auth URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 
-// Handle Gmail OAuth callback
-export const gmailOAuthCallback = onRequest(async (req, res) => {
-  const { code, state } = req.query;
-  
-  if (!code) {
-    res.status(400).send('Authorization code not provided');
-    return;
-  }
-
+/**
+ * Handle Gmail OAuth callback and store tokens
+ */
+export const handleGmailCallback = onCall({
+  cors: true
+}, async (request) => {
   try {
-    // Initialize OAuth2 client
-    const oauth2Client = initializeOAuth2Client();
-    
-    // Exchange code for tokens
-    const { tokens } = await oauth2Client.getToken(code as string);
-    oauth2Client.setCredentials(tokens);
+    const { code, state } = request.data;
 
-    // Get user info
+    if (!code || !state) {
+      throw new Error('Missing required fields: code, state');
+    }
+
+    const { userId } = JSON.parse(state);
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    // Get user info from Gmail API to get email address
+    oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
     const profile = await gmail.users.getProfile({ userId: 'me' });
     const email = profile.data.emailAddress;
-
-    if (!email) {
-      throw new Error('Could not retrieve email address');
-    }
-
-    // Store tokens in Firestore (you'll need to determine the tenant ID from state or other means)
-    // For now, we'll use a placeholder
-    const tenantId = state as string || 'default';
     
-    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').set({
-      enabled: true,
-      accountEmail: email,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
-      status: 'active',
-      lastAuthAttempt: new Date()
-    }, { merge: true });
+    // Check if Calendar scopes are included
+    const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
+    
+    // Prepare update object
+    const updateData: any = {
+      gmailTokens: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        scope: tokens.scope,
+        token_type: tokens.token_type,
+        expiry_date: tokens.expiry_date,
+        email: email
+      },
+      gmailConnected: true,
+      gmailConnectedAt: new Date()
+    };
+    
+    // If Calendar scopes are included, also store Calendar tokens
+    if (hasCalendarScope) {
+      updateData.calendarTokens = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        scope: tokens.scope,
+        token_type: tokens.token_type,
+        expiry_date: tokens.expiry_date,
+        email: email
+      };
+      updateData.calendarConnected = true;
+      updateData.calendarConnectedAt = new Date();
+    }
+    
+    // Store tokens securely
+    await db.collection('users').doc(userId).update(updateData);
 
-    res.send(`
-      <html>
-        <body>
-          <h1>Gmail Integration Successful!</h1>
-          <p>Your Gmail account (${email}) has been successfully connected.</p>
-          <p>You can close this window and return to the application.</p>
-          <script>
-            setTimeout(() => {
-              window.close();
-            }, 3000);
-          </script>
-        </body>
-      </html>
-    `);
+    const message = hasCalendarScope 
+      ? 'Google services (Gmail and Calendar) connected successfully'
+      : 'Gmail connected successfully';
+    
+    return { success: true, message };
   } catch (error) {
-    console.error('Error in Gmail OAuth callback:', error);
-    res.status(500).send('Authentication failed. Please try again.');
+    console.error('Error handling Gmail callback:', error);
+    throw new Error(`Failed to connect Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 
-// Sync Gmail emails
-export const syncGmailEmails = onCall(async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
-  }
-
-  const { tenantId } = request.data;
-  if (!tenantId) {
-    throw new Error('Tenant ID is required');
-  }
-
+/**
+ * HTTP OAuth callback to support Google redirect_uri
+ * Stores tokens on the `users/{userId}` document and renders a success page
+ */
+export const gmailOAuthCallback = onRequest(async (req, res) => {
   try {
-    // Get Gmail config
-    const configDoc = await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').get();
-    if (!configDoc.exists) {
-      throw new Error('Gmail integration not configured');
+    const code = (req.query.code as string) || '';
+    const state = (req.query.state as string) || '';
+
+    if (!code || !state) {
+      res.status(400).send('Missing required fields: code, state');
+      return;
     }
 
-    const config = configDoc.data() as GmailConfig;
-    if (!config.enabled || !config.accessToken) {
-      throw new Error('Gmail integration not enabled or not authenticated');
-    }
+    const { userId } = JSON.parse(state);
 
-    // Initialize OAuth2 client
-    const oauth2Client = initializeOAuth2Client();
-    
-    // Set up Gmail API client
-    oauth2Client.setCredentials({
-      access_token: config.accessToken,
-      refresh_token: config.refreshToken
-    });
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
 
+    // Get user info to capture email
+    oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    const email = profile.data.emailAddress || '';
 
-    // Get recent emails
-    const response = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults: 50,
-      q: 'is:unread OR in:sent'
-    });
+    const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
 
-    const messages = response.data.messages || [];
-    let syncedCount = 0;
-    let linkedContacts = 0;
-    let updatedDeals = 0;
-
-    // Process each email
-    for (const message of messages) {
-      try {
-        const email = await gmail.users.messages.get({
-          userId: 'me',
-          id: message.id || ''
-        });
-
-        // Store email in Firestore
-        const messageId = message.id || '';
-        await db.collection('tenants').doc(tenantId).collection('emails').doc(messageId).set({
-          id: messageId,
-          threadId: email.data.threadId,
-          labelIds: email.data.labelIds,
-          snippet: email.data.snippet,
-          internalDate: email.data.internalDate,
-          syncedAt: new Date()
-        });
-
-        syncedCount++;
-      } catch (error) {
-        console.error(`Error processing email ${message.id}:`, error);
-      }
-    }
-
-    // Update sync stats
-    const updatedStats = {
-      emailsSynced: (config.syncStats?.emailsSynced || 0) + syncedCount,
-      contactsLinked: (config.syncStats?.contactsLinked || 0) + linkedContacts,
-      dealsUpdated: (config.syncStats?.dealsUpdated || 0) + updatedDeals,
-      lastSyncTime: new Date()
+    const updateData: any = {
+      gmailTokens: {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        scope: tokens.scope,
+        token_type: tokens.token_type,
+        expiry_date: tokens.expiry_date,
+        email: email
+      },
+      gmailConnected: true,
+      gmailConnectedAt: new Date()
     };
 
-    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').update({
-      lastSync: new Date(),
-      syncStats: updatedStats
+    if (hasCalendarScope) {
+      updateData.calendarTokens = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        scope: tokens.scope,
+        token_type: tokens.token_type,
+        expiry_date: tokens.expiry_date,
+        email: email
+      };
+      updateData.calendarConnected = true;
+      updateData.calendarConnectedAt = new Date();
+    }
+
+    await db.collection('users').doc(userId).set(updateData, { merge: true });
+
+    // Simple success HTML
+    const message = hasCalendarScope
+      ? 'Google services (Gmail and Calendar) connected successfully'
+      : 'Gmail connected successfully';
+
+    res.status(200).send(`<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Gmail Integration Successful</title></head>
+  <body style="font-family: Arial, sans-serif; padding: 24px;">
+    <h1>Gmail Integration Successful!</h1>
+    <p>Your Gmail account (${email}) has been successfully connected.</p>
+    <p>${message}</p>
+    <p>You can close this window and return to the application.</p>
+    <script>
+      // Try to notify opener to refresh status
+      if (window.opener && typeof window.opener.postMessage === 'function') {
+        window.opener.postMessage({ type: 'google-auth-success' }, '*');
+      }
+    </script>
+  </body>
+</html>`);
+  } catch (error) {
+    console.error('Error in gmailOAuthCallback:', error);
+    res.status(500).send('Failed to connect Gmail. Please close this window and try again.');
+  }
+});
+
+/**
+ * Sync emails from Gmail for a user
+ */
+export const syncGmailEmails = onCall({
+  cors: true
+}, async (request) => {
+  try {
+    const { userId, tenantId, maxResults = 50 } = request.data;
+
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    // Get user's Gmail tokens
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData = userDoc.data();
+    const gmailTokens = userData?.gmailTokens;
+
+    if (!gmailTokens?.access_token) {
+      throw new Error('Gmail not connected. Please authenticate first.');
+    }
+
+    // Set up Gmail API client
+    oauth2Client.setCredentials(gmailTokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Get recent messages
+    const messagesResponse = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults,
+      q: 'is:email' // Only emails, not chats
     });
+
+    const messages = messagesResponse.data.messages || [];
+    let syncedCount = 0;
+    const newEmails = [];
+
+    // Process each message
+    for (const message of messages) {
+      try {
+        // Check if email already exists
+        const existingEmail = await db.collection('tenants').doc(tenantId)
+          .collection('email_logs')
+          .where('messageId', '==', message.id)
+          .limit(1)
+          .get();
+
+        if (!existingEmail.empty) {
+          continue; // Skip if already synced
+        }
+
+        // Get full message details
+        const messageResponse = await gmail.users.messages.get({
+          userId: 'me',
+          id: message.id!
+        });
+
+        const messageData = messageResponse.data;
+        const headers = messageData.payload?.headers || [];
+        
+        // Extract email data
+        const from = headers.find(h => h.name === 'From')?.value || '';
+        const to = headers.find(h => h.name === 'To')?.value || '';
+        const cc = headers.find(h => h.name === 'Cc')?.value || '';
+        const bcc = headers.find(h => h.name === 'Bcc')?.value || '';
+        const subject = headers.find(h => h.name === 'Subject')?.value || '';
+        const date = headers.find(h => h.name === 'Date')?.value || '';
+
+        // Extract body
+        let bodySnippet = messageData.snippet || '';
+        let bodyHtml = '';
+
+        if (messageData.payload?.body?.data) {
+          bodySnippet = Buffer.from(messageData.payload.body.data, 'base64').toString();
+        } else if (messageData.payload?.parts) {
+          for (const part of messageData.payload.parts) {
+            if (part.mimeType === 'text/html' && part.body?.data) {
+              bodyHtml = Buffer.from(part.body.data, 'base64').toString();
+            } else if (part.mimeType === 'text/plain' && part.body?.data) {
+              bodySnippet = Buffer.from(part.body.data, 'base64').toString();
+            }
+          }
+        }
+
+        // Determine direction
+        const userEmail = userData?.email || '';
+        const direction = from.includes(userEmail) ? 'outbound' : 'inbound';
+
+        // Find associated contacts
+        const allEmails = [from, to, cc, bcc].flat().filter(Boolean);
+        const contactMap = new Map();
+
+        for (const email of allEmails) {
+          const contactQuery = await db.collection('tenants').doc(tenantId)
+            .collection('crm_contacts')
+            .where('email', '==', email)
+            .limit(1)
+            .get();
+
+          if (!contactQuery.empty) {
+            const contact = contactQuery.docs[0];
+            contactMap.set(email, {
+              id: contact.id,
+              ...contact.data()
+            });
+          }
+        }
+
+        // Find most relevant deal for contacts
+        let dealId = null;
+        for (const contact of contactMap.values()) {
+          const dealQuery = await db.collection('tenants').doc(tenantId)
+            .collection('crm_deals')
+            .where('associations.contacts', 'array-contains', contact.id)
+            .orderBy('updatedAt', 'desc')
+            .limit(1)
+            .get();
+
+          if (!dealQuery.empty) {
+            dealId = dealQuery.docs[0].id;
+            break;
+          }
+        }
+
+        // Create email log
+        const emailLog = {
+          messageId: message.id!,
+          threadId: messageData.threadId!,
+          subject,
+          from,
+          to: to.split(',').map(e => e.trim()).filter(Boolean),
+          cc: cc.split(',').map(e => e.trim()).filter(Boolean),
+          bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
+          timestamp: new Date(date),
+          bodySnippet: bodySnippet.substring(0, 250),
+          bodyHtml,
+          direction,
+          contactId: contactMap.size > 0 ? Array.from(contactMap.values())[0].id : null,
+          companyId: contactMap.size > 0 ? Array.from(contactMap.values())[0].companyId : null,
+          dealId,
+          userId,
+          isDraft: messageData.labelIds?.includes('DRAFT') || false,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+        // Save to Firestore
+        await db.collection('tenants').doc(tenantId)
+          .collection('email_logs')
+          .add(emailLog);
+
+        newEmails.push(emailLog);
+        syncedCount++;
+
+      } catch (messageError) {
+        console.error(`Error processing message ${message.id}:`, messageError);
+        // Continue with next message
+      }
+    }
 
     return {
       success: true,
       syncedCount,
-      linkedContacts,
-      updatedDeals
+      newEmails: newEmails.length
     };
+
   } catch (error) {
     console.error('Error syncing Gmail emails:', error);
-    throw new Error('Failed to sync Gmail emails');
+    throw new Error(`Failed to sync emails: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 
-// Send Gmail email
-export const sendGmailEmail = onCall(async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
-  }
-
-  const { tenantId, to, subject, body } = request.data;
-  if (!tenantId || !to || !subject || !body) {
-    throw new Error('Tenant ID, to, subject, and body are required');
-  }
-
+/**
+ * Disconnect Gmail for a user
+ */
+export const disconnectGmail = onCall({
+  cors: true
+}, async (request) => {
   try {
-    // Get Gmail config
-    const configDoc = await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').get();
-    if (!configDoc.exists) {
-      throw new Error('Gmail integration not configured');
+    const { userId } = request.data;
+
+    if (!userId) {
+      throw new Error('Missing required field: userId');
     }
 
-    const config = configDoc.data() as GmailConfig;
-    if (!config.enabled || !config.accessToken) {
-      throw new Error('Gmail integration not enabled or not authenticated');
+    // Remove Gmail tokens
+    await db.collection('users').doc(userId).update({
+      gmailTokens: null,
+      gmailConnected: false,
+      gmailDisconnectedAt: new Date()
+    });
+
+    return { success: true, message: 'Gmail disconnected successfully' };
+  } catch (error) {
+    console.error('Error disconnecting Gmail:', error);
+    throw new Error(`Failed to disconnect Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+/**
+ * Get Gmail connection status for a user
+ */
+export const getGmailStatus = onCall({
+  cors: true
+}, async (request) => {
+  try {
+    const { userId } = request.data;
+
+    if (!userId) {
+      throw new Error('Missing required field: userId');
     }
 
-    // Initialize OAuth2 client
-    const oauth2Client = initializeOAuth2Client();
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData = userDoc.data();
+    console.log('Gmail status check - userData:', {
+      gmailConnected: userData?.gmailConnected,
+      hasGmailTokens: !!userData?.gmailTokens?.access_token,
+      email: userData?.gmailTokens?.email || userData?.email,
+      fullUserData: userData // Log the entire user data to see what's actually stored
+    });
     
-    // Set up Gmail API client
-    oauth2Client.setCredentials({
-      access_token: config.accessToken,
-      refresh_token: config.refreshToken
-    });
+    const connected = !!(userData?.gmailConnected && userData?.gmailTokens?.access_token);
+    const email = userData?.gmailTokens?.email || userData?.email;
+    const lastSync = userData?.lastGmailSync;
+    const syncStatus = connected ? 'not_synced' : 'not_synced';
 
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-
-    // Create email message
-    const message = [
-      `To: ${to}`,
-      `Subject: ${subject}`,
-      '',
-      body
-    ].join('\n');
-
-    const encodedMessage = Buffer.from(message).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
-
-    // Send email
-    const response = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: {
-        raw: encodedMessage
-      }
-    });
-
-    // Update stats
-    const updatedStats = {
-      emailsSent: (config.syncStats?.emailsSent || 0) + 1,
-      lastSyncTime: new Date()
-    };
-
-    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').update({
-      syncStats: updatedStats
-    });
+    console.log('Gmail status result:', { connected, email, lastSync, syncStatus });
 
     return {
-      success: true,
-      messageId: response.data.id
+      connected,
+      email,
+      lastSync,
+      syncStatus
     };
   } catch (error) {
-    console.error('Error sending Gmail email:', error);
-    throw new Error('Failed to send email');
-  }
-});
-
-// Scheduled Gmail sync
-export const scheduledGmailSync = onSchedule({
-  schedule: 'every 15 minutes'
-}, async (event) => {
-  try {
-    // Get all tenants with Gmail integration enabled
-    const tenantsSnapshot = await db.collection('tenants').get();
-    
-    for (const tenantDoc of tenantsSnapshot.docs) {
-      const tenantId = tenantDoc.id;
-      const gmailDoc = await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').get();
-      
-      if (gmailDoc.exists) {
-        const config = gmailDoc.data() as GmailConfig;
-        if (config.enabled && config.autoSync) {
-          try {
-                         // Call sync function for this tenant
-             // Note: This is a simplified call for scheduled sync
-             console.log(`Scheduled sync for tenant: ${tenantId}`);
-          } catch (error) {
-            console.error(`Error syncing Gmail for tenant ${tenantId}:`, error);
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error in scheduled Gmail sync:', error);
+    console.error('Error getting Gmail status:', error);
+    throw new Error(`Failed to get Gmail status: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }); 

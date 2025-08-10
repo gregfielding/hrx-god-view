@@ -2,20 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Box, Tabs, Tab, Typography, Button, Paper, Alert } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase'; // adjust path
 import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
-import ChatUI, { FAQSuggestion, CheckInNotification } from '../../components/ChatUI';
 import { useAuth } from '../../contexts/AuthContext';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
-import SkillsTab from './components/SkillsTab';
-import { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
+import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
-import CustomerWorksiteTab from './components/CustomerWorksiteTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import PrivacySettingsTab from './components/PrivacySettingsTab';
 
@@ -223,7 +221,7 @@ const UserProfilePage = () => {
         <Alert severity="error" sx={{ mb: 2 }}>
           <Typography variant="h6">Access Denied</Typography>
           <Typography variant="body1">
-            You don't have permission to view this profile.
+            You don&apos;t have permission to view this profile.
           </Typography>
         </Alert>
         <Button variant="contained" onClick={() => navigate('/dashboard')}>

@@ -15,17 +15,11 @@ import {
   FormControlLabel,
   Snackbar,
   Alert,
-  Card,
-  CardContent,
   Chip,
   Divider,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   List,
   ListItem,
   ListItemText,
-  ListItemSecondaryAction,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -33,50 +27,33 @@ import {
   Slider,
   Tabs,
   Tab,
-  Badge,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Avatar,
   Tooltip,
-  Fab,
   LinearProgress,
-  CircularProgress,
   useTheme,
   Stepper,
   Step,
   StepLabel,
   StepContent,
-  Autocomplete,
   FormHelperText,
-  AlertTitle,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import AnalyticsIcon from '@mui/icons-material/Analytics';
-import CampaignIcon from '@mui/icons-material/Campaign';
 import SendIcon from '@mui/icons-material/Send';
-import ScheduleIcon from '@mui/icons-material/Schedule';
-import GroupIcon from '@mui/icons-material/Group';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import AutomationIcon from '@mui/icons-material/AutoAwesome';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface Campaign {

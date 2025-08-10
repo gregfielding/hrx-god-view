@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
+import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } from '@mui/material';
+
 import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
-import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } from '@mui/material';
 
 const Login = () => {
   console.log('Login component rendering');
@@ -69,6 +70,8 @@ const Login = () => {
         <form onSubmit={handleLogin}>
           <TextField
             label="Email"
+            type="email"
+            name="email"
             fullWidth
             value={email}
             onChange={(e) => setEmail(e.target.value)}

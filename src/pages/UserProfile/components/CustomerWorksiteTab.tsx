@@ -17,8 +17,9 @@ import {
   Paper,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { Link, useNavigate } from 'react-router-dom';
+
+import { db } from '../../../firebase';
 
 interface CustomerWorksiteTabProps {
   userId: string;

@@ -12,6 +12,8 @@ service cloud.firestore {
       allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
       // Allow high-security-level users to update user profiles
       allow write: if isAuthenticated() && isHighSecurityLevel();
+      // Unified Association Service access for salespeople
+      allow read: if isAuthenticated() && request.auth.uid != null;
       
       // --- USER FOLLOWED COMPANIES ---
       match /followedCompanies/{companyId} {
@@ -101,12 +103,31 @@ service cloud.firestore {
           allow read, write: if isTenantAdmin(tenantId);
         }
 
-        // --- CONTACTS (Customer Contacts) ---
-        match /contacts/{contactId} {
-          allow read, write: if isHRX();
-          allow read, write: if isTenantAdmin(tenantId);
-          allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- EMAIL LOGS (Tenant-level Email History) ---
+      // Emails are stored at tenants/{tenantId}/email_logs/{emailId}
+      match /email_logs/{emailId} {
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(tenantId);
+        // Allow any authenticated user assigned to this tenant (read-only typically)
+        allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
+      }
+
+      // --- AI CHAT THREADS (Tenant-level) ---
+      // Conversations stored at tenants/{tenantId}/ai_chats/{threadId}/messages/{messageId}
+      match /ai_chats/{threadId} {
+        allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
+        match /messages/{messageId} {
+          allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
         }
+      }
+
+      // --- CONTACTS (Customer Contacts) ---
+      match /contacts/{contactId} {
+        allow read, write: if isHRX();
+        allow read, write: if isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
       }
 
       // --- CONTACTS (Tenants) ---
@@ -215,20 +236,34 @@ service cloud.firestore {
       // --- CRM COLLECTIONS (Tenants) ---
       match /crm_contacts/{contactId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow read: if isAuthenticated(); // Temporary for testing
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId); // For activity logging
+        allow read: if isAuthenticated() && isHighSecurityLevel(); // Admin override
+        // Temporary: Allow all authenticated users for debugging
+        allow read: if isAuthenticated();
+        // Unified Association Service access
+        allow read: if isAuthenticated() && request.auth.uid != null;
       }
       
       match /crm_companies/{companyId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId); // For activity logging
+        allow read: if isAuthenticated() && isHighSecurityLevel(); // Admin override
+        // Temporary: Allow all authenticated users for debugging
+        allow read: if isAuthenticated();
+        // Unified Association Service access
+        allow read: if isAuthenticated() && request.auth.uid != null;
         
         // --- COMPANY LOCATIONS ---
         match /locations/{locationId} {
           allow read, write: if isHRX() || isTenantAdmin(tenantId);
           allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
           allow read: if isAssignedToTenant(tenantId);
+          // Allow all authenticated users to read locations for association service
+          allow read: if isAuthenticated() && request.auth.uid != null;
         }
         
         // --- COMPANY DIVISIONS ---
@@ -252,6 +287,11 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
         // Allow updating any fields for authenticated users with CRM access
         allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAuthenticated() && isHighSecurityLevel(); // Admin override
+        // Temporary: Allow all authenticated users for debugging
+        allow read: if isAuthenticated();
+        // Unified Association Service access
+        allow read: if isAuthenticated() && request.auth.uid != null;
       }
       
       match /crm_pipeline_stages/{stageId} {
@@ -264,12 +304,50 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
+        // Temporary: Allow all authenticated users for debugging
+        allow read: if isAuthenticated();
       }
       
       match /crm_tasks/{taskId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
+        allow read, write, create, update, delete: if isAuthenticated() && isHighSecurityLevel(); // Admin override
+      }
+      
+      // Tasks collection (for task management system)
+      match /tasks/{taskId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
+        allow read, write, create, update, delete: if isAuthenticated() && isHighSecurityLevel(); // Admin override
+      }
+      
+      // AI Task Suggestions
+      match /ai_task_suggestions/{suggestionId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.salespersonId == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.salespersonId == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      // Activity Logs
+      match /activityLogs/{logId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow read, write, create, update, delete: if isAuthenticated() && isAssignedToTenant(tenantId);
+        allow read, write, create, update, delete: if isAuthenticated() && isHighSecurityLevel();
+        // Temporary: Allow all authenticated users for debugging
+        allow read, write, create, update, delete: if isAuthenticated();
       }
       
       // --- CRM NOTES COLLECTIONS ---
@@ -441,6 +519,8 @@ service cloud.firestore {
       );
       // Temporary: Allow reading AI logs for any authenticated user assigned to the tenant
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+      // Temporary: Allow all authenticated users for debugging
+      allow read: if isAuthenticated();
     }
 
     // --- MOMENT ANALYSIS ---
@@ -847,6 +927,13 @@ service cloud.firestore {
     function isHighSecurityLevel() {
       let user = getUser();
       return user.securityLevel == "6" || user.securityLevel == "7";
+    }
+    // AI chat threads
+    match /ai_chats/{threadId} {
+      allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
+      match /messages/{messageId} {
+        allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
+      }
     }
   }
 }

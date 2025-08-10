@@ -151,7 +151,7 @@ export function validateCSVData(data: any[]): CSVValidationResult {
     }
 
     // Validate phone format (basic check)
-    if (row.phone && !/^[\d\s\-\(\)\+]+$/.test(row.phone)) {
+    if (row.phone && !/^[\d\s()+-]+$/.test(row.phone)) {
       rowWarnings.push(`Row ${rowNumber}: Phone number may be in incorrect format "${row.phone}"`);
     }
 

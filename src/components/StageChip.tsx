@@ -1,6 +1,7 @@
 import React from 'react';
 import { Chip, ChipProps, Tooltip } from '@mui/material';
-import { getStageChipProps, getStageColor, getStageStyle, getTextContrastColor, getStageHexColor } from '../utils/crmStageColors';
+
+import { getStageChipProps, getStageColor, getTextContrastColor, getStageHexColor } from '../utils/crmStageColors';
 
 interface StageChipProps extends Omit<ChipProps, 'label' | 'color'> {
   stage: string;

@@ -7,15 +7,7 @@ import {
   Alert,
   CircularProgress,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   Chip,
   Accordion,
   AccordionSummary,
@@ -25,14 +17,13 @@ import {
 import {
   Delete as DeleteIcon,
   Search as SearchIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckIcon,
   ExpandMore as ExpandMoreIcon,
   Business as BusinessIcon,
 } from '@mui/icons-material';
 import { httpsCallable } from 'firebase/functions';
+
 import { functions } from '../firebase';
-import { useAuth } from '../contexts/AuthContext';
+// import { useAuth } from '../contexts/AuthContext';
 
 interface DuplicateGroup {
   companyName: string;
@@ -56,7 +47,7 @@ interface AnalysisResult {
 }
 
 const DuplicateCompanyRemover: React.FC = () => {
-  const { user } = useAuth();
+  // const { user } = useAuth();
   const [tenantId, setTenantId] = useState('');
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);

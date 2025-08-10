@@ -52,7 +52,7 @@ const JobOrdersTable: React.FC<JobOrdersTableProps> = ({
                 <Checkbox
                   checked={selectedJobOrders.length === jobOrders.length && jobOrders.length > 0}
                   indeterminate={selectedJobOrders.length > 0 && selectedJobOrders.length < jobOrders.length}
-                  onChange={onSelectAll}
+                  onChange={(e, checked) => { if (onSelectAll) onSelectAll(); }}
                 />
               </TableCell>
             )}
@@ -90,7 +90,7 @@ const JobOrdersTable: React.FC<JobOrdersTableProps> = ({
                   }
                 </TableCell>
               )}
-              <TableCell>{worksiteInfo && worksiteInfo[order.worksiteId]?.nickname ? worksiteInfo[order.worksiteId].nickname : order.worksiteId || '-'}</TableCell>
+              <TableCell>{order.worksiteId ? (worksiteInfo?.[order.worksiteId]?.nickname || order.worksiteId) : '-'}</TableCell>
               <TableCell>{order.type || '-'}</TableCell>
               <TableCell>{order.startDate || '-'}</TableCell>
               <TableCell>{order.endDate || '-'}</TableCell>

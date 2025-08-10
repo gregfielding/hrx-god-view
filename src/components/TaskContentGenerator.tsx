@@ -8,7 +8,6 @@ import {
   Button,
   Grid,
   Chip,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -20,9 +19,6 @@ import {
   TextField,
   Alert,
   LinearProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   IconButton
 } from '@mui/material';
 import {
@@ -34,11 +30,11 @@ import {
   ContentCopy as CopyIcon,
   Edit as EditIcon,
   Refresh as RefreshIcon,
-  ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
   Schedule as ScheduleIcon,
   TrendingUp as TrendingUpIcon
 } from '@mui/icons-material';
+
 import { useAuth } from '../contexts/AuthContext';
 import { TaskService } from '../utils/taskService';
 

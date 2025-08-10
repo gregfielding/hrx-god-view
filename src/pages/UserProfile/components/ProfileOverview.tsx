@@ -12,7 +12,6 @@ import {
   InputLabel,
   Select,
   Chip,
-  OutlinedInput,
   Autocomplete,
   Dialog,
   DialogTitle,
@@ -24,10 +23,8 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
   Card,
   CardContent,
-  CardHeader,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -35,20 +32,19 @@ import {
   Work as WorkIcon,
   Business as BusinessIcon,
   Psychology as PsychologyIcon,
-  Security as SecurityIcon,
   ContactEmergency as EmergencyIcon,
-  DirectionsCar as TransportIcon,
 } from '@mui/icons-material';
-import { db } from '../../../firebase';
 import { doc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../../../firebase';
+
+import { db , auth } from '../../../firebase';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import { logProfileUpdateActivity, logSecurityChangeActivity } from '../../../utils/activityLogger';
 import { useAuth } from '../../../contexts/AuthContext';
+import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
+
 import AddressFormFields from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
-import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 
 type Props = {
   uid: string;

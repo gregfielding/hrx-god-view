@@ -2,25 +2,22 @@ import React, { useState, useEffect } from 'react';
 import {
   Paper,
   Typography,
-  Grid,
-  Slider,
   Button,
   Snackbar,
   Alert,
   Tooltip,
   IconButton,
   Box,
-  Divider,
   Accordion,
   AccordionSummary,
   AccordionDetails,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../../../firebase';
+
+import { db , app } from '../../../../firebase';
 import { LoggableSlider } from '../../../../components/LoggableField';
 
 const ADMIN_SLIDERS = [

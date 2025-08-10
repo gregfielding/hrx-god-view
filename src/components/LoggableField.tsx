@@ -1,6 +1,6 @@
 import React, { ReactNode } from 'react';
+
 import { useAIFieldLogging } from '../utils/aiFieldLogging';
-import { LogTriggerDefinition } from '../utils/loggingTriggerMap';
 
 interface LoggableFieldProps {
   fieldPath: string;

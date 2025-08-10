@@ -5,7 +5,6 @@ import {
   Switch,
   FormControlLabel,
   Paper,
-  Divider,
   Alert,
   Radio,
   RadioGroup,
@@ -13,6 +12,7 @@ import {
   FormLabel,
 } from '@mui/material';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 

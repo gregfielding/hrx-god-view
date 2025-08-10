@@ -158,7 +158,7 @@ async function logIntegrationAction(
       actionType: `integration_${actionType}`,
       sourceModule: 'Integrations',
       success,
-      errorMessage,
+      ...(errorMessage ? { errorMessage } : {}),
       versionTag: 'v1',
       reason: `${integrationType} integration ${actionType}`,
       eventType: `integration.${integrationType}.${actionType}`,

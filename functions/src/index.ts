@@ -42,12 +42,50 @@ import { extractCompanyInfoFromUrls } from './extractCompanyInfoFromUrls';
 import { manageAssociations } from './manageAssociations';
 import { fixContactAssociations } from './fixContactAssociations';
 import { findContactInfo } from './findContactEmail';
+import { updateCompanyPipelineTotals, onDealUpdated } from './updateCompanyPipelineTotals';
+import { generateDealAISummary } from './generateDealAISummary';
+import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
+import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
+
+// 📅 CALENDAR WEBHOOKS IMPORTS
+import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
+import { getCalendarWebhookStatus } from './calendarWebhookStatus';
+
+// Export Deal Coach endpoints for deployment
+export {
+  dealCoachAnalyze,
+  dealCoachChat,
+  dealCoachAction,
+  dealCoachAnalyzeCallable,
+  dealCoachChatCallable,
+  dealCoachActionCallable,
+  dealCoachStartNewCallable,
+  dealCoachLoadConversationCallable,
+  dealCoachFeedbackCallable,
+  analyzeDealOutcomeCallable,
+  dealCoachProactiveCallable
+};
+
+// 📅 Export Calendar Webhook endpoints
+export {
+  setupCalendarWatch,
+  calendarWebhook,
+  stopCalendarWatch,
+  refreshCalendarWatch,
+  getCalendarWebhookStatus
+};
+
+// 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
+// Temporarily commented out due to TypeScript errors
+// import { syncDenormalizedAssociations, bulkSyncAssociations } from './syncDenormalizedAssociations';
+// import { migrateToDenormalizedAssociations, cleanupOldAssociations } from './migrateToDenormalizedAssociations';
 
 // 🎯 TASK ENGINE IMPORTS
 import {
   createTask,
   updateTask,
   completeTask,
+  quickCompleteTask,
   deleteTask,
   getTasks,
   getTasksForDate,
@@ -59,11 +97,18 @@ import {
   generateTaskContent
 } from './taskEngine';
 
+// 🎯 DEAL ASSOCIATION IMPORTS
+import {
+  associateDealsWithSalespeople,
+  createExplicitAssociations
+} from './associateDealsWithSalespeople';
+
 // Export task functions
 export {
   createTask,
   updateTask,
   completeTask,
+  quickCompleteTask,
   deleteTask,
   getTasks,
   getTasksForDate,
@@ -73,6 +118,12 @@ export {
   rejectAITaskSuggestion,
   getDealStageAISuggestions,
   generateTaskContent
+};
+
+// Export deal association functions
+export {
+  associateDealsWithSalespeople,
+  createExplicitAssociations
 };
 
 // Get SendGrid API key from environment variables
@@ -442,7 +493,8 @@ export const createRetrievalFilter = onCall(async (request) => {
       // --- New schema fields ---
       eventType: 'retrieval.filter.created',
       targetType: 'filter',
-      targetId: undefined,
+      // omit optional when undefined
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'retrieval',
       traitsAffected: null,
@@ -4462,7 +4514,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
       reason: `Generated orchestration report for ${timeRange}h`,
       eventType: 'analytics.report.generated',
       targetType: 'report',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'analytics',
       traitsAffected: null,
@@ -4493,7 +4545,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
       reason: `Failed to generate orchestration report`,
       eventType: 'analytics.report.generated',
       targetType: 'report',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'analytics',
       traitsAffected: null,
@@ -4552,7 +4604,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
       reason: `Analyzed ${failedLogs.length} failure patterns`,
       eventType: 'analytics.failures.analyzed',
       targetType: 'analysis',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'analytics',
       traitsAffected: null,
@@ -4582,7 +4634,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
       reason: `Failed to analyze failure patterns`,
       eventType: 'analytics.failures.analyzed',
       targetType: 'analysis',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'analytics',
       traitsAffected: null,
@@ -4686,7 +4738,7 @@ export const simulateOrchestrationScenario = onCall(async (request) => {
       reason: `Failed to simulate orchestration scenario`,
       eventType: 'test.scenario.simulated',
       targetType: 'scenario',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'test',
       traitsAffected: null,
@@ -5134,7 +5186,7 @@ export const createInviteToken = onCall(async (request) => {
       reason: `Failed to create invite token`,
       eventType: 'onboarding.token-created',
       targetType: 'invite',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: false,
       contextType: 'onboarding',
       traitsAffected: null,
@@ -6274,7 +6326,7 @@ Effective performance management helps workers succeed and organizations thrive.
       reason: 'Failed to generate help drafts',
       eventType: 'help.drafts-generated',
       targetType: 'help_topics',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'help_management',
       traitsAffected: null,
@@ -6422,7 +6474,7 @@ export const updateHelpArticlesWithNewInfo = onCall(async (request) => {
       reason: 'Failed to update help articles',
       eventType: 'help.articles-updated',
       targetType: 'help_topics',
-      targetId: undefined,
+      // targetId intentionally omitted when not available
       aiRelevant: true,
       contextType: 'help_management',
       traitsAffected: null,
@@ -6544,7 +6596,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
       return birthdayA.getTime() - birthdayB.getTime();
     });
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
       customerId,
@@ -6565,7 +6617,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
     return { birthdays: upcomingBirthdays };
   } catch (error: any) {
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
       customerId,
@@ -6623,7 +6675,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
     };
     await db.collection('notifications').add(notification);
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
       customerId,
@@ -6644,7 +6696,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
     return { success: true, messageId: birthdayMessage.id };
   } catch (error: any) {
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
       customerId,
@@ -6685,7 +6737,7 @@ export const getMotivations = onCall(async (request) => {
     const snapshot = await motivationsQuery.get();
     const motivations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), createdAt: doc.data().createdAt?.toDate() }));
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
       customerId,
@@ -6705,7 +6757,7 @@ export const getMotivations = onCall(async (request) => {
     return { motivations };
   } catch (error: any) {
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
       customerId,
@@ -6744,7 +6796,7 @@ export const addMotivation = onCall(async (request) => {
     };
     const docRef = await db.collection('motivations').add(motivation);
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
       customerId,
@@ -6764,7 +6816,7 @@ export const addMotivation = onCall(async (request) => {
     return { success: true, motivationId: docRef.id };
   } catch (error: any) {
     await logAIAction({
-      userId: request.auth?.uid,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
       customerId,
@@ -6775,7 +6827,6 @@ export const addMotivation = onCall(async (request) => {
       reason: `Failed to add motivation: ${error.message}`,
       eventType: 'motivation.added',
       targetType: 'motivation',
-      targetId: undefined,
       aiRelevant: true,
       contextType: 'motivation',
       traitsAffected: null,
@@ -6906,7 +6957,7 @@ export const checkBirthdays = onSchedule({
       return dob.getMonth() + 1 === month && dob.getDate() === day;
     });
     await logAIAction({
-      userId: undefined,
+      userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
       success: true,
@@ -6925,7 +6976,7 @@ export const checkBirthdays = onSchedule({
     console.log(`Birthday check completed: ${usersWithBirthdaysToday.length} birthdays found`);
   } catch (error: any) {
     await logAIAction({
-      userId: undefined,
+      userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
       success: false,
@@ -7484,7 +7535,7 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
     
     // Log the AI action for email failure
     await logAIAction({
-      userId: request.auth?.uid || undefined,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'invite_email_failed',
       sourceModule: 'InviteUserV2',
       success: false,
@@ -7701,7 +7752,7 @@ export const revokeInviteV2 = onCall(async (request) => {
 
     // Log the AI action for successful revocation
     await logAIAction({
-      userId: request.auth?.uid || undefined,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
       success: true,
@@ -7722,7 +7773,7 @@ export const revokeInviteV2 = onCall(async (request) => {
   } catch (error: any) {
     // Log the AI action for failed revocation
     await logAIAction({
-      userId: request.auth?.uid || undefined,
+      userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
       success: false,
@@ -9607,9 +9658,9 @@ export const getTenantAIEngagementSettings = onCall(async (request) => {
     const settingsRef = db.collection('tenants').doc(tenantId).collection('aiSettings').doc('securityLevelEngagement');
     const settingsDoc = await settingsRef.get();
     
-    let settings;
+    let settings: Record<string, any> = {};
     if (settingsDoc.exists) {
-      settings = settingsDoc.data();
+      settings = settingsDoc.data() as Record<string, any>;
     } else {
       // Return default settings if none exist
       settings = {
@@ -9978,9 +10029,9 @@ export const filterWorkersBySecurityLevel = onCall(async (request) => {
     const settingsRef = db.collection('tenants').doc(tenantId).collection('aiSettings').doc('securityLevelEngagement');
     const settingsDoc = await settingsRef.get();
     
-    let settings;
+    let settings: Record<string, any> = {};
     if (settingsDoc.exists) {
-      settings = settingsDoc.data();
+      settings = settingsDoc.data() as Record<string, any>;
     } else {
       // Use default settings if none exist
       settings = {};
@@ -10175,14 +10226,26 @@ export {
 
 // Gmail Integration Functions
 export { 
-  getGmailConfig, 
-  updateGmailConfig, 
-  authenticateGmail, 
-  gmailOAuthCallback, 
-  syncGmailEmails, 
-  sendGmailEmail, 
-  scheduledGmailSync 
+  getGmailAuthUrl,
+  handleGmailCallback,
+  gmailOAuthCallback,
+  syncGmailEmails,
+  disconnectGmail,
+  getGmailStatus
 } from './gmailIntegration';
+
+// Google Calendar Integration Functions
+export {
+  getCalendarAuthUrl,
+  handleCalendarCallback,
+  syncTaskToCalendar,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  getCalendarStatus,
+  disconnectCalendar,
+  listCalendarEvents,
+  createCalendarEvent
+} from './googleCalendarIntegration';
 
 // Gmail-Tasks Integration Functions
 export {
@@ -10213,7 +10276,7 @@ export { getCompanyLocations };
 
 // Location Association Functions
 export { getLocationAssociations } from './getLocationAssociations';
-export { updateLocationAssociation } from './updateLocationAssociation';
+export { updateLocationAssociation, updateLocationAssociationHttp } from './updateLocationAssociation';
 
 // CRM Data Management Functions
 export { linkContactsToCompanies, linkCRMEntities, triggerAINoteReview };
@@ -10239,5 +10302,57 @@ export { extractCompanyInfoFromUrls };
 
 // Association Management Functions
 export { manageAssociations };
-export { fixContactAssociations, findContactInfo };
+export { migrateAssociationsToObjects } from './migrateAssociationsToObjects';
+export { fixContactAssociations, findContactInfo, updateCompanyPipelineTotals, onDealUpdated };
+
+// AI Summary Functions
+export { generateDealAISummary, triggerAISummaryUpdate };
+
+// 🚀 DENORMALIZED ASSOCIATIONS FUNCTIONS
+// Temporarily commented out due to TypeScript errors
+// export { syncDenormalizedAssociations, bulkSyncAssociations };
+// export { migrateToDenormalizedAssociations, cleanupOldAssociations };
+
+// Similar Companies Functions
+export { findSimilarCompanies } from './findSimilarCompanies';
+export { addCompanyToCRM } from './addCompanyToCRM';
+
+// AI Chat
+export { startAIThread, chatWithAI, logAIUserMessage } from './aiChat';
+export { chatWithGPT } from './gptGateway';
+export { enhancedChatWithGPT } from './enhancedMainChat';
+export { upsertCodeChunks, searchCodeChunks, upsertCodeChunksHttp } from './codeAware';
+export { metricsIngest } from './telemetry/metrics';
+export { app_ai_generateResponse } from './appAi';
+
+// Auto Activity Logger
+export { 
+  autoLogActivity,
+  logContactActivity,
+  logDealActivity,
+  logCompanyActivity,
+  logLocationActivity,
+  logSalespersonActivity,
+  logTaskActivity,
+  logEmailActivity,
+  logNoteActivity,
+  logContactCreated,
+  logContactUpdated,
+  logContactEnhanced,
+  logContactEmailFound,
+  logContactPhoneFound,
+  logDealCreated,
+  logDealUpdated,
+  logDealStageChanged,
+  logCompanyCreated,
+  logCompanyUpdated,
+  logCompanyEnhanced,
+  logTaskCreated,
+  logTaskCompleted,
+  logTaskCancelled,
+  logNoteAdded,
+  logNoteUpdated,
+  logAssociationAdded,
+  logAssociationRemoved
+} from './autoActivityLogger';
 

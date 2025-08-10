@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box,
   Typography,
   Paper,
   Grid,
@@ -12,10 +11,10 @@ import {
   IconButton,
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../../../firebase';
+
+import { db , app } from '../../../../firebase';
 
 interface CustomPromptsSettingsProps {
   tenantId: string;

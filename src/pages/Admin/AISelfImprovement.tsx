@@ -8,7 +8,6 @@ import {
   Card,
   CardContent,
   Chip,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -21,12 +20,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  LinearProgress,
-  CircularProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
   TextField,
   FormControl,
   InputLabel,
@@ -37,10 +30,6 @@ import {
   ListItem,
   ListItemText,
   ListItemIcon,
-  Badge,
-  Tooltip,
-  Switch,
-  FormControlLabel,
   Tabs,
   Tab,
   Autocomplete,
@@ -51,24 +40,9 @@ import {
   TrendingUp as TrendingUpIcon,
   ArrowBack as ArrowBackIcon,
   Refresh as RefreshIcon,
-  PlayArrow as PlayArrowIcon,
-  Stop as StopIcon,
-  ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
   Warning as WarningIcon,
-  Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as VisibilityIcon,
   Settings as SettingsIcon,
-  Timeline as TimelineIcon,
-  BugReport as BugReportIcon,
-  Assessment as AssessmentIcon,
-  Compare as CompareIcon,
-  History as HistoryIcon,
-  Science as ScienceIcon,
-  PlaylistPlay as PlaylistPlayIcon,
   Lightbulb as LightbulbIcon,
   Analytics as AnalyticsIcon,
   Feedback as FeedbackIcon,
@@ -80,14 +54,14 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../firebase';
 import {
   collection,
   getDocs,
   query,
   where,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
+
+import { app , db } from '../../firebase';
 
 interface ImprovementRecommendation {
   type: string;

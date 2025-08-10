@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Checkbox, Button, Typography, Box, TableSortLabel, TextField } from '@mui/material';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Checkbox, Button, Typography, Box, TableSortLabel } from '@mui/material';
 
 export interface WorkersTableProps {
   contacts: any[];
@@ -15,15 +15,7 @@ export interface WorkersTableProps {
   onSearchChange: (value: string) => void;
 }
 
-const sortableColumns = [
-  { id: 'firstName', label: 'First Name' },
-  { id: 'lastName', label: 'Last Name' },
-  { id: 'jobTitle', label: 'Job Title' },
-  { id: 'department', label: 'Department' },
-  { id: 'location', label: 'Location' },
-  { id: 'city', label: 'City' },
-  { id: 'state', label: 'State' },
-];
+// Removed unused sortableColumns to satisfy TS6133
 
 function getComparator(order: 'asc' | 'desc', orderBy: string) {
   return (a: any, b: any) => {

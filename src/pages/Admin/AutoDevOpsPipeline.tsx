@@ -23,13 +23,9 @@ import {
   IconButton,
   Tooltip,
   CircularProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   List,
   ListItem,
-  ListItemText,
-  Divider
+  ListItemText
 } from '@mui/material';
 import {
   PlayArrow,
@@ -38,13 +34,8 @@ import {
   Visibility,
   CheckCircle,
   Error,
-  Warning,
   Info,
-  ExpandMore,
-  Timeline,
   Code,
-  Security,
-  Speed,
   BugReport,
   CloudUpload,
   Monitor,
@@ -52,8 +43,9 @@ import {
 } from '@mui/icons-material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+
+import { useAuth } from '../../contexts/AuthContext';
 
 interface PipelineStatus {
   isRunning: boolean;

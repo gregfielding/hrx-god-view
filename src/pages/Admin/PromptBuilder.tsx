@@ -21,7 +21,6 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Divider,
   Card,
   CardContent,
   Switch,
@@ -29,14 +28,11 @@ import {
   Slider,
   Tabs,
   Tab,
-  LinearProgress,
-  CircularProgress,
 } from '@mui/material';
 import {
   Build as BuildIcon,
   PlayArrow as PlayArrowIcon,
   Save as SaveIcon,
-  Refresh as RefreshIcon,
   ArrowBack as ArrowBackIcon,
   ExpandMore as ExpandMoreIcon,
   ContentCopy as CopyIcon,
@@ -44,13 +40,12 @@ import {
   Settings as SettingsIcon,
   Psychology as PsychologyIcon,
   Storage as StorageIcon,
-  Speed as SpeedIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
-  Warning as WarningIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 
 interface PromptTemplate {

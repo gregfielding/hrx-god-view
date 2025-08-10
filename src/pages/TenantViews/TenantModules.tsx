@@ -46,9 +46,11 @@ import {
   School,
   Visibility,
 } from '@mui/icons-material';
+import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
+
 import { useAuth } from '../../contexts/AuthContext';
-import { doc, getDoc, setDoc, collection, getDocs, updateDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
+
 import ModuleDetailsView from './ModuleDetailsView';
 
 // Simplified module definitions - only what's actually functional

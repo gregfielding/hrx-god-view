@@ -1,0 +1,229 @@
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
+
+// 🔄 SYNC DENORMALIZED ASSOCIATIONS
+// This function runs when any entity's associations field is updated
+// It automatically updates all related entities to keep associations in sync
+
+export const syncDenormalizedAssociations = functions.firestore
+  .document('tenants/{tenantId}/crm_{entityType}/{entityId}')
+  .onUpdate(async (change, context) => {
+    const { tenantId, entityType, entityId } = context.params;
+    const beforeData = change.before.data();
+    const afterData = change.after.data();
+
+    // Only process if associations field changed
+    if (JSON.stringify(beforeData.associations) === JSON.stringify(afterData.associations)) {
+      console.log('No association changes detected, skipping sync');
+      return;
+    }
+
+    console.log(`🔄 Syncing associations for ${entityType}:${entityId}`);
+
+    try {
+      const associations = afterData.associations;
+      if (!associations) {
+        console.log('No associations found, skipping sync');
+        return;
+      }
+
+      // Get the entity that was updated
+      const updatedEntity = {
+        id: entityId,
+        type: entityType,
+        name: afterData.name || afterData.companyName || afterData.title || 'Unknown',
+        ...afterData
+      };
+
+      // Sync to all related entities
+      await Promise.all([
+        // Sync to companies
+        ...(associations.companies || []).map(company => 
+          syncToEntity(tenantId, 'company', company.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to contacts
+        ...(associations.contacts || []).map(contact => 
+          syncToEntity(tenantId, 'contact', contact.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to salespeople
+        ...(associations.salespeople || []).map(salesperson => 
+          syncToEntity(tenantId, 'salesperson', salesperson.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to locations
+        ...(associations.locations || []).map(location => 
+          syncToEntity(tenantId, 'location', location.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to deals
+        ...(associations.deals || []).map(deal => 
+          syncToEntity(tenantId, 'deal', deal.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to divisions
+        ...(associations.divisions || []).map(division => 
+          syncToEntity(tenantId, 'division', division.id, entityType, updatedEntity, associations)
+        ),
+
+        // Sync to tasks
+        ...(associations.tasks || []).map(task => 
+          syncToEntity(tenantId, 'task', task.id, entityType, updatedEntity, associations)
+        )
+      ]);
+
+      console.log(`✅ Successfully synced associations for ${entityType}:${entityId}`);
+    } catch (error) {
+      console.error(`❌ Error syncing associations for ${entityType}:${entityId}:`, error);
+      throw error;
+    }
+  });
+
+// 🔄 SYNC TO SPECIFIC ENTITY
+async function syncToEntity(
+  tenantId: string,
+  targetType: string,
+  targetId: string,
+  sourceType: string,
+  sourceEntity: any,
+  sourceAssociations: any
+) {
+  try {
+    const targetRef = admin.firestore()
+      .collection('tenants')
+      .doc(tenantId)
+      .collection(`crm_${targetType}s`)
+      .doc(targetId);
+
+    const targetDoc = await targetRef.get();
+    if (!targetDoc.exists) {
+      console.log(`Target entity ${targetType}:${targetId} not found, skipping sync`);
+      return;
+    }
+
+    const targetData = targetDoc.data();
+    const targetAssociations = targetData.associations || {};
+
+    // Update the target entity's associations to include the source entity
+    const updatedAssociations = {
+      ...targetAssociations,
+      [sourceType + 's']: updateEntityArray(
+        targetAssociations[sourceType + 's'] || [],
+        {
+          id: sourceEntity.id,
+          name: sourceEntity.name,
+          ...getEntitySpecificFields(sourceType, sourceEntity)
+        }
+      )
+    };
+
+    // Update the target entity
+    await targetRef.update({
+      associations: updatedAssociations,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`✅ Synced ${sourceType}:${sourceEntity.id} to ${targetType}:${targetId}`);
+  } catch (error) {
+    console.error(`❌ Error syncing to ${targetType}:${targetId}:`, error);
+    // Don't throw - we want to continue with other syncs
+  }
+}
+
+// 🔄 UPDATE ENTITY ARRAY (add or update entity)
+function updateEntityArray(existingArray: any[], newEntity: any): any[] {
+  const existingIndex = existingArray.findIndex(entity => entity.id === newEntity.id);
+  
+  if (existingIndex >= 0) {
+    // Update existing entity
+    const updatedArray = [...existingArray];
+    updatedArray[existingIndex] = { ...updatedArray[existingIndex], ...newEntity };
+    return updatedArray;
+  } else {
+    // Add new entity
+    return [...existingArray, newEntity];
+  }
+}
+
+// 🏷️ GET ENTITY-SPECIFIC FIELDS
+function getEntitySpecificFields(entityType: string, entity: any): any {
+  switch (entityType) {
+    case 'deal':
+      return {
+        stage: entity.stage,
+        value: entity.estimatedRevenue || entity.value,
+        closeDate: entity.closeDate
+      };
+    case 'company':
+      return {
+        type: entity.type || 'primary',
+        industry: entity.industry
+      };
+    case 'contact':
+      return {
+        email: entity.email,
+        phone: entity.phone,
+        title: entity.title
+      };
+    case 'salesperson':
+      return {
+        email: entity.email,
+        role: entity.role
+      };
+    case 'location':
+      return {
+        address: entity.address,
+        city: entity.city,
+        state: entity.state
+      };
+    case 'task':
+      return {
+        status: entity.status,
+        priority: entity.priority,
+        dueDate: entity.dueDate
+      };
+    default:
+      return {};
+  }
+}
+
+// 🚀 BULK SYNC FUNCTION (for migration)
+export const bulkSyncAssociations = functions.https.onCall(async (data, context) => {
+  const { tenantId, entityType } = data;
+  
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    console.log(`🔄 Starting bulk sync for ${entityType} in tenant ${tenantId}`);
+
+    const collectionRef = admin.firestore()
+      .collection('tenants')
+      .doc(tenantId)
+      .collection(`crm_${entityType}s`);
+
+    const snapshot = await collectionRef.get();
+    let processed = 0;
+
+    for (const doc of snapshot.docs) {
+      const entityData = doc.data();
+      if (entityData.associations) {
+        // Trigger sync for this entity
+        await syncDenormalizedAssociations({
+          before: { data: () => ({ associations: null }) },
+          after: { data: () => entityData }
+        } as any, { params: { tenantId, entityType, entityId: doc.id } } as any);
+        
+        processed++;
+      }
+    }
+
+    console.log(`✅ Bulk sync completed for ${entityType}: ${processed} entities processed`);
+    return { success: true, processed };
+  } catch (error) {
+    console.error('❌ Error in bulk sync:', error);
+    throw new functions.https.HttpsError('internal', 'Bulk sync failed');
+  }
+});

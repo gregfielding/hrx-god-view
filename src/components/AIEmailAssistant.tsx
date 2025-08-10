@@ -27,32 +27,18 @@ import {
   Alert,
   CircularProgress,
   LinearProgress,
-  Divider,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Switch,
   FormControlLabel,
-  Slider,
   Autocomplete,
 } from '@mui/material';
 import {
   Email as EmailIcon,
   Send as SendIcon,
-  Edit as EditIcon,
   ContentCopy as CopyIcon,
-  Psychology as PsychologyIcon,
-  Schedule as ScheduleIcon,
-  Person as PersonIcon,
-  Business as BusinessIcon,
-  TrendingUp as TrendingUpIcon,
-  ExpandMore as ExpandMoreIcon,
-  CheckCircle as CheckIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
   SmartToy as AIIcon,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -191,7 +177,8 @@ Best regards,
       }
 
       // Load company data
-      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      if (!tenantId) throw new Error('Missing tenantId');
+      const companiesRef = collection(db, 'tenants', tenantId as string, 'crm_companies');
       const companyQuery = query(companiesRef, where('__name__', '==', deal.companyId));
       const companySnapshot = await getDocs(companyQuery);
       if (!companySnapshot.empty) {
@@ -199,7 +186,7 @@ Best regards,
       }
 
       // Load contacts
-      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const contactsRef = collection(db, 'tenants', tenantId as string, 'crm_contacts');
       const contactsQuery = query(contactsRef, where('companyId', '==', deal.companyId));
       const contactsSnapshot = await getDocs(contactsQuery);
       const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMContact));
@@ -427,9 +414,10 @@ Best regards,
                       }}
                       renderInput={(params) => (
                         <TextField
-                          {...params}
+                          {...(params as any)}
                           label="Recipient"
                           placeholder="Select contact..."
+                          size="small"
                         />
                       )}
                     />

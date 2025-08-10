@@ -1,5 +1,6 @@
-import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+
+import { db } from '../firebase';
 
 export interface ActivityLogData {
   userId: string;
@@ -263,6 +264,6 @@ export const logCustomActivity = async (
     description,
     severity,
     source: 'web',
-    metadata,
+    ...(metadata ? { metadata } : {}),
   });
 }; 

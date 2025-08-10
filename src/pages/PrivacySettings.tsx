@@ -3,9 +3,7 @@ import {
   Box,
   Container,
   Typography,
-  Paper,
   Switch,
-  FormControlLabel,
   Divider,
   List,
   ListItem,
@@ -22,7 +20,6 @@ import {
 } from '@mui/material';
 import {
   Notifications,
-  NotificationsOff,
   Email,
   Phone,
   Security,
@@ -30,11 +27,11 @@ import {
   VisibilityOff,
   Save,
   CheckCircle,
-  Warning,
   Info,
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
+
+import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 
 interface NotificationSettings {

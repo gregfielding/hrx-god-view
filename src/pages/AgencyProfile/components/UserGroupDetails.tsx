@@ -18,8 +18,10 @@ import {
   Tab,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
+
+import { db } from '../../../firebase';
+
 import AgencyProfileHeader from './AgencyProfileHeader';
 
 const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({

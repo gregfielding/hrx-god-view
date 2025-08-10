@@ -16,8 +16,9 @@ import {
   Snackbar,
   Alert,
 } from '@mui/material';
-import { db } from '../../firebase';
 import { collection, getDocs, doc, getDoc, updateDoc, serverTimestamp, query, where } from 'firebase/firestore';
+
+import { db } from '../../firebase';
 
 interface AgencyContactsTabProps {
   tenantId: string;

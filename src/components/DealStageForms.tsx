@@ -2,14 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Stepper,
-  Step,
-  StepLabel,
-  StepContent,
-  Card,
-  CardContent,
-  CardHeader,
-  TextField,
+  TextField as MuiTextField,
   FormControl,
   FormControlLabel,
   FormGroup,
@@ -34,11 +27,8 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemIcon,
   IconButton,
-  Tooltip,
   CircularProgress,
-  Stack,
   Paper,
   Snackbar,
   Table,
@@ -57,11 +47,9 @@ import {
   Remove as RemoveIcon,
   Save as SaveIcon,
   ArrowForward as ArrowForwardIcon,
-  ArrowBack as ArrowBackIcon,
   Psychology as PsychologyIcon,
   Business as BusinessIcon,
   Person as PersonIcon,
-  AttachMoney as AttachMoneyIcon,
   Description as DescriptionIcon,
   RateReview as RateReviewIcon,
   Gavel as GavelIcon,
@@ -72,12 +60,14 @@ import {
   Bedtime as BedtimeIcon,
   Cancel as CancelIcon,
   CloudUpload as CloudUploadIcon,
-  AutoAwesome as AutoAwesomeIcon
+  Undo as UndoIcon
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../firebase';
+
 
 interface Contact {
   id: string;
@@ -268,6 +258,24 @@ interface DormantData {
   assignedTo?: string; // salesperson ID
 }
 
+// Wrap MUI TextField to commit changes on blur and maintain local input while typing
+const TextField = (props: any) => {
+  const { value, onChange, onBlur, ...rest } = props;
+  const [local, setLocal] = React.useState(value);
+  React.useEffect(() => { setLocal(value); }, [value]);
+  return (
+    <MuiTextField
+      {...rest}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={(e) => {
+        if (onChange) onChange(e);
+        if (onBlur) onBlur(e);
+      }}
+    />
+  );
+};
+
 interface ClosedLostData {
   lostReason?: 'price' | 'timing' | 'competitor' | 'no_need' | 'internal_decision' | 'other';
   competitor?: string;
@@ -291,6 +299,7 @@ interface DealStageFormsProps {
   stageData: DealStageData;
   onStageDataChange: (stageData: DealStageData) => void;
   onStageAdvance: (newStage: string) => void;
+  onStageIncomplete?: (stageKey: string) => void;
   associatedContacts?: Contact[];
 }
 
@@ -316,6 +325,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   stageData,
   onStageDataChange,
   onStageAdvance,
+  onStageIncomplete,
   associatedContacts = []
 }) => {
   const { user } = useAuth();
@@ -476,16 +486,29 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   };
 
   const handleStageDataChange = (stageKey: string, field: string, value: any) => {
-    const oldValue = stageData[stageKey as keyof DealStageData]?.[field];
+    const stageDataForKey = stageData[stageKey as keyof DealStageData] as Record<string, any> | undefined;
+    const oldValue = stageDataForKey ? stageDataForKey[field] : undefined;
     
     const updatedData = {
       ...stageData,
       [stageKey]: {
-        ...stageData[stageKey as keyof DealStageData],
+        ...(stageDataForKey || {}),
         [field]: value
       }
     };
     onStageDataChange(updatedData);
+    // Auto-save on change/blur
+    (async () => {
+      try {
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId), {
+          stageData: updatedData,
+          updatedAt: serverTimestamp()
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('Auto-save failed', e);
+      }
+    })();
 
     // TODO: Re-enable AI logging once Cloud Function is properly configured
     // Log field change for AI analysis (fire-and-forget)
@@ -730,7 +753,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   label="Current Staff Count"
                   type="number"
                   value={data.currentStaffCount || ''}
-                  onChange={(e) => handleStageDataChange('discovery', 'currentStaffCount', parseInt(e.target.value))}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleStageDataChange('discovery', 'currentStaffCount', parseInt(e.target.value))}
                   fullWidth
                   size="small"
                 />
@@ -740,38 +763,64 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   label="Current Agency Count"
                   type="number"
                   value={data.currentAgencyCount || ''}
-                  onChange={(e) => handleStageDataChange('discovery', 'currentAgencyCount', parseInt(e.target.value))}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleStageDataChange('discovery', 'currentAgencyCount', parseInt(e.target.value))}
                   fullWidth
                   size="small"
                 />
               </Grid>
             </Grid>
             
-            <TextField
-              label="Job Titles Needed"
-              value={data.jobTitles?.join(', ') || ''}
-              onChange={(e) => {
-                const value = e.target.value;
-                // Only parse if the value ends with a comma or is empty
-                if (value.endsWith(',') || value === '') {
-                  const titles = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                  handleStageDataChange('discovery', 'jobTitles', titles);
-                } else {
-                  // For normal typing, just store the raw value
-                  handleStageDataChange('discovery', 'jobTitles', [value]);
+            {/* Job Titles Needed - Chip Input */}
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Job Titles Needed
+              </Typography>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={data.jobTitles || []}
+                onChange={(_, newValue) => {
+                  handleStageDataChange('discovery', 'jobTitles', newValue);
+                }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={String(key)}
+                        variant="outlined"
+                        label={option}
+                        {...chipProps}
+                        size="small"
+                      />
+                    );
+                  })
                 }
-              }}
-              onBlur={(e) => {
-                // Parse on blur to handle final formatting
-                const value = e.target.value;
-                const titles = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                handleStageDataChange('discovery', 'jobTitles', titles);
-              }}
-              fullWidth
-              size="small"
-              sx={{ mt: 2 }}
-              helperText="Separate multiple titles with commas"
-            />
+                renderInput={(params) => (
+                  <TextField
+                    {...(params as any)}
+                    placeholder="Type job titles and press Enter or comma"
+                    size="small"
+                    helperText="Separate multiple titles with commas or press Enter"
+                  />
+                )}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ',') {
+                    event.preventDefault();
+                    const input = event.target as HTMLInputElement;
+                    const value = input.value.trim();
+                    if (value) {
+                      const currentTitles = data.jobTitles || [];
+                      if (!currentTitles.includes(value)) {
+                        handleStageDataChange('discovery', 'jobTitles', [...currentTitles, value]);
+                      }
+                      input.value = '';
+                    }
+                  }
+                }}
+              />
+            </Box>
             
             <FormControl fullWidth sx={{ mt: 2 }}>
               <InputLabel>Satisfaction Level</InputLabel>
@@ -786,53 +835,111 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               </Select>
             </FormControl>
 
-            <TextField
-              label="Shifts Needed"
-              value={data.shifts?.join(', ') || ''}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value.endsWith(',') || value === '') {
-                  const shifts = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                  handleStageDataChange('discovery', 'shifts', shifts);
-                } else {
-                  handleStageDataChange('discovery', 'shifts', [value]);
+            {/* Shifts Needed - Chip Input */}
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Shifts Needed
+              </Typography>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={['1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
+                value={data.shifts || []}
+                onChange={(_, newValue) => {
+                  handleStageDataChange('discovery', 'shifts', newValue);
+                }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={String(key)}
+                        variant="outlined"
+                        label={option}
+                        {...chipProps}
+                        size="small"
+                      />
+                    );
+                  })
                 }
-              }}
-              onBlur={(e) => {
-                const value = e.target.value;
-                const shifts = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                handleStageDataChange('discovery', 'shifts', shifts);
-              }}
-              fullWidth
-              size="small"
-              sx={{ mt: 2 }}
-              helperText="Separate multiple shifts with commas (e.g., 1st Shift, 2nd Shift, Night Shift)"
-            />
+                renderInput={(params) => (
+                  <TextField
+                    {...(params as any)}
+                    placeholder="Type shifts and press Enter or comma"
+                    size="small"
+                    helperText="Separate multiple shifts with commas or press Enter (e.g., 1st Shift, 2nd Shift, Night Shift)"
+                  />
+                )}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ',') {
+                    event.preventDefault();
+                    const input = event.target as HTMLInputElement;
+                    const value = input.value.trim();
+                    if (value) {
+                      const currentShifts = data.shifts || [];
+                      if (!currentShifts.includes(value)) {
+                        handleStageDataChange('discovery', 'shifts', [...currentShifts, value]);
+                      }
+                      input.value = '';
+                    }
+                  }
+                }}
+              />
+            </Box>
 
-            <TextField
-              label="Current Struggles"
-              value={data.struggles?.join(', ') || ''}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value.endsWith(',') || value === '') {
-                  const struggles = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                  handleStageDataChange('discovery', 'struggles', struggles);
-                } else {
-                  handleStageDataChange('discovery', 'struggles', [value]);
+            {/* Current Struggles - Chip Input */}
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Current Struggles
+              </Typography>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={data.struggles || []}
+                onChange={(_, newValue) => {
+                  handleStageDataChange('discovery', 'struggles', newValue);
+                }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={String(key)}
+                        variant="outlined"
+                        label={option}
+                        {...chipProps}
+                        size="small"
+                      />
+                    );
+                  })
                 }
-              }}
-              onBlur={(e) => {
-                const value = e.target.value;
-                const struggles = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-                handleStageDataChange('discovery', 'struggles', struggles);
-              }}
-              fullWidth
-              multiline
-              rows={2}
-              size="small"
-              sx={{ mt: 2 }}
-              helperText="What challenges are they facing? Separate with commas"
-            />
+                renderInput={(params) => (
+                  <TextField
+                    {...(params as any)}
+                    placeholder="Type struggles and press Enter or comma"
+                    size="small"
+                    multiline
+                    rows={2}
+                    helperText="What challenges are they facing? Separate with commas or press Enter"
+                  />
+                )}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ',') {
+                    event.preventDefault();
+                    const input = event.target as HTMLInputElement;
+                    const value = input.value.trim();
+                    if (value) {
+                      const currentStruggles = data.struggles || [];
+                      if (!currentStruggles.includes(value)) {
+                        handleStageDataChange('discovery', 'struggles', [...currentStruggles, value]);
+                      }
+                      input.value = '';
+                    }
+                  }
+                }}
+              />
+            </Box>
 
             <FormControlLabel
               control={
@@ -859,75 +966,77 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Box>
         )}
 
-        {data.usesAgencies === false && (
+        <Divider sx={{ my: 3 }} />
+
+        <FormControl component="fieldset" sx={{ mb: 3 }}>
+          <FormLabel component="legend">Have they used staffing agencies before?</FormLabel>
+          <RadioGroup
+            value={data.hasUsedBefore ?? ''}
+            onChange={(e) => handleStageDataChange('discovery', 'hasUsedBefore', e.target.value === 'true')}
+          >
+            <FormControlLabel value="true" control={<Radio />} label="Yes" />
+            <FormControlLabel value="false" control={<Radio />} label="No" />
+          </RadioGroup>
+        </FormControl>
+
+        {data.hasUsedBefore === true && (
           <Box sx={{ ml: 2, mb: 3 }}>
-            <FormControl component="fieldset" sx={{ mb: 2 }}>
-              <FormLabel component="legend">Have they used agencies before?</FormLabel>
-              <RadioGroup
-                value={data.hasUsedBefore ?? ''}
-                onChange={(e) => handleStageDataChange('discovery', 'hasUsedBefore', e.target.value === 'true')}
-              >
-                <FormControlLabel value="true" control={<Radio />} label="Yes" />
-                <FormControlLabel value="false" control={<Radio />} label="No" />
-              </RadioGroup>
-            </FormControl>
+            <TextField
+              label="When did they last use an agency?"
+              value={data.lastUsed || ''}
+              onChange={(e) => handleStageDataChange('discovery', 'lastUsed', e.target.value)}
+              fullWidth
+              size="small"
+              sx={{ mb: 2 }}
+              helperText="Approximate timeframe"
+            />
+            
+            <TextField
+              label="Why did they stop?"
+              value={data.reasonStopped || ''}
+              onChange={(e) => handleStageDataChange('discovery', 'reasonStopped', e.target.value)}
+              fullWidth
+              multiline
+              rows={2}
+              size="small"
+              sx={{ mb: 2 }}
+              helperText="What led to them stopping use of staffing agencies?"
+            />
 
-            {data.hasUsedBefore === true && (
-              <Box sx={{ ml: 2 }}>
-                <TextField
-                  label="When did they last use an agency?"
-                  type="date"
-                  value={data.lastUsed || ''}
-                  onChange={(e) => handleStageDataChange('discovery', 'lastUsed', e.target.value)}
-                  fullWidth
-                  size="small"
-                  sx={{ mb: 2 }}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={data.openToUsingAgain || false}
+                  onChange={(e) => handleStageDataChange('discovery', 'openToUsingAgain', e.target.checked)}
                 />
-                <TextField
-                  label="Why did they stop?"
-                  value={data.reasonStopped || ''}
-                  onChange={(e) => handleStageDataChange('discovery', 'reasonStopped', e.target.value)}
-                  fullWidth
-                  multiline
-                  rows={2}
-                  size="small"
-                  sx={{ mb: 2 }}
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={data.openToUsingAgain || false}
-                      onChange={(e) => handleStageDataChange('discovery', 'openToUsingAgain', e.target.checked)}
-                    />
-                  }
-                  label="Open to using agencies again"
-                />
-              </Box>
-            )}
+              }
+              label="Open to using an agency again"
+              sx={{ mb: 2 }}
+            />
+          </Box>
+        )}
 
-            {data.hasUsedBefore === false && (
-              <Box sx={{ ml: 2 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={data.strugglingToHire || false}
-                      onChange={(e) => handleStageDataChange('discovery', 'strugglingToHire', e.target.checked)}
-                    />
-                  }
-                  label="Struggling to hire"
-                  sx={{ mb: 2 }}
+        {data.hasUsedBefore === false && (
+          <Box sx={{ ml: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={data.strugglingToHire || false}
+                  onChange={(e) => handleStageDataChange('discovery', 'strugglingToHire', e.target.checked)}
                 />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={data.openToAgency || false}
-                      onChange={(e) => handleStageDataChange('discovery', 'openToAgency', e.target.checked)}
-                    />
-                  }
-                  label="Open to using an agency"
+              }
+              label="Struggling to hire"
+              sx={{ mb: 2 }}
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={data.openToAgency || false}
+                  onChange={(e) => handleStageDataChange('discovery', 'openToAgency', e.target.checked)}
                 />
-              </Box>
-            )}
+              }
+              label="Open to using an agency"
+            />
           </Box>
         )}
 
@@ -980,7 +1089,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Discovery Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('discovery', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('discovery', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -1083,7 +1192,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Must Have Requirements"
           value={data.mustHave || ''}
-          onChange={(e) => handleStageDataChange('qualification', 'mustHave', e.target.value)}
+          onBlur={(e) => handleStageDataChange('qualification', 'mustHave', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -1094,7 +1203,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Must Avoid"
           value={data.mustAvoid || ''}
-          onChange={(e) => handleStageDataChange('qualification', 'mustAvoid', e.target.value)}
+          onBlur={(e) => handleStageDataChange('qualification', 'mustAvoid', e.target.value)}
           fullWidth
           multiline
           rows={2}
@@ -1291,7 +1400,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Qualification Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('qualification', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('qualification', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -1402,7 +1511,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('dormant', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('dormant', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -1571,7 +1680,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Additional Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('closedLost', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('closedLost', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={2}
@@ -2113,7 +2222,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Scoping Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('scoping', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('scoping', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2167,7 +2276,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         {positionRates.length === 0 ? (
           <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
-            <Typography variant="body2">No positions added yet. Click "Add Position" to get started.</Typography>
+            <Typography variant="body2">No positions added yet. Click &quot;Add Position&quot; to get started.</Typography>
           </Box>
         ) : (
           <TableContainer component={Paper} sx={{ mb: 3 }}>
@@ -2270,7 +2379,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
             {(!data.rollovers || data.rollovers.length === 0) ? (
               <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
-                <Typography variant="body2">No rollover employees added yet. Click "Add Rollover" to get started.</Typography>
+                <Typography variant="body2">No rollover employees added yet. Click &quot;Add Rollover&quot; to get started.</Typography>
               </Box>
             ) : (
               <TableContainer component={Paper} sx={{ mb: 3 }}>
@@ -2370,7 +2479,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Proposal Drafted Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('proposalDrafted', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('proposalDrafted', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2450,7 +2559,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Proposal Review Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('proposalReview', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('proposalReview', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2569,7 +2678,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Negotiation Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('negotiation', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('negotiation', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2691,7 +2800,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Verbal Agreement Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('verbalAgreement', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('verbalAgreement', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2823,7 +2932,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <TextField
           label="Closed Won Notes"
           value={data.notes || ''}
-          onChange={(e) => handleStageDataChange('closedWon', 'notes', e.target.value)}
+          onBlur={(e) => handleStageDataChange('closedWon', 'notes', e.target.value)}
           fullWidth
           multiline
           rows={3}
@@ -2870,7 +2979,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <TextField
               label={`${STAGES.find(s => s.key === stageKey)?.label} Notes`}
               value={stageData[stageKey as keyof DealStageData]?.notes || ''}
-              onChange={(e) => handleStageDataChange(stageKey, 'notes', e.target.value)}
+              onBlur={(e) => handleStageDataChange(stageKey, 'notes', e.target.value)}
               fullWidth
               multiline
               rows={3}
@@ -2884,27 +2993,9 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h5">Deal Stage Forms</Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="outlined"
-            startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? <CircularProgress size={20} /> : 'Save Progress'}
-          </Button>
-          <Button
-            variant="contained"
-            endIcon={<ArrowForwardIcon />}
-            onClick={handleAdvanceStage}
-            disabled={activeStep === STAGES.length - 1}
-          >
-            Advance Stage
-          </Button>
-        </Box>
-      </Box>
+      </Box> */}
 
       <Paper elevation={1} sx={{ borderRadius: 0 }}>
         {STAGES.map((stage, index) => {
@@ -2938,18 +3029,35 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                       size="small"
                     />
                     {status === 'active' && (
-                      <Button
-                        variant="outlined"
-                        size="small"
+                      <Chip
+                        label="Mark as Complete"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleMarkStageComplete(stage.key);
                         }}
-                        startIcon={<CheckIcon />}
-                        sx={{ ml: 1, minWidth: 'auto', px: 1 }}
+                        color="primary"
+                        size="small"
+                        clickable
+                        sx={{ 
+                          ml: 1,
+                          mr: 1.5,
+                          cursor: 'pointer'
+                        }}
+                      />
+                    )}
+                    {status === 'completed' && onStageIncomplete && (
+                      <IconButton
+                        size="small"
+                        color="warning"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStageIncomplete(stage.key);
+                        }}
+                        sx={{ ml: 1 }}
+                        title="Mark as incomplete"
                       >
-                        Complete
-                      </Button>
+                        <UndoIcon fontSize="small" />
+                      </IconButton>
                     )}
                   </Box>
                 </Box>

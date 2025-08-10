@@ -4,10 +4,8 @@ import {
   Typography,
   TextField,
   Button,
-  Chip,
   Snackbar,
   Alert,
-  Stack,
   TableContainer,
   Table,
   TableHead,
@@ -16,23 +14,20 @@ import {
   TableCell,
   Paper,
   Grid,
-  MenuItem,
-  Select,
 } from '@mui/material';
 import {
   doc,
-  getDoc,
   updateDoc,
-  setDoc,
   collection,
   addDoc,
   getDocs,
   deleteDoc,
 } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import IconButton from '@mui/material/IconButton';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+
+import { db } from '../../../firebase';
 
 
 

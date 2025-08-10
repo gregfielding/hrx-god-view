@@ -29,12 +29,13 @@ import {
   Chip,
   Autocomplete,
 } from '@mui/material';
-import { collection, addDoc, getDocs, query, where, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { collection, addDoc, getDocs, query, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
+
+import { geocodeAddress } from '../../../utils/geocodeAddress';
+import { db } from '../../../firebase';
 
 // Location type options
 const locationTypeOptions = [

@@ -2,22 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { Box, Tabs, Tab, Typography, Button } from '@mui/material';
 import { useParams, useMatch, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase'; // adjust path
+import ContactsTab from '../CustomerProfile/components/ContactsTab';
+import { useAuth } from '../../contexts/AuthContext';
+import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
 
 import ProfileOverview from './components/ProfileOverview';
 // import AddressTab from './components/AddressTab/AddressTab';
 import UserProfileHeader from './components/CustomerProfileHeader';
-import ContactsTab from '../CustomerProfile/components/ContactsTab';
 import AddCustomerForm from './AddCustomerForm';
 import LocationsTab from './components/LocationsTab';
 import WorkforceTab from './components/WorkforceTab';
 import AISettingsTab from './components/AISettingsTab';
-import AITrainingTab from './components/AITrainingTab';
 import LocationDetails from './LocationDetails';
 import CompanySettingsTab from './components/CompanySettingsTab';
-import { useAuth } from '../../contexts/AuthContext';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
+
 
 const NewsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [tenant, setTenant] = useState<any>(null);

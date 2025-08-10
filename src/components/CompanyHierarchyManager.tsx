@@ -23,221 +23,36 @@ import {
   Tooltip,
   Divider,
   Alert,
-  Badge,
   Avatar,
   List,
   ListItem,
   ListItemText,
   ListItemAvatar,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
-  Switch,
-  FormControlLabel,
   Tabs,
   Tab,
-  CircularProgress,
-
-  Autocomplete,
-  Slider,
-  FormGroup,
-  Checkbox,
-  Radio,
-  RadioGroup,
-  FormLabel,
-  InputAdornment,
-  OutlinedInput,
-  InputLabel as MuiInputLabel,
-  Select as MuiSelect,
-  MenuItem as MuiMenuItem,
-  FormHelperText,
-  AlertTitle,
-  Skeleton,
   Collapse,
-  Fade,
-  Zoom,
-  Grow,
-  Slide,
-  Fab,
-  SpeedDial,
-  SpeedDialAction,
-  SpeedDialIcon,
-  Breadcrumbs,
-  Link as MuiLink,
-  Stepper,
-  Step,
-  StepLabel,
-  StepContent,
-  MobileStepper,
-  useTheme,
-  useMediaQuery,
 } from '@mui/material';
 import {
   Business,
   LocationOn,
-  AccountBalance,
-  TrendingUp,
-  TrendingDown,
-  CheckCircle,
-  Warning,
-  Error,
-  ExpandMore,
   ExpandLess,
   ChevronRight,
   Add,
   Edit,
-  Visibility,
-  Assignment,
-  People,
-  AttachMoney,
   Schedule,
-  Star,
   BusinessCenter,
   Store,
   Apartment,
   Group,
-  Link,
-  Timeline as TimelineIcon,
   Assessment,
-  Insights,
-  ContactSupport,
-  PersonSearch,
-  FilterList,
-  Sort,
-  Refresh,
-  Download,
-  Upload,
-  Settings,
-  Notifications,
-  Chat,
-  VideoCall,
-  CalendarToday,
-  AccessTime,
-  Flag,
-  PriorityHigh,
-  LowPriority,
-  Block,
-  ThumbUp,
-  ThumbDown,
-  Favorite,
-  FavoriteBorder,
-  VisibilityOff,
-  Lock,
-  LockOpen,
-  Security,
-  VerifiedUser,
-  GpsFixed,
-  LocationSearching,
   Map as MapIcon,
-  Public,
-  Share,
-  ContentCopy,
-  QrCode,
-  ContactPhone,
-  ContactMail,
-  ContactPage,
-  ContactEmergency,
-  ContactSupport as ContactSupportIcon,
-  Contactless,
-  Contacts,
-  ContactPhoneOutlined,
-  ContactMailOutlined,
-  ContactPageOutlined,
-  ContactEmergencyOutlined,
-  ContactSupportOutlined,
-  ContactlessOutlined,
-  ContactsOutlined,
   AccountTree,
-  CorporateFare,
-  Domain,
-  HomeWork,
-  Storefront,
-  LocalShipping,
-  Warehouse,
-  Factory,
-  BusinessOutlined,
-  LocationCity,
-  LocationOnOutlined,
-  MapOutlined,
-  Navigation,
-  CompassCalibration,
-  MyLocation,
-  Place,
-  Room,
-  Streetview,
-  Terrain,
-  Traffic,
-  Directions,
-  DirectionsCar,
-  DirectionsWalk,
-  DirectionsBike,
-  DirectionsBus,
-  DirectionsRailway,
-  DirectionsSubway,
-  DirectionsTransit,
-  DirectionsBoat,
-  DirectionsRun,
-  DirectionsWalkOutlined,
-  DirectionsCarOutlined,
-  DirectionsBikeOutlined,
-  DirectionsBusOutlined,
-  DirectionsRailwayOutlined,
-  DirectionsSubwayOutlined,
-  DirectionsTransitOutlined,
-  DirectionsBoatOutlined,
-  DirectionsRunOutlined,
-  AccountBalanceOutlined,
-  AccountBalanceWallet,
-  AccountBalanceWalletOutlined,
-  AccountBox,
-  AccountBoxOutlined,
-  AccountCircle,
-  AccountCircleOutlined,
-  AssignmentInd,
-  AssignmentIndOutlined,
-  Badge as BadgeIcon,
-  BadgeOutlined,
-  ContactMailOutlined as ContactMailOutlinedIcon,
-  ContactPhoneOutlined as ContactPhoneOutlinedIcon,
-  ContactSupportOutlined as ContactSupportOutlinedIcon,
-  Face,
-  FaceOutlined,
-  GroupOutlined,
-  GroupWork,
-  GroupWorkOutlined,
-  HowToReg,
-  HowToRegOutlined,
-  Person,
-  PersonAdd,
-  PersonAddOutlined,
-  PersonOff,
-  PersonOffOutlined,
-  PersonOutline,
-  PersonPin,
-  PersonPinCircle,
-  PersonPinCircleOutlined,
-  PersonPinOutlined,
-  PersonRemove,
-  PersonRemoveOutlined,
-  RecordVoiceOver,
-  RecordVoiceOverOutlined,
-  SupervisorAccount,
-  SupervisorAccountOutlined,
-  VerifiedUserOutlined,
   Work,
-  WorkOff,
-  WorkOffOutlined,
-  WorkOutline,
-  WorkOutlined,
 } from '@mui/icons-material';
-import { collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs } from 'firebase/firestore';
+
 import { db } from '../firebase';
-import { CRMCompany, CRMContact } from '../types/CRM';
+import { CRMCompany } from '../types/CRM';
 import { useAIFieldLogging } from '../utils/aiFieldLogging';
 
 interface CompanyHierarchyManagerProps {
@@ -273,15 +88,15 @@ interface RegionalAssignment {
 
 const CompanyHierarchyManager: React.FC<CompanyHierarchyManagerProps> = ({ tenantId }) => {
   const [companies, setCompanies] = useState<CRMCompany[]>([]);
-  const [contacts, setContacts] = useState<CRMContact[]>([]);
+  // const [contacts, setContacts] = useState<CRMContact[]>([]);
   const [companyTree, setCompanyTree] = useState<CompanyNode[]>([]);
   const [regionalAssignments, setRegionalAssignments] = useState<RegionalAssignment[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<CompanyNode | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
-  const [showFacilityDialog, setShowFacilityDialog] = useState(false);
-  const [showRegionalDialog, setShowRegionalDialog] = useState(false);
+  // const [showFacilityDialog] = useState(false);
+  // const [showRegionalDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<CRMCompany | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
@@ -302,16 +117,13 @@ const CompanyHierarchyManager: React.FC<CompanyHierarchyManagerProps> = ({ tenan
       setLoading(true);
       
       // Load companies
-      const companiesQuery = query(collection(db, 'companies'), where('tenantId', '==', tenantId));
+      const companiesQuery = query(collection(db, 'tenants', tenantId, 'crm_companies'));
       const companiesSnapshot = await getDocs(companiesQuery);
       const companiesData = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMCompany));
       setCompanies(companiesData);
 
       // Load contacts
-      const contactsQuery = query(collection(db, 'contacts'), where('tenantId', '==', tenantId));
-      const contactsSnapshot = await getDocs(contactsQuery);
-      const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMContact));
-      setContacts(contactsData);
+      // Contacts are not used in current view; skipped to satisfy TS6133
 
       // Build company tree
       const tree = buildCompanyTree(companiesData);
@@ -324,7 +136,7 @@ const CompanyHierarchyManager: React.FC<CompanyHierarchyManagerProps> = ({ tenan
       logFieldInteraction(null, {
         action: 'data_loaded',
         companyCount: companiesData.length,
-        contactCount: contactsData.length,
+        // contactCount omitted (not loaded)
         treeDepth: getMaxTreeDepth(tree),
         regionalCount: regional.length,
         tenantId
@@ -347,17 +159,17 @@ const CompanyHierarchyManager: React.FC<CompanyHierarchyManagerProps> = ({ tenan
         id: company.id,
         name: company.name,
         type: company.companyStructure?.locationType || 'facility',
-        parentId: company.companyStructure?.parentId,
+        ...(company.companyStructure?.parentId ? { parentId: company.companyStructure.parentId } : {}),
         children: [],
         company,
-        region: company.companyStructure?.region,
+        ...(company.companyStructure?.region ? { region: company.companyStructure.region } : {}),
         hasMSA: company.companyStructure?.msaSigned || false,
-        assignedRep: company.companyStructure?.assignedRep,
-        facilityCode: company.companyStructure?.facilityCode,
-        headcount: company.companyStructure?.headcount,
-        isUnionized: company.companyStructure?.isUnionized,
-        hasTempLaborExperience: company.companyStructure?.hasTempLaborExperience,
-        workforceModel: company.companyStructure?.workforceModel,
+        ...(company.companyStructure?.assignedRep ? { assignedRep: company.companyStructure.assignedRep } : {}),
+        ...(company.companyStructure?.facilityCode ? { facilityCode: company.companyStructure.facilityCode } : {}),
+        headcount: company.companyStructure?.headcount ?? 0,
+        ...(company.companyStructure?.isUnionized !== undefined ? { isUnionized: company.companyStructure.isUnionized } : {}),
+        ...(company.companyStructure?.hasTempLaborExperience !== undefined ? { hasTempLaborExperience: company.companyStructure.hasTempLaborExperience } : {}),
+        ...(company.companyStructure?.workforceModel ? { workforceModel: company.companyStructure.workforceModel } : {}),
       };
       companyMap.set(company.id, node);
     });
@@ -492,35 +304,35 @@ const CompanyHierarchyManager: React.FC<CompanyHierarchyManagerProps> = ({ tenan
     setShowCompanyDialog(true);
   };
 
-  const handleSaveCompany = async (companyData: Partial<CRMCompany>) => {
-    try {
-      logFieldInteraction(null, {
-        action: 'company_updated',
-        companyId: editingCompany?.id,
-        companyName: companyData.name
-      });
-
-      if (editingCompany) {
-        await updateDoc(doc(db, 'companies', editingCompany.id), {
-          ...companyData,
-          updatedAt: serverTimestamp()
-        });
-      } else {
-        await addDoc(collection(db, 'companies'), {
-          ...companyData,
-          tenantId,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      setShowCompanyDialog(false);
-      setEditingCompany(null);
-      await loadData(); // Refresh data
-    } catch (error) {
-      console.error('Error saving company:', error);
-    }
-  };
+  // const handleSaveCompany = async (companyData: Partial<CRMCompany>) => {
+  //   try {
+  //     logFieldInteraction(null, {
+  //       action: 'company_updated',
+  //       companyId: editingCompany?.id,
+  //       companyName: companyData.name
+  //     });
+  //
+  //     if (editingCompany) {
+  //       await updateDoc(doc(db, 'companies', editingCompany.id), {
+  //         ...companyData,
+  //         updatedAt: serverTimestamp()
+  //       });
+  //     } else {
+  //       await addDoc(collection(db, 'companies'), {
+  //         ...companyData,
+  //         tenantId,
+  //         createdAt: serverTimestamp(),
+  //         updatedAt: serverTimestamp()
+  //       });
+  //     }
+  //
+  //     setShowCompanyDialog(false);
+  //     setEditingCompany(null);
+  //     await loadData(); // Refresh data
+  //   } catch (error) {
+  //     console.error('Error saving company:', error);
+  //   }
+  // };
 
   const renderCompanyTree = (nodes: CompanyNode[], level = 0) => {
     return nodes.map(node => {

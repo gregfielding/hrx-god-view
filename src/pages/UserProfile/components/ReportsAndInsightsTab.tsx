@@ -4,7 +4,6 @@ import {
   Typography,
   Tabs,
   Tab,
-  Paper,
   Grid,
   Card,
   CardContent,
@@ -30,9 +29,6 @@ import {
   TrendingUp,
   TrendingDown,
   TrendingFlat,
-  Warning,
-  CheckCircle,
-  Info,
   Download,
   Assessment,
   Psychology,
@@ -43,8 +39,9 @@ import {
   Visibility,
   VisibilityOff,
 } from '@mui/icons-material';
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+
 import { db } from '../../../firebase';
 
 interface ReportsAndInsightsTabProps {

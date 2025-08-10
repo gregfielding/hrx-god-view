@@ -14,7 +14,6 @@ import {
   ListItemText,
   ListItemIcon,
   ListItemSecondaryAction,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -27,7 +26,6 @@ import {
   Alert,
   Snackbar,
   CircularProgress,
-  Divider,
   Paper,
   Table,
   TableBody,
@@ -35,26 +33,18 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Badge,
-  Tooltip,
 } from '@mui/material';
 import {
   TrendingUp as TrendingUpIcon,
-  Assignment as AssignmentIcon,
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
   Schedule as ScheduleIcon,
-  Person as PersonIcon,
-  Add as AddIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
   Lightbulb as LightbulbIcon,
   Task as TaskIcon,
   Phone as PhoneIcon,
   Email as EmailIcon,
   MeetingRoom as MeetingIcon,
   Assessment as AssessmentIcon,
-  CalendarToday as CalendarIcon,
   PriorityHigh as HighPriorityIcon,
   FiberManualRecord as MediumPriorityIcon,
   RadioButtonUnchecked as LowPriorityIcon,
@@ -64,12 +54,12 @@ import {
   addDoc,
   updateDoc,
   doc,
-  getDocs,
   query,
   where,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {

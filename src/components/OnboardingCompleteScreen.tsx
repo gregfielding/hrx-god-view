@@ -17,7 +17,6 @@ import {
   Download,
   QrCode2,
   Smartphone,
-  Computer,
   Email,
   Sms,
 } from '@mui/icons-material';
@@ -76,9 +75,9 @@ const OnboardingCompleteScreen: React.FC = () => {
       <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
         <CheckCircle color="success" sx={{ fontSize: 80, mb: 3 }} />
 
-        <Typography variant="h3" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-          You're All Set!
-        </Typography>
+          <Typography variant="h3" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+            You&apos;re All Set!
+          </Typography>
 
         <Typography variant="h6" color="text.secondary" sx={{ mb: 4 }}>
           Welcome to HRX, {completionData.userProfile.firstName}!
@@ -97,7 +96,7 @@ const OnboardingCompleteScreen: React.FC = () => {
             Account Successfully Created
           </Typography>
           <Typography variant="body1">
-            You're now connected to {completionData.orgData?.name} as a{' '}
+            You&apos;re now connected to {completionData.orgData?.name} as a{' '}
             {completionData.userProfile.role}
           </Typography>
         </Box>
@@ -222,7 +221,7 @@ const OnboardingCompleteScreen: React.FC = () => {
 
         <Box sx={{ mb: 4 }}>
           <Typography variant="h6" gutterBottom>
-            What's Next?
+            What&apos;s Next?
           </Typography>
           <Grid container spacing={2} justifyContent="center">
             <Grid item>

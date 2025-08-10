@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, Button, Divider } from '@mui/material';
-import { LoggableSlider } from '../../components/LoggableField';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import Snackbar from '@mui/material/Snackbar';
 import MuiAlert from '@mui/material/Alert';
-import { useAuth } from '../../contexts/AuthContext';
 import { doc, setDoc } from 'firebase/firestore';
+
+import { useAuth } from '../../contexts/AuthContext';
+import { LoggableSlider } from '../../components/LoggableField';
 import { db } from '../../firebase';
 
 const ADMIN_SLIDERS = [

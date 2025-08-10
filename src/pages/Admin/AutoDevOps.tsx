@@ -22,10 +22,6 @@ import {
   TableHead,
   TableRow,
   TablePagination,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
   Switch,
   FormControlLabel,
   TextField,
@@ -33,10 +29,8 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
-  LinearProgress,
   CircularProgress,
   Tooltip,
-  Badge,
   Tabs,
   Tab,
   List,
@@ -48,10 +42,8 @@ import {
 import {
   BugReport as BugIcon,
   Speed as SpeedIcon,
-  Lightbulb as SuggestionIcon,
   Settings as SettingsIcon,
   ArrowBack as ArrowBackIcon,
-  ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
@@ -63,15 +55,13 @@ import {
   Code as CodeIcon,
   Notifications as NotifyIcon,
   AutoFixHigh as AutoFixIcon,
-  Monitor as MonitorIcon,
   Build as BuildIcon,
   Security as SecurityIcon,
-  Analytics as AnalyticsIcon,
-  Timeline as TimelineIcon,
   CloudUpload as CloudUploadIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 import DevOpsChat from '../../components/DevOpsChat';
 import { useAuth } from '../../contexts/AuthContext';

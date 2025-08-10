@@ -15,17 +15,15 @@ import {
   Typography,
   Chip,
   Autocomplete,
-  FormControlLabel,
-  Switch,
-  Divider,
   Tabs,
   Tab,
   Alert,
   CircularProgress
 } from '@mui/material';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { TaskType, TaskStatus, TaskCategory } from '../types/Tasks';
 import { useAuth } from '../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 interface CreateFollowUpCampaignDialogProps {
   open: boolean;
@@ -424,10 +422,11 @@ const CreateFollowUpCampaignDialog: React.FC<CreateFollowUpCampaignDialogProps> 
                 }
                 renderInput={(params) => (
                   <TextField
-                    {...params}
+                    {...(params as any)}
                     label="Tags"
                     placeholder="Add tags..."
                     helperText="Press Enter to add a new tag"
+                    size="small"
                   />
                 )}
               />

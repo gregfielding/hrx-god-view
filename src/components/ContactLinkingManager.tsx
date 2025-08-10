@@ -23,6 +23,7 @@ import {
   Person as PersonIcon,
 } from '@mui/icons-material';
 import { httpsCallable } from 'firebase/functions';
+
 import { functions } from '../firebase';
 
 interface LinkingResult {

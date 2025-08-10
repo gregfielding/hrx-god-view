@@ -21,10 +21,11 @@ import {
   FormControl,
   InputLabel,
 } from '@mui/material';
-import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../../firebase';
 
 interface ContactsTabProps {
   tenantId?: string;

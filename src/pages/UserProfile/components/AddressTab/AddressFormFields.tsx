@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Grid, TextField, Button, Snackbar, Alert } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../../firebase';
+
 
 type Props = {
   uid: string;

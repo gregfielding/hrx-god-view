@@ -1,10 +1,6 @@
 import React from 'react';
-import { Box, Typography, Grid, Paper, IconButton } from '@mui/material';
-import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import { Box, Typography, Grid, Paper } from '@mui/material';
 import PsychologyAltIcon from '@mui/icons-material/PsychologyAlt';
-import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
-import ScheduleIcon from '@mui/icons-material/Schedule';
-import TimelineIcon from '@mui/icons-material/Timeline';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 import { useNavigate } from 'react-router-dom';
 import TuneIcon from '@mui/icons-material/Tune';

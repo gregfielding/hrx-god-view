@@ -12,22 +12,12 @@ import {
   FormControl,
   Grid,
   IconButton,
-  Card,
-  CardContent,
-  CardHeader,
-  Divider,
   Paper,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Avatar,
   List,
   ListItem,
   ListItemText,
   ListItemIcon,
-  Badge,
   Alert,
-  Tooltip,
   FormControlLabel,
   Switch,
   Snackbar,
@@ -35,14 +25,12 @@ import {
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
-  Edit as EditIcon,
   School as SchoolIcon,
   Work as WorkIcon,
   Star as StarIcon,
   Language as LanguageIcon,
   Description as DescriptionIcon,
   Upload as UploadIcon,
-  ExpandMore as ExpandMoreIcon,
   Psychology as PsychologyIcon,
   EmojiEvents as EmojiEventsIcon,
   Timeline as TimelineIcon,
@@ -50,8 +38,10 @@ import {
   CheckCircle,
 } from '@mui/icons-material';
 import Autocomplete from '@mui/material/Autocomplete';
-import { EducationSection, WorkExperienceSection } from './index';
+
 import ResumeUpload from '../../../../components/ResumeUpload';
+
+import { EducationSection, WorkExperienceSection } from './index';
 
 const educationLevels = ['High School', "Associate's", "Bachelor's", "Master's", 'Doctorate'];
 const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];

@@ -19,17 +19,15 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Divider,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
   Download as DownloadIcon,
-  CheckCircle as CheckIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
-  Info as InfoIcon,
   TableChart as TableIcon,
 } from '@mui/icons-material';
+
 import {
   parseCSVFile,
   downloadSampleCSV,
@@ -98,20 +96,20 @@ const CSVUpload: React.FC<CSVUploadProps> = ({
     return dept ? dept.name : id;
   };
 
-  const getLocationName = (id: string) => {
-    const loc = locations.find(l => l.id === id);
-    return loc ? (loc.nickname || loc.name) : id;
-  };
+  // const getLocationName = (id: string) => {
+  //   const loc = locations.find(l => l.id === id);
+  //   return loc ? (loc.nickname || loc.name) : id;
+  // };
 
-  const getDivisionName = (id: string) => {
-    const div = divisions.find(d => d.id === id);
-    return div ? div.name : id;
-  };
+  // const getDivisionName = (id: string) => {
+  //   const div = divisions.find(d => d.id === id);
+  //   return div ? div.name : id;
+  // };
 
-  const getManagerName = (id: string) => {
-    const mgr = managers.find(m => m.id === id);
-    return mgr ? `${mgr.firstName} ${mgr.lastName}` : id;
-  };
+  // const getManagerName = (id: string) => {
+  //   const mgr = managers.find(m => m.id === id);
+  //   return mgr ? `${mgr.firstName} ${mgr.lastName}` : id;
+  // };
 
   return (
     <Box>
@@ -125,7 +123,7 @@ const CSVUpload: React.FC<CSVUploadProps> = ({
           <b>Instructions for CSV Upload</b>
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          <b>Required:</b> For the <code>securityLevel</code> column, use the following numbers to indicate the worker's role:
+          <b>Required:</b> For the <code>securityLevel</code> column, use the following numbers to indicate the worker&apos;s role:
         </Typography>
         <Box sx={{ overflowX: 'auto', mb: 1 }}>
           <table style={{ borderCollapse: 'collapse', minWidth: 400 }}>

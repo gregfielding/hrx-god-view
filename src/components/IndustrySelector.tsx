@@ -11,6 +11,7 @@ import {
   MenuItem,
   FormHelperText,
 } from '@mui/material';
+
 import {
   INDUSTRIES,
   Industry,
@@ -160,7 +161,7 @@ const IndustrySelector: React.FC<IndustrySelectorProps> = ({
         onChange={(_, newValue) => handleIndustryChange(newValue)}
         renderInput={(params) => (
           <TextField
-            {...params}
+            {...(params as any)}
             label={label}
             required={required}
             error={error}

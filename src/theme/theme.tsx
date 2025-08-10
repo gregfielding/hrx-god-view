@@ -1,5 +1,5 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState, useEffect } from 'react';
 
 // HRX One Enterprise Design System Colors
 const hrxColors = {
@@ -72,56 +72,87 @@ const lightColors = {
 };
 
 const getTheme = (mode: 'light' | 'dark') => {
-  const colors = mode === 'light' ? lightColors : hrxColors;
+  const radius = 12;
+  
+  // Use modern colors for light mode, keep existing for dark mode
+  const colors = mode === 'light' ? {
+    // Modern light mode colors
+    background: '#F7F8FB',
+    surface: '#FFFFFF',
+    surfaceLight: '#E9ECEF',
+    textPrimary: '#0B0D12',
+    textSecondary: '#5A6372',
+    border: 'rgba(0,0,0,.06)',
+    hrxBlue: '#4A90E2',
+    hrxBlueDark: '#1F6FC9',
+    hrxBlueDarker: '#235DA9',
+    hrxBlueLight: '#E8F1FC',
+    hrxBlueLighter: '#9BCBFF',
+    error: '#D14343',
+    errorLight: '#FDECEC',
+    warning: '#B88207',
+    warningLight: '#FFF7E6',
+    success: '#1E9E6A',
+    successLight: '#E7F7F0',
+    info: '#2A7BBF',
+    infoLight: '#E8F3FC',
+    disabled: '#ADB5BD',
+  } : hrxColors;
   
   return createTheme({
     palette: {
       mode,
       background: {
-        default: colors.background,
-        paper: colors.surface,
+        default: '#F7F8FB',
+        paper: '#FFFFFF',
       },
       text: {
-        primary: colors.textPrimary,
-        secondary: colors.textSecondary,
+        primary: '#0B0D12',
+        secondary: '#5A6372',
+        disabled: '#8B94A3',
       },
       primary: {
-        main: colors.hrxBlue,
-        dark: colors.hrxBlueDark,
-        light: colors.hrxBlueLight,
-        contrastText: mode === 'light' ? '#FFFFFF' : colors.textPrimary,
+        main: '#4A90E2',
+        dark: '#1F6FC9',
+        light: '#E8F1FC',
+        contrastText: '#FFFFFF',
       },
       secondary: {
-        main: colors.hrxBlueLight,
-        dark: colors.hrxBlueDarker,
-        light: colors.hrxBlueLighter,
-        contrastText: mode === 'light' ? '#FFFFFF' : colors.textPrimary,
+        main: '#8B94A3',
+        dark: '#5A6372',
+        light: '#C9CFD8',
+        contrastText: '#FFFFFF',
       },
       error: {
-        main: colors.error,
-      },
-      success: {
-        main: colors.success,
+        main: '#D14343',
+        light: '#FDECEC',
+        contrastText: '#FFFFFF',
       },
       warning: {
-        main: colors.warning,
+        main: '#B88207',
+        light: '#FFF7E6',
+      },
+      success: {
+        main: '#1E9E6A',
+        light: '#E7F7F0',
       },
       info: {
-        main: colors.info,
+        main: '#2A7BBF',
+        light: '#E8F3FC',
       },
-      divider: colors.border,
+      divider: 'rgba(0,0,0,.06)',
     },
     typography: {
-      fontFamily: 'Helvetica, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontFamily: 'Poppins, Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
       h1: {
-        fontWeight: 700,
-        fontSize: '2.5rem',
-        letterSpacing: '-0.02em',
+        fontSize: 32,
+        fontWeight: 600,
+        lineHeight: 1.25,
       },
       h2: {
-        fontWeight: 700,
-        fontSize: '2rem',
-        letterSpacing: '-0.01em',
+        fontSize: 24,
+        fontWeight: 600,
+        lineHeight: 1.3,
       },
       h3: {
         fontWeight: 600,
@@ -143,112 +174,285 @@ const getTheme = (mode: 'light' | 'dark') => {
         fontSize: '1.125rem',
         letterSpacing: '-0.01em',
       },
+      subtitle1: {
+        fontSize: 16,
+        fontWeight: 600,
+        color: '#5A6372',
+      },
       body1: {
-        fontWeight: 400,
-        fontSize: '1rem',
-        lineHeight: 1.5,
+        fontSize: 14,
+        lineHeight: 1.6,
       },
       body2: {
         fontWeight: 400,
         fontSize: '0.875rem',
-        lineHeight: 1.5,
+        lineHeight: 1.6,
       },
       caption: {
+        fontSize: 12,
         fontWeight: 500,
-        fontSize: '0.75rem',
-        lineHeight: 1.4,
+        color: '#8B94A3',
       },
       button: {
-        fontWeight: 600,
-        fontSize: '0.875rem',
         textTransform: 'none',
-        letterSpacing: '0.01em',
+        fontWeight: 600,
+        letterSpacing: 0,
       },
     },
     shape: {
-      borderRadius: 8,
+      borderRadius: radius,
     },
     components: {
-      // Button Overrides
-      MuiButton: {
+      MuiPaper: {
         styleOverrides: {
           root: {
-            borderRadius: '8px',
+            boxShadow: 'none',
+            border: '1px solid rgba(0,0,0,.08)',
+            backgroundColor: '#FFFFFF'
+          }
+        }
+      },
+      MuiCard: {
+        styleOverrides: {
+          root: {
+            borderRadius: radius,
+            border: '1px solid rgba(0,0,0,.08)',
+            boxShadow: 'none',
+            backgroundColor: '#FFFFFF',
+            padding: '24px',
+            '&.MuiCard-tonal': {
+              backgroundColor: '#F7F9FC',
+              border: 'none',
+            },
+            '&:hover': {
+              borderColor: 'rgba(0,0,0,.12)'
+            }
+          }
+        }
+      },
+      MuiButton: {
+        defaultProps: { disableElevation: true },
+        styleOverrides: {
+          root: {
+            borderRadius: 999, // pill buttons
+            padding: '6px 16px',
             textTransform: 'none',
             fontWeight: 600,
             fontSize: '0.875rem',
-            padding: '8px 16px',
             minHeight: '40px',
+            transition: 'all 200ms ease-in-out',
             '&:hover': {
               boxShadow: 'none',
             },
             '&.Mui-disabled': {
-              backgroundColor: colors.disabled,
-              color: colors.textSecondary,
+              backgroundColor: '#ADB5BD',
+              color: '#8B94A3',
             },
+            '&.MuiButton-sizeXsmall': {
+              height: 24,
+              minHeight: 24,
+              padding: '0 8px',
+              minWidth: 'auto',
+              borderRadius: 999,
+              fontSize: '0.8125rem',
+              lineHeight: '24px',
+              letterSpacing: 0,
+            },
+            '& .MuiButton-startIcon': { marginRight: 6, marginLeft: -2 },
+            '& .MuiButton-endIcon': { marginLeft: 6, marginRight: -2 },
+            '& .MuiButton-startIcon > *:nth-of-type(1)': { fontSize: 18 },
+            '& .MuiButton-endIcon > *:nth-of-type(1)': { fontSize: 18 },
           },
-          contained: {
-            backgroundColor: colors.hrxBlue,
-            color: mode === 'light' ? '#FFFFFF' : colors.textPrimary,
-            '&:hover': {
-              backgroundColor: colors.hrxBlueDark,
+          containedPrimary: {
+            backgroundColor: '#4A90E2',
+            color: '#FFFFFF',
+            '&:hover': { 
+              backgroundColor: '#1F6FC9' 
             },
             '&:active': {
-              backgroundColor: colors.hrxBlueDarker,
+              backgroundColor: '#235DA9',
             },
           },
-          outlined: {
-            borderColor: colors.hrxBlue,
-            color: colors.hrxBlue,
-            '&:hover': {
-              backgroundColor: `${colors.hrxBlue}10`,
-              borderColor: colors.hrxBlueLight,
+          outlinedPrimary: {
+            borderWidth: 2,
+            borderColor: '#4A90E2',
+            color: '#4A90E2',
+            '&:hover': { 
+              borderWidth: 2,
+              backgroundColor: '#E8F1FC',
             },
           },
-          text: {
-            color: colors.hrxBlue,
+          textPrimary: {
+            color: '#4A90E2',
             '&:hover': {
-              backgroundColor: `${colors.hrxBlue}10`,
+              backgroundColor: '#E8F1FC',
             },
           },
         },
       },
-      
-      // Card Overrides
-      MuiCard: {
+      MuiChip: {
         styleOverrides: {
           root: {
-            borderRadius: '0',
-            boxShadow: 'none',
-            border: 'none',
-            backgroundColor: 'transparent',
+            borderRadius: 999, // full pill
+            fontWeight: 600,
+            paddingInline: 8,
+            height: 28,
+          },
+          colorError: {
+            backgroundColor: '#FDECEC',
+            color: '#D14343',
+            border: 'none'
+          },
+          colorSuccess: {
+            backgroundColor: '#E7F7F0',
+            color: '#1E9E6A',
+            border: 'none'
+          },
+          colorWarning: {
+            backgroundColor: '#FFF7E6',
+            color: '#B88207',
+            border: 'none'
+          },
+          colorInfo: {
+            backgroundColor: '#E8F3FC',
+            color: '#1F6FC9',
+            border: 'none'
+          }
+        }
+      },
+      MuiTabs: {
+        styleOverrides: {
+          indicator: {
+            height: 3,
+            borderRadius: 2,
+            backgroundColor: '#4A90E2'
+          },
+          root: {
+            minHeight: 44,
+            borderBottom: 'none',
+            '& .MuiTabs-scroller': {
+              paddingLeft: 0,
+              paddingRight: 0
+            }
+          }
+        }
+      },
+      MuiTab: {
+        styleOverrides: {
+          root: {
+            textTransform: 'none',
+            fontWeight: 600,
+            color: '#5A6372',
+            fontSize: '0.875rem',
+            padding: '12px 16px',
+            minHeight: 44,
+            '&.Mui-selected': {
+              color: '#0B0D12'
+            },
+            '&:hover': {
+              color: '#4A90E2'
+            }
+          }
+        }
+      },
+      MuiListItemButton: {
+        styleOverrides: {
+          root: {
+            borderRadius: radius,
+            margin: '4px 8px',
+            minHeight: '48px',
+            color: '#5A6372',
+            '&:hover': {
+              backgroundColor: '#F7F9FC',
+              color: '#4A90E2',
+            },
+            '&.Mui-selected': {
+              backgroundColor: 'transparent',
+              color: '#4A90E2',
+              borderLeft: '4px solid #4A90E2',
+              paddingLeft: '12px',
+              '&:hover': {
+                backgroundColor: '#F7F9FC',
+              },
+            },
+            '& .MuiListItemIcon-root': {
+              color: 'inherit',
+              minWidth: '40px',
+            },
+            '& .MuiListItemText-root': {
+              '& .MuiTypography-root': {
+                fontWeight: 600,
+                fontSize: '0.875rem',
+              },
+            },
+          }
+        }
+      },
+      MuiDivider: {
+        styleOverrides: {
+          root: {
+            borderColor: 'rgba(0,0,0,.06)'
+          }
+        }
+      },
+      MuiLink: {
+        styleOverrides: {
+          root: {
+            fontWeight: 600
+          }
+        }
+      },
+      MuiIconButton: {
+        styleOverrides: {
+          root: {
+            borderRadius: 10,
+            transition: 'all 200ms ease-in-out'
+          }
+        }
+      },
+      MuiTextField: {
+        defaultProps: {
+          size: 'small',
+          variant: 'filled'
+        },
+        styleOverrides: {
+          root: {
+            '& .MuiFilledInput-root': {
+              backgroundColor: '#F7F9FC',
+              borderRadius: radius,
+              '&:hover': {
+                backgroundColor: '#F0F2F5',
+              },
+              '&.Mui-focused': {
+                backgroundColor: '#FFFFFF',
+                border: '1px solid #4A90E2',
+              },
+            },
+            '& .MuiInputLabel-root': {
+              color: '#5A6372',
+              '&.Mui-focused': {
+                color: '#4A90E2',
+              },
+            },
+            '& .MuiInputBase-input': {
+              color: '#0B0D12',
+            },
+            '& .MuiFormHelperText-root': {
+              color: '#8B94A3',
+              fontSize: '0.75rem',
+            },
+          }
+        }
+      },
+      MuiAccordionSummary: {
+        styleOverrides: {
+          root: {
+            '& .MuiButton-root': {
+              marginRight: '12px',
+            },
           },
         },
       },
-                    MuiCardContent: {
-                styleOverrides: {
-                  root: {
-                    padding: '0px 4px',
-                    '&:last-child': {
-                      paddingBottom: '0px 4px',
-                    },
-                    '&:first-of-type': {
-                      padding: '0px 4px',
-                    },
-                  },
-                },
-              },
-              MuiCardHeader: {
-                styleOverrides: {
-                  root: {
-                    padding: '0px',
-                    marginBottom: '16px',
-                    marginTop: '16px',
-                  },
-                },
-              },
-      
-      // Avatar Overrides
       MuiAvatar: {
         styleOverrides: {
           root: {
@@ -258,49 +462,14 @@ const getTheme = (mode: 'light' | 'dark') => {
           },
         },
       },
-      
-      // TextField Overrides
-      MuiTextField: {
-        defaultProps: {
-          variant: 'outlined',
-        },
-        styleOverrides: {
-          root: {
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '12px',
-              backgroundColor: colors.surfaceLight,
-              '& fieldset': {
-                borderColor: colors.border,
-              },
-              '&:hover fieldset': {
-                borderColor: colors.hrxBlueLight,
-              },
-              '&.Mui-focused fieldset': {
-                borderColor: colors.hrxBlue,
-              },
-            },
-            '& .MuiInputLabel-root': {
-              color: colors.textSecondary,
-              '&.Mui-focused': {
-                color: colors.hrxBlue,
-              },
-            },
-            '& .MuiInputBase-input': {
-              color: colors.textPrimary,
-            },
-          },
-        },
-      },
-      
-      // Table Overrides
       MuiTableContainer: {
         styleOverrides: {
           root: {
             background: 'transparent',
-            boxShadow: mode === 'light' ? '0 2px 8px rgba(0, 0, 0, 0.1)' : 'none',
-            border: `1px solid ${colors.border}`,
-            borderRadius: '12px',
-            overflow: 'hidden',
+            boxShadow: 'none',
+            border: 'none',
+            borderRadius: 0,
+            overflow: 'visible',
           },
         },
       },
@@ -314,12 +483,15 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiTableHead: {
         styleOverrides: {
           root: {
-            backgroundColor: colors.surfaceLight,
+            backgroundColor: 'transparent',
             '& .MuiTableCell-root': {
               fontWeight: 600,
-              textTransform: 'none',
-              color: colors.textPrimary,
-              borderBottom: `1px solid ${colors.border}`,
+              textTransform: 'uppercase',
+              fontSize: '0.75rem',
+              letterSpacing: '0.5px',
+              color: '#5A6372',
+              borderBottom: '1px solid rgba(0,0,0,.06)',
+              padding: '16px 12px',
             },
           },
         },
@@ -327,93 +499,70 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiTableBody: {
         styleOverrides: {
           root: {
-            '& .MuiTableRow-root:nth-of-type(even)': {
-              backgroundColor: `${colors.surfaceLight}40`,
-            },
-            '& .MuiTableRow-root:hover': {
-              backgroundColor: `${colors.hrxBlue}10`,
+            '& .MuiTableRow-root': {
+              '&:hover': {
+                backgroundColor: '#F7F9FC',
+                cursor: 'pointer',
+              },
             },
             '& .MuiTableCell-root': {
-              borderBottom: `1px solid ${colors.border}`,
-              color: colors.textPrimary,
+              borderBottom: '1px solid rgba(0,0,0,.06)',
+              color: '#0B0D12',
+              padding: '16px 12px',
             },
           },
         },
       },
-      
-      // AppBar Overrides
       MuiAppBar: {
         styleOverrides: {
           root: {
             backgroundColor: colors.surface,
             borderBottom: `1px solid ${colors.border}`,
             boxShadow: mode === 'light' ? '0 2px 8px rgba(0, 0, 0, 0.1)' : 'none',
-            color: colors.textPrimary, // Ensure text/icons use correct color
+            color: colors.textPrimary,
           },
         },
       },
-      // Toolbar Overrides
       MuiToolbar: {
         styleOverrides: {
           root: {
-            color: colors.textPrimary, // Ensure toolbar text/icons use correct color
+            color: colors.textPrimary,
           },
         },
       },
-      
-      // Drawer Overrides
       MuiDrawer: {
         styleOverrides: {
           paper: {
-            backgroundColor: colors.surface,
-            borderRight: `1px solid ${colors.border}`,
-            boxShadow: mode === 'light' ? '2px 0 8px rgba(0, 0, 0, 0.1)' : 'none',
-          },
-        },
-      },
-      
-      // ListItem Overrides
-      MuiListItemButton: {
-        styleOverrides: {
-          root: {
-            borderRadius: '8px',
-            margin: '2px 8px',
+            backgroundColor: '#FFFFFF',
+            borderRight: '1px solid rgba(0,0,0,.06)',
+            boxShadow: 'none',
+            width: '72px',
             '&:hover': {
-              backgroundColor: `${colors.hrxBlue}20`,
+              width: '240px',
             },
-            '&.Mui-selected': {
-              backgroundColor: `${colors.hrxBlue}30`,
+            transition: 'width 200ms ease-in-out',
+            '& .MuiListItemButton-root': {
+              borderRadius: 12,
+              margin: '4px 8px',
+              minHeight: '48px',
+              color: '#5A6372',
               '&:hover': {
-                backgroundColor: `${colors.hrxBlue}40`,
+                backgroundColor: '#F7F9FC',
+                color: '#4A90E2'
               },
-            },
+              '&.Mui-selected': {
+                backgroundColor: 'transparent',
+                color: '#4A90E2',
+                borderLeft: '4px solid #4A90E2',
+                paddingLeft: '12px',
+                '&:hover': {
+                  backgroundColor: '#F7F9FC'
+                }
+              }
+            }
           },
         },
       },
-      
-      // Chip Overrides
-      MuiChip: {
-        styleOverrides: {
-          root: {
-            borderRadius: '6px',
-            fontWeight: 500,
-          },
-        },
-      },
-      
-      // Dialog Overrides
-      MuiDialog: {
-        styleOverrides: {
-          paper: {
-            backgroundColor: colors.surface,
-            borderRadius: '16px',
-            border: `1px solid ${colors.border}`,
-            boxShadow: mode === 'light' ? '0 8px 32px rgba(0, 0, 0, 0.15)' : '0 8px 32px rgba(0, 0, 0, 0.3)',
-          },
-        },
-      },
-      
-      // Menu Overrides
       MuiMenu: {
         styleOverrides: {
           paper: {
@@ -424,8 +573,6 @@ const getTheme = (mode: 'light' | 'dark') => {
           },
         },
       },
-      
-      // Select Overrides
       MuiSelect: {
         styleOverrides: {
           root: {
@@ -441,12 +588,73 @@ const getTheme = (mode: 'light' | 'dark') => {
           },
         },
       },
+      MuiSkeleton: {
+        styleOverrides: {
+          root: {
+            backgroundColor: '#F0F2F5',
+            '&::after': {
+              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
+            },
+          },
+        },
+      },
+      MuiAlert: {
+        styleOverrides: {
+          root: {
+            borderRadius: 12,
+            border: '1px solid rgba(0,0,0,.08)',
+            '& .MuiAlert-icon': {
+              fontSize: 20,
+            },
+          },
+          standardInfo: {
+            backgroundColor: '#E8F3FC',
+            color: '#1F6FC9',
+            '& .MuiAlert-icon': {
+              color: '#1F6FC9',
+            },
+          },
+          standardSuccess: {
+            backgroundColor: '#E7F7F0',
+            color: '#1E9E6A',
+            '& .MuiAlert-icon': {
+              color: '#1E9E6A',
+            },
+          },
+          standardWarning: {
+            backgroundColor: '#FFF7E6',
+            color: '#B88207',
+            '& .MuiAlert-icon': {
+              color: '#B88207',
+            },
+          },
+          standardError: {
+            backgroundColor: '#FDECEC',
+            color: '#D14343',
+            '& .MuiAlert-icon': {
+              color: '#D14343',
+            },
+          },
+        },
+      },
+      MuiSnackbar: {
+        styleOverrides: {
+          root: {
+            '& .MuiSnackbarContent-root': {
+              borderRadius: 12,
+              backgroundColor: '#0B0D12',
+              color: '#FFFFFF',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.15)',
+            },
+          },
+        },
+      },
     },
   });
 };
 
 const ThemeModeContext = createContext({
-  mode: 'dark' as 'light' | 'dark',
+  mode: 'light' as 'light' | 'dark',
   toggleMode: () => {
     /* intentionally left blank */
   },
@@ -455,18 +663,35 @@ const ThemeModeContext = createContext({
 export const ThemeModeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   console.log('ThemeModeProvider rendering');
   
-  // Get initial mode from localStorage or default to dark
+  // Force light mode for all users - clear any existing dark mode preferences
+  const forceLightMode = () => {
+    try {
+      localStorage.removeItem('hrx-theme-mode');
+    } catch {
+      // Ignore localStorage errors
+    }
+  };
+  
+  // Get initial mode from localStorage or default to light
   const getInitialMode = (): 'light' | 'dark' => {
     try {
       const savedMode = localStorage.getItem('hrx-theme-mode');
-      return savedMode === 'light' ? 'light' : 'dark';
+      return savedMode === 'dark' ? 'dark' : 'light';
     } catch {
-      return 'dark';
+      return 'light';
     }
   };
   
   const [mode, setMode] = useState<'light' | 'dark'>(getInitialMode);
   const theme = useMemo(() => getTheme(mode), [mode]);
+  
+  // Force light mode on component mount
+  useEffect(() => {
+    forceLightMode();
+    if (mode === 'dark') {
+      setMode('light');
+    }
+  }, []);
   
   const toggleMode = () => {
     const newMode = mode === 'light' ? 'dark' : 'light';
@@ -490,4 +715,4 @@ export const useThemeMode = () => useContext(ThemeModeContext);
 // Export HRX colors for use in components
 export { hrxColors, lightColors };
 
-export default getTheme('dark');
+export default getTheme('light');

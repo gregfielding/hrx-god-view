@@ -239,19 +239,19 @@ export const getRealTimeMetrics = onCall(async () => {
     const realTimeMetrics: RealTimeMetrics = {
       lastRunTime: latestMetrics?.timestamp || new Date(),
       isCurrentlyRunning: systemStatus.isRunning,
-      currentRunStartTime: systemStatus.currentRunStartTime,
+      ...(systemStatus.currentRunStartTime ? { currentRunStartTime: systemStatus.currentRunStartTime } : {}),
       logsInQueue: await getLogsInQueue(),
       activeFixes: await getActiveFixes(),
       systemStatus: systemStatus.status,
       uptimeSeconds: calculateUptime(),
-      lastError: systemStatus.lastError,
-      lastErrorTime: systemStatus.lastErrorTime,
+      ...(systemStatus.lastError ? { lastError: systemStatus.lastError } : {}),
+      ...(systemStatus.lastErrorTime ? { lastErrorTime: systemStatus.lastErrorTime } : {}),
       
       // Build & Deployment status
       buildStatus: systemStatus.buildStatus,
       deploymentStatus: systemStatus.deploymentStatus,
-      lastBuildTime: systemStatus.lastBuildTime,
-      lastDeploymentTime: systemStatus.lastDeploymentTime,
+      ...(systemStatus.lastBuildTime ? { lastBuildTime: systemStatus.lastBuildTime } : {}),
+      ...(systemStatus.lastDeploymentTime ? { lastDeploymentTime: systemStatus.lastDeploymentTime } : {}),
       pendingBuilds: await getPendingBuilds(),
       pendingDeployments: await getPendingDeployments(),
     };

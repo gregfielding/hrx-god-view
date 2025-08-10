@@ -2,13 +2,11 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Paper,
   Switch,
   FormControlLabel,
   Card,
   CardContent,
   CardHeader,
-  Divider,
   Alert,
   Button,
   Grid,
@@ -18,13 +16,11 @@ import {
   Select,
   MenuItem,
   Chip,
-  Autocomplete,
   List,
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
   IconButton,
-  Checkbox,
 } from '@mui/material';
 import {
   Favorite as FavoriteIcon,
@@ -33,8 +29,9 @@ import {
   VisibilityOff as VisibilityOffIcon,
   Edit as EditIcon,
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
+
+import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 
 interface ReportTemplate {

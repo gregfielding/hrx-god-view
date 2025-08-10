@@ -5,13 +5,7 @@ import {
   TextField,
   Button,
   Grid,
-  Table,
-  TableBody,
   TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Snackbar,
   Alert,
   MenuItem,
@@ -19,11 +13,6 @@ import {
   InputLabel,
   Select,
   OutlinedInput,
-  Chip,
-  Checkbox,
-  AppBar,
-  Toolbar,
-  IconButton,
   Fab,
 } from '@mui/material';
 import {
@@ -39,10 +28,10 @@ import {
   where,
   onSnapshot,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
 import { ArrowDropUp, ArrowDropDown, Add as AddIcon } from '@mui/icons-material';
-import Autocomplete from '@mui/material/Autocomplete';
+
+import { db } from '../../firebase';
 import BroadcastDialog from '../../components/BroadcastDialog';
 import { useAuth } from '../../contexts/AuthContext';
 import JobOrdersTable from '../../componentBlocks/JobOrdersTable';
@@ -175,7 +164,9 @@ const TenantJobOrders: React.FC = () => {
               const data = locSnap.data();
               worksiteMap[worksiteId] = { nickname: data.nickname, city: data.city };
             }
-          } catch {}
+          } catch (e) {
+            // noop: missing location info is acceptable here
+          }
         }),
       );
       setWorksiteInfo(worksiteMap);
@@ -204,7 +195,9 @@ const TenantJobOrders: React.FC = () => {
       const q = collection(db, 'tenants', tenantId, 'locations');
       const snapshot = await getDocs(q);
       setWorksites(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-    } catch {}
+    } catch (e) {
+      // noop
+    }
   };
 
   const fetchJobTitles = async () => {
@@ -213,7 +206,9 @@ const TenantJobOrders: React.FC = () => {
       const settingsRef = doc(db, 'tenants', tenantId, 'settings', 'main');
       const snap = await getDoc(settingsRef);
       setJobTitles(snap.exists() ? snap.data().jobTitles || [] : []);
-    } catch {}
+    } catch (e) {
+      // noop
+    }
   };
 
   const getNextJobOrderId = async () => {

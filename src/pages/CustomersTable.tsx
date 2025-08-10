@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Box,
-  CircularProgress,
   Typography,
   TextField,
   Button,
@@ -25,13 +24,13 @@ import {
   getDoc,
   addDoc,
 } from 'firebase/firestore';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
+
 import { db } from '../firebase';
-import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
 import CustomersTableBlock from '../componentBlocks/CustomersTableBlock';
 import { useAuth } from '../contexts/AuthContext';
 import { INDUSTRIES } from '../data/industries';
-import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../utils/geocodeAddress';
 
 const PAGE_SIZE = 10;

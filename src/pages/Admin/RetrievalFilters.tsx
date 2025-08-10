@@ -26,18 +26,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Slider,
   Divider,
   Card,
   CardContent,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Badge,
   Tooltip,
   LinearProgress,
 } from '@mui/material';
@@ -45,20 +37,15 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  ExpandMore as ExpandMoreIcon,
   ArrowBack as ArrowBackIcon,
-  Save as SaveIcon,
-  Cancel as CancelIcon,
-  Visibility as VisibilityIcon,
   FilterList as FilterListIcon,
   Preview as PreviewIcon,
   Assignment as AssignmentIcon,
   CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 
 interface RetrievalFilter {

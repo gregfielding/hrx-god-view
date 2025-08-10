@@ -24,17 +24,12 @@ import {
   Avatar,
   Alert,
   Snackbar,
-  Tooltip,
   Grid,
   CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as VisibilityIcon,
-  Business as BusinessIcon,
   Clear as ClearIcon,
 } from '@mui/icons-material';
 import {
@@ -42,21 +37,21 @@ import {
   addDoc,
   getDocs,
   doc,
-  updateDoc,
   deleteDoc,
   serverTimestamp,
   query,
   orderBy,
-  where,
   limit,
   startAfter,
 } from 'firebase/firestore';
+import { Autocomplete } from '@react-google-maps/api';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import IndustrySelector from '../components/IndustrySelector';
-import CustomerDetailsView from './TenantViews/CustomerDetailsView';
-import { Autocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../utils/geocodeAddress';
+
+import CustomerDetailsView from './TenantViews/CustomerDetailsView';
 
 interface Customer {
   id: string;

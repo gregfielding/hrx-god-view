@@ -22,10 +22,10 @@ import {
   Newspaper as NewspaperIcon,
   OpenInNew as OpenInNewIcon,
   Refresh as RefreshIcon,
-  Business as BusinessIcon,
   Star as StarIcon
 } from '@mui/icons-material';
-import { collection, query, where, getDocs, orderBy, limit, doc, onSnapshot } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 

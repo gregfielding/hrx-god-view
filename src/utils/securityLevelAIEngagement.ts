@@ -1,4 +1,5 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../firebase';
 
 // Security Level Definitions

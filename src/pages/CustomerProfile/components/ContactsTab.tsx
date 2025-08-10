@@ -23,8 +23,9 @@ import {
   Autocomplete,
 } from '@mui/material';
 import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
+
+import { db } from '../../../firebase';
 import jobTitles from '../../../data/onetJobTitles.json';
 
 interface ContactsTabProps {

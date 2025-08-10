@@ -8,7 +8,6 @@ import {
   Grid,
   Card,
   CardContent,
-  Divider,
   Chip,
   Alert,
   CircularProgress,
@@ -28,10 +27,8 @@ import {
   History as HistoryIcon,
   ContentCopy as ContentCopyIcon,
   CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
 } from '@mui/icons-material';
-import { httpsCallable } from 'firebase/functions';
-import { getFunctions } from 'firebase/functions';
+import { httpsCallable , getFunctions } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';
 
 const functions = getFunctions();

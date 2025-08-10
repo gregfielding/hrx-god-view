@@ -1,23 +1,23 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
+
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import UsersTable from './pages/UsersTable';
+import AIDashboard from './pages/TenantViews/AIDashboard';
 import UserProfile from './pages/UserProfile';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
+import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
-
 import TenantWorkforce from './pages/TenantViews/TenantWorkforce';
 import TenantSettings from './pages/TenantViews/TenantSettings';
 import TenantLocations from './pages/TenantViews/TenantLocations';
 import TenantUserGroups from './pages/TenantViews/TenantUserGroups';
-import TenantAssignments from './pages/TenantViews/TenantAssignments';
 import TenantModules from './pages/TenantViews/TenantModules';
 import TenantAISettings from './pages/TenantViews/TenantAISettings';
 import TenantFlex from './pages/TenantViews/TenantFlex';
@@ -31,13 +31,9 @@ import LocationDetails from './pages/TenantViews/LocationDetails';
 import TenantUsers from './pages/TenantViews/TenantUsers';
 import AddUserForm from './pages/AddUserForm';
 import Customers from './pages/Customers';
-import CustomerProfile from './pages/CustomerProfile';
-import AddCustomerForm from './pages/CustomerProfile/AddCustomerForm';
 import UserGroupDetails from './pages/AgencyProfile/components/UserGroupDetails';
-
 import AIContextDashboard from './pages/Admin/AIContextDashboard';
 import ModulesDashboard from './pages/Admin/ModulesDashboard';
-import CustomerDetails from './pages/AgencyProfile/CustomerDetails';
 import AILaunchpad from './pages/Admin/AILaunchpad';
 import TraitsEngine from './pages/Admin/TraitsEngine';
 import ToneSettings from './pages/Admin/ToneSettings';
@@ -138,7 +134,7 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="dashboard" element={<AIDashboard />} />
 
         {/* Admin/Manager only routes */}
         <Route path="users" element={
@@ -177,12 +173,16 @@ function App() {
         } />
         <Route path="crm" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <TenantCRM />
+            <CRMCacheProvider>
+              <TenantCRM />
+            </CRMCacheProvider>
           </ProtectedRoute>
         } />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <CompanyDetails />
+            <CRMCacheProvider>
+              <CompanyDetails />
+            </CRMCacheProvider>
           </ProtectedRoute>
         } />
         <Route path="crm/contacts/:contactId" element={

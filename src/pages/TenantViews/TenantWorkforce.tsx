@@ -4,7 +4,6 @@ import {
   Typography,
   TextField,
   Button,
-  Grid,
   Table,
   TableBody,
   TableCell,
@@ -14,36 +13,28 @@ import {
   Paper,
   Snackbar,
   Alert,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Select,
-  OutlinedInput,
-  Chip,
-  Autocomplete,
-  Checkbox,
-  Tooltip,
   Tabs,
   Tab,
   ToggleButton,
   ToggleButtonGroup,
   TableSortLabel,
 } from '@mui/material';
-import { collection, addDoc, getDocs, query, where, serverTimestamp, doc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { collection, getDocs, query, where, doc, onSnapshot } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import jobTitles from '../../data/onetJobTitles.json';
-import { geocodeAddress } from '../../utils/geocodeAddress';
-import BroadcastDialog from '../../components/BroadcastDialog';
 import AddWorkerForm from '../../componentBlocks/AddWorkerForm';
 import CSVUpload from '../../components/CSVUpload';
 import WorkersTable from '../../componentBlocks/WorkersTable';
+import { CSVWorkerData } from '../../utils/csvUpload';
+import { isStaffingCompany as checkIfStaffingCompany } from '../../utils/staffingCompanies';
+
 import TenantUserGroups from './TenantUserGroups';
 import IntegrationsTab from './IntegrationsTab';
-import { CSVWorkerData } from '../../utils/csvUpload';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { isStaffingCompany as checkIfStaffingCompany } from '../../utils/staffingCompanies';
+
 
 function formatPhoneNumber(value: string) {
   const cleaned = value.replace(/\D/g, '');
@@ -493,18 +484,20 @@ const TenantWorkforce: React.FC = () => {
           aValue = (a.email || '').toLowerCase();
           bValue = (b.email || '').toLowerCase();
           break;
-        case 'department':
+        case 'department': {
           const aDept = departments.find(d => d.id === a.departmentId)?.name || '';
           const bDept = departments.find(d => d.id === b.departmentId)?.name || '';
           aValue = aDept.toLowerCase();
           bValue = bDept.toLowerCase();
           break;
-        case 'role':
+        }
+        case 'role': {
           aValue = (a.tenantIds && a.tenantIds[tenantId]?.role) || '';
           bValue = (b.tenantIds && b.tenantIds[tenantId]?.role) || '';
           aValue = aValue.toLowerCase();
           bValue = bValue.toLowerCase();
           break;
+        }
         case 'inviteSentAt':
           aValue = a.inviteSentAt?.toDate ? a.inviteSentAt.toDate() : new Date(0);
           bValue = b.inviteSentAt?.toDate ? b.inviteSentAt.toDate() : new Date(0);

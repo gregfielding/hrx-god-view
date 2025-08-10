@@ -170,7 +170,7 @@ export const USER_PROFILE_VALIDATION = {
   firstName: { required: true, minLength: 1, maxLength: 50 },
   lastName: { required: true, minLength: 1, maxLength: 50 },
   email: { required: true, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
-  phone: { required: true, pattern: /^\+?[\d\s\-\(\)]+$/ },
+  phone: { required: true, pattern: /^\+?[\d\s()+-]+$/ },
   securityLevel: { required: true },
   employmentType: { required: true },
   departmentId: { required: true },

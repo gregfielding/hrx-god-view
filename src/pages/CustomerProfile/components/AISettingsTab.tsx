@@ -2,31 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Switch,
-  TextField,
   Button,
-  FormControlLabel,
-  Select,
-  MenuItem,
-  InputLabel,
-  FormControl,
   Snackbar,
   Alert,
-  Slider,
-  Tabs,
-  Tab,
-  Checkbox,
-  OutlinedInput,
-  TableContainer,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
   Paper,
-  TableCell,
   Grid,
   IconButton,
   List,
@@ -35,7 +14,6 @@ import {
   ListItemSecondaryAction,
   Chip,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
@@ -43,23 +21,10 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import {
   doc,
   getDoc,
-  setDoc,
-  updateDoc,
-  collection,
-  getDocs,
-  addDoc,
-  deleteDoc,
 } from 'firebase/firestore';
-import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject,
-} from 'firebase/storage';
-import { db } from '../../../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../../firebase';
+
+import { db , app } from '../../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect } from '../../../components/LoggableField';
 import { useAuth } from '../../../contexts/AuthContext';
 

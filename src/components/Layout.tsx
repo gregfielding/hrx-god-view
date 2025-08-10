@@ -1,37 +1,20 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { useThemeMode } from '../theme/theme';
-import LightModeIcon from '@mui/icons-material/LightMode';
-import DarkModeIcon from '@mui/icons-material/DarkMode';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '../firebase';
-
 import {
-  AppBar,
   Avatar,
   Box,
   CssBaseline,
-  Divider,
-  IconButton,
   List,
   ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
-  Menu,
-  MenuItem,
-  Toolbar,
-  Typography,
   useMediaQuery,
-  FormControl,
-  Select,
-  Chip,
-  Fab,
   Drawer,
+  Typography,
 } from '@mui/material';
-
 import MenuIcon from '@mui/icons-material/Menu';
-import DashboardIcon from '@mui/icons-material/Dashboard';
 import BusinessIcon from '@mui/icons-material/Business';
 import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
@@ -40,11 +23,6 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HelpIcon from '@mui/icons-material/Help';
-import ManageAccountsIcon from '@mui/icons-material/ManageAccounts';
-import SecurityIcon from '@mui/icons-material/Security';
-import ChatIcon from '@mui/icons-material/Chat';
-import ChatUI from './ChatUI';
-import CloseIcon from '@mui/icons-material/Close';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
@@ -55,15 +33,16 @@ import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import DescriptionIcon from '@mui/icons-material/Description';
 import PhoneIphoneIcon from '@mui/icons-material/PhoneIphone';
-import ExtensionIcon from '@mui/icons-material/Extension';
 import LogoutIcon from '@mui/icons-material/Logout';
 import WorkIcon from '@mui/icons-material/Work';
 
+import { db } from '../firebase';
+import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
-import { generateMenuItems, hasMenuAccess, MenuItem as MenuItemType } from '../utils/menuGenerator';
+import { generateMenuItems, MenuItem as MenuItemType } from '../utils/menuGenerator';
 import { Role, SecurityLevel } from '../utils/AccessRoles';
-import FeedbackEngine from '../pages/Admin/FeedbackEngine';
+
 import TenantSwitcher from './TenantSwitcher';
 
 const drawerFullWidth = 240;
@@ -404,7 +383,8 @@ const Layout: React.FC = () => {
 
   const menuItemsWithIcons = menuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
-      'Dashboard': <DashboardIcon />, 
+      'Dashboard': <RocketLaunchIcon />, 
+      'Chat GPT': <RocketLaunchIcon />, 
       'Customers': <BusinessIcon />, 
       'Agencies': <GroupWorkIcon />,
       'Tenants': <BusinessIcon />,
@@ -443,7 +423,8 @@ const Layout: React.FC = () => {
     };
     return {
       ...item,
-      icon: iconMap[item.text] || <SettingsIcon />,
+      text: item.text === 'Dashboard' ? 'Chat GPT' : item.text,
+      icon: iconMap[item.text === 'Dashboard' ? 'Chat GPT' : item.text] || <SettingsIcon />,
     };
   });
 
@@ -494,6 +475,9 @@ const Layout: React.FC = () => {
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'flex-start',
+            backgroundColor: '#FFFFFF',
+            borderRight: '1px solid rgba(0,0,0,.06)',
+            boxShadow: 'none',
             transition: (theme) =>
               theme.transitions.create('width', {
                 easing: theme.transitions.easing.sharp,
@@ -513,7 +497,7 @@ const Layout: React.FC = () => {
           />
         </Box>
         {/* Removed avatar/welcome and divider here */}
-        <List sx={{ flexGrow: 1, pb: '72px' }}>
+        <List sx={{ flexGrow: 1, pb: '8px' }}>
           {/* My Profile menu item at the top */}
           {user && (
             <ListItem disablePadding sx={{ display: 'block' }}>
@@ -604,7 +588,7 @@ const Layout: React.FC = () => {
         </List>
         
         {/* Theme Toggle Button */}
-        <Box sx={{ px: 2, py: 1, mb: 8 }}>
+        {/* <Box sx={{ px: 0, py: 0, mb: 8 }}>
           <ListItem disablePadding sx={{ display: 'block' }}>
             <ListItemButton
               onClick={toggleMode}
@@ -637,7 +621,7 @@ const Layout: React.FC = () => {
               {open && <ListItemText primary={mode === 'dark' ? 'Light Mode' : 'Dark Mode'} />}
             </ListItemButton>
           </ListItem>
-        </Box>
+        </Box> */}
         
         {/* Fixed Collapse button at the bottom */}
         <Box
@@ -679,10 +663,10 @@ const Layout: React.FC = () => {
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          mt: 0, // No AppBar, so no margin top
+          display: 'flex',
+          flexDirection: 'column',
           height: '100vh',
-          overflowY: 'auto',
+          overflow: 'hidden',
           transition: (theme) =>
             theme.transitions.create(['margin', 'width'], {
               easing: theme.transitions.easing.sharp,
@@ -690,7 +674,43 @@ const Layout: React.FC = () => {
             }),
         }}
       >
-        <Outlet />
+        {/* Sticky top bar */}
+        <Box
+          sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 1100,
+            backgroundColor: 'background.paper',
+            borderBottom: '1px solid rgba(0,0,0,.06)',
+            px: { xs: 2, md: 4 },
+            py: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            minHeight: 64,
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="h5" sx={{ fontWeight: 600, color: 'text.primary' }}>
+              HRX Platform
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* User menu and actions can go here */}
+          </Box>
+        </Box>
+
+        {/* Scrollable content area */}
+        <Box
+          sx={{
+            flex: 1,
+            overflowY: 'auto',
+            px: { xs: 2, md: 4 },
+            py: 3,
+          }}
+        >
+          <Outlet />
+        </Box>
         {/* Floating Chatbot Button and Widget */}
         {/* {showChatbotButton && (
           <>

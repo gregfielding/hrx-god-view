@@ -7,11 +7,12 @@ import {
   Tab,
 } from '@mui/material';
 import { doc, onSnapshot } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+
 import TenantJobOrdersTab from './TenantJobOrdersTab';
 import TenantAssignments from './TenantAssignments';
-import TenantWorkforce from './TenantWorkforce';
 import FlexSettings from './FlexSettings';
 import FlexDefaults from './FlexDefaults';
 import FlexPositions from './FlexPositions';

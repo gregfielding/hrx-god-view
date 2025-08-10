@@ -1,7 +1,9 @@
-import { Role, SecurityLevel, getAccessRole } from './AccessRoles';
-import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { isStaffingCompany } from './staffingCompanies';
+
+import { auth, db } from '../firebase';
+
+import { Role, SecurityLevel, getAccessRole } from './AccessRoles';
+
 
 export interface MenuItem {
   text: string;
@@ -151,18 +153,18 @@ export async function generateMenuItems(
         icon: 'assessment',
         accessRoles: ['tenant_7', 'tenant_7'], // Admin and Manager only
       },
-      {
-        text: 'Team Access',
-        to: '/users',
-        icon: 'people',
-        accessRoles: ['tenant_7'], // Admin only
-      },
-      {
-        text: 'AI Settings',
-        to: '/aisettings',
-        icon: 'auto_fix_high',
-        accessRoles: ['tenant_7'], // Admin only
-      },
+      // {
+      //   text: 'Team Access',
+      //   to: '/users',
+      //   icon: 'people',
+      //   accessRoles: ['tenant_7'], // Admin only
+      // },
+      // {
+      //   text: 'AI Settings',
+      //   to: '/aisettings',
+      //   icon: 'auto_fix_high',
+      //   accessRoles: ['tenant_7'], // Admin only
+      // },
       {
         text: 'Mobile App',
         to: '/mobile-app',
@@ -175,12 +177,12 @@ export async function generateMenuItems(
         icon: 'notifications',
         accessRoles: ['tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
       },
-      {
-        text: 'Help',
-        to: '/help',
-        icon: 'help',
-        accessRoles: ['tenant_7', 'tenant_6', 'tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
-      },
+      // {
+      //   text: 'Help',
+      //   to: '/help',
+      //   icon: 'help',
+      //   accessRoles: ['tenant_7', 'tenant_6', 'tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
+      // },
       {
         text: 'Log out',
         to: '#', // Will be handled specially in Layout

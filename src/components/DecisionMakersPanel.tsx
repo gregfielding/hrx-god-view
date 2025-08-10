@@ -11,13 +11,7 @@ import {
   Grid,
   IconButton,
   Tooltip,
-  Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   Avatar,
-  Link,
   Snackbar
 } from '@mui/material';
 import {
@@ -31,9 +25,9 @@ import {
   Work as WorkIcon
 } from '@mui/icons-material';
 import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
-import { doc, addDoc, collection } from 'firebase/firestore';
-import { db } from '../firebase';
+import { addDoc, collection } from 'firebase/firestore';
+
+import { functions , db } from '../firebase';
 
 interface DecisionMaker {
   name: string;
@@ -193,6 +187,12 @@ Generated on: ${new Date().toLocaleString()}`,
         email: extractedEmail || 'Not found in snippet',
         phone: extractedPhone || 'Not found in snippet',
         relevance: decisionMaker.relevance
+      });
+      
+      // Debug: Log the full contact data to verify LinkedIn URL is saved
+      console.log('🔗 Full contact data with LinkedIn URL:', {
+        ...contactData,
+        linkedinUrl: contactData.linkedinUrl // Explicitly log LinkedIn URL
       });
       
       // Create detailed success message

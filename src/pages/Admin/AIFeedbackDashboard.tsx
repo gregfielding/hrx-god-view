@@ -17,7 +17,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
   FormControl,
   InputLabel,
   Select,
@@ -28,17 +27,12 @@ import {
   LinearProgress,
   Alert,
   Tooltip,
-  Badge,
   Tabs,
   Tab,
-  Divider,
   List,
   ListItem,
   ListItemText,
-  ListItemIcon,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails
+  ListItemIcon
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -49,18 +43,13 @@ import {
   Feedback as FeedbackIcon,
   AutoFixHigh as AutoFixHighIcon,
   Schedule as ScheduleIcon,
-  ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Error as ErrorIcon,
   Info as InfoIcon,
   Visibility as VisibilityIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  PlayArrow as PlayArrowIcon,
-  Stop as StopIcon
+  PlayArrow as PlayArrowIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { useAuth } from '../../contexts/AuthContext';
 
 interface AIFeedback {

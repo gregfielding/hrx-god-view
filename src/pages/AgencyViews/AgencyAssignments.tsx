@@ -1,5 +1,6 @@
 import React from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
+
 import { useAuth } from '../../contexts/AuthContext';
 import AgencyAssignmentsTab from '../AgencyProfile/components/AgencyAssignmentsTab';
 

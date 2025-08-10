@@ -2,13 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Box, Tabs, Tab, Typography } from '@mui/material';
 import { useParams, useLocation, useMatch, useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 
 import ProfileOverview from './components/ProfileOverview';
-import AddressTab from './components/AddressTab/AddressTab';
 import AgencyProfileHeader from './components/AgencyProfileHeader';
 import AddAgencyForm from './AddAgencyForm';
-import BillingInfoTab from './components/BillingInfoTab';
 import ModulesTab from './components/ModulesTab';
 import LocationsTab from './components/LocationsTab';
 import LocationDetails from './LocationDetails';

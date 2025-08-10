@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+
 import { useAuth } from '../contexts/AuthContext';
+
 import { isModuleEnabled, getModuleSettings, isModuleSettingEnabled, getEnabledModules } from './canAccessModule';
 
 export const useModuleAccess = () => {

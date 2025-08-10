@@ -27,10 +27,6 @@ import {
   Select,
   MenuItem,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
   Tabs,
   Tab,
 } from '@mui/material';
@@ -43,15 +39,9 @@ import {
   Error,
   Warning,
   Info,
-  Schedule,
   Speed,
   HealthAndSafety,
   BugReport,
-  Timeline,
-  Assessment,
-  Notifications,
-  PlayArrow,
-  Stop,
   Settings,
   PhoneIphone,
   Web,
@@ -59,7 +49,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface AutoDevOpsMetrics {
   id: string;

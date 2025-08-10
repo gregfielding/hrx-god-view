@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -17,14 +17,11 @@ import {
   AccordionSummary,
   AccordionDetails,
   Typography,
-  Chip,
-  Box,
   Alert,
   CircularProgress,
 } from '@mui/material';
 import { ExpandMore as ExpandMoreIcon, Send as SendIcon } from '@mui/icons-material';
-import { httpsCallable } from 'firebase/functions';
-import { getFunctions } from 'firebase/functions';
+import { httpsCallable , getFunctions } from 'firebase/functions';
 
 interface AudienceFilter {
   location: string[];
@@ -78,8 +75,8 @@ const BroadcastDialog: React.FC<BroadcastDialogProps> = ({
     traits: initialAudienceFilter.traits || [],
     tags: initialAudienceFilter.tags || [],
     userIds: initialAudienceFilter.userIds || [],
-    jobOrderId: initialAudienceFilter.jobOrderId,
-    userGroupId: initialAudienceFilter.userGroupId,
+    ...(initialAudienceFilter.jobOrderId ? { jobOrderId: initialAudienceFilter.jobOrderId } : {}),
+    ...(initialAudienceFilter.userGroupId ? { userGroupId: initialAudienceFilter.userGroupId } : {}),
   });
   const [aiAssistReplies, setAiAssistReplies] = useState(true);
   const [escalationEmail, setEscalationEmail] = useState('');
@@ -116,10 +113,8 @@ const BroadcastDialog: React.FC<BroadcastDialogProps> = ({
         costCenter: [],
         traits: [],
         tags: [],
-        userIds: [],
-        jobOrderId: undefined,
-        userGroupId: undefined,
-      });
+        userIds: []
+      } as AudienceFilter);
 
       onSuccess?.(result.data);
       onClose();
@@ -131,7 +126,7 @@ const BroadcastDialog: React.FC<BroadcastDialogProps> = ({
   };
 
   const getAudienceSummary = () => {
-    const filters = [];
+    const filters: string[] = [];
     if (audienceFilter.location.length > 0)
       filters.push(`${audienceFilter.location.length} location(s)`);
     if (audienceFilter.jobTitle.length > 0)

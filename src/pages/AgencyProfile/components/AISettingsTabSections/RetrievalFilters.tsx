@@ -17,28 +17,22 @@ import {
   AccordionDetails,
   Slider,
   FormControl,
-  InputLabel,
   Select,
   MenuItem,
   Chip,
-  Divider,
   List,
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import { db } from '../../../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { db } from '../../../../firebase';
 
 interface FilterRule {
   field: string;

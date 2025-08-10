@@ -11,20 +11,15 @@ import {
   IconButton,
   Avatar,
   Paper,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Chip,
 } from '@mui/material';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { storage, db } from '../../firebase';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import DeleteIcon from '@mui/icons-material/Delete';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+
+import { storage, db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface BrandingTabProps {

@@ -19,11 +19,10 @@ import {
   Chip,
   Typography,
   CircularProgress,
-  Alert,
-  Tooltip,
-  IconButton
+  Alert
 } from '@mui/material';
 import { collection, getDocs, query, where } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 
 interface PeopleGridViewProps {

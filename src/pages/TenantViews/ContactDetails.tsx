@@ -11,12 +11,10 @@ import {
   Button,
   IconButton,
   Grid,
-  Divider,
   List,
   ListItem,
   ListItemText,
   ListItemIcon,
-  Badge,
   CircularProgress,
   Alert,
   TextField,
@@ -32,42 +30,36 @@ import {
   Card,
   CardContent,
   CardHeader,
-  Slider,
+  Snackbar,
 } from '@mui/material';
 import {
-  ArrowBack as ArrowBackIcon,
-  Edit as EditIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
-  Business as BusinessIcon,
-  LocationOn as LocationIcon,
   LinkedIn as LinkedInIcon,
   Twitter as TwitterIcon,
   Facebook as FacebookIcon,
   Instagram as InstagramIcon,
-  Work as WorkIcon,
-  Person as PersonIcon,
-  CalendarToday as CalendarIcon,
   Notes as NotesIcon,
   List as ListIcon,
-  Add as AddIcon,
   Save as SaveIcon,
-  Cancel as CancelIcon,
   Delete as DeleteIcon,
   Info as InfoIcon,
-  AttachMoney as OpportunitiesIcon,
   Language as LanguageIcon,
   AutoAwesome as AutoAwesomeIcon,
+  Task as TaskIcon,
+  CloudUpload as UploadIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, onSnapshot, orderBy, deleteDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
+import { doc, getDoc, updateDoc, collection, query, getDocs, orderBy, deleteDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { functions } from '../../firebase';
+
+import { db, storage , functions } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import ActivityLogTab from '../../components/ActivityLogTab';
-import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../components/LoggableField';
+import ContactTasksDashboard from '../../components/ContactTasksDashboard';
+import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../components/LoggableField';
 
 interface ContactData {
   id: string;
@@ -82,8 +74,9 @@ interface ContactData {
   title?: string;
   companyId?: string;
   companyName?: string;
-  status?: string;
+  contactType?: string;
   tags?: string[];
+  isActive?: boolean;
   notes?: string;
   address?: string;
   city?: string;
@@ -105,6 +98,7 @@ interface ContactData {
   salesOwnerRef?: string;
   locationId?: string;
   locationName?: string;
+  avatar?: string;
   createdAt?: any;
   updatedAt?: any;
   
@@ -178,7 +172,7 @@ function TabPanel(props: TabPanelProps) {
 const ContactDetails: React.FC = () => {
   const { contactId } = useParams<{ contactId: string }>();
   const navigate = useNavigate();
-  const { tenantId } = useAuth();
+  const { tenantId, user } = useAuth();
   
   const [contact, setContact] = useState<ContactData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,6 +182,29 @@ const ContactDetails: React.FC = () => {
   const [activities, setActivities] = useState<any[]>([]);
   const [aiEnhancing, setAiEnhancing] = useState(false);
   const [aiSuccess, setAiSuccess] = useState<string | null>(null);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [snackbarSeverity, setSnackbarSeverity] = useState<'success' | 'error' | 'info' | 'warning'>('info');
+  
+  // Associations state to prevent reloading
+  const [associationsData, setAssociationsData] = useState<{
+    associations: any;
+    entities: any;
+    loading: boolean;
+    error: string | null;
+  }>({
+    associations: {},
+    entities: {
+      companies: [],
+      deals: [],
+      contacts: [],
+      salespeople: [],
+      tasks: [],
+      locations: []
+    },
+    loading: false,
+    error: null
+  });
   
   // Company linking state
   const [companies, setCompanies] = useState<any[]>([]);
@@ -204,6 +221,9 @@ const ContactDetails: React.FC = () => {
   const [findingContactInfo, setFindingContactInfo] = useState(false);
   const [emailOptions, setEmailOptions] = useState<any[]>([]);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
+  
+  // Avatar upload state
+  const [avatarLoading, setAvatarLoading] = useState(false);
 
   // Tone settings state
   const [toneSettings, setToneSettings] = useState({
@@ -213,6 +233,90 @@ const ContactDetails: React.FC = () => {
     direct: 0.5,
     empathetic: 0.7,
   });
+
+  // Helper function to show toast notifications
+  const showToast = (message: string, severity: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+    setSnackbarMessage(message);
+    setSnackbarSeverity(severity);
+    setSnackbarOpen(true);
+  };
+
+  // Avatar upload function
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!contactId || !tenantId || !e.target.files || !e.target.files[0]) return;
+    
+    const file = e.target.files[0];
+    
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Avatar file size must be less than 2MB', 'error');
+      return;
+    }
+
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'];
+    if (!validTypes.includes(file.type)) {
+      showToast('Please upload a PNG, JPG, or SVG file', 'error');
+      return;
+    }
+
+    setAvatarLoading(true);
+    try {
+      const storageRef = ref(storage, `contacts/${tenantId}/${contactId}/avatar.${file.name.split('.').pop()}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      await handleContactUpdate('avatar', downloadURL);
+      showToast('Avatar uploaded successfully!', 'success');
+    } catch (err) {
+      console.error('Error uploading avatar:', err);
+      showToast('Failed to upload avatar. Please try again.', 'error');
+    } finally {
+      setAvatarLoading(false);
+    }
+  };
+
+  // Avatar delete function
+  const handleAvatarDelete = async () => {
+    if (!contactId || !tenantId || !contact?.avatar) return;
+    
+    setAvatarLoading(true);
+    try {
+      // Delete from storage
+      const urlParts = contact.avatar.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      const fileExtension = fileName.split('.').pop() || 'png';
+      const storageRef = ref(storage, `contacts/${tenantId}/${contactId}/avatar.${fileExtension}`);
+      await deleteObject(storageRef);
+      
+      // Update contact record
+      await handleContactUpdate('avatar', '');
+      showToast('Avatar deleted successfully!', 'success');
+    } catch (err) {
+      console.error('Error deleting avatar:', err);
+      showToast('Failed to delete avatar. Please try again.', 'error');
+    } finally {
+      setAvatarLoading(false);
+    }
+  };
+
+  // Function to update avatar from social profile
+  const updateAvatarFromSocialProfile = async (profileUrl: string) => {
+    if (!contactId || !tenantId) return;
+    
+    try {
+      // This would typically involve fetching the profile image from the social platform
+      // For now, we'll simulate this by using a placeholder
+      // In a real implementation, you'd need to:
+      // 1. Fetch the profile image from LinkedIn/Twitter/etc.
+      // 2. Upload it to Firebase Storage
+      // 3. Update the contact record
+      
+      console.log('Would update avatar from social profile:', profileUrl);
+      showToast('Avatar update from social profile not yet implemented', 'info');
+    } catch (err) {
+      console.error('Error updating avatar from social profile:', err);
+      showToast('Failed to update avatar from social profile', 'error');
+    }
+  };
 
   const handleToneChange = (tone: string, value: number) => {
     setToneSettings(prev => ({
@@ -249,6 +353,36 @@ const ContactDetails: React.FC = () => {
       setTimeout(() => setAiSuccess(null), 3000);
     } catch (err) {
       setError('Failed to save tone settings');
+    }
+  };
+
+  // Load associations data
+  const loadAssociations = async () => {
+    if (!contactId || !tenantId || !user?.uid) return;
+    
+    try {
+      setAssociationsData(prev => ({ ...prev, loading: true, error: null }));
+      
+      // Use the simple association service
+      const { createSimpleAssociationService } = await import('../../utils/simpleAssociationService');
+      const associationService = createSimpleAssociationService(tenantId, user.uid);
+      
+      const result = await associationService.getAssociations('contact', contactId);
+      
+      setAssociationsData({
+        associations: result.associations,
+        entities: result.entities,
+        loading: false,
+        error: null
+      });
+      
+    } catch (err: any) {
+      console.error('Error loading associations:', err);
+      setAssociationsData(prev => ({
+        ...prev,
+        loading: false,
+        error: err.message || 'Failed to load associations'
+      }));
     }
   };
 
@@ -291,6 +425,9 @@ const ContactDetails: React.FC = () => {
 
       // Load companies for autocomplete
       await loadCompanies();
+      
+      // Load associations
+      await loadAssociations();
 
     } catch (err) {
       console.error('Error loading contact:', err);
@@ -357,6 +494,18 @@ const ContactDetails: React.FC = () => {
       await loadCompanyLocations(company.id);
       await handleContactUpdate('companyId', company.id);
       await handleContactUpdate('companyName', company.companyName || company.name);
+      
+      // Add company to associations
+      if (contact && contact.associations) {
+        const updatedAssociations = { ...contact.associations };
+        if (!updatedAssociations.companies) {
+          updatedAssociations.companies = [];
+        }
+        if (!updatedAssociations.companies.includes(company.id)) {
+          updatedAssociations.companies.push(company.id);
+          await handleContactUpdate('associations', updatedAssociations);
+        }
+      }
     } else {
       setCompanyLocations([]);
       await handleContactUpdate('companyId', null);
@@ -370,13 +519,25 @@ const ContactDetails: React.FC = () => {
     setSelectedLocation('');
   };
 
-  // Handle location selection
+  // Handle location selection (standardize on callable function)
   const handleLocationSelect = async (locationId: string) => {
     setSelectedLocation(locationId);
     const location = companyLocations.find(loc => loc.id === locationId);
-    if (location) {
-      await handleContactUpdate('locationId', locationId);
-      await handleContactUpdate('locationName', location.name);
+    try {
+      const updateLocationAssociation = httpsCallable(functions, 'updateLocationAssociation');
+      await updateLocationAssociation({
+        tenantId,
+        entityType: 'contact',
+        entityId: contactId,
+        locationId,
+        companyId: selectedCompany?.id || contact?.companyId || '',
+        locationName: location?.name || null
+      });
+      // Optimistically update local state
+      setContact(prev => prev ? { ...prev, locationId, locationName: location?.name || '' } : prev);
+    } catch (err) {
+      console.error('Error updating location association via function:', err);
+      setError('Failed to update work location');
     }
   };
 
@@ -389,7 +550,7 @@ const ContactDetails: React.FC = () => {
   };
 
   const handleContactUpdate = async (field: string, value: any) => {
-    if (!contactId || !tenantId || !contact) return;
+    if (!contactId || !tenantId || !contact || !user?.uid) return;
 
     try {
       // Ensure URL fields have proper protocols
@@ -402,6 +563,24 @@ const ContactDetails: React.FC = () => {
         [field]: processedValue,
         updatedAt: new Date()
       });
+      
+      // Log the activity using the existing AI logging system
+      try {
+        const functions = getFunctions();
+        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
+        await logAIActionCallable({
+          action: 'contact_updated',
+          entityId: contactId,
+          entityType: 'contact',
+          reason: `Updated ${field}: ${processedValue}`,
+          tenantId,
+          userId: user.uid,
+          metadata: { field, value: processedValue }
+        });
+      } catch (logError) {
+        console.warn('Failed to log activity:', logError);
+        // Don't fail the main operation if logging fails
+      }
       
       // Update local state
       setContact(prev => prev ? { ...prev, [field]: processedValue } : null);
@@ -518,9 +697,36 @@ const ContactDetails: React.FC = () => {
       if (resultData.success) {
         // Reload the contact to get the enhanced data
         const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        let enhancedContactData: ContactData | null = null;
         if (contactDoc.exists()) {
-          const enhancedContactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
+          enhancedContactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
           setContact(enhancedContactData);
+        }
+        
+        // Log the AI enhancement activity
+        try {
+          const logContactEnhanced = httpsCallable(functions, 'logContactEnhanced');
+          await logContactEnhanced({
+            contactId: contactId,
+            reason: 'AI enhancement completed',
+            tenantId,
+            userId: user?.uid || '',
+            metadata: { 
+              enhancedFields: enhancedContactData ? Object.keys(enhancedContactData) : [],
+              hasProfessionalSummary: !!(enhancedContactData?.professionalSummary),
+              hasInferredData: !!(enhancedContactData?.inferredSeniority || enhancedContactData?.inferredIndustry)
+            }
+          });
+        } catch (logError) {
+          console.warn('Failed to log AI enhancement activity:', logError);
+        }
+        
+        // Update avatar if social profiles are found and no avatar exists
+        if (enhancedContactData?.socialProfiles && enhancedContactData.socialProfiles.length > 0 && !contact.avatar) {
+          const linkedInProfile = enhancedContactData.socialProfiles.find((profile: any) => profile.platform === 'LinkedIn');
+          if (linkedInProfile) {
+            await updateAvatarFromSocialProfile(linkedInProfile.url);
+          }
         }
         
         setAiSuccess('Contact enhanced successfully with AI! Found social profiles, company information, and professional insights.');
@@ -629,15 +835,15 @@ const ContactDetails: React.FC = () => {
           setShowEmailDialog(true);
         } else {
           // Single result found, auto-save
-          setAiSuccess(successMessage);
+          showToast(successMessage, 'success');
           await loadContact();
         }
       } else {
-        setError('No contact information found for this contact');
+        showToast('No contact information found for this contact', 'info');
       }
     } catch (err: any) {
       console.error('Error finding contact info:', err);
-      setError(err.message || 'Failed to find contact information');
+      showToast(err.message || 'Failed to find contact information', 'error');
     } finally {
       setFindingContactInfo(false);
     }
@@ -647,11 +853,11 @@ const ContactDetails: React.FC = () => {
   const handleSelectEmail = async (selectedEmail: string) => {
     try {
       await handleContactUpdate('email', selectedEmail);
-      setAiSuccess(`Email updated: ${selectedEmail}`);
+      showToast(`Email updated: ${selectedEmail}`, 'success');
       setShowEmailDialog(false);
       setEmailOptions([]);
     } catch (err: any) {
-      setError('Failed to update email');
+      showToast('Failed to update email', 'error');
     }
   };
 
@@ -666,16 +872,80 @@ const ContactDetails: React.FC = () => {
             {/* Contact Avatar */}
             <Box sx={{ position: 'relative' }}>
               <Avatar
+                src={contact.avatar}
                 sx={{ 
                   width: 80, 
                   height: 80,
-                  bgcolor: 'primary.main',
+                  bgcolor: contact.avatar ? 'transparent' : 'primary.main',
                   fontSize: '1.5rem',
                   fontWeight: 'bold'
                 }}
               >
                 {getInitials(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`)}
               </Avatar>
+              
+              {/* Avatar Upload/Delete Buttons */}
+              <Box sx={{ 
+                position: 'absolute', 
+                bottom: -8, 
+                right: -8,
+                display: 'flex',
+                gap: 0.5
+              }}>
+                <input
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  id="avatar-upload"
+                  type="file"
+                  onChange={handleAvatarUpload}
+                  disabled={avatarLoading}
+                />
+                <label htmlFor="avatar-upload">
+                  <IconButton
+                    component="span"
+                    size="small"
+                    sx={{
+                      bgcolor: 'primary.main',
+                      color: 'white',
+                      '&:hover': {
+                        bgcolor: 'primary.dark'
+                      },
+                      width: 28,
+                      height: 28
+                    }}
+                    disabled={avatarLoading}
+                  >
+                    {avatarLoading ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <UploadIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </label>
+                
+                {contact.avatar && (
+                  <IconButton
+                    size="small"
+                    onClick={handleAvatarDelete}
+                    disabled={avatarLoading}
+                    sx={{
+                      bgcolor: 'error.main',
+                      color: 'white',
+                      '&:hover': {
+                        bgcolor: 'error.dark'
+                      },
+                      width: 28,
+                      height: 28
+                    }}
+                  >
+                    {avatarLoading ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <DeleteIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                )}
+              </Box>
             </Box>
 
             {/* Contact Information */}
@@ -932,12 +1202,6 @@ const ContactDetails: React.FC = () => {
           {aiSuccess}
         </Alert>
       )}
-      
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
-          {error}
-        </Alert>
-      )}
 
       {/* Tabs Navigation */}
       <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
@@ -955,6 +1219,14 @@ const ContactDetails: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <InfoIcon fontSize="small" />
                 Overview
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <TaskIcon fontSize="small" />
+                Tasks
               </Box>
             } 
           />
@@ -1107,6 +1379,81 @@ const ContactDetails: React.FC = () => {
                     description="Contact lead source"
                   />
 
+                  {/* Contact Type Dropdown */}
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Contact Type</InputLabel>
+                    <Select
+                      value={contact.contactType || 'Unknown'}
+                      label="Contact Type"
+                      onChange={(e) => handleContactUpdate('contactType', e.target.value)}
+                    >
+                      <MenuItem value="Decision Maker">Decision Maker</MenuItem>
+                      <MenuItem value="Influencer">Influencer</MenuItem>
+                      <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
+                      <MenuItem value="Referrer">Referrer</MenuItem>
+                      <MenuItem value="Evaluator">Evaluator</MenuItem>
+                      <MenuItem value="Unknown">Unknown</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  {/* Tags Field */}
+                  <Autocomplete
+                    multiple
+                    freeSolo
+                    options={[]}
+                    value={contact.tags || []}
+                    onChange={(event, newValue) => {
+                      // Handle both string and array values
+                      const tags = newValue.map(item => typeof item === 'string' ? item : (item as any).inputValue || '');
+                      handleContactUpdate('tags', tags);
+                    }}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return (
+                          <Chip
+                            key={key}
+                            variant="outlined"
+                            label={option}
+                            {...chipProps}
+                            size="small"
+                          />
+                        );
+                      })
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Tags"
+                        size="small"
+                        placeholder="Add tags..."
+                        helperText="Press Enter to add a new tag"
+                      />
+                    )}
+                  />
+
+                  {/* isActive Toggle */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Box>
+                      <Typography variant="body2" component="div">
+                        Active Contact
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {contact.isActive ? 'Contact is active and available for engagement' : 'Contact is archived or inactive'}
+                      </Typography>
+                    </Box>
+                    <LoggableSwitch
+                      fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.isActive`}
+                      trigger="update"
+                      destinationModules={['ContactEngine']}
+                      value={contact.isActive !== false}
+                      onChange={(value) => handleContactUpdate('isActive', value)}
+                      contextType="contact"
+                      urgencyScore={4}
+                      description="Contact active status"
+                    />
+                  </Box>
+
                   {/* Division Dropdown - Only show if company has divisions */}
                   {selectedCompany && selectedCompany.divisions && selectedCompany.divisions.length > 0 && (
                     <FormControl fullWidth size="small">
@@ -1198,10 +1545,17 @@ const ContactDetails: React.FC = () => {
                   }}
                   onAssociationChange={(type, action, entityId) => {
                     console.log(`${action} ${type} association: ${entityId}`);
+                    // Reload associations after change
+                    loadAssociations();
                   }}
                   onError={(error) => {
                     console.error('Association error:', error);
                   }}
+                  // Pass cached data to prevent reloading
+                  cachedAssociations={associationsData.associations}
+                  cachedEntities={associationsData.entities}
+                  isLoading={associationsData.loading}
+                  error={associationsData.error}
                 />
               </CardContent>
             </Card>
@@ -1615,7 +1969,7 @@ const ContactDetails: React.FC = () => {
         </Grid>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={1}>
+      <TabPanel value={tabValue} index={2}>
         {contact && (
           <CRMNotesTab
             entityId={contact.id}
@@ -1626,7 +1980,17 @@ const ContactDetails: React.FC = () => {
         )}
       </TabPanel>
 
-      <TabPanel value={tabValue} index={2}>
+      <TabPanel value={tabValue} index={1}>
+        {contact && (
+          <ContactTasksDashboard
+            contactId={contact.id}
+            tenantId={tenantId}
+            contact={contact}
+          />
+        )}
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={3}>
         <ActivityLogTab
           entityId={contactId}
           entityType="contact"
@@ -1691,6 +2055,22 @@ const ContactDetails: React.FC = () => {
           <Button onClick={() => setShowEmailDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Toast Notifications */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={6000}
+        onClose={() => setSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setSnackbarOpen(false)} 
+          severity={snackbarSeverity}
+          sx={{ width: '100%' }}
+        >
+          {snackbarMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

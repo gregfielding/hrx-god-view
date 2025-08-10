@@ -12,7 +12,6 @@ import {
   MenuItem,
   Box,
   Typography,
-  Chip,
   ToggleButton,
   ToggleButtonGroup,
   Grid,
@@ -23,21 +22,27 @@ import {
   Tabs,
   Tab,
   LinearProgress,
-  Autocomplete
+  Chip
 } from '@mui/material';
 import {
-  Assignment as AssignmentIcon,
   Schedule as ScheduleIcon,
   CheckCircle as CheckCircleIcon,
   AutoAwesome as AutoAwesomeIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Save as SaveIcon
+  Save as SaveIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
+import { doc, getDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskType, TaskCategory, TaskClassification } from '../types/Tasks';
-import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { 
+  normalizeAssociationArray, 
+  toSelectValue, 
+  getAssociationDisplayName,
+  mergeAssociations 
+} from '../utils/associationHelpers';
 
 interface TaskDetailsDialogProps {
   open: boolean;
@@ -93,7 +98,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     priority: 'medium',
     classification: 'todo' as TaskClassification,
     startTime: '',
-    duration: 30,
+    duration: undefined as number | undefined,
     scheduledDate: new Date(),
     dueDate: '',
     assignedTo: salespersonId,
@@ -101,9 +106,10 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     reason: '',
     notes: '',
     quotaCategory: 'business_generating',
-    estimatedDuration: 30,
+    estimatedDuration: 0,
     aiSuggested: false,
     aiPrompt: '',
+    aiRecommendations: '',
     associations: {
       companies: [],
       contacts: [],
@@ -115,7 +121,19 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       recipient: '',
       subject: '',
       body: ''
-    }
+    },
+    // Task-type-specific fields
+    agenda: '',
+    goals: [] as string[],
+    researchTopics: [] as string[],
+    callScript: '',
+    emailTemplate: '',
+    followUpNotes: '',
+    meetingAttendees: [] as Array<{
+      email: string;
+      displayName?: string;
+      responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
+    }>
   });
 
   const [loading, setLoading] = useState(false);
@@ -127,9 +145,11 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [associatedCompanies, setAssociatedCompanies] = useState<any[]>([]);
   const [associatedDeals, setAssociatedDeals] = useState<any[]>([]);
+  const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [dealContacts, setDealContacts] = useState<any[]>([]);
   const [dealSalespeople, setDealSalespeople] = useState<any[]>([]);
+  const [generatingRecommendations, setGeneratingRecommendations] = useState(false);
 
   const taskService = TaskService.getInstance();
 
@@ -158,37 +178,31 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     
     setLoading(true);
     try {
-      // Load associated companies
-      if (task.associations?.companies?.length > 0) {
-        const companyPromises = task.associations.companies.map(async (companyId: string) => {
+      // Use the contacts and salespeople data that's already available from props
+      // These should contain the deal's associated contacts and salespeople
+      if (contacts && contacts.length > 0) {
+        setAssociatedContacts(contacts);
+      }
+      
+      if (salespeople && salespeople.length > 0) {
+        setAssociatedSalespeople(salespeople);
+      }
+      
+      // Also load any existing task associations (for editing existing tasks)
+      if (task.associations?.contacts?.length > 0) {
+        const contactPromises = task.associations.contacts.map(async (contactId: string) => {
           try {
-            const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
-            return companyDoc.exists() ? { id: companyDoc.id, ...companyDoc.data() } : null;
+            const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+            return contactDoc.exists() ? { id: contactDoc.id, ...contactDoc.data() } : null;
           } catch (err) {
-            console.error('Error loading company:', companyId, err);
+            console.error('Error loading contact:', contactId, err);
             return null;
           }
         });
-        const companies = (await Promise.all(companyPromises)).filter(Boolean);
-        setAssociatedCompanies(companies);
+        const contacts = (await Promise.all(contactPromises)).filter(Boolean);
+        setAssociatedContacts(prev => [...prev, ...contacts.filter(c => !prev.find(p => p.id === c.id))]);
       }
 
-      // Load associated deals
-      if (task.associations?.deals?.length > 0) {
-        const dealPromises = task.associations.deals.map(async (dealId: string) => {
-          try {
-            const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId));
-            return dealDoc.exists() ? { id: dealDoc.id, ...dealDoc.data() } : null;
-          } catch (err) {
-            console.error('Error loading deal:', dealId, err);
-            return null;
-          }
-        });
-        const deals = (await Promise.all(dealPromises)).filter(Boolean);
-        setAssociatedDeals(deals);
-      }
-
-      // Load associated salespeople
       if (task.associations?.salespeople?.length > 0) {
         const salespeoplePromises = task.associations.salespeople.map(async (salespersonId: string) => {
           try {
@@ -200,7 +214,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
           }
         });
         const salespeople = (await Promise.all(salespeoplePromises)).filter(Boolean);
-        setAssociatedSalespeople(salespeople);
+        setAssociatedSalespeople(prev => [...prev, ...salespeople.filter(s => !prev.find(p => p.id === s.id))]);
       }
 
     } catch (err) {
@@ -220,8 +234,8 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         type: task.type || 'email',
         priority: task.priority || 'medium',
         classification: task.classification || 'todo',
-        startTime: task.startTime || '',
-        duration: task.duration || 30,
+        startTime: (task.classification === 'appointment' ? (task.startTime || '') : ''),
+        duration: (task.classification === 'appointment' ? (task.duration ?? undefined) : undefined),
         scheduledDate: task.scheduledDate ? new Date(task.scheduledDate) : new Date(),
         dueDate: task.dueDate || '',
         assignedTo: task.assignedTo || salespersonId,
@@ -232,6 +246,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         estimatedDuration: task.estimatedDuration || 30,
         aiSuggested: task.aiSuggested || false,
         aiPrompt: task.aiPrompt || '',
+        aiRecommendations: task.aiRecommendations || '',
         associations: task.associations || {
           companies: [],
           contacts: [],
@@ -243,7 +258,15 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
           recipient: '',
           subject: '',
           body: ''
-        }
+        },
+        // Task-type-specific fields
+        agenda: task.agenda || '',
+        goals: task.goals || [],
+        researchTopics: task.researchTopics || [],
+        callScript: task.callScript || '',
+        emailTemplate: task.emailTemplate || '',
+        followUpNotes: task.followUpNotes || '',
+        meetingAttendees: task.meetingAttendees || []
       });
       
       // Load associated data
@@ -252,23 +275,138 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       // Debug: Log the task associations
       console.log('Task associations:', task.associations);
       console.log('Task assignedTo:', task.assignedTo);
+      
+      // Auto-generate AI recommendations if they don't exist
+      if (!task.aiRecommendations && task.associations?.deals?.length > 0) {
+        setTimeout(() => handleGenerateAIRecommendations(), 1000); // Small delay to ensure form is loaded
+      }
     }
   }, [task, open, salespersonId, tenantId]);
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
+    setFormData(prev => {
+      const newFormData = { ...prev, [field]: value };
+      
+      // Auto-populate meeting attendees when Google Meet is selected
+      if (field === 'type' && value === 'scheduled_meeting_virtual') {
+        updateMeetingAttendees(newFormData);
+      }
+      
+      return newFormData;
+    });
+  };
+
+  const handleGenerateAIRecommendations = async () => {
+    if (!task?.id) return;
+    
+    setGeneratingRecommendations(true);
+    try {
+      // Call Deal Coach AI to generate recommendations using Firebase Callable
+      const functions = getFunctions(undefined, 'us-central1');
+      const chatFn = httpsCallable(functions, 'dealCoachChatCallable');
+      
+      const result = await chatFn({
+        dealId: task.associations?.deals?.[0] || '',
+        stageKey: task.stage || 'discovery',
+        message: `Generate ${formData.type === 'email' ? 'email content' : 
+                  formData.type === 'phone_call' ? 'phone call script' : 
+                  formData.type === 'activity' ? 'activity suggestions' : 
+                  'recommendations'} for this task: ${formData.title}. ${formData.description || ''}`,
+        tenantId: tenantId,
+        userId: salespersonId
+      });
+
+      if (result.data) {
+        const response = result.data as any;
+        if (response.text) {
+          // Update local form state
+          setFormData(prev => ({
+            ...prev,
+            aiRecommendations: response.text
+          }));
+          
+          // Save to database
+          try {
+            await taskService.updateTask(task.id, {
+              aiRecommendations: response.text
+            }, tenantId);
+          } catch (error) {
+            console.error('Error saving AI recommendations to database:', error);
+            setError('Failed to save AI recommendations');
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error generating AI recommendations:', error);
+      setError('Failed to generate AI recommendations');
+    } finally {
+      setGeneratingRecommendations(false);
+    }
   };
 
   const handleAssociationChange = (type: string, value: any) => {
+    // Use helper function to merge new selections with existing associations
+    const entityMap = type === 'contacts' ? associatedContacts : 
+                     type === 'salespeople' ? associatedSalespeople : [];
+    
+    const mergedAssociations = mergeAssociations(
+      formData.associations?.[type], 
+      value, 
+      entityMap
+    );
+
+    setFormData(prev => {
+      const newFormData = {
+        ...prev,
+        associations: {
+          ...prev.associations,
+          [type]: mergedAssociations
+        }
+      };
+      
+      // Auto-update meeting attendees when associations change and it's a Google Meet
+      if (newFormData.type === 'scheduled_meeting_virtual') {
+        updateMeetingAttendees(newFormData);
+      }
+      
+      return newFormData;
+    });
+  };
+
+  const updateMeetingAttendees = (formData: any) => {
+    const attendees = [];
+    
+    // Add company contacts from associations
+    if (formData.associations?.contacts) {
+      formData.associations.contacts.forEach((contactId: string) => {
+        const contactData = contacts.find(c => c.id === contactId);
+        if (contactData?.email) {
+          attendees.push({
+            email: contactData.email,
+            displayName: contactData.fullName || contactData.name || contactData.email,
+            responseStatus: 'needsAction' as const
+          });
+        }
+      });
+    }
+    
+    // Add assigned salespeople
+    if (formData.associations?.salespeople) {
+      formData.associations.salespeople.forEach((salespersonId: string) => {
+        const salespersonData = salespeople.find(s => s.id === salespersonId);
+        if (salespersonData?.email && !attendees.find(a => a.email === salespersonData.email)) {
+          attendees.push({
+            email: salespersonData.email,
+            displayName: salespersonData.fullName || salespersonData.name || salespersonData.displayName || salespersonData.email,
+            responseStatus: 'needsAction' as const
+          });
+        }
+      });
+    }
+    
     setFormData(prev => ({
       ...prev,
-      associations: {
-        ...prev.associations,
-        [type]: value
-      }
+      meetingAttendees: attendees
     }));
   };
 
@@ -282,6 +420,12 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       // Calculate status based on due date
       const status = calculateStatus(formData.dueDate, formData.scheduledDate);
       
+      // For appointments, extract date from startTime and set scheduledDate
+      let scheduledDate = formData.scheduledDate.toISOString().split('T')[0];
+      if (formData.classification === 'appointment' && formData.startTime) {
+        scheduledDate = formData.startTime.split('T')[0];
+      }
+
       const taskData = {
         title: formData.title,
         description: formData.description,
@@ -291,7 +435,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         classification: formData.classification,
         startTime: formData.classification === 'appointment' ? formData.startTime : null,
         duration: formData.classification === 'appointment' ? formData.duration : null,
-        scheduledDate: formData.scheduledDate.toISOString().split('T')[0],
+        scheduledDate: scheduledDate,
         dueDate: formData.dueDate,
         assignedTo: formData.assignedTo,
         category: formData.category,
@@ -301,6 +445,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         quotaCategory: 'business_generating' as const,
         aiSuggested: formData.aiSuggested,
         aiPrompt: formData.aiPrompt,
+        aiRecommendations: formData.aiRecommendations,
         associations: formData.associations,
         communicationDetails: formData.type === 'email' ? formData.communicationDetails : undefined
       };
@@ -390,7 +535,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     { value: 480, label: '8 hours' }
   ];
 
-  const currentStatus = calculateStatus(formData.dueDate, formData.scheduledDate);
+
 
   if (loading) {
     return (
@@ -499,12 +644,13 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
               </Grid>
 
               {/* Appointment-specific fields */}
+              {/* Date and Duration for Appointments */}
               {formData.classification === 'appointment' && (
                 <>
-                  <Grid item xs={6}>
+                  <Grid item xs={8}>
                     <TextField
                       fullWidth
-                      label="Start Time"
+                      label="Date"
                       type="datetime-local"
                       value={formData.startTime}
                       onChange={(e) => handleInputChange('startTime', e.target.value)}
@@ -513,7 +659,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                     />
                   </Grid>
                   
-                  <Grid item xs={6}>
+                  <Grid item xs={4}>
                     <FormControl fullWidth>
                       <InputLabel>Duration</InputLabel>
                       <Select
@@ -546,10 +692,11 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   >
                     <MenuItem value="email">Email</MenuItem>
                     <MenuItem value="phone_call">Phone Call</MenuItem>
-                    <MenuItem value="scheduled_meeting_virtual">Virtual Meeting</MenuItem>
+                    <MenuItem value="scheduled_meeting_virtual">Google Meet</MenuItem>
                     <MenuItem value="scheduled_meeting_in_person">In-Person Meeting</MenuItem>
                     <MenuItem value="research">Research</MenuItem>
                     <MenuItem value="follow_up">Follow Up</MenuItem>
+                    <MenuItem value="activity">Activity</MenuItem>
                     <MenuItem value="custom">Custom</MenuItem>
                   </Select>
                 </FormControl>
@@ -577,93 +724,219 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                 </FormControl>
               </Grid>
 
-              {/* Status (Read-only) */}
+              {/* Company Contacts */}
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Status</InputLabel>
+                  <InputLabel>Company Contacts</InputLabel>
                   <Select
-                    value={currentStatus}
-                    label="Status"
-                    disabled
+                    multiple
+                    value={toSelectValue(formData.associations?.contacts)}
+                    onChange={(e) => handleAssociationChange('contacts', e.target.value)}
+                    label="Company Contacts"
+                    renderValue={(selected) => (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {selected.map((contactId) => {
+                          const displayName = getAssociationDisplayName(contactId, associatedContacts);
+                          
+                          return (
+                            <Chip 
+                              key={contactId} 
+                              label={displayName} 
+                              size="small"
+                              onDelete={() => {
+                                const currentContactIds = toSelectValue(formData.associations?.contacts);
+                                const newContactIds = currentContactIds.filter(id => id !== contactId);
+                                handleAssociationChange('contacts', newContactIds);
+                              }}
+                            />
+                          );
+                        })}
+                      </Box>
+                    )}
                   >
-                    <MenuItem value="scheduled">Scheduled</MenuItem>
-                    <MenuItem value="upcoming">Upcoming</MenuItem>
-                    <MenuItem value="due">Due</MenuItem>
-                    <MenuItem value="overdue">Overdue</MenuItem>
-                    <MenuItem value="completed">Completed</MenuItem>
+                    {associatedContacts.map((contact) => (
+                      <MenuItem key={contact.id} value={contact.id}>
+                        {contact.fullName || contact.name}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
-                <Typography variant="caption" color="text.secondary">
-                  Status is automatically determined by due date
-                </Typography>
               </Grid>
 
-              {/* Scheduling */}
-              <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>Scheduling</Typography>
-              </Grid>
+              {/* Assigned To */}
               <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Scheduled Date"
-                  type="date"
-                  value={formData.scheduledDate.toISOString().split('T')[0]}
-                  onChange={(e) => handleInputChange('scheduledDate', new Date(e.target.value))}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Due Date"
-                  type="date"
-                  value={formData.dueDate}
-                  onChange={(e) => handleInputChange('dueDate', e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
+                <FormControl fullWidth>
+                  <InputLabel>Assigned To</InputLabel>
+                  <Select
+                    multiple
+                    value={toSelectValue(formData.associations?.salespeople)}
+                    onChange={(e) => handleAssociationChange('salespeople', e.target.value)}
+                    label="Assigned To"
+                    renderValue={(selected) => (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {selected.map((salespersonId) => {
+                          const displayName = getAssociationDisplayName(salespersonId, associatedSalespeople);
+                          
+                          return (
+                            <Chip 
+                              key={salespersonId} 
+                              label={displayName} 
+                              size="small"
+                              onDelete={() => {
+                                const currentSalespersonIds = toSelectValue(formData.associations?.salespeople);
+                                const newSalespersonIds = currentSalespersonIds.filter(id => id !== salespersonId);
+                                handleAssociationChange('salespeople', newSalespersonIds);
+                              }}
+                            />
+                          );
+                        })}
+                      </Box>
+                    )}
+                  >
+                    {associatedSalespeople.map((salesperson) => (
+                      <MenuItem key={salesperson.id} value={salesperson.id}>
+                        {salesperson.fullName || salesperson.name || salesperson.displayName || salesperson.email}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
               </Grid>
 
-              {/* AI Fields */}
+              {/* Google Meet Specific Fields */}
+              {formData.type === 'scheduled_meeting_virtual' && (
+                <>
+                  <Grid item xs={12}>
+                    <Typography variant="h6" gutterBottom>Google Meet Details</Typography>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Meeting Agenda"
+                      value={formData.agenda || ''}
+                      onChange={(e) => handleInputChange('agenda', e.target.value)}
+                      multiline
+                      rows={3}
+                      placeholder="What will be discussed in this Google Meet?"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Meeting Goals"
+                      value={formData.goals?.join(', ') || ''}
+                      onChange={(e) => handleInputChange('goals', e.target.value.split(',').map(g => g.trim()).filter(g => g))}
+                      multiline
+                      rows={2}
+                      placeholder="What do you want to accomplish? (comma-separated)"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Meeting Attendees"
+                      value={formData.meetingAttendees?.map(a => a.email).join(', ') || ''}
+                      onChange={(e) => {
+                        const emails = e.target.value.split(',').map(email => email.trim()).filter(email => email);
+                        const attendees = emails.map(email => ({ email, displayName: '', responseStatus: 'needsAction' as const }));
+                        handleInputChange('meetingAttendees', attendees);
+                      }}
+                      multiline
+                      rows={2}
+                      placeholder="Enter email addresses separated by commas (e.g., john@company.com, jane@company.com)"
+                      helperText="Attendees will receive Google Calendar invites with the Meet link"
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
+                      <Typography variant="body2" color="info.contrastText" sx={{ fontWeight: 500, mb: 1 }}>
+                        🎥 Google Meet Integration
+                      </Typography>
+                      <Typography variant="caption" color="info.contrastText">
+                        A Google Meet link will be automatically generated when this task is saved. 
+                        Attendees will receive calendar invites with the meeting link.
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </>
+              )}
+
+              {/* Due Date for Todos */}
+              {formData.classification === 'todo' && (
+                <>
+                  <Grid item xs={12}>
+                    <Typography variant="h6" gutterBottom>Due Date</Typography>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Due Date"
+                      type="date"
+                      value={formData.dueDate}
+                      onChange={(e) => handleInputChange('dueDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Deal Coach Recommendations */}
               <Grid item xs={12}>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <AutoAwesomeIcon color="primary" />
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={formData.aiSuggested}
-                        onChange={(e) => handleInputChange('aiSuggested', e.target.checked)}
-                      />
-                    }
-                    label="AI Suggested"
-                  />
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                  <Typography variant="h6" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <AutoAwesomeIcon />
+                    Deal Coach Recommendations
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={handleGenerateAIRecommendations}
+                    disabled={generatingRecommendations}
+                  >
+                    {generatingRecommendations ? 'Generating...' : 'Refresh'}
+                  </Button>
+                </Box>
+              </Grid>
+              
+              <Grid item xs={12}>
+                <Box
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    p: 2,
+                    minHeight: '200px',
+                    backgroundColor: 'background.paper',
+                    position: 'relative'
+                  }}
+                >
+                  {formData.aiRecommendations ? (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: 1.6,
+                        color: 'text.primary'
+                      }}
+                    >
+                      {formData.aiRecommendations}
+                    </Typography>
+                  ) : (
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ fontStyle: 'italic' }}
+                    >
+                      {formData.type === 'email' ? 'AI-generated email content will appear here...' :
+                       formData.type === 'phone_call' ? 'AI-generated phone call script will appear here...' :
+                       formData.type === 'activity' ? 'AI-generated activity suggestions will appear here...' :
+                       'AI-generated recommendations will appear here...'}
+                    </Typography>
+                  )}
                 </Box>
               </Grid>
 
-              {formData.aiSuggested && (
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="AI Prompt"
-                    value={formData.aiPrompt}
-                    onChange={(e) => handleInputChange('aiPrompt', e.target.value)}
-                    multiline
-                    rows={2}
-                    placeholder="What AI prompt was used to generate this task?"
-                  />
-                </Grid>
-              )}
 
-              {/* Notes */}
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Notes"
-                  value={formData.notes}
-                  onChange={(e) => handleInputChange('notes', e.target.value)}
-                  multiline
-                  rows={3}
-                />
-              </Grid>
             </Grid>
           </TabPanel>
 
@@ -745,7 +1018,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         <DialogTitle>Delete Task</DialogTitle>
         <DialogContent>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Are you sure you want to delete "{formData.title}"? This action cannot be undone.
+            Are you sure you want to delete &quot;{formData.title}&quot;? This action cannot be undone.
           </Typography>
         </DialogContent>
         <DialogActions>

@@ -8,7 +8,6 @@ import {
   Paper,
   Snackbar,
   Alert,
-  Chip,
   Divider,
   FormHelperText,
   FormControlLabel,
@@ -16,10 +15,11 @@ import {
   Card,
   CardContent,
 } from '@mui/material';
-import { doc, getDoc, updateDoc, query, where, getDocs, collection, setDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../../firebase';
 
 // Function to validate slug
 function validateSlug(slug: string): { isValid: boolean; error?: string } {

@@ -1,8 +1,9 @@
 import React from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { canAccessModule } from '../utils/canAccessModule';
 import { Box, Typography, Alert, Paper, Divider, Button } from '@mui/material';
 import { Logout as LogoutIcon } from '@mui/icons-material';
+
+import { useAuth } from '../contexts/AuthContext';
+import { canAccessModule } from '../utils/canAccessModule';
 import SalesNewsFeed from '../components/SalesNewsFeed';
 
 const Dashboard: React.FC = () => {

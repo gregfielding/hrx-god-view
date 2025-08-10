@@ -7,66 +7,42 @@ import {
   Tabs,
   Tab,
   Avatar,
-  Chip,
   Button,
-  IconButton,
   Grid,
-  Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Badge,
   CircularProgress,
   Alert,
   Card,
   CardContent,
   CardHeader,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Autocomplete,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
 } from '@mui/material';
+
 import {
   ArrowBack as ArrowBackIcon,
-  Edit as EditIcon,
-  Business as BusinessIcon,
-  Person as PersonIcon,
   AttachMoney as DealIcon,
   Info as InfoIcon,
   Timeline as TimelineIcon,
   Notes as NotesIcon,
-  Settings as SettingsIcon,
-  Psychology as PsychologyIcon,
-  LocationOn as LocationIcon,
-  OpenInNew as OpenInNewIcon,
-  Close as CloseIcon,
-  Analytics as AnalyticsIcon,
-  AutoAwesome as AutoAwesomeIcon,
+  List as ListIcon,
   Task as TaskIcon,
+  Delete as DeleteIcon,
+  Email as EmailIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../contexts/AuthContext';
-import { createAssociationService } from '../../utils/associationService';
+import { createDenormalizedAssociationService } from '../../utils/denormalizedAssociationService';
 import StageChip from '../../components/StageChip';
 import CRMNotesTab from '../../components/CRMNotesTab';
-import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
+import FastAssociationsCard from '../../components/FastAssociationsCard';
 import DealStageForms from '../../components/DealStageForms';
-import DealActivityTab from '../../components/DealActivityTab';
+import ActivityLogTab from '../../components/ActivityLogTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
+import DealCoachPanel from '../../components/DealCoachPanel';
 import DealTasksDashboard from '../../components/DealTasksDashboard';
-import { getAllStages } from '../../utils/crmStageColors';
+import DealAISummary from '../../components/DealAISummary';
+import EmailTab from '../../components/EmailTab';
 
 interface DealData {
   id: string;
@@ -241,30 +217,85 @@ const DealDetails: React.FC = () => {
     }
   };
 
+  const handleMarkStageIncomplete = async (stageKey: string) => {
+    if (!deal || !tenantId) return;
+    
+    try {
+      // Find the stage index and go back to the previous stage
+      const STAGES = [
+        { key: 'discovery', label: 'Discovery' },
+        { key: 'qualification', label: 'Qualification' },
+        { key: 'scoping', label: 'Scoping' },
+        { key: 'proposalDrafted', label: 'Proposal Drafted' },
+        { key: 'proposalReview', label: 'Proposal Review' },
+        { key: 'negotiation', label: 'Negotiation' },
+        { key: 'verbalAgreement', label: 'Verbal Agreement' },
+        { key: 'closedWon', label: 'Closed Won' },
+        { key: 'closedLost', label: 'Closed Lost' },
+        { key: 'onboarding', label: 'Onboarding' },
+        { key: 'liveAccount', label: 'Live Account' },
+        { key: 'dormant', label: 'Dormant' }
+      ];
+      
+      const currentIndex = STAGES.findIndex(s => s.key === deal.stage);
+      const targetIndex = STAGES.findIndex(s => s.key === stageKey);
+      
+      if (targetIndex >= 0 && targetIndex < currentIndex) {
+        const previousStage = STAGES[targetIndex];
+        const updatedDeal = { ...deal, stage: previousStage.key };
+        setDeal(updatedDeal);
+        
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+          stage: previousStage.key,
+          updatedAt: new Date()
+        });
+      }
+    } catch (err) {
+      console.error('Error marking stage incomplete:', err);
+      // Revert the local state if update fails
+      setDeal(deal);
+    }
+  };
+
+  const handleDeleteDeal = async () => {
+    if (!deal || !tenantId) return;
+    
+    if (!window.confirm(`Are you sure you want to delete "${deal.name}"? This action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      // Delete the deal from Firestore
+      await deleteDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id));
+      
+      // Navigate back to CRM with Opportunities tab active
+      navigate('/crm?tab=opportunities');
+    } catch (err) {
+      console.error('Error deleting deal:', err);
+      alert('Failed to delete deal. Please try again.');
+    }
+  };
+
   const loadAssociatedContacts = async () => {
     if (!deal || !tenantId || !user?.uid) return;
     
     try {
       console.log('Loading associated contacts for deal:', deal.id);
       
-      // Use the associationService to load contacts (same as UniversalAssociationsCard)
-      const associationService = createAssociationService(tenantId, user.uid);
-      const result = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: deal.id,
-        targetTypes: ['contact']
-      });
+      // Use the denormalized association service for fast loading
+      const associationService = createDenormalizedAssociationService(tenantId);
+      const result = await associationService.getAssociations('deal', deal.id);
       
       console.log('Association service result:', result);
-      console.log('Found contacts:', result.entities.contacts);
+      console.log('Found contacts:', result.contacts);
       
-      // Map the contacts to the expected format
-      const contacts = result.entities.contacts.map(contact => ({
+      // Map the contacts to the expected format (defensive against undefined)
+      const contacts = (result?.contacts || []).map(contact => ({
         id: contact.id,
-        fullName: contact.fullName || (contact as any).name || 'Unknown Contact',
+        fullName: contact.name || 'Unknown Contact',
         email: contact.email || '',
         phone: contact.phone || '',
-        title: contact.title || (contact as any).jobTitle || ''
+        title: '' // Title not available in denormalized format
       }));
       
       console.log('Mapped contacts:', contacts);
@@ -347,6 +378,15 @@ const DealDetails: React.FC = () => {
     return (
       <Box p={3}>
         <Alert severity="error">{error || 'Deal not found'}</Alert>
+      </Box>
+    );
+  }
+
+  // Guard: require tenantId to proceed so downstream props are typed as string
+  if (!tenantId) {
+    return (
+      <Box p={3}>
+        <Alert severity="warning">Missing tenant context. Please reload or switch tenant.</Alert>
       </Box>
     );
   }
@@ -449,22 +489,34 @@ const DealDetails: React.FC = () => {
 
           {/* Actions */}
           <Box sx={{ display: 'flex', gap: 1 }}>
-            {/* <Button variant="outlined" startIcon={<EditIcon />}>
-              Edit
-            </Button> */}
             <Button 
               variant="outlined" 
               startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/crm')}
+              onClick={() => navigate('/crm?tab=opportunities')}
             >
               Back to Opportunities
+            </Button>
+            <Button 
+              variant="outlined" 
+              color="error"
+              sx={{ 
+                borderColor: 'error.main',
+                '&:hover': {
+                  borderColor: 'error.dark',
+                  backgroundColor: 'error.light'
+                }
+              }}
+              startIcon={<DeleteIcon />}
+              onClick={handleDeleteDeal}
+            >
+              Delete Deal
             </Button>
           </Box>
         </Box>
       </Box>
 
       {/* Tabs */}
-      <Paper elevation={1} sx={{ mb: 2, borderRadius: 0 }}>
+      <Paper sx={{ mb: 3 }}>
         <Tabs
           value={tabValue}
           onChange={handleTabChange}
@@ -501,20 +553,29 @@ const DealDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AutoAwesomeIcon fontSize="small" />
-                Activity & AI
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <NotesIcon fontSize="small" />
                 Notes
               </Box>
             } 
           />
           <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {/* <AutoAwesomeIcon fontSize="small" /> */}
+                <ListIcon fontSize="small" />
+                Activity Log
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <EmailIcon fontSize="small" />
+                Email
+              </Box>
+            } 
+          />
+          {/* <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <SettingsIcon fontSize="small" />
@@ -529,7 +590,7 @@ const DealDetails: React.FC = () => {
                 AI Suggestions
               </Box>
             } 
-          />
+          /> */}
         </Tabs>
       </Paper>
 
@@ -568,7 +629,7 @@ const DealDetails: React.FC = () => {
                               ${revenueRange.min.toLocaleString()} - ${revenueRange.max.toLocaleString()}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                              Based on ${revenueRange.billRate.toFixed(2)}/hr bill rate • {revenueRange.startingCount} starting • {revenueRange.after180DaysCount} after 6 months
+                              Based on ${Number(revenueRange.billRate ?? 0).toFixed(2)}/hr bill rate • {revenueRange.startingCount} starting • {revenueRange.after180DaysCount} after 6 months
                             </Typography>
                           </Box>
                         ) : (
@@ -601,17 +662,29 @@ const DealDetails: React.FC = () => {
                     );
                   })()}
 
+                  {/* AI Summary */}
+                  <Box sx={{ mt: 3 }}>
+                    <DealAISummary
+                      dealId={deal.id}
+                      tenantId={tenantId}
+                      onSummaryUpdate={() => {
+                        // Optionally refresh deal data when summary updates
+                        console.log('AI Summary updated');
+                      }}
+                    />
+                  </Box>
+
                 </Box>
               </CardContent>
             </Card>
           </Grid>
 
           <Grid item xs={12} md={6}>
-            <SimpleAssociationsCard
+            <FastAssociationsCard
               entityType="deal"
               entityId={deal.id}
-              entityName={deal.name}
               tenantId={tenantId}
+              entityName={deal.name}
               showAssociations={{
                 companies: true,
                 locations: true,
@@ -619,18 +692,6 @@ const DealDetails: React.FC = () => {
                 salespeople: true,
                 deals: false, // Don't show deals for deals
                 tasks: false
-              }}
-              customLabels={{
-                companies: "Company",
-                locations: "Location",
-                contacts: "Contacts",
-                salespeople: "Sales Team"
-              }}
-              onAssociationChange={(type, action, entityId) => {
-                console.log(`${action} ${type} association: ${entityId}`);
-              }}
-              onError={(error) => {
-                console.error('Association error:', error);
               }}
             />
           </Grid>
@@ -656,40 +717,35 @@ const DealDetails: React.FC = () => {
               stageData={stageData}
               onStageDataChange={handleStageDataChange}
               onStageAdvance={handleStageAdvance}
+              onStageIncomplete={handleMarkStageIncomplete}
               associatedContacts={associatedContacts}
             />
           </Grid>
           <Grid item xs={12} md={4}>
-            <Card>
-              <CardHeader 
-                title="AI Stage Suggestions" 
-                sx={{ p: 0, mb: 2 }}
-                titleTypographyProps={{ variant: 'h6' }}
-              />
-              <CardContent>
-                <DealStageAISuggestions
-                  dealId={deal.id}
-                  tenantId={tenantId}
-                  currentStage={deal.stage}
-                  onTaskCreated={(taskId) => {
-                    console.log('Task created from side panel:', taskId);
-                  }}
-                />
-              </CardContent>
-            </Card>
+            {(() => {
+              let enable = true;
+              try { enable = localStorage.getItem('feature.dealCoach') !== 'false'; } catch {}
+              return enable ? (
+                <DealCoachPanel dealId={deal.id} stageKey={deal.stage} tenantId={tenantId} />
+              ) : (
+                <Card>
+                  <CardHeader title="AI Stage Suggestions" sx={{ p: 0, mb: 2 }} titleTypographyProps={{ variant: 'h6' }} />
+                  <CardContent>
+                    <DealStageAISuggestions
+                      dealId={deal.id}
+                      tenantId={tenantId}
+                      currentStage={deal.stage}
+                      onTaskCreated={(taskId) => { console.log('Task created from side panel:', taskId); }}
+                    />
+                  </CardContent>
+                </Card>
+              );
+            })()}
           </Grid>
         </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <DealActivityTab
-          dealId={deal.id}
-          tenantId={tenantId}
-          dealName={deal.name}
-        />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={4}>
         <CRMNotesTab
           entityId={deal.id}
           entityType="deal"
@@ -698,7 +754,26 @@ const DealDetails: React.FC = () => {
         />
       </TabPanel>
 
+      <TabPanel value={tabValue} index={4}>
+        <ActivityLogTab
+          entityId={deal.id}
+          entityType="deal"
+          entityName={deal.name || 'Deal'}
+          tenantId={tenantId}
+        />
+      </TabPanel>
+
       <TabPanel value={tabValue} index={5}>
+        <EmailTab
+          dealId={deal.id}
+          tenantId={tenantId}
+          contacts={associatedContacts}
+          companies={company ? [company] : []}
+          currentUser={user}
+        />
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={6}>
         <Card>
           <CardHeader title="Order Defaults" sx={{ p: 0, mb: 2 }} />
           <CardContent>
@@ -709,7 +784,7 @@ const DealDetails: React.FC = () => {
         </Card>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={6}>
+      <TabPanel value={tabValue} index={7}>
         <Card>
           <CardHeader title="AI Suggestions" sx={{ p: 0, mb: 2 }} />
           <CardContent>

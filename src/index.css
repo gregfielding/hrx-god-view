@@ -128,17 +128,17 @@ input, textarea, select {
   box-shadow: none !important;
 }
 
-/* Dark mode styles */
-[data-mui-color-scheme="dark"] {
-  --scrollbar-track: #111111;
-  --scrollbar-thumb: #2C2C2C;
-  --scrollbar-thumb-hover: #4A90E2;
-}
-
-/* Light mode styles */
+/* Light mode styles (default) */
 [data-mui-color-scheme="light"] {
   --scrollbar-track: #F8F9FA;
   --scrollbar-thumb: #DEE2E6;
+  --scrollbar-thumb-hover: #4A90E2;
+}
+
+/* Dark mode styles (disabled for now) */
+[data-mui-color-scheme="dark"] {
+  --scrollbar-track: #111111;
+  --scrollbar-thumb: #2C2C2C;
   --scrollbar-thumb-hover: #4A90E2;
 }
 

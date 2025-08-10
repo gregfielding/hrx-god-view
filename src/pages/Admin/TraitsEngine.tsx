@@ -28,18 +28,16 @@ import {
   Snackbar,
   Alert,
   Chip,
-  Divider,
-  Card,
-  CardContent,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
 import SaveIcon from '@mui/icons-material/Save';
 import CancelIcon from '@mui/icons-material/Cancel';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import { doc, getDoc, setDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+
+import { db } from '../../firebase';
 
 interface ConditionalPrompt {
   condition: string;

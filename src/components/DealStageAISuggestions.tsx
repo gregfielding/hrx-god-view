@@ -10,7 +10,6 @@ import {
   ListItem,
   ListItemText,
   ListItemIcon,
-  Divider,
   Alert,
   CircularProgress,
   IconButton,
@@ -34,6 +33,7 @@ import {
   Psychology as PsychologyIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { useAuth } from '../contexts/AuthContext';
 
 interface AISuggestion {
@@ -133,12 +133,22 @@ const DealStageAISuggestions: React.FC<DealStageAISuggestionsProps> = ({
     setCreatingTasks(prev => new Set(prev).add(taskId));
 
     try {
+      // Determine classification based on task type
+      let classification: 'todo' | 'appointment' = 'todo';
+      const appointmentTypes = ['scheduled_meeting_virtual', 'scheduled_meeting_in_person', 'demo', 'presentation'];
+      if (appointmentTypes.includes(suggestion.type)) {
+        classification = 'appointment';
+      }
+
       const result = await createTask({
         title: suggestion.title,
         description: suggestion.description,
         type: suggestion.type,
         priority: suggestion.priority,
         status: 'scheduled',
+        classification, // Add classification
+        startTime: classification === 'appointment' ? new Date().toISOString() : null,
+        duration: classification === 'appointment' ? 60 : null, // Default 1 hour for appointments
         scheduledDate: new Date().toISOString(),
         assignedTo: user.uid,
         createdBy: user.uid,

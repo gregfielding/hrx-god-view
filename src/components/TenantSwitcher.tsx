@@ -7,8 +7,6 @@ import {
   Typography,
   IconButton,
   Tooltip,
-  Chip,
-  Divider,
   ListItemIcon,
   ListItemText,
   CircularProgress,
@@ -20,13 +18,13 @@ import {
   Business as BusinessIcon,
   AccountBalance as AccountBalanceIcon,
   Store as StoreIcon,
-  Check as CheckIcon,
-  ExpandMore as ExpandMoreIcon
+  Check as CheckIcon
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../firebase';
+
 
 interface Tenant {
   id: string;

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../firebase';
 import {
   Box,
   Paper,
@@ -10,7 +9,6 @@ import {
   Checkbox,
   FormControlLabel,
   Grid,
-  IconButton,
   Chip,
   LinearProgress,
   Card,
@@ -20,6 +18,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useNavigate } from 'react-router-dom';
+
+import { app } from '../../firebase';
 
 const FeedbackEngine: React.FC = () => {
   const [campaignName, setCampaignName] = useState('');

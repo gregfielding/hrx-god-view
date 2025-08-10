@@ -1,7 +1,8 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import { Box, Typography, CircularProgress } from '@mui/material';
+
+import { useAuth } from '../contexts/AuthContext';
 import { Role, SecurityLevel, getAccessRole, hasAccess } from '../utils/AccessRoles';
 
 interface ProtectedRouteProps {
@@ -61,9 +62,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
         <Typography variant="h5" color="error">
           Access Denied
         </Typography>
-        <Typography variant="body1" color="text.secondary">
-          You don't have the required role to access this page.
-        </Typography>
+          <Typography variant="body1" color="text.secondary">
+            You don&apos;t have the required role to access this page.
+          </Typography>
         <Typography variant="body2" color="text.secondary">
           Required: {requiredRole} | Your role: {role}
         </Typography>
@@ -102,7 +103,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             Access Denied
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            You don't have sufficient security level to access this page.
+            You don&apos;t have sufficient security level to access this page.
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Required: {requiredSecurityLevel} | Your level: {securityLevel}
@@ -154,7 +155,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
             Access Denied
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            You don't have the required access level to view this page.
+            You don&apos;t have the required access level to view this page.
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Required: {requiredAccessRole} | Your access: {userAccessRole}

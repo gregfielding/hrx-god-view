@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Box, Typography, TextField, Button, Grid, Snackbar, Alert, FormHelperText, FormControlLabel, Checkbox } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { db } from '../../firebase';
 import { geocodeAddress } from '../../utils/geocodeAddress';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 function formatPhoneNumber(value: string) {
   // Remove all non-digit characters

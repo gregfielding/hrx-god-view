@@ -1,5 +1,6 @@
 import React from 'react';
 import { Chip, Box, Typography, Paper } from '@mui/material';
+
 import { getStageColorHex, getTextContrastColor } from '../utils/crmStageColors';
 
 // Example usage as specified in the implementation instructions

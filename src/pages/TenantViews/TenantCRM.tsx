@@ -18,11 +18,9 @@ import {
   FormControl,
   InputLabel,
   Select,
-  OutlinedInput,
   Chip,
   Autocomplete,
   Checkbox,
-  Tooltip,
   Tabs,
   Tab,
   ToggleButton,
@@ -40,7 +38,6 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  Divider,
   Badge,
   Avatar,
   Switch,
@@ -62,44 +59,22 @@ import {
   orderBy,
   limit,
   startAfter,
-  getDoc,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
-import CRMImportDialog from '../../components/CRMImportDialog';
-import DealIntelligenceWizard from '../../components/DealIntelligenceWizard';
-import KPIManagement from '../../components/KPIManagement';
-import KPIDashboard from '../../components/KPIDashboard';
-import NationalAccountManager from '../../components/NationalAccountManager';
-import EnhancedContactManager from '../../components/EnhancedContactManager';
-import CompanyHierarchyManager from '../../components/CompanyHierarchyManager';
-import GmailSettings from '../../components/GmailSettings';
-import StageChip from '../../components/StageChip';
-import { TasksDashboard } from '../../components/TasksDashboard';
 import {
   Person as PersonIcon,
   Business as BusinessIcon,
   AttachMoney as DealIcon,
-  People as PeopleIcon,
   Group as GroupIcon,
-  AccountTree,
   Timeline as PipelineIcon,
-  Assessment as ReportsIcon,
   Settings as SettingsIcon,
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   Search as SearchIcon,
-  FilterList as FilterIcon,
-  MoreVert as MoreIcon,
   Phone as PhoneIcon,
   Email as EmailIcon,
-  LocationOn as LocationIcon,
-  Work as WorkIcon,
   TrendingUp as TrendingUpIcon,
-  CalendarToday as CalendarIcon,
-  Star as StarIcon,
   Visibility as VisibilityIcon,
   Assignment as TaskIcon,
   CheckCircle as CompletedIcon,
@@ -107,25 +82,45 @@ import {
   PriorityHigh as HighPriorityIcon,
   FiberManualRecord as MediumPriorityIcon,
   RadioButtonUnchecked as LowPriorityIcon,
-  Assessment as AssessmentIcon,
   Clear as ClearIcon,
-  LinkedIn as LinkedInIcon,
 
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { functions } from '../../firebase';
+
+import { db , functions } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
+import { useCRMCache } from '../../contexts/CRMCacheContext';
+import CRMImportDialog from '../../components/CRMImportDialog';
+import DealIntelligenceWizard from '../../components/DealIntelligenceWizard';
+import KPIManagement from '../../components/KPIManagement';
+import KPIDashboard from '../../components/KPIDashboard';
+import NationalAccountManager from '../../components/NationalAccountManager';
+import EnhancedContactManager from '../../components/EnhancedContactManager';
+import CompanyHierarchyManager from '../../components/CompanyHierarchyManager';
+import GoogleIntegration from '../../components/GoogleIntegration';
+import StageChip from '../../components/StageChip';
+import UserTasksDashboard from '../../components/UserTasksDashboard';
+import PipelineFunnel from '../../components/PipelineFunnel';
+
+
 
 const TenantCRM: React.FC = () => {
   const { tenantId, role, accessRole, orgType, currentUser, activeTenant } = useAuth();
+  const { cacheState, updateCacheState, hasCachedState } = useCRMCache();
   const navigate = useNavigate();
   
-  // State for tabs
+  // State for tabs - use cached state if available
   const [searchParams] = useSearchParams();
   const [tabValue, setTabValue] = useState(() => {
+    // Use cached state if available, otherwise use URL params
+    if (hasCachedState) {
+      return cacheState.activeTab;
+    }
+    
     const tabParam = searchParams.get('tab');
     if (tabParam === 'companies') return 2;
     if (tabParam === 'contacts') return 1;
-    if (tabParam === 'deals') return 3;
+    if (tabParam === 'deals' || tabParam === 'opportunities') return 3;
     if (tabParam === 'tasks') return 0;
     return 0;
   });
@@ -134,17 +129,20 @@ const TenantCRM: React.FC = () => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
+  const [allDeals, setAllDeals] = useState<any[]>([]);
   const [pipelineStages, setPipelineStages] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [crmTasks, setCrmTasks] = useState<any[]>([]);
+  const [regularTasks, setRegularTasks] = useState<any[]>([]);
   
   // Pagination state for companies
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [companiesLastDoc, setCompaniesLastDoc] = useState<any>(null);
   const [companiesHasMore, setCompaniesHasMore] = useState(true);
   const [companiesPageSize] = useState(20);
-  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>('all');
-  const [contactFilter, setContactFilter] = useState<'all' | 'my'>('all');
-  const [dealFilter, setDealFilter] = useState<'all' | 'my'>('all');
+  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(cacheState.companyFilter);
+  const [contactFilter, setContactFilter] = useState<'all' | 'my'>(cacheState.contactFilter);
+  const [dealFilter, setDealFilter] = useState<'all' | 'my'>(cacheState.dealFilter);
   
   // Pagination state for contacts
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -157,7 +155,7 @@ const TenantCRM: React.FC = () => {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(cacheState.searchTerm);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [dialogType, setDialogType] = useState<'contact' | 'company' | 'deal' | 'task'>('contact');
@@ -187,11 +185,22 @@ const TenantCRM: React.FC = () => {
     notes: ''
   });
   const [savingContact, setSavingContact] = useState(false);
+  
+  // Company form state
+  const [companyForm, setCompanyForm] = useState({
+    name: '',
+    website: '',
+    industry: '',
+    source: '',
+    notes: ''
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+  
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [salesTeam, setSalesTeam] = useState<any[]>([]);
   const [salesTeamLoading, setSalesTeamLoading] = useState(false);
-  const [fixingAllAssociations, setFixingAllAssociations] = useState(false);
+
 
   // Load companies with pagination
   const loadCompanies = async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false) => {
@@ -204,10 +213,12 @@ const TenantCRM: React.FC = () => {
 
       // If filtering by user associations, add user-specific constraints
       if (filterByUser && currentUser?.uid) {
-        console.log('Loading companies where user is in salespeople array:', currentUser.uid);
+        console.log('🔍 Loading companies where user is in salespeople array:', currentUser.uid);
+        console.log('🔍 Current user:', currentUser);
         
-        // Query companies where user is in salespeople array in associations map
-        const salespeopleAssociationsQuery = query(
+        // First, try to query companies where user ID is directly in the salespeople array
+        // This handles the case where salespeople are stored as strings
+        const directQuery = query(
           companiesRef,
           where('associations.salespeople', 'array-contains', currentUser.uid),
           orderBy('createdAt', 'desc'),
@@ -215,10 +226,61 @@ const TenantCRM: React.FC = () => {
         );
         
         try {
-          const salespeopleAssociationsSnapshot = await getDocs(salespeopleAssociationsQuery);
+          const directSnapshot = await getDocs(directQuery);
+          let companiesData = directSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          console.log('🔍 Found', companiesData.length, 'companies with direct user ID in salespeople array');
           
-          const companiesData = salespeopleAssociationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          console.log('Found', companiesData.length, 'companies where user is in salespeople array');
+          // If no results, try querying for companies where user ID is in the 'id' field of salespeople objects
+          if (companiesData.length === 0) {
+            console.log('🔍 No direct matches, trying object-based query...');
+            
+            // Load all companies and filter client-side for object-based salespeople
+            const allCompaniesQuery = query(
+              companiesRef,
+              orderBy('createdAt', 'desc'),
+              limit(100) // Load more to ensure we find matches
+            );
+            
+            const allSnapshot = await getDocs(allCompaniesQuery);
+            const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // Debug: Log a few companies to see their structure
+            console.log('🔍 Sample companies structure:', allCompanies.slice(0, 3).map((company: any) => ({
+              id: company.id,
+              name: company.companyName || company.name,
+              associations: company.associations,
+              salespeople: company.associations?.salespeople
+            })));
+            
+            // Filter companies where user ID is in the 'id' field of any salespeople object
+            companiesData = allCompanies.filter((company: any) => {
+              if (!company.associations?.salespeople) {
+                console.log('🔍 Company', company.id, 'has no salespeople associations');
+                return false;
+              }
+              
+              const hasUser = company.associations.salespeople.some((salesperson: any) => {
+                if (typeof salesperson === 'string') {
+                  const match = salesperson === currentUser.uid;
+                  if (match) console.log('🔍 Found string match for company', company.id);
+                  return match;
+                } else if (salesperson && typeof salesperson === 'object') {
+                  const match = salesperson.id === currentUser.uid;
+                  if (match) console.log('🔍 Found object match for company', company.id, 'salesperson:', salesperson);
+                  return match;
+                }
+                return false;
+              });
+              
+              if (hasUser) {
+                console.log('🔍 Company', company.id, 'is associated with current user');
+              }
+              
+              return hasUser;
+            });
+            
+            console.log('🔍 Found', companiesData.length, 'companies with user ID in salespeople object IDs');
+          }
           
           setCompanies(prev => append ? [...prev, ...companiesData] : companiesData);
           setCompaniesHasMore(companiesData.length === companiesPageSize);
@@ -487,15 +549,51 @@ const TenantCRM: React.FC = () => {
         
         // First, get all companies where user is in salespeople array
         const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-        const myCompaniesQuery = query(
+        
+        // Try direct query first
+        const directQuery = query(
           companiesRef,
           where('associations.salespeople', 'array-contains', currentUser.uid)
         );
         
-        const myCompaniesSnapshot = await getDocs(myCompaniesQuery);
-        const myCompanyIds = myCompaniesSnapshot.docs.map(doc => doc.id);
+        const myCompaniesSnapshot = await getDocs(directQuery);
+        let myCompanyIds = myCompaniesSnapshot.docs.map(doc => doc.id);
         
-        console.log(`Found ${myCompanyIds.length} companies where user is in salespeople array`);
+        console.log(`Found ${myCompanyIds.length} companies with direct user ID in salespeople array`);
+        
+        // If no results, try object-based query
+        if (myCompanyIds.length === 0) {
+          console.log('No direct matches for contacts, trying object-based query...');
+          
+          // Load all companies and filter client-side for object-based salespeople
+          const allCompaniesQuery = query(
+            companiesRef,
+            orderBy('createdAt', 'desc'),
+            limit(100)
+          );
+          
+          const allSnapshot = await getDocs(allCompaniesQuery);
+          const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          
+          // Filter companies where user ID is in the 'id' field of any salespeople object
+          const filteredCompanies = allCompanies.filter((company: any) => {
+            if (!company.associations?.salespeople) return false;
+            
+            return company.associations.salespeople.some((salesperson: any) => {
+              if (typeof salesperson === 'string') {
+                return salesperson === currentUser.uid;
+              } else if (salesperson && typeof salesperson === 'object') {
+                return salesperson.id === currentUser.uid;
+              }
+              return false;
+            });
+          });
+          
+          myCompanyIds = filteredCompanies.map(company => company.id);
+          console.log(`Found ${myCompanyIds.length} companies with user ID in salespeople object IDs`);
+        }
+        
+        console.log(`Total companies where user is in salespeople array: ${myCompanyIds.length}`);
         
         if (myCompanyIds.length === 0) {
           // No companies found, set empty contacts
@@ -673,58 +771,129 @@ const TenantCRM: React.FC = () => {
     try {
       const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
       
+      // Always load all deals first to track total count
+      const allDealsQuery = query(dealsRef, orderBy('createdAt', 'desc'));
+      const allDealsSnapshot = await getDocs(allDealsQuery);
+      const allDealsData = allDealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllDeals(allDealsData);
+      
+      console.log('🔍 Total deals in database:', allDealsData.length);
+      
       // If filtering by user associations, add user-specific constraints
       if (filterByUser && currentUser?.uid) {
-        console.log('Loading deals associated with user via salespeople array:', currentUser.uid);
+        console.log('🔍 Loading deals associated with user via salespeople array:', currentUser.uid);
+        console.log('🔍 Current user:', currentUser);
         
-        // Query deals where user is in the salespeople array in associations map
-        const salespeopleAssociationsQuery = query(
+        // Try direct query first for deals
+        const directQuery = query(
           dealsRef,
           where('associations.salespeople', 'array-contains', currentUser.uid),
           orderBy('createdAt', 'desc')
         );
         
         try {
-          const snapshot = await getDocs(salespeopleAssociationsQuery);
-          const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const snapshot = await getDocs(directQuery);
+          let dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           
-          console.log('Found', dealsData.length, 'deals associated with user via salespeople array');
+          console.log('🔍 Found', dealsData.length, 'deals with direct user ID in salespeople array');
+          
+          // If no results, try object-based query
+          if (dealsData.length === 0) {
+            console.log('🔍 No direct matches for deals, trying object-based query...');
+            
+            // Debug: Log a few deals to see their structure
+            console.log('🔍 Sample deals structure:', allDealsData.slice(0, 3).map((deal: any) => ({
+              id: deal.id,
+              name: deal.name,
+              associations: deal.associations,
+              salespeople: deal.associations?.salespeople
+            })));
+            
+            // Filter all deals where user ID is in the 'id' field of any salespeople object
+            dealsData = allDealsData.filter((deal: any) => {
+              if (!deal.associations?.salespeople) {
+                console.log('🔍 Deal', deal.id, 'has no salespeople associations');
+                return false;
+              }
+              
+              const hasUser = deal.associations.salespeople.some((salesperson: any) => {
+                if (typeof salesperson === 'string') {
+                  const match = salesperson === currentUser.uid;
+                  if (match) console.log('🔍 Found string match for deal', deal.id);
+                  return match;
+                } else if (salesperson && typeof salesperson === 'object') {
+                  const match = salesperson.id === currentUser.uid;
+                  if (match) console.log('🔍 Found object match for deal', deal.id, 'salesperson:', salesperson);
+                  return match;
+                }
+                return false;
+              });
+              
+              if (hasUser) {
+                console.log('🔍 Deal', deal.id, 'is associated with current user');
+              }
+              
+              return hasUser;
+            });
+            
+            console.log('🔍 Found', dealsData.length, 'deals with user ID in salespeople object IDs');
+          }
           
           setDeals(prev => append ? [...prev, ...dealsData] : dealsData);
           
         } catch (error) {
-          console.error('Error loading user-associated deals:', error);
+          console.error('❌ Error loading user-associated deals:', error);
           // Fallback to loading all deals if query fails
-          const q = query(dealsRef, orderBy('createdAt', 'desc'));
-          const snapshot = await getDocs(q);
-          const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setDeals(prev => append ? [...prev, ...dealsData] : dealsData);
+          setDeals(prev => append ? [...prev, ...allDealsData] : allDealsData);
         }
         
         return;
       }
 
-      // For non-filtered or search queries, use the existing onSnapshot approach
-      // This maintains real-time updates for the main deals list
-      const q = query(dealsRef, orderBy('createdAt', 'desc'));
-      const snapshot = await getDocs(q);
-      const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setDeals(prev => append ? [...prev, ...dealsData] : dealsData);
+      // For non-filtered queries, use all deals
+      setDeals(prev => append ? [...prev, ...allDealsData] : allDealsData);
       
     } catch (error) {
-      console.error('Error loading deals:', error);
+      console.error('❌ Error loading deals:', error);
     }
   };
 
   // Handle search changes
   const handleSearchChange = (newSearch: string) => {
     setSearch(newSearch);
+    updateCacheState({ searchTerm: newSearch });
     // Reset pagination when search changes
     setCompaniesLastDoc(null);
     setCompaniesHasMore(true);
     setContactsLastDoc(null);
     setContactsHasMore(true);
   };
+
+  // Restore cached state on component mount
+  useEffect(() => {
+    if (hasCachedState) {
+      // Restore search term
+      if (cacheState.searchTerm && cacheState.searchTerm !== search) {
+        setSearch(cacheState.searchTerm);
+      }
+      
+      // Restore filters
+      if (cacheState.companyFilter !== companyFilter) {
+        setCompanyFilter(cacheState.companyFilter);
+      }
+      if (cacheState.contactFilter !== contactFilter) {
+        setContactFilter(cacheState.contactFilter);
+      }
+      if (cacheState.dealFilter !== dealFilter) {
+        setDealFilter(cacheState.dealFilter);
+      }
+      
+      // Restore active tab - only if we have meaningful cached state
+      if (cacheState.activeTab !== tabValue && hasCachedState) {
+        setTabValue(cacheState.activeTab);
+      }
+    }
+  }, [hasCachedState]); // Run when hasCachedState changes
 
   // Debounced search effect
   useEffect(() => {
@@ -767,22 +936,56 @@ const TenantCRM: React.FC = () => {
       setPipelineStages(stagesData.sort((a: any, b: any) => (a.order || 0) - (b.order || 0)));
     });
 
-    // Listen for tasks
-    const tasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
+    // Listen for tasks from both collections
+    const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    
+    // Listen for CRM tasks
+    const crmTasksUnsubscribe = onSnapshot(crmTasksRef, (snapshot) => {
+      const crmTasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      // Filter CRM tasks to show only those assigned to the current user
+      const userCrmTasks = crmTasksData.filter((task: any) => {
+        // Show tasks assigned to the current user
+        if (task.assignedTo === currentUser?.uid) {
+          return true;
+        }
+        // Show tasks associated with deals owned by the current user
+        if (task.relatedTo?.type === 'deal' && task.relatedTo?.id) {
+          const deal = deals.find(d => d.id === task.relatedTo.id);
+          if (deal && deal.owner === currentUser?.uid) {
+            return true;
+          }
+        }
+        return false;
+      });
+      
+      // Store CRM tasks in state and update combined tasks
+      setCrmTasks(userCrmTasks);
+      setTasks([...userCrmTasks, ...regularTasks]);
+    });
+    
+    // Listen for regular tasks
     const tasksUnsubscribe = onSnapshot(tasksRef, (snapshot) => {
-      const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTasks(tasksData);
+      const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      // Filter tasks to show only those assigned to the current user
+      const userTasks = tasksData.filter((task: any) => task.assignedTo === currentUser?.uid);
+      
+      // Store regular tasks in state and update combined tasks
+      setRegularTasks(userTasks);
+      setTasks([...crmTasks, ...userTasks]);
     });
 
     return () => {
       dealsUnsubscribe();
       stagesUnsubscribe();
+      crmTasksUnsubscribe();
       tasksUnsubscribe();
     };
   }, [tenantId]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
+    updateCacheState({ activeTab: newValue });
   };
 
   const handleAddNew = (type: 'contact' | 'company' | 'deal' | 'task') => {
@@ -792,18 +995,21 @@ const TenantCRM: React.FC = () => {
 
   const handleCompanyFilterChange = (newFilter: 'all' | 'my') => {
     setCompanyFilter(newFilter);
+    updateCacheState({ companyFilter: newFilter });
     // Reload companies with the new filter
     loadCompanies('', null, false, newFilter === 'my');
   };
 
   const handleContactFilterChange = (newFilter: 'all' | 'my') => {
     setContactFilter(newFilter);
+    updateCacheState({ contactFilter: newFilter });
     // Reload contacts with the new filter
     loadContacts('', null, false, newFilter === 'my');
   };
 
   const handleDealFilterChange = (newFilter: 'all' | 'my') => {
     setDealFilter(newFilter);
+    updateCacheState({ dealFilter: newFilter });
     // Reload deals with the new filter
     loadDeals('', null, false, newFilter === 'my');
   };
@@ -822,35 +1028,11 @@ const TenantCRM: React.FC = () => {
     setContactForm(prev => ({ ...prev, tags: newTags }));
   };
 
-  const handleFixAllAssociations = async () => {
-    if (!tenantId) return;
-    
-    setFixingAllAssociations(true);
-    try {
-      const fixContactAssociations = httpsCallable(functions, 'fixContactAssociations');
-      
-      const result = await fixContactAssociations({
-        tenantId
-      });
-
-      const resultData = result.data as any;
-      
-      if (resultData.success) {
-        setSuccess(true);
-        setSuccessMessage(`Fixed ${resultData.fixedCount} contact associations!`);
-        
-        // Reload contacts to show updated associations
-        loadContacts();
-      } else {
-        setError(resultData.message || 'Failed to fix associations');
-      }
-    } catch (err: any) {
-      console.error('Error fixing associations:', err);
-      setError(err.message || 'Failed to fix associations');
-    } finally {
-      setFixingAllAssociations(false);
-    }
+  const handleCompanyFormChange = (field: string, value: string) => {
+    setCompanyForm(prev => ({ ...prev, [field]: value }));
   };
+
+
 
   const handleSaveContact = async () => {
     if (!contactForm.firstName || !contactForm.lastName) {
@@ -903,6 +1085,71 @@ const TenantCRM: React.FC = () => {
     }
   };
 
+  const handleSaveCompany = async () => {
+    if (!companyForm.name) {
+      setError('Company name is required');
+      return;
+    }
+
+    setSavingCompany(true);
+    try {
+      const companyData = {
+        ...companyForm,
+        tenantId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Add the current user as an associated salesperson
+        associations: {
+          salespeople: [currentUser?.uid]
+        },
+        // Legacy fields for backward compatibility
+        salesOwnerId: currentUser?.uid || null,
+        accountOwnerId: currentUser?.uid || null,
+        salesOwnerName: currentUser?.displayName || currentUser?.email || 'Unknown',
+        accountOwnerName: currentUser?.displayName || currentUser?.email || 'Unknown'
+      };
+
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      await addDoc(companiesRef, companyData);
+
+      // Reset form and close dialog
+      setCompanyForm({
+        name: '',
+        website: '',
+        industry: '',
+        source: '',
+        notes: ''
+      });
+      setShowAddDialog(false);
+      setSuccess(true);
+      setSuccessMessage('Company added successfully!');
+      
+      // Reload companies
+      loadCompanies();
+    } catch (err: any) {
+      console.error('Error adding company:', err);
+      setError(err.message || 'Failed to add company');
+    } finally {
+      setSavingCompany(false);
+    }
+  };
+
+  const handleUpdatePipelineTotals = async (companyId: string) => {
+    try {
+      const functions = getFunctions();
+      const updatePipelineTotals = httpsCallable(functions, 'updateCompanyPipelineTotals');
+      
+      await updatePipelineTotals({ tenantId, companyId });
+      
+      // Refresh companies data to show updated totals
+      await loadCompanies();
+      
+      console.log(`✅ Updated pipeline totals for company ${companyId}`);
+    } catch (error) {
+      console.error('❌ Error updating pipeline totals:', error);
+    }
+  };
+
   if (!tenantId) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -920,14 +1167,6 @@ const TenantCRM: React.FC = () => {
           Sales CRM
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="outlined"
-            color="secondary"
-            onClick={handleFixAllAssociations}
-            disabled={fixingAllAssociations}
-          >
-            {fixingAllAssociations ? 'Fixing...' : 'Fix Contact Associations'}
-          </Button>
           {/* <Button
             variant="outlined"
             color="primary"
@@ -1041,11 +1280,11 @@ const TenantCRM: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <SettingsIcon fontSize="small" />
-                Settings
+                Gmail Settings
               </Box>
             } 
           />
-          <Tab 
+          {/* <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AssessmentIcon fontSize="small" />
@@ -1060,14 +1299,13 @@ const TenantCRM: React.FC = () => {
                 My KPIs
               </Box>
             } 
-          />
+          /> */}
         </Tabs>
       </Paper>
 
       {/* Tab Panels */}
       {tabValue === 0 && (
-        <TasksDashboard 
-          salespersonId={currentUser?.uid || ''} 
+        <UserTasksDashboard 
           tenantId={tenantId}
         />
       )}
@@ -1092,6 +1330,7 @@ const TenantCRM: React.FC = () => {
           companies={companies}
           contacts={contacts}
           deals={deals}
+          salesTeam={salesTeam}
           search={search}
           onSearchChange={handleSearchChange}
           onAddNew={() => handleAddNew('company')}
@@ -1100,13 +1339,18 @@ const TenantCRM: React.FC = () => {
           onLoadMore={loadMoreCompanies}
           companyFilter={companyFilter}
           onCompanyFilterChange={handleCompanyFilterChange}
+          tenantId={tenantId}
+          onUpdatePipelineTotals={handleUpdatePipelineTotals}
         />
       )}
       
       {tabValue === 3 && (
         <DealsTab 
           deals={deals}
+          allDeals={allDeals}
           companies={companies}
+          allCompanies={allCompanies}
+          loadingAllCompanies={loadingAllCompanies}
           contacts={contacts}
           pipelineStages={pipelineStages}
           search={search}
@@ -1114,6 +1358,9 @@ const TenantCRM: React.FC = () => {
           onAddNew={() => handleAddNew('deal')}
           dealFilter={dealFilter}
           onDealFilterChange={handleDealFilterChange}
+          currentUser={currentUser}
+          salesTeam={salesTeam}
+          tenantId={tenantId}
         />
       )}
       
@@ -1288,6 +1535,7 @@ const TenantCRM: React.FC = () => {
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
                     <Chip
+                      key={`${option}-${index}`}
                       variant="outlined"
                       label={option}
                       {...getTagProps({ index })}
@@ -1394,6 +1642,74 @@ const TenantCRM: React.FC = () => {
             disabled={savingContact || !contactForm.firstName || !contactForm.lastName}
           >
             {savingContact ? <CircularProgress size={20} /> : 'Save Contact'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Company Dialog */}
+      <Dialog open={showAddDialog && dialogType === 'company'} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Company</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Company Name"
+                value={companyForm.name}
+                onChange={(e) => handleCompanyFormChange('name', e.target.value)}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Website"
+                value={companyForm.website}
+                onChange={(e) => handleCompanyFormChange('website', e.target.value)}
+                placeholder="https://example.com"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Industry"
+                value={companyForm.industry}
+                onChange={(e) => handleCompanyFormChange('industry', e.target.value)}
+                placeholder="e.g., Technology, Healthcare, Manufacturing"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Lead Source"
+                value={companyForm.source}
+                onChange={(e) => handleCompanyFormChange('source', e.target.value)}
+                placeholder="e.g., Website, Referral, Cold Call"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Notes"
+                multiline
+                rows={3}
+                value={companyForm.notes}
+                onChange={(e) => handleCompanyFormChange('notes', e.target.value)}
+                placeholder="Additional notes about this company..."
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog} disabled={savingCompany}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSaveCompany} 
+            variant="contained" 
+            disabled={savingCompany || !companyForm.name}
+          >
+            {savingCompany ? <CircularProgress size={20} /> : 'Save Company'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1689,15 +2005,18 @@ const TasksTab: React.FC<{
     if (!relatedTo || !relatedTo.type || !relatedTo.id) return '';
     
     switch (relatedTo.type) {
-      case 'contact':
+      case 'contact': {
         const contact = contacts.find(c => c.id === relatedTo.id);
         return contact?.fullName || '';
-      case 'company':
+      }
+      case 'company': {
         const company = companies.find(c => c.id === relatedTo.id);
         return company?.companyName || '';
-      case 'deal':
+      }
+      case 'deal': {
         const deal = deals.find(d => d.id === relatedTo.id);
         return deal?.title || '';
+      }
       default:
         return '';
     }
@@ -1707,9 +2026,7 @@ const TasksTab: React.FC<{
     <Box>
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6">
-          Tasks ({filteredTasks.length})
-        </Typography>
+        <Typography variant="h6">Tasks ({filteredTasks.length})</Typography>
         <Button
           variant="contained"
           color="primary"
@@ -1810,7 +2127,7 @@ const TasksTab: React.FC<{
                 <TableCell>
                   {task.dueDate ? (
                     <Typography variant="body2">
-                      {new Date(task.dueDate).toLocaleDateString()}
+                      {new Date(task.dueDate + 'T00:00:00').toLocaleDateString()}
                     </Typography>
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -1991,10 +2308,10 @@ const ContactsTab: React.FC<{
 }> = ({ contacts, companies, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, contactFilter, onContactFilterChange }) => {
   const navigate = useNavigate();
   const { currentUser, tenantId } = useAuth();
-  const [selectedContacts, setSelectedContacts] = useState<string[]>([]);
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string | null>(null);
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
+  const [lastActivities, setLastActivities] = useState<{[key: string]: any}>({});
 
   // Function to get companies the current user is associated with
   const getMyCompanies = React.useCallback(() => {
@@ -2059,13 +2376,47 @@ const ContactsTab: React.FC<{
     loadAllCompanies();
   }, [loadAllCompanies]);
 
-  const handleContactSelection = (contactId: string) => {
-    setSelectedContacts(prev =>
-      prev.includes(contactId) 
-        ? prev.filter(id => id !== contactId) 
-        : [...prev, contactId]
-    );
-  };
+  // Function to get the last activity for a contact
+  const getLastActivity = React.useCallback(async (contactId: string) => {
+    if (!tenantId) return;
+    
+    try {
+      const { collection, query, where, orderBy, limit, getDocs } = await import('firebase/firestore');
+      const { db } = await import('../../firebase');
+      
+      const logsRef = collection(db, 'tenants', tenantId, 'ai_logs');
+      const q = query(
+        logsRef,
+        where('entityId', '==', contactId),
+        where('entityType', '==', 'contact'),
+        orderBy('timestamp', 'desc'),
+        limit(1)
+      );
+      
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const lastLog = snapshot.docs[0].data();
+        setLastActivities(prev => ({
+          ...prev,
+          [contactId]: lastLog
+        }));
+      }
+    } catch (error) {
+      // Silently handle permission errors for ai_logs collection
+      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+        console.log('AI logs not accessible, skipping last activity');
+      } else {
+        console.error('Error loading last activity:', error);
+      }
+    }
+  }, [tenantId]);
+
+  // Load last activities for all contacts
+  React.useEffect(() => {
+    filteredContacts.forEach(contact => {
+      getLastActivity(contact.id);
+    });
+  }, [filteredContacts, getLastActivity]);
 
   return (
     <Box>
@@ -2137,19 +2488,16 @@ const ContactsTab: React.FC<{
                 }}
               />
             )}
-                            renderOption={(props, option) => {
-                  const { key, ...otherProps } = props;
-                  return (
-                    <Box component="li" key={option.id} {...otherProps}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <BusinessIcon fontSize="small" color="action" />
-                        <Typography variant="body2">
-                          {option.companyName || option.name}
-                        </Typography>
-                      </Box>
+                renderOption={(props, option) => (
+                  <Box component="li" {...props}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <BusinessIcon fontSize="small" color="action" />
+                      <Typography variant="body2">
+                        {option.companyName || option.name}
+                      </Typography>
                     </Box>
-                  );
-                }}
+                  </Box>
+                )}
             isOptionEqualToValue={(option, value) => option.id === value.id}
             clearOnBlur={false}
             sx={{ width: 200 }}
@@ -2191,39 +2539,19 @@ const ContactsTab: React.FC<{
         <Table sx={{ minWidth: 1200 }}>
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" sx={{ width: 50 }}>
-                <Checkbox
-                  checked={selectedContacts.length === filteredContacts.length}
-                  indeterminate={selectedContacts.length > 0 && selectedContacts.length < filteredContacts.length}
-                  onChange={() => {
-                    if (selectedContacts.length === filteredContacts.length) {
-                      setSelectedContacts([]);
-                    } else {
-                      setSelectedContacts(filteredContacts.map(c => c.id));
-                    }
-                  }}
-                />
-              </TableCell>
               <TableCell sx={{ width: 200 }}>Name</TableCell>
               <TableCell sx={{ width: 150 }}>Job Title</TableCell>
               <TableCell sx={{ width: 150 }}>Company</TableCell>
               <TableCell sx={{ width: 200 }}>Email</TableCell>
               <TableCell sx={{ width: 120 }}>Phone</TableCell>
               <TableCell sx={{ width: 120 }}>Location</TableCell>
-              <TableCell sx={{ width: 120 }}>Last Contacted</TableCell>
-              <TableCell sx={{ width: 100 }}>Status</TableCell>
+              <TableCell sx={{ width: 150 }}>Last Activity</TableCell>
               <TableCell sx={{ width: 100 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredContacts.map((contact) => (
               <TableRow key={contact.id} hover>
-                <TableCell padding="checkbox">
-                  <Checkbox
-                    checked={selectedContacts.includes(contact.id)}
-                    onChange={() => handleContactSelection(contact.id)}
-                  />
-                </TableCell>
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Avatar sx={{ width: 32, height: 32 }}>
@@ -2239,49 +2567,47 @@ const ContactsTab: React.FC<{
                   {contact.companyName || companies.find(c => c.id === contact.companyId)?.companyName || '-'}
                 </TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <EmailIcon fontSize="small" color="action" />
-                    {contact.email}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <PhoneIcon fontSize="small" color="action" />
-                    {contact.phone || contact.workPhone || '-'}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                    {contact.city && contact.state && (
-                      <Typography variant="caption">
-                        {contact.city}, {contact.state}
+                  {contact.email ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <EmailIcon fontSize="small" color="action" />
+                      <Typography variant="body2">
+                        {contact.email}
                       </Typography>
-                    )}
-                    {contact.linkedInUrl && (
-                      <a href={contact.linkedInUrl} target="_blank" rel="noopener noreferrer">
-                        <LinkedInIcon fontSize="small" color="primary" />
-                      </a>
-                    )}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  {contact.lastContactedTime ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Typography variant="caption">
-                        {new Date(contact.lastContactedTime).toLocaleDateString()}
-                      </Typography>
-                      {contact.lastContactedMode && (
-                        <Chip label={contact.lastContactedMode} size="small" variant="outlined" />
-                      )}
                     </Box>
                   ) : '-'}
                 </TableCell>
                 <TableCell>
-                  <Chip 
-                    label={contact.status} 
-                    size="small" 
-                    color={contact.status === 'active' ? 'success' : 'default'}
-                  />
+                  {contact.phone || contact.workPhone ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <PhoneIcon fontSize="small" color="action" />
+                      <Typography variant="body2">
+                        {contact.phone || contact.workPhone}
+                      </Typography>
+                    </Box>
+                  ) : '-'}
+                </TableCell>
+                <TableCell>
+                  {contact.locationName ? (
+                    <Typography variant="body2">
+                      {contact.locationName}
+                    </Typography>
+                  ) : contact.city && contact.state ? (
+                    <Typography variant="body2">
+                      {contact.city}, {contact.state}
+                    </Typography>
+                  ) : '-'}
+                </TableCell>
+                <TableCell>
+                  {lastActivities[contact.id] ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      <Typography variant="caption">
+                        {new Date(lastActivities[contact.id].timestamp?.toDate?.() || lastActivities[contact.id].timestamp).toLocaleDateString()}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {lastActivities[contact.id].eventType || lastActivities[contact.id].action || 'Activity'}
+                      </Typography>
+                    </Box>
+                  ) : '-'}
                 </TableCell>
                 <TableCell>
                   <Button
@@ -2324,6 +2650,7 @@ const CompaniesTab: React.FC<{
   companies: any[];
   contacts: any[];
   deals: any[];
+  salesTeam: any[];
   search: string;
   onSearchChange: (value: string) => void;
   onAddNew: () => void;
@@ -2332,10 +2659,11 @@ const CompaniesTab: React.FC<{
   onLoadMore: () => void;
   companyFilter: 'all' | 'my';
   onCompanyFilterChange: (newFilter: 'all' | 'my') => void;
-}> = ({ companies, contacts, deals, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange }) => {
+  tenantId: string;
+  onUpdatePipelineTotals: (companyId: string) => Promise<void>;
+}> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const [selectedCompanies, setSelectedCompanies] = useState<string[]>([]);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
   const [companyForm, setCompanyForm] = useState({
@@ -2359,13 +2687,7 @@ const CompaniesTab: React.FC<{
   // Since filtering is now handled at the database level, we just use the companies as-is
   const filteredCompanies = companies;
 
-  const handleCompanySelection = (companyId: string) => {
-    setSelectedCompanies(prev =>
-      prev.includes(companyId) 
-        ? prev.filter(id => id !== companyId) 
-        : [...prev, companyId]
-    );
-  };
+
 
   const handleViewCompany = (company: any) => {
     navigate(`/crm/companies/${company.id}`);
@@ -2399,6 +2721,112 @@ const CompaniesTab: React.FC<{
 
   const getCompanyDeals = (companyId: string) => {
     return deals.filter(deal => deal.companyId === companyId);
+  };
+
+  // Helper function to get salesperson name from ID
+  const getSalespersonName = (salespersonId: string) => {
+    const salesperson = salesTeam.find(sp => sp.id === salespersonId || sp.uid === salespersonId);
+    return salesperson ? (salesperson.name || salesperson.displayName || salesperson.email) : salespersonId;
+  };
+
+  // Get pipeline value for a company (from stored hierarchical data or calculate on demand)
+  const getCompanyPipelineValue = (company: any) => {
+    // Use stored hierarchical values if available
+    if (company.pipelineValue) {
+      return {
+        totalLow: company.pipelineValue.low || 0,
+        totalHigh: company.pipelineValue.high || 0,
+        dealCount: company.pipelineValue.dealCount || 0
+      };
+    }
+    
+    // Fallback to calculation if stored values not available
+    const companyDeals = getCompanyDeals(company.id);
+    const pipelineDeals = companyDeals.filter(deal => 
+      deal.status !== 'closed' && deal.status !== 'lost' && deal.expectedAnnualRevenueRange
+    );
+    
+    let totalLow = 0;
+    let totalHigh = 0;
+    
+    pipelineDeals.forEach(deal => {
+      const range = deal.expectedAnnualRevenueRange;
+      if (range && typeof range === 'string') {
+        // Parse range like "$87,360 - $218,400"
+        const match = range.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/);
+        if (match) {
+          const low = parseInt(match[1].replace(/,/g, ''));
+          const high = parseInt(match[2].replace(/,/g, ''));
+          totalLow += low;
+          totalHigh += high;
+        }
+      }
+    });
+    
+    return { totalLow, totalHigh, dealCount: pipelineDeals.length };
+  };
+
+  // Get closed deal value for a company (from stored hierarchical data or calculate on demand)
+  const getCompanyClosedValue = (company: any) => {
+    // Use stored hierarchical values if available
+    if (company.closedValue) {
+      return {
+        totalValue: company.closedValue.total || 0,
+        dealCount: company.closedValue.dealCount || 0
+      };
+    }
+    
+    // Fallback to calculation if stored values not available
+    const companyDeals = getCompanyDeals(company.id);
+    const closedDeals = companyDeals.filter(deal => 
+      deal.status === 'closed' && deal.expectedAnnualRevenueRange
+    );
+    
+    let totalValue = 0;
+    
+    closedDeals.forEach(deal => {
+      const range = deal.expectedAnnualRevenueRange;
+      if (range && typeof range === 'string') {
+        // Parse range like "$87,360 - $218,400" and use the average
+        const match = range.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/);
+        if (match) {
+          const low = parseInt(match[1].replace(/,/g, ''));
+          const high = parseInt(match[2].replace(/,/g, ''));
+          totalValue += (low + high) / 2; // Use average of range
+        }
+      }
+    });
+    
+    return { totalValue, dealCount: closedDeals.length };
+  };
+
+  // Get division breakdown for a company
+  const getCompanyDivisionBreakdown = (company: any) => {
+    if (!company.divisionTotals) return null;
+    
+    return Object.entries(company.divisionTotals).map(([divisionName, division]: [string, any]) => ({
+      name: divisionName,
+      pipeline: {
+        low: division.pipelineValue.low || 0,
+        high: division.pipelineValue.high || 0,
+        dealCount: division.pipelineValue.dealCount || 0
+      },
+      closed: {
+        total: division.closedValue.total || 0,
+        dealCount: division.closedValue.dealCount || 0
+      },
+      locationCount: division.locations?.length || 0
+    }));
+  };
+
+  // Format currency for display
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
   };
 
   return (
@@ -2470,40 +2898,18 @@ const CompaniesTab: React.FC<{
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox">
-                <Checkbox
-                  checked={selectedCompanies.length === filteredCompanies.length}
-                  indeterminate={selectedCompanies.length > 0 && selectedCompanies.length < filteredCompanies.length}
-                  onChange={() => {
-                    if (selectedCompanies.length === filteredCompanies.length) {
-                      setSelectedCompanies([]);
-                    } else {
-                      setSelectedCompanies(filteredCompanies.map(c => c.id));
-                    }
-                  }}
-                />
-              </TableCell>
               <TableCell>Company Name</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell>Industry</TableCell>
-              <TableCell>Tier</TableCell>
               <TableCell>Contacts</TableCell>
               <TableCell>Deals</TableCell>
-              <TableCell>Tags</TableCell>
+              <TableCell>Pipeline Value</TableCell>
+              <TableCell>Closed Value</TableCell>
               <TableCell>Account Owner</TableCell>
-              <TableCell>Source</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredCompanies.map((company) => (
               <TableRow key={company.id} hover>
-                <TableCell padding="checkbox">
-                  <Checkbox
-                    checked={selectedCompanies.includes(company.id)}
-                    onChange={() => handleCompanySelection(company.id)}
-                  />
-                </TableCell>
                 <TableCell>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <BusinessIcon color="primary" />
@@ -2511,25 +2917,6 @@ const CompaniesTab: React.FC<{
                       {company.companyName}
                     </Typography>
                   </Box>
-                </TableCell>
-                <TableCell>
-                  <Chip 
-                    label={company.status} 
-                    size="small" 
-                    color={
-                      company.status === 'active' ? 'success' : 
-                      company.status === 'lead' ? 'primary' : 
-                      company.status === 'lost' ? 'error' : 'default'
-                    }
-                  />
-                </TableCell>
-                <TableCell>{company.industry}</TableCell>
-                <TableCell>
-                  <Chip 
-                    label={company.tier} 
-                    size="small" 
-                    color={company.tier === 'A' ? 'primary' : company.tier === 'B' ? 'secondary' : 'default'}
-                  />
                 </TableCell>
                 <TableCell>
                   <Badge badgeContent={getCompanyContacts(company.id).length} color="primary">
@@ -2542,26 +2929,122 @@ const CompaniesTab: React.FC<{
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                    {company.tags?.slice(0, 2).map((tag: string, index: number) => (
-                      <Chip key={index} label={tag} size="small" />
-                    ))}
-                    {company.tags?.length > 2 && (
-                      <Chip label={`+${company.tags.length - 2}`} size="small" variant="outlined" />
-                    )}
-                  </Box>
+                  {(() => {
+                    const pipeline = getCompanyPipelineValue(company);
+                    if (pipeline.dealCount === 0) {
+                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                    }
+                    return (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {formatCurrency(pipeline.totalLow)} - {formatCurrency(pipeline.totalHigh)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {pipeline.dealCount} deal{pipeline.dealCount !== 1 ? 's' : ''}
+                        </Typography>
+                      </Box>
+                    );
+                  })()}
                 </TableCell>
-                <TableCell>{company.accountOwner}</TableCell>
-                <TableCell>{company.source}</TableCell>
                 <TableCell>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => handleViewCompany(company)}
-                    sx={{ minWidth: 'auto', px: 1 }}
-                  >
-                    View
-                  </Button>
+                  {(() => {
+                    const closed = getCompanyClosedValue(company);
+                    if (closed.dealCount === 0) {
+                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                    }
+                    return (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Typography variant="body2" fontWeight="medium" color="success.main">
+                          {formatCurrency(closed.totalValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {closed.dealCount} deal{closed.dealCount !== 1 ? 's' : ''}
+                        </Typography>
+                      </Box>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    // Get associated salespeople for this company using the associations system
+                    const salespeople = new Set<string>();
+                    
+                    // Check if company has associations data
+                    if (company.associations && company.associations.salespeople) {
+                      // If associations are already loaded in the company object
+                      company.associations.salespeople.forEach((salesperson: any) => {
+                        if (salesperson.name) {
+                          salespeople.add(salesperson.name);
+                        } else if (typeof salesperson === 'string') {
+                          salespeople.add(getSalespersonName(salesperson));
+                        }
+                      });
+                    }
+                    
+                    // Also check for legacy fields
+                    if (company.salesOwnerId) {
+                      salespeople.add(getSalespersonName(company.salesOwnerId));
+                    }
+                    if (company.accountOwnerId) {
+                      salespeople.add(getSalespersonName(company.accountOwnerId));
+                    }
+                    if (company.salesOwnerName) {
+                      salespeople.add(company.salesOwnerName);
+                    }
+                    if (company.accountOwner) {
+                      salespeople.add(company.accountOwner);
+                    }
+                    
+                    // Check deals for additional salespeople
+                    const companyDeals = getCompanyDeals(company.id);
+                    companyDeals.forEach(deal => {
+                      if (deal.owner) {
+                        salespeople.add(getSalespersonName(deal.owner));
+                      }
+                    });
+                    
+                    const salespeopleList = Array.from(salespeople);
+                    
+                    if (salespeopleList.length === 0) {
+                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                    }
+                    
+                    return (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        {salespeopleList.slice(0, 2).map((salesperson, index) => (
+                          <Typography key={index} variant="body2" fontWeight="medium">
+                            {salesperson}
+                          </Typography>
+                        ))}
+                        {salespeopleList.length > 2 && (
+                          <Typography variant="caption" color="text.secondary">
+                            +{salespeopleList.length - 2} more
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => handleViewCompany(company)}
+                      sx={{ minWidth: 'auto', px: 1 }}
+                    >
+                      View
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="secondary"
+                      onClick={() => onUpdatePipelineTotals(company.id)}
+                      sx={{ minWidth: 'auto', px: 1 }}
+                    >
+                      Update Totals
+                    </Button>
+                  </Box>
                 </TableCell>
               </TableRow>
             ))}
@@ -2700,9 +3183,12 @@ const CompaniesTab: React.FC<{
 };
 
 // Deals Tab Component
-const DealsTab: React.FC<{
+  const DealsTab: React.FC<{
   deals: any[];
-  companies: any[];
+  allDeals: any[];
+    companies: any[];
+    allCompanies: any[];
+    loadingAllCompanies: boolean;
   contacts: any[];
   pipelineStages: any[];
   search: string;
@@ -2710,57 +3196,366 @@ const DealsTab: React.FC<{
   onAddNew: () => void;
   dealFilter: 'all' | 'my';
   onDealFilterChange: (newFilter: 'all' | 'my') => void;
-}> = ({ deals, companies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange }) => {
+  currentUser: any;
+  salesTeam: any[];
+  tenantId: string;
+  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId }) => {
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
-  const [selectedDeals, setSelectedDeals] = useState<string[]>([]);
   const [showDealDialog, setShowDealDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any>(null);
   const [dealForm, setDealForm] = useState({
     name: '',
-    value: '',
+    estimatedRevenue: '',
     stage: '',
     companyId: '',
     contactIds: [] as string[],
     description: '',
-    expectedCloseDate: '',
+    closeDate: '',
     probability: 50,
     tags: [] as string[],
     owner: '',
   });
 
   const [showDealWizard, setShowDealWizard] = useState(false);
+  
+  // New opportunity dialog state
+  const [showNewOpportunityDialog, setShowNewOpportunityDialog] = useState(false);
+  const [newOpportunityForm, setNewOpportunityForm] = useState({
+    name: '',
+    companyId: '',
+    divisionId: '',
+    locationId: '',
+  });
+  const [selectedCompany, setSelectedCompany] = useState<any>(null);
+  const [companyDivisions, setCompanyDivisions] = useState<any[]>([]);
+  const [companyLocations, setCompanyLocations] = useState<any[]>([]);
+  const [loadingDivisions, setLoadingDivisions] = useState(false);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  
+  // Sorting state
+  const [sortField, setSortField] = useState<string>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  
+  // Salesperson filter state
+  const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
 
-  // Calculate my deals count
-  const myDealsCount = React.useMemo(() => {
-    // Since we're now using Firestore queries, the deals prop already contains the filtered data
-    // We just need to count the deals that are currently loaded
-    return deals.length;
-  }, [deals]);
-
-  // Filter deals based on the selected filter
-  const filteredDeals = React.useMemo(() => {
-    return deals;
-  }, [deals]);
-
-  const handleDealSelection = (dealId: string) => {
-    setSelectedDeals(prev =>
-      prev.includes(dealId) 
-        ? prev.filter(id => id !== dealId) 
-        : [...prev, dealId]
-    );
+  const getDealContacts = (contactIds: string[]) => {
+    return contacts.filter(contact => contactIds.includes(contact.id));
   };
+
+  // Load company divisions when company is selected
+  const loadCompanyDivisions = async (companyId: string) => {
+    if (!companyId) {
+      setCompanyDivisions([]);
+      return;
+    }
+    
+    setLoadingDivisions(true);
+    try {
+      const divisionsRef = collection(db, `tenants/${tenantId}/crm_companies/${companyId}/divisions`);
+      const divisionsSnapshot = await getDocs(divisionsRef);
+      const divisions = divisionsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCompanyDivisions(divisions);
+    } catch (error) {
+      console.error('Error loading company divisions:', error);
+      setCompanyDivisions([]);
+    } finally {
+      setLoadingDivisions(false);
+    }
+  };
+
+  // Load company locations when company is selected
+  const loadCompanyLocations = async (companyId: string) => {
+    if (!companyId) {
+      setCompanyLocations([]);
+      return;
+    }
+    
+    setLoadingLocations(true);
+    try {
+      const locationsRef = collection(db, `tenants/${tenantId}/crm_companies/${companyId}/locations`);
+      const locationsSnapshot = await getDocs(locationsRef);
+      const locations = locationsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCompanyLocations(locations);
+    } catch (error) {
+      console.error('Error loading company locations:', error);
+      setCompanyLocations([]);
+    } finally {
+      setLoadingLocations(false);
+    }
+  };
+
+  // Handle company selection in new opportunity form
+  const handleCompanySelection = async (company: any) => {
+    setSelectedCompany(company);
+    setNewOpportunityForm(prev => ({ ...prev, companyId: company.id }));
+    
+    // Load divisions and locations for the selected company
+    await Promise.all([
+      loadCompanyDivisions(company.id),
+      loadCompanyLocations(company.id)
+    ]);
+  };
+
+  const getDealCompanyName = (deal: any) => {
+    // First try to get company name from direct companyId reference
+    if (deal.companyId) {
+      const company = companies.find(c => c.id === deal.companyId);
+      if (company?.name) {
+        return company.name;
+      }
+    }
+
+    // Fallback to external company name
+    if (deal.externalCompanyName) {
+      return deal.externalCompanyName;
+    }
+
+    // Fallback to first company in associations
+    if (deal.associations?.companies && deal.associations.companies.length > 0) {
+      const firstCompanyId = deal.associations.companies[0];
+      const company = companies.find(c => c.id === firstCompanyId);
+      if (company?.name) {
+        return company.name;
+      }
+    }
+
+    // Final fallback
+    return '-';
+  };
+
+  const getUserDealsCount = () => {
+    // Count deals that belong to the current user
+    return allDeals.filter(deal => {
+      // Check if user is in the salespeople array
+      if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
+        return deal.associations.salespeople.some((salesperson: any) => {
+          if (typeof salesperson === 'string') {
+            return salesperson === currentUser?.uid;
+          } else if (salesperson && typeof salesperson === 'object') {
+            return salesperson.id === currentUser?.uid;
+          }
+          return false;
+        });
+      }
+      return false;
+    }).length;
+  };
+
+  const getDealOwner = (deal: any) => {
+    // Helper function to get salesperson name by ID
+    const getSalespersonName = (salespersonId: string) => {
+      const salesperson = salesTeam.find(sp => sp.id === salespersonId);
+      return salesperson?.name || salesperson?.displayName || salespersonId;
+    };
+
+    // Get all salespeople from associations
+    if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
+      const salespersonNames = deal.associations.salespeople.map((salesperson: any) => {
+        // Handle both string IDs and object format
+        if (typeof salesperson === 'string') {
+          return getSalespersonName(salesperson);
+        } else if (salesperson && typeof salesperson === 'object') {
+          // If it's an object, use the name property if available, otherwise fall back to ID lookup
+          return salesperson.name || salesperson.displayName || getSalespersonName(salesperson.id);
+        }
+        return 'Unknown';
+      });
+      return salespersonNames.join(', ');
+    }
+
+    // Fallback to salesOwnerName if available
+    if (deal.salesOwnerName) {
+      return deal.salesOwnerName;
+    }
+
+    // Fallback to salespeopleNames array if available
+    if (deal.salespeopleNames && deal.salespeopleNames.length > 0) {
+      return deal.salespeopleNames.join(', ');
+    }
+
+    // Final fallback
+    return '-';
+  };
+
+  const getDealCloseDate = (deal: any) => {
+    // First try to get the expected close date from qualification stage data
+    if (deal.stageData?.qualification?.expectedCloseDate) {
+      return new Date(deal.stageData.qualification.expectedCloseDate).toLocaleDateString();
+    }
+    
+    // Fallback to regular closeDate if no qualification date
+    if (deal.closeDate) {
+      return new Date(deal.closeDate).toLocaleDateString();
+    }
+    
+    return '-';
+  };
+
+  const getDealEstimatedValue = (deal: any) => {
+    // Debug logging to see what data we have
+    console.log('Deal estimated value debug:', {
+      dealId: deal.id,
+      dealName: deal.name,
+      hasStageData: !!deal.stageData,
+      hasQualification: !!deal.stageData?.qualification,
+      qualificationData: deal.stageData?.qualification,
+      estimatedRevenue: deal.estimatedRevenue
+    });
+
+    // Check if we have qualification stage data
+    if (deal.stageData?.qualification) {
+      const qualData = deal.stageData.qualification;
+      const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
+      const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
+      const timeline = qualData.staffPlacementTimeline;
+
+      console.log('Qualification data found:', {
+        payRate,
+        markup,
+        timeline,
+        hasTimeline: !!timeline
+      });
+
+      if (timeline) {
+        // Calculate bill rate: pay rate + markup
+        const billRate = payRate * (1 + markup / 100);
+        
+        // Annual hours per employee (2080 full-time hours)
+        const annualHoursPerEmployee = 2080;
+        
+        // Calculate annual revenue per employee
+        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+        
+        // Get starting and 180-day numbers
+        const startingCount = timeline.starting || 0;
+        const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+        
+        console.log('Timeline data:', {
+          startingCount,
+          after180DaysCount,
+          billRate,
+          annualRevenuePerEmployee
+        });
+        
+        if (startingCount > 0 || after180DaysCount > 0) {
+          // Calculate revenue range
+          const minRevenue = annualRevenuePerEmployee * startingCount;
+          const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+          
+          const result = `$${minRevenue.toLocaleString()} - $${maxRevenue.toLocaleString()}`;
+          console.log('Calculated range:', result);
+          return result;
+        }
+      }
+    }
+    
+    // Fallback to estimatedRevenue if qualification data is not available
+    if (deal.estimatedRevenue) {
+      console.log('Using fallback estimatedRevenue:', deal.estimatedRevenue);
+      return `$${Number(deal.estimatedRevenue).toLocaleString()}`;
+    }
+    
+    console.log('No data available, returning "-"');
+    return '-';
+  };
+
+  // Handle sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Get sortable value for a deal and field
+  const getSortableValue = (deal: any, field: string) => {
+    switch (field) {
+      case 'name':
+        return deal.name?.toLowerCase() || '';
+      case 'company':
+        return getDealCompanyName(deal)?.toLowerCase() || '';
+      case 'stage':
+        return deal.stage?.toLowerCase() || '';
+      case 'value': {
+        const valueStr = getDealEstimatedValue(deal);
+        // Extract numeric value for sorting (remove $ and commas)
+        const numericValue = valueStr.replace(/[$,]/g, '').replace(/\s*-\s*.*/, '');
+        return parseFloat(numericValue) || 0;
+      }
+      case 'closeDate': {
+        const closeDate = getDealCloseDate(deal);
+        return closeDate === '-' ? new Date(0) : new Date(closeDate);
+      }
+      case 'owner':
+        return getDealOwner(deal)?.toLowerCase() || '';
+      default:
+        return '';
+    }
+  };
+
+  // Filter and sort deals
+  const filteredDeals = React.useMemo(() => {
+    let filtered = deals;
+    
+    // Apply salesperson filter
+    if (selectedSalesperson !== 'all') {
+      filtered = filtered.filter(deal => {
+        if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
+          return deal.associations.salespeople.includes(selectedSalesperson);
+        }
+        return false;
+      });
+    }
+    
+    // Apply search filter if search term exists
+    if (search.trim()) {
+      const searchLower = search.toLowerCase().trim();
+      filtered = filtered.filter(deal => {
+        // Search in deal name
+        const dealNameMatch = deal.name?.toLowerCase().includes(searchLower);
+        
+        // Search in company name
+        const companyName = getDealCompanyName(deal);
+        const companyNameMatch = companyName?.toLowerCase().includes(searchLower);
+        
+        return dealNameMatch || companyNameMatch;
+      });
+    }
+    
+    // Sort the filtered deals
+    filtered.sort((a, b) => {
+      const aValue = getSortableValue(a, sortField);
+      const bValue = getSortableValue(b, sortField);
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    return filtered;
+  }, [deals, search, sortField, sortDirection, selectedSalesperson]);
+
+
 
   const handleEditDeal = (deal: any) => {
     setEditingDeal(deal);
     setDealForm({
       name: deal.name || '',
-      value: deal.value || '',
+      estimatedRevenue: deal.estimatedRevenue || '',
       stage: deal.stage || '',
       companyId: deal.companyId || '',
       contactIds: deal.contactIds || [],
       description: deal.description || '',
-      expectedCloseDate: deal.expectedCloseDate || '',
+      closeDate: deal.closeDate || '',
       probability: deal.probability || 50,
       tags: deal.tags || [],
       owner: deal.owner || '',
@@ -2774,8 +3569,52 @@ const DealsTab: React.FC<{
     setEditingDeal(null);
   };
 
-  const getDealContacts = (contactIds: string[]) => {
-    return contacts.filter(contact => contactIds.includes(contact.id));
+  // Handle creating new opportunity
+  const handleCreateNewOpportunity = async () => {
+    if (!newOpportunityForm.name || !newOpportunityForm.companyId) {
+      return; // Basic validation
+    }
+
+    try {
+      // Create the new opportunity
+      const opportunityData = {
+        name: newOpportunityForm.name,
+        companyId: newOpportunityForm.companyId,
+        stage: 'qualification', // Default stage
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        associations: {
+          companies: [newOpportunityForm.companyId],
+          salespeople: [currentUser?.uid],
+          divisions: newOpportunityForm.divisionId ? [newOpportunityForm.divisionId] : [],
+          locations: newOpportunityForm.locationId ? [newOpportunityForm.locationId] : [],
+        },
+        // Add division and location data if selected
+        ...(newOpportunityForm.divisionId && { divisionId: newOpportunityForm.divisionId }),
+        ...(newOpportunityForm.locationId && { locationId: newOpportunityForm.locationId }),
+      };
+
+      const opportunitiesRef = collection(db, `tenants/${tenantId}/crm_deals`);
+      const docRef = await addDoc(opportunitiesRef, opportunityData);
+
+      // Close dialog and reset form
+      setShowNewOpportunityDialog(false);
+      setNewOpportunityForm({
+        name: '',
+        companyId: '',
+        divisionId: '',
+        locationId: '',
+      });
+      setSelectedCompany(null);
+      setCompanyDivisions([]);
+      setCompanyLocations([]);
+
+      // Navigate to the new opportunity details
+      navigate(`/crm/deals/${docRef.id}`);
+    } catch (error) {
+      console.error('Error creating new opportunity:', error);
+      // You might want to show an error message to the user
+    }
   };
 
   return (
@@ -2797,12 +3636,29 @@ const DealsTab: React.FC<{
             sx={{ mr: 2 }}
           >
             <ToggleButton value="all">
-              All Opportunities
+              All Opportunities ({allDeals.length})
             </ToggleButton>
             <ToggleButton value="my">
-              My Opportunities ({myDealsCount})
+              My Opportunities ({getUserDealsCount()})
             </ToggleButton>
           </ToggleButtonGroup>
+          
+          {/* Salesperson Filter */}
+          <FormControl size="small" sx={{ minWidth: 200, mr: 2 }}>
+            <InputLabel>Salesperson</InputLabel>
+            <Select
+              value={selectedSalesperson}
+              onChange={(e) => setSelectedSalesperson(e.target.value)}
+              label="Salesperson"
+            >
+              <MenuItem value="all">All Salespeople</MenuItem>
+              {salesTeam.map((salesperson) => (
+                <MenuItem key={salesperson.id} value={salesperson.id}>
+                  {salesperson.name || salesperson.displayName || salesperson.id}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           
           <TextField
             placeholder="Search opportunities..."
@@ -2822,7 +3678,7 @@ const DealsTab: React.FC<{
             variant="contained"
             color="primary"
             startIcon={<AddIcon />}
-            onClick={onAddNew}
+            onClick={() => setShowNewOpportunityDialog(true)}
           >
             Add New Opportunity
           </Button>
@@ -2834,49 +3690,73 @@ const DealsTab: React.FC<{
         <Table sx={{ minWidth: 1400 }}>
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" sx={{ width: 50 }}>
-                <Checkbox
-                  checked={selectedDeals.length === filteredDeals.length}
-                  indeterminate={selectedDeals.length > 0 && selectedDeals.length < filteredDeals.length}
-                  onChange={() => {
-                    if (selectedDeals.length === filteredDeals.length) {
-                      setSelectedDeals([]);
-                    } else {
-                      setSelectedDeals(filteredDeals.map(d => d.id));
-                    }
-                  }}
-                />
+              <TableCell sx={{ width: 250 }}>
+                <TableSortLabel
+                  active={sortField === 'name'}
+                  direction={sortField === 'name' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('name')}
+                >
+                  Deal Name
+                </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 250 }}>Deal Name</TableCell>
-              <TableCell sx={{ width: 150 }}>Company</TableCell>
-              <TableCell sx={{ width: 120 }}>Stage</TableCell>
-              <TableCell sx={{ width: 120 }}>Value</TableCell>
-              <TableCell sx={{ width: 120 }}>Probability</TableCell>
-              <TableCell sx={{ width: 120 }}>Close Date</TableCell>
-              <TableCell sx={{ width: 100 }}>Owner</TableCell>
-              <TableCell sx={{ width: 100 }}>Contacts</TableCell>
+              <TableCell sx={{ width: 150 }}>
+                <TableSortLabel
+                  active={sortField === 'company'}
+                  direction={sortField === 'company' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('company')}
+                >
+                  Company
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ width: 120 }}>
+                <TableSortLabel
+                  active={sortField === 'stage'}
+                  direction={sortField === 'stage' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('stage')}
+                >
+                  Stage
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ width: 120 }}>
+                <TableSortLabel
+                  active={sortField === 'value'}
+                  direction={sortField === 'value' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('value')}
+                >
+                  Value
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ width: 120 }}>
+                <TableSortLabel
+                  active={sortField === 'closeDate'}
+                  direction={sortField === 'closeDate' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('closeDate')}
+                >
+                  Close Date
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ width: 100 }}>
+                <TableSortLabel
+                  active={sortField === 'owner'}
+                  direction={sortField === 'owner' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('owner')}
+                >
+                  Owner
+                </TableSortLabel>
+              </TableCell>
               <TableCell sx={{ width: 150 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredDeals.map((deal) => (
               <TableRow key={deal.id} hover>
-                <TableCell padding="checkbox">
-                  <Checkbox
-                    checked={selectedDeals.includes(deal.id)}
-                    onChange={() => handleDealSelection(deal.id)}
-                  />
+                <TableCell>
+                  <Typography variant="body2" fontWeight="medium">
+                    {deal.name}
+                  </Typography>
                 </TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DealIcon color="primary" />
-                    <Typography variant="body2" fontWeight="medium">
-                      {deal.name}
-                    </Typography>
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  {companies.find(c => c.id === deal.companyId)?.name || '-'}
+                  {getDealCompanyName(deal)}
                 </TableCell>
                 <TableCell>
                   <StageChip 
@@ -2887,31 +3767,11 @@ const DealsTab: React.FC<{
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2" fontWeight="medium">
-                    ${deal.value ? Number(deal.value).toLocaleString() : '0'}
+                    {getDealEstimatedValue(deal)}
                   </Typography>
                 </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="body2">{deal.probability}%</Typography>
-                    <Box sx={{ width: 50, height: 4, bgcolor: 'grey.200', borderRadius: 2 }}>
-                      <Box 
-                        sx={{ 
-                          width: `${deal.probability}%`, 
-                          height: '100%', 
-                          bgcolor: 'primary.main', 
-                          borderRadius: 2 
-                        }} 
-                      />
-                    </Box>
-                  </Box>
-                </TableCell>
-                <TableCell>{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString() : '-'}</TableCell>
-                <TableCell>{deal.owner || '-'}</TableCell>
-                <TableCell>
-                  <Badge badgeContent={getDealContacts(deal.contactIds || []).length} color="primary">
-                    <PersonIcon />
-                  </Badge>
-                </TableCell>
+                <TableCell>{getDealCloseDate(deal)}</TableCell>
+                <TableCell>{getDealOwner(deal)}</TableCell>
                 <TableCell>
                   <Button
                     size="small"
@@ -2979,10 +3839,10 @@ const DealsTab: React.FC<{
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Value"
+                label="Estimated Revenue"
                 type="number"
-                value={dealForm.value}
-                onChange={(e) => setDealForm(prev => ({ ...prev, value: e.target.value }))}
+                value={dealForm.estimatedRevenue}
+                onChange={(e) => setDealForm(prev => ({ ...prev, estimatedRevenue: e.target.value }))}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -2998,17 +3858,17 @@ const DealsTab: React.FC<{
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Expected Close Date"
+                label="Estimated Close Date"
                 type="date"
-                value={dealForm.expectedCloseDate}
-                onChange={(e) => setDealForm(prev => ({ ...prev, expectedCloseDate: e.target.value }))}
+                value={dealForm.closeDate}
+                onChange={(e) => setDealForm(prev => ({ ...prev, closeDate: e.target.value }))}
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Owner"
+                label="Salesperson"
                 value={dealForm.owner}
                 onChange={(e) => setDealForm(prev => ({ ...prev, owner: e.target.value }))}
               />
@@ -3051,6 +3911,98 @@ const DealsTab: React.FC<{
           // Optionally refresh deals or navigate to the new deal
         }}
       />
+
+      {/* New Opportunity Dialog */}
+      <Dialog open={showNewOpportunityDialog} onClose={() => setShowNewOpportunityDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Create New Opportunity</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Opportunity Name"
+                value={newOpportunityForm.name}
+                onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, name: e.target.value }))}
+                required
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                options={allCompanies}
+                getOptionLabel={(option) => option.companyName || option.name || ''}
+                value={selectedCompany}
+                onChange={(event, newValue) => {
+                  setSelectedCompany(newValue);
+                  if (newValue) {
+                    handleCompanySelection(newValue);
+                  } else {
+                    setNewOpportunityForm(prev => ({ ...prev, companyId: '' }));
+                    setCompanyDivisions([]);
+                    setCompanyLocations([]);
+                  }
+                }}
+                loading={loadingAllCompanies}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Company"
+                    required
+                  />
+                )}
+              />
+            </Grid>
+            {companyDivisions.length > 0 && (
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Company Division (Optional)</InputLabel>
+                  <Select
+                    value={newOpportunityForm.divisionId}
+                    onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, divisionId: e.target.value }))}
+                    label="Company Division (Optional)"
+                  >
+                    <MenuItem value="">Skip Division</MenuItem>
+                    {companyDivisions.map((division) => (
+                      <MenuItem key={division.id} value={division.id}>
+                        {division.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+            {companyLocations.length > 0 && (
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Company Location (Optional)</InputLabel>
+                  <Select
+                    value={newOpportunityForm.locationId}
+                    onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, locationId: e.target.value }))}
+                    label="Company Location (Optional)"
+                  >
+                    <MenuItem value="">Skip Location</MenuItem>
+                    {companyLocations.map((location) => (
+                      <MenuItem key={location.id} value={location.id}>
+                        {location.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowNewOpportunityDialog(false)}>Cancel</Button>
+          <Button 
+            onClick={handleCreateNewOpportunity} 
+            variant="contained"
+            disabled={!newOpportunityForm.name || !newOpportunityForm.companyId}
+          >
+            Create Opportunity
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
@@ -3063,6 +4015,9 @@ const PipelineTab: React.FC<{
   filters: any;
   onFiltersChange: (filters: any) => void;
 }> = ({ deals, companies, pipelineStages, filters, onFiltersChange }) => {
+  const [selectedStage, setSelectedStage] = React.useState<string | undefined>();
+  const [filteredDeals, setFilteredDeals] = React.useState<any[]>(deals);
+
   const getDealsByStage = (stageName: string) => {
     return deals.filter(deal => deal.stage === stageName);
   };
@@ -3071,11 +4026,41 @@ const PipelineTab: React.FC<{
     return stageDeals.reduce((sum, deal) => sum + (Number(deal.estimatedRevenue) || 0), 0);
   };
 
+  // Handle stage selection from funnel
+  const handleStageClick = (stage: string) => {
+    if (selectedStage === stage) {
+      setSelectedStage(undefined);
+      setFilteredDeals(deals);
+    } else {
+      setSelectedStage(stage);
+      setFilteredDeals(deals.filter(deal => deal.stage === stage));
+    }
+  };
+
+  // Update filtered deals when deals change
+  React.useEffect(() => {
+    if (selectedStage) {
+      setFilteredDeals(deals.filter(deal => deal.stage === selectedStage));
+    } else {
+      setFilteredDeals(deals);
+    }
+  }, [deals, selectedStage]);
+
   return (
     <Box>
       {/* Header with filters */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Sales Pipeline</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <Typography variant="h6">Sales Pipeline</Typography>
+          {selectedStage && (
+            <Chip 
+              label={`Filtered: ${selectedStage.charAt(0).toUpperCase() + selectedStage.slice(1).replace(/([A-Z])/g, ' $1')}`}
+              color="primary"
+              onDelete={() => handleStageClick(selectedStage)}
+              size="small"
+            />
+          )}
+        </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <FormControl size="small" sx={{ minWidth: 120 }}>
             <InputLabel>Owner</InputLabel>
@@ -3102,6 +4087,15 @@ const PipelineTab: React.FC<{
             </Select>
           </FormControl>
         </Box>
+      </Box>
+
+      {/* Pipeline Funnel */}
+      <Box sx={{ mb: 3 }}>
+        <PipelineFunnel 
+          deals={deals}
+          onStageClick={handleStageClick}
+          selectedStage={selectedStage}
+        />
       </Box>
 
       {/* Pipeline Board */}
@@ -3308,10 +4302,10 @@ const SettingsTab: React.FC<{
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>CRM Settings</Typography>
+      {/* <Typography variant="h6" gutterBottom>CRM Settings</Typography> */}
       
       {/* Pipeline Stages */}
-      <Card sx={{ mb: 3 }}>
+      {/* <Card sx={{ mb: 3 }}>
         <CardHeader 
           title="Pipeline Stages" 
           action={
@@ -3354,10 +4348,10 @@ const SettingsTab: React.FC<{
             </Table>
           </TableContainer>
         </CardContent>
-      </Card>
+      </Card> */}
 
       {/* Other Settings */}
-      <Grid container spacing={3}>
+      {/* <Grid container spacing={3}>
         <Grid item xs={12} md={6}>
           <Card>
             <CardHeader title="Contact Roles" />
@@ -3390,12 +4384,12 @@ const SettingsTab: React.FC<{
             </CardContent>
           </Card>
         </Grid>
-      </Grid>
+      </Grid> */}
 
-      {/* Gmail Integration Settings */}
-      <Box sx={{ mt: 4 }}>
-        <GmailSettings tenantId={tenantId} />
-      </Box>
+              {/* Google Integration Settings */}
+        <Box sx={{ mt: 2 }}>
+          <GoogleIntegration tenantId={tenantId} />
+        </Box>
 
       {/* Stage Dialog */}
       <Dialog open={showStageDialog} onClose={() => setShowStageDialog(false)} maxWidth="sm" fullWidth>

@@ -15,19 +15,14 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Chip,
-  Slider,
-  Divider,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../../../components/LoggableField';
+
+import { db } from '../../../../firebase';
+import { LoggableSlider, LoggableTextField, LoggableSelect } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
 
 interface Moment {

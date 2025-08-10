@@ -17,7 +17,6 @@ import {
   MenuItem,
   Chip,
   Alert,
-  Divider,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -34,7 +33,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Autocomplete,
   List,
   ListItem,
   ListItemText,
@@ -51,7 +49,6 @@ import {
   Settings as SettingsIcon,
   Security as SecurityIcon,
   Sync as SyncIcon,
-  CloudUpload as CloudUploadIcon,
   Chat as ChatIcon,
   Science as ScienceIcon,
   Download as DownloadIcon,
@@ -59,16 +56,11 @@ import {
   Key as KeyIcon,
   Group as GroupIcon,
   Person as PersonIcon,
-  Business as BusinessIcon,
-  Email as EmailIcon,
-  Mail as MailIcon,
-  Send as SendIcon,
-  Drafts as DraftsIcon,
-  Archive as ArchiveIcon,
-  Label as LabelIcon
+  Business as BusinessIcon
 } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { useAuth } from '../../contexts/AuthContext';
 
 interface IntegrationsTabProps {
   tenantId: string;

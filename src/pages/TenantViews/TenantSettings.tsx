@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
+
 import { useAuth } from '../../contexts/AuthContext';
-import SettingsTab from '../AgencyProfile/components/SettingsTab';
 import LocationsTab from '../AgencyProfile/components/LocationsTab';
 import DivisionsTab from '../AgencyProfile/components/DivisionsTab';
 import RegionsTab from '../AgencyProfile/components/RegionsTab';
 import DivisionTypesTab from '../AgencyProfile/components/DivisionTypesTab';
 import DepartmentsTab from '../AgencyProfile/components/DepartmentsTab';
+
 import OrgChartTab from './OrgChartTab';
 import BrandingTab from './BrandingTab';
 

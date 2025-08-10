@@ -4,9 +4,7 @@ import {
   Typography,
   TextField,
   Button,
-  Card,
   CardContent,
-  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -35,16 +33,16 @@ import {
   AttachFile as AttachFileIcon,
   Visibility as ViewIcon,
   Delete as DeleteIcon,
-  Edit as EditIcon,
   Note as NoteIcon,
-  Upload as UploadIcon,
   Person as PersonIcon,
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
-import { db } from '../../../firebase';
-import { doc, collection, addDoc, getDocs, query, orderBy, where, updateDoc, deleteDoc } from 'firebase/firestore';
-import { useAuth } from '../../../contexts/AuthContext';
+import { doc, collection, addDoc, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../../firebase';
+import { useAuth } from '../../../contexts/AuthContext';
+
 
 interface Note {
   id: string;

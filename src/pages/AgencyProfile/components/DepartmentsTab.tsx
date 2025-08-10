@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -29,11 +29,13 @@ import {
   Chip,
   Autocomplete,
 } from '@mui/material';
-import { collection, addDoc, getDocs, query, where, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { collection, addDoc, getDocs, query, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../../contexts/AuthContext';
 import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
+
+import { db } from '../../../firebase';
+import { useAuth } from '../../../contexts/AuthContext';
+
 
 // Department type options
 const departmentTypeOptions = [

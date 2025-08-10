@@ -23,10 +23,6 @@ import {
   TableRow,
   LinearProgress,
   CircularProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
   TextField,
   FormControl,
   InputLabel,
@@ -36,37 +32,28 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemIcon,
-  Badge,
   Tooltip,
-  Switch,
-  FormControlLabel,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
   Storage as StorageIcon,
   Speed as SpeedIcon,
-  Memory as MemoryIcon,
   ArrowBack as ArrowBackIcon,
   PlayArrow as PlayArrowIcon,
   Stop as StopIcon,
-  ExpandMore as ExpandMoreIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
   Search as SearchIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
   Archive as ArchiveIcon,
-  Tag as TagIcon,
   Score as ScoreIcon,
   Visibility as VisibilityIcon,
-  Settings as SettingsIcon,
   DataUsage as DataUsageIcon,
-  Timeline as TimelineIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 
 interface VectorCollection {

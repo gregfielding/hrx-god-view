@@ -15,17 +15,10 @@ import {
   FormControlLabel,
   Snackbar,
   Alert,
-  Card,
-  CardContent,
   Chip,
-  Divider,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -33,7 +26,6 @@ import {
   Slider,
   Tabs,
   Tab,
-  Badge,
   Table,
   TableBody,
   TableCell,
@@ -41,8 +33,6 @@ import {
   TableHead,
   TableRow,
   Avatar,
-  Tooltip,
-  Fab,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import EditIcon from '@mui/icons-material/Edit';
@@ -51,16 +41,14 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VisibilityIcon from '@mui/icons-material/Visibility';
-import AnalyticsIcon from '@mui/icons-material/Analytics';
 import CakeIcon from '@mui/icons-material/Cake';
 import SendIcon from '@mui/icons-material/Send';
-import CardGiftcardIcon from '@mui/icons-material/CardGiftcard';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../firebase';
 
 interface EligibilityRule {
   type:

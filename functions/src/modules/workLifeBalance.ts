@@ -1071,7 +1071,7 @@ async function checkForBalanceAlerts(userId: string, checkIn: BalanceCheckIn): P
       id: alertId,
       userId,
       customerId: checkIn.customerId,
-      agencyId: checkIn.agencyId,
+      ...(checkIn.agencyId ? { agencyId: checkIn.agencyId } : {}),
       ...alert,
       acknowledged: false,
       createdAt: new Date()

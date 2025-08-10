@@ -1,17 +1,10 @@
 import { geocodeAddress } from './geocodeAddress';
 
-interface ParsedAddress {
-  streetAddress: string;
-  unit?: string;
-  city: string;
-  state: string;
-  zip: string;
-  country: string;
-}
+// Removed unused ParsedAddress interface
 
 export function parseAddress(address: string): { streetAddress: string; unit?: string } {
   if (!address || typeof address !== 'string') {
-    return { streetAddress: '', unit: undefined };
+    return { streetAddress: '' };
   }
 
   const addressLower = address.toLowerCase().trim();
@@ -70,10 +63,7 @@ export function parseAddress(address: string): { streetAddress: string; unit?: s
     }
   }
 
-  return {
-    streetAddress: cleanAddress,
-    unit: unit
-  };
+  return unit ? { streetAddress: cleanAddress, unit } : { streetAddress: cleanAddress };
 }
 
 export async function validateAndGeocodeAddress(
@@ -135,9 +125,14 @@ export async function processCompanyAddress(company: any): Promise<{
     unit
   );
 
-  return {
-    streetAddress,
-    unit,
-    coordinates: coordinates || undefined
+  const result: { streetAddress: string; unit?: string; coordinates?: { lat: number; lng: number } } = {
+    streetAddress
   };
+  if (unit) {
+    result.unit = unit;
+  }
+  if (coordinates) {
+    result.coordinates = coordinates;
+  }
+  return result;
 } 

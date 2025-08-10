@@ -12,21 +12,21 @@ import {
   MenuItem,
   Box,
   Typography,
-  Chip,
   ToggleButton,
   ToggleButtonGroup,
   Grid,
   FormControlLabel,
   Switch,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Chip
 } from '@mui/material';
 import {
   Assignment as AssignmentIcon,
   Schedule as ScheduleIcon,
-  CheckCircle as CheckCircleIcon,
-  AutoAwesome as AutoAwesomeIcon
+  CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
+
 import { TaskClassification } from '../types/Tasks';
 
 interface CreateTaskDialogProps {
@@ -35,6 +35,9 @@ interface CreateTaskDialogProps {
   onSubmit: (taskData: any) => void;
   prefilledData?: any;
   loading?: boolean;
+  salespeople?: any[];
+  contacts?: any[];
+  currentUserId?: string;
 }
 
 const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
@@ -42,7 +45,10 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
   onClose,
   onSubmit,
   prefilledData,
-  loading = false
+  loading = false,
+  salespeople = [],
+  contacts = [],
+  currentUserId = ''
 }) => {
   const [formData, setFormData] = useState({
     title: '',
@@ -52,16 +58,35 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
     status: 'scheduled',
     classification: 'todo' as TaskClassification, // NEW: Default to todo
     startTime: '', // NEW: For appointments
-    duration: 30, // NEW: Duration in minutes for appointments
+    duration: undefined as number | undefined,
     scheduledDate: new Date().toISOString().split('T')[0],
     dueDate: '',
-    estimatedDuration: 30,
+    assignedTo: currentUserId,
+    estimatedDuration: 0,
     category: 'general',
     quotaCategory: 'business_generating',
     notes: '',
     tags: [] as string[],
     aiSuggested: false,
-    aiPrompt: ''
+    aiPrompt: '',
+    associations: {
+      companies: [],
+      contacts: [],
+      deals: [],
+      salespeople: []
+    },
+    // Task-type-specific fields
+    agenda: '',
+    goals: [] as string[],
+    researchTopics: [] as string[],
+    callScript: '',
+    emailTemplate: '',
+    followUpNotes: '',
+    meetingAttendees: [] as Array<{
+      email: string;
+      displayName?: string;
+      responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
+    }>
   });
 
   const [errors, setErrors] = useState<{[key: string]: string}>({});
@@ -72,20 +97,90 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
         ...formData,
         ...prefilledData,
         classification: prefilledData.classification || 'todo',
-        startTime: prefilledData.startTime || '',
-        duration: prefilledData.duration || 30
+        startTime: prefilledData.startTime || (prefilledData.classification === 'appointment' ? new Date().toISOString().slice(0, 16) : ''),
+        duration: prefilledData.classification === 'appointment' ? prefilledData.duration || undefined : undefined
       });
+      
+
     }
   }, [prefilledData]);
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const newFormData = { ...prev, [field]: value };
+      
+      // Auto-populate meeting attendees when Google Meet is selected
+      if (field === 'type' && value === 'scheduled_meeting_virtual') {
+        updateMeetingAttendees(newFormData);
+      }
+      
+      return newFormData;
+    });
     
     // Clear errors when user starts typing
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
   };
+
+  const handleAssociationChange = (type: string, value: any) => {
+    setFormData(prev => {
+      const newFormData = {
+        ...prev,
+        associations: {
+          ...prev.associations,
+          [type]: value
+        }
+      };
+      
+      // Auto-update meeting attendees when associations change and it's a Google Meet
+      if (newFormData.type === 'scheduled_meeting_virtual') {
+        updateMeetingAttendees(newFormData);
+      }
+      
+      return newFormData;
+    });
+  };
+
+  const updateMeetingAttendees = (formData: any) => {
+    const attendees = [];
+    
+    // Add company contacts from associations
+    if (formData.associations?.contacts) {
+      formData.associations.contacts.forEach((contactId: string) => {
+        const contactData = contacts.find(c => c.id === contactId);
+        if (contactData?.email) {
+          attendees.push({
+            email: contactData.email,
+            displayName: contactData.fullName || contactData.name || contactData.email,
+            responseStatus: 'needsAction' as const
+          });
+        }
+      });
+    }
+    
+    // Add assigned salespeople
+    if (formData.assignedTo) {
+      const assignedToArray = Array.isArray(formData.assignedTo) ? formData.assignedTo : [formData.assignedTo];
+      assignedToArray.forEach((salespersonId: string) => {
+        const salespersonData = salespeople.find(s => s.id === salespersonId);
+        if (salespersonData?.email && !attendees.find(a => a.email === salespersonData.email)) {
+          attendees.push({
+            email: salespersonData.email,
+            displayName: salespersonData.fullName || salespersonData.name || salespersonData.displayName || salespersonData.email,
+            responseStatus: 'needsAction' as const
+          });
+        }
+      });
+    }
+    
+    setFormData(prev => ({
+      ...prev,
+      meetingAttendees: attendees
+    }));
+  };
+
+
 
   const validateForm = () => {
     const newErrors: {[key: string]: string} = {};
@@ -110,11 +205,17 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
   const handleSubmit = () => {
     if (!validateForm()) return;
 
+    // For appointments, extract date from startTime and set scheduledDate
+    let scheduledDate = formData.scheduledDate;
+    if (formData.classification === 'appointment' && formData.startTime) {
+      scheduledDate = formData.startTime.split('T')[0];
+    }
+
     const taskData = {
       ...formData,
-      // Convert duration to number
-      duration: parseInt(formData.duration.toString()),
-      estimatedDuration: parseInt(formData.estimatedDuration.toString())
+      scheduledDate: scheduledDate,
+      duration: formData.classification === 'appointment' && formData.duration ? Number(formData.duration) : undefined,
+      estimatedDuration: Number(formData.estimatedDuration || 0)
     };
 
     onSubmit(taskData);
@@ -129,16 +230,31 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
       status: 'scheduled',
       classification: 'todo',
       startTime: '',
-      duration: 30,
+      duration: undefined,
       scheduledDate: new Date().toISOString().split('T')[0],
       dueDate: '',
-      estimatedDuration: 30,
+      assignedTo: currentUserId,
+      estimatedDuration: 0,
       category: 'general',
       quotaCategory: 'business_generating',
       notes: '',
       tags: [],
       aiSuggested: false,
-      aiPrompt: ''
+      aiPrompt: '',
+      associations: {
+        companies: [],
+        contacts: [],
+        deals: [],
+        salespeople: []
+      },
+      // Task-type-specific fields
+      agenda: '',
+      goals: [],
+      researchTopics: [],
+      callScript: '',
+      emailTemplate: '',
+      followUpNotes: '',
+      meetingAttendees: []
     });
     setErrors({});
     onClose();
@@ -226,12 +342,13 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
           </Grid>
 
           {/* Appointment-specific fields */}
+          {/* Date and Duration for Appointments */}
           {formData.classification === 'appointment' && (
             <>
-              <Grid item xs={6}>
+              <Grid item xs={8}>
                 <TextField
                   fullWidth
-                  label="Start Time"
+                  label="Date"
                   type="datetime-local"
                   value={formData.startTime}
                   onChange={(e) => handleInputChange('startTime', e.target.value)}
@@ -242,7 +359,7 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
                 />
               </Grid>
               
-              <Grid item xs={6}>
+              <Grid item xs={4}>
                 <FormControl fullWidth error={!!errors.duration}>
                   <InputLabel>Duration</InputLabel>
                   <Select
@@ -267,17 +384,19 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
             </>
           )}
 
-          {/* General fields */}
-          <Grid item xs={6}>
-            <TextField
-              fullWidth
-              label="Date"
-              type="date"
-              value={formData.scheduledDate}
-              onChange={(e) => handleInputChange('scheduledDate', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
+          {/* Date for Todos */}
+          {formData.classification === 'todo' && (
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                label="Due Date"
+                type="date"
+                value={formData.dueDate}
+                onChange={(e) => handleInputChange('dueDate', e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+          )}
 
           <Grid item xs={6}>
             <FormControl fullWidth>
@@ -305,10 +424,11 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
               >
                 <MenuItem value="email">Email</MenuItem>
                 <MenuItem value="phone_call">Phone Call</MenuItem>
-                <MenuItem value="scheduled_meeting_virtual">Virtual Meeting</MenuItem>
+                <MenuItem value="scheduled_meeting_virtual">Google Meet</MenuItem>
                 <MenuItem value="scheduled_meeting_in_person">In-Person Meeting</MenuItem>
                 <MenuItem value="research">Research</MenuItem>
                 <MenuItem value="follow_up">Follow Up</MenuItem>
+                <MenuItem value="activity">Activity</MenuItem>
                 <MenuItem value="custom">Custom</MenuItem>
               </Select>
             </FormControl>
@@ -337,46 +457,196 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
             </FormControl>
           </Grid>
 
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Notes"
-              value={formData.notes}
-              onChange={(e) => handleInputChange('notes', e.target.value)}
-              multiline
-              rows={2}
-            />
-          </Grid>
+          {/* Company Contacts */}
+          {contacts.length > 0 && (
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Company Contacts</InputLabel>
+                <Select
+                  multiple
+                  value={formData.associations?.contacts || []}
+                  onChange={(e) => handleAssociationChange('contacts', e.target.value)}
+                  label="Company Contacts"
+                  renderValue={(selected) => (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {selected.map((contactId: string) => {
+                        const contact = contacts.find(c => c.id === contactId);
+                        return (
+                          <Chip 
+                            key={contactId} 
+                            label={contact?.fullName || contact?.name || contactId} 
+                            size="small"
+                            onDelete={() => {
+                              const newContacts = (formData.associations?.contacts || []).filter(id => id !== contactId);
+                              handleAssociationChange('contacts', newContacts);
+                            }}
+                          />
+                        );
+                      })}
+                    </Box>
+                  )}
+                >
+                  {contacts.map((contact) => (
+                    <MenuItem key={contact.id} value={contact.id}>
+                      {contact.fullName || contact.name || contact.email}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+          )}
 
-          {/* AI Fields */}
-          <Grid item xs={12}>
-            <Box display="flex" alignItems="center" gap={1}>
-              <AutoAwesomeIcon color="primary" />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={formData.aiSuggested}
-                    onChange={(e) => handleInputChange('aiSuggested', e.target.checked)}
-                  />
-                }
-                label="AI Suggested"
-              />
-            </Box>
-          </Grid>
+          {/* Assigned To */}
+          {salespeople.length > 0 && (
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Assigned To</InputLabel>
+                <Select
+                  value={formData.assignedTo}
+                  onChange={(e) => handleInputChange('assignedTo', e.target.value)}
+                  label="Assigned To"
+                >
+                  {salespeople.map((salesperson) => (
+                    <MenuItem key={salesperson.id} value={salesperson.id}>
+                      {salesperson.fullName || salesperson.name || salesperson.displayName || salesperson.email}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+          )}
 
-          {formData.aiSuggested && (
+          {/* Task Type Specific Fields */}
+          {formData.type === 'scheduled_meeting_virtual' ? (
+            <>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Meeting Agenda"
+                  value={formData.agenda}
+                  onChange={(e) => handleInputChange('agenda', e.target.value)}
+                  multiline
+                  rows={3}
+                  placeholder="What will be discussed in this Google Meet?"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Meeting Goals"
+                  value={formData.goals.join(', ')}
+                  onChange={(e) => handleInputChange('goals', e.target.value.split(',').map(g => g.trim()).filter(g => g))}
+                  multiline
+                  rows={2}
+                  placeholder="What do you want to accomplish? (comma-separated)"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Meeting Attendees"
+                  value={formData.meetingAttendees?.map(a => a.email).join(', ') || ''}
+                  onChange={(e) => {
+                    const emails = e.target.value.split(',').map(email => email.trim()).filter(email => email);
+                    const attendees = emails.map(email => ({ email, displayName: '', responseStatus: 'needsAction' as const }));
+                    handleInputChange('meetingAttendees', attendees);
+                  }}
+                  multiline
+                  rows={2}
+                  placeholder="Enter email addresses separated by commas (e.g., john@company.com, jane@company.com)"
+                  helperText="Attendees will receive Google Calendar invites with the Meet link"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
+                  <Typography variant="body2" color="info.contrastText" sx={{ fontWeight: 500, mb: 1 }}>
+                    🎥 Google Meet Integration
+                  </Typography>
+                  <Typography variant="caption" color="info.contrastText">
+                    A Google Meet link will be automatically generated when this task is created. 
+                    Attendees will receive calendar invites with the meeting link.
+                  </Typography>
+                </Box>
+              </Grid>
+            </>
+          ) : formData.type === 'scheduled_meeting_in_person' ? (
+            <>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Meeting Agenda"
+                  value={formData.agenda}
+                  onChange={(e) => handleInputChange('agenda', e.target.value)}
+                  multiline
+                  rows={3}
+                  placeholder="What will be discussed in this meeting?"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Meeting Goals"
+                  value={formData.goals.join(', ')}
+                  onChange={(e) => handleInputChange('goals', e.target.value.split(',').map(g => g.trim()).filter(g => g))}
+                  multiline
+                  rows={2}
+                  placeholder="What do you want to accomplish? (comma-separated)"
+                />
+              </Grid>
+            </>
+          ) : formData.type === 'research' ? (
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="AI Prompt"
-                value={formData.aiPrompt}
-                onChange={(e) => handleInputChange('aiPrompt', e.target.value)}
+                label="Research Topics"
+                value={formData.researchTopics.join(', ')}
+                onChange={(e) => handleInputChange('researchTopics', e.target.value.split(',').map(t => t.trim()).filter(t => t))}
                 multiline
-                rows={2}
-                placeholder="What AI prompt was used to generate this task?"
+                rows={3}
+                placeholder="What are you researching? (comma-separated topics)"
               />
             </Grid>
-          )}
+          ) : formData.type === 'phone_call' ? (
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Call Script"
+                value={formData.callScript}
+                onChange={(e) => handleInputChange('callScript', e.target.value)}
+                multiline
+                rows={4}
+                placeholder="Key points to cover during the call..."
+              />
+            </Grid>
+          ) : formData.type === 'email' ? (
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Email Template"
+                value={formData.emailTemplate}
+                onChange={(e) => handleInputChange('emailTemplate', e.target.value)}
+                multiline
+                rows={4}
+                placeholder="Draft your email content here..."
+              />
+            </Grid>
+          ) : formData.type === 'follow_up' ? (
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Follow-up Notes"
+                value={formData.followUpNotes}
+                onChange={(e) => handleInputChange('followUpNotes', e.target.value)}
+                multiline
+                rows={3}
+                placeholder="What needs to be followed up on?"
+              />
+            </Grid>
+          ) : null}
+
+
+
+
         </Grid>
       </DialogContent>
 

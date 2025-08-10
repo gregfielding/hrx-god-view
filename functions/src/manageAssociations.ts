@@ -148,32 +148,69 @@ export const manageAssociations = functions.https.onCall(async (request, context
     const sourceArrayKey = getCorrectPluralKey(sourceEntityType);
 
     if (action === 'add') {
-      // Add target to source associations
+      // Create association objects with names for quick reference
+      const targetEntityData = targetDoc.data();
+      const sourceEntityData = sourceDoc.data();
+      
+      // Build target association object
+      const targetAssociation = {
+        id: targetEntityId,
+        name: targetEntityData?.name || targetEntityData?.fullName || targetEntityData?.companyName || targetEntityData?.title || 'Unknown',
+        email: targetEntityData?.email || '',
+        phone: targetEntityData?.phone || '',
+        type: targetEntityType === 'company' ? 'primary' : undefined
+      };
+      
+      // Build source association object
+      const sourceAssociation = {
+        id: sourceEntityId,
+        name: sourceEntityData?.name || sourceEntityData?.fullName || sourceEntityData?.companyName || sourceEntityData?.title || 'Unknown',
+        email: sourceEntityData?.email || '',
+        phone: sourceEntityData?.phone || '',
+        type: sourceEntityType === 'company' ? 'primary' : undefined
+      };
+      
+      // Add target to source associations (as object with name)
       batch.update(sourceRef, {
-        [`associations.${targetArrayKey}`]: admin.firestore.FieldValue.arrayUnion(targetEntityId),
+        [`associations.${targetArrayKey}`]: admin.firestore.FieldValue.arrayUnion(targetAssociation),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: userId
       });
 
-      // Add source to target associations (bidirectional)
+      // Add source to target associations (as object with name)
       batch.update(targetRef, {
-        [`associations.${sourceArrayKey}`]: admin.firestore.FieldValue.arrayUnion(sourceEntityId),
+        [`associations.${sourceArrayKey}`]: admin.firestore.FieldValue.arrayUnion(sourceAssociation),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: userId
       });
 
       console.log(`✅ Added association: ${sourceEntityType}:${sourceEntityId} ↔ ${targetEntityType}:${targetEntityId}`);
     } else if (action === 'remove') {
+      // For removal, we need to remove by ID since we can't use arrayRemove with objects
+      // We'll need to get the current associations and filter out the target
+      const sourceData = sourceDoc.data();
+      const targetData = targetDoc.data();
+      
       // Remove target from source associations
+      const currentSourceAssociations = sourceData?.associations?.[targetArrayKey] || [];
+      const updatedSourceAssociations = currentSourceAssociations.filter((assoc: any) => 
+        typeof assoc === 'string' ? assoc !== targetEntityId : assoc.id !== targetEntityId
+      );
+      
+      // Remove source from target associations
+      const currentTargetAssociations = targetData?.associations?.[sourceArrayKey] || [];
+      const updatedTargetAssociations = currentTargetAssociations.filter((assoc: any) => 
+        typeof assoc === 'string' ? assoc !== sourceEntityId : assoc.id !== sourceEntityId
+      );
+      
       batch.update(sourceRef, {
-        [`associations.${targetArrayKey}`]: admin.firestore.FieldValue.arrayRemove(targetEntityId),
+        [`associations.${targetArrayKey}`]: updatedSourceAssociations,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: userId
       });
 
-      // Remove source from target associations (bidirectional)
       batch.update(targetRef, {
-        [`associations.${sourceArrayKey}`]: admin.firestore.FieldValue.arrayRemove(sourceEntityId),
+        [`associations.${sourceArrayKey}`]: updatedTargetAssociations,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedBy: userId
       });

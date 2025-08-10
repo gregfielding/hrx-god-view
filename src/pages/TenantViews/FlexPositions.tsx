@@ -16,7 +16,6 @@ import {
   Paper,
   IconButton,
   MenuItem,
-  Select,
 } from '@mui/material';
 import {
   doc,
@@ -28,13 +27,14 @@ import {
   deleteDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import Autocomplete from '@mui/material/Autocomplete';
-import jobTitlesData from '../../data/onetJobTitles.json';
 import CircularProgress from '@mui/material/CircularProgress';
+
+import jobTitlesData from '../../data/onetJobTitles.json';
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 
 const languageOptions = [

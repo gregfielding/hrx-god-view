@@ -245,8 +245,8 @@ export const fetchCompanyNews = onCall({
       if (!hasExactCompanyMatch && !hasBusinessWordMatch) continue;
 
       try {
-        let summary: string;
-        let tags: string[];
+        let summary: string = article.description || article.content?.substring(0, 200) + '...' || 'No summary available';
+        let tags: string[] = ['Business', 'News'];
         let relevance = 0.5; // Base score
         
         // Check if OpenAI API key is available

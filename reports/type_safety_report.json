@@ -1,0 +1,1863 @@
+{
+  "generatedAt": "2025-08-08T03:02:52.261Z",
+  "totals": {
+    "files": 401,
+    "problemFiles": 309
+  },
+  "results": [
+    {
+      "file": "functions/src/index.ts",
+      "anyCount": 250,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantCRM.tsx",
+      "anyCount": 116,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/taskEngine.ts",
+      "anyCount": 106,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/taskAIEngine.ts",
+      "anyCount": 85,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/firestoreTriggers.ts",
+      "anyCount": 84,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/CompanyDetails.tsx",
+      "anyCount": 76,
+      "tsIgnoreCount": 0,
+      "todoCount": 4
+    },
+    {
+      "file": "functions/src/autoDevOpsMonitoring.ts",
+      "anyCount": 70,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/aiEngineProcessor.ts",
+      "anyCount": 68,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/crmEngine.ts",
+      "anyCount": 58,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AIContextDashboard.tsx",
+      "anyCount": 46,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/dealStageAIEngine.ts",
+      "anyCount": 46,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DealTasksDashboard.tsx",
+      "anyCount": 43,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantWorkforce.tsx",
+      "anyCount": 40,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/taskContentAIEngine.ts",
+      "anyCount": 39,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/JobSatisfactionInsights.tsx",
+      "anyCount": 38,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "functions/src/jobSatisfactionInsights.ts",
+      "anyCount": 38,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/gptGateway.ts",
+      "anyCount": 36,
+      "tsIgnoreCount": 1,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/feedbackEngine.ts",
+      "anyCount": 35,
+      "tsIgnoreCount": 0,
+      "todoCount": 8
+    },
+    {
+      "file": "src/types/CRM.ts",
+      "anyCount": 34,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/SimpleAssociationsCard.tsx",
+      "anyCount": 33,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/JobOrderDetails.tsx",
+      "anyCount": 33,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/JobOrderDetails.tsx",
+      "anyCount": 33,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/types/global.d.ts",
+      "anyCount": 32,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/FastAssociationsCard.tsx",
+      "anyCount": 27,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/ContactDetails.tsx",
+      "anyCount": 27,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/associationService.ts",
+      "anyCount": 27,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/mobileChatPhase2.ts",
+      "anyCount": 27,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/IntegrationsTab.tsx",
+      "anyCount": 25,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/JobOrderShiftsTab.tsx",
+      "anyCount": 24,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/JobOrderShiftsTab.tsx",
+      "anyCount": 24,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/simpleAssociationService.ts",
+      "anyCount": 24,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TasksDashboard.tsx",
+      "anyCount": 23,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AICampaigns.tsx",
+      "anyCount": 22,
+      "tsIgnoreCount": 0,
+      "todoCount": 3
+    },
+    {
+      "file": "src/pages/Admin/AIChat.tsx",
+      "anyCount": 22,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "functions/src/generateDealAISummary.ts",
+      "anyCount": 22,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/ProfileOverview.tsx",
+      "anyCount": 21,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/taskService.ts",
+      "anyCount": 21,
+      "tsIgnoreCount": 0,
+      "todoCount": 4
+    },
+    {
+      "file": "functions/src/autoDevAssistant.ts",
+      "anyCount": 21,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/UniversalAssociationsCard.tsx",
+      "anyCount": 19,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/UserTasksDashboard.tsx",
+      "anyCount": 18,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/MomentsEngine.tsx",
+      "anyCount": 18,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/integrations.ts",
+      "anyCount": 18,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ContactTasksDashboard.tsx",
+      "anyCount": 17,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/UserGroupDetails.tsx",
+      "anyCount": 17,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/WorkforceTab.tsx",
+      "anyCount": 17,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/modules/professionalGrowth.ts",
+      "anyCount": 17,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/modules/resetMode.ts",
+      "anyCount": 17,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/BroadcastManagement.tsx",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/LocationsTab.tsx",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/analyticsEngine.ts",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/fieldLoggingTests.ts",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/modules/miniLearningBoosts.ts",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/modules/workLifeBalance.ts",
+      "anyCount": 16,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AILogs.tsx",
+      "anyCount": 15,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AutoDevOps.tsx",
+      "anyCount": 15,
+      "tsIgnoreCount": 0,
+      "todoCount": 2
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/DivisionsTab.tsx",
+      "anyCount": 15,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/autoActivityLogger.ts",
+      "anyCount": 15,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/componentBlocks/WorkersTable.tsx",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DealStageForms.tsx",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/DepartmentsTab.tsx",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/JobOrdersTab.tsx",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantCustomersTab.tsx",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/scrapeIndeedJobs.ts",
+      "anyCount": 14,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TaskCard.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TaskDetailsDialog.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AutoDevOpsMonitoring.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/ContactsTab.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyViews/AgencyWorkforce.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/OrgTreeView.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/TenantViews/TenantJobOrdersTab.tsx",
+      "anyCount": 13,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/GoogleIntegration.tsx",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TaskSplitView.tsx",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/ContextEngine.tsx",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/SkillsTab/SkillsTab.tsx",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/aiFieldLogging.ts",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/utils/unifiedAssociationService.ts",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/enhanceContactWithAI.ts",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/retrievalFilters.ts",
+      "anyCount": 12,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ResumeUpload.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/FeedbackEngine.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/RetrievalFilters.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/CustomersTab.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/WorkforceTab.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomersTable.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/FlexPositions.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantSalesperson.tsx",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/exportUtils.ts",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/gmailTasksIntegration.ts",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/migrateContactSchema.ts",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/vectorSettings.ts",
+      "anyCount": 11,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ResumeHistory.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AIFeedbackDashboard.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/TranslationManagement.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AgencyAssignmentsTab.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyViews/AgencyJobOrders.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/LocationsTab.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantJobOrders.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/TenantModules.tsx",
+      "anyCount": 10,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/resumeParser.ts",
+      "anyCount": 8,
+      "tsIgnoreCount": 2,
+      "todoCount": 0
+    },
+    {
+      "file": "src/componentBlocks/AddWorkerForm.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CRMImportDialog.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CalendarManagement.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DealIntelligenceWizard.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TaskContentGenerator.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AISelfImprovement.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/HelloMessageManagement.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/WeightsEngine.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/DivisionTypesTab.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/ProfileOverview.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/DealDetails.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/ReportsAndInsightsTab.tsx",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/types/Tasks.ts",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/discoverCompanyLocations.ts",
+      "anyCount": 9,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/LocationDetails.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/TestSchedulerButton.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/UserLanguagePreferences.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/AgencyContactsTab.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/WeightsEngineSettings.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/RegionsTab.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/UserGroupsTab.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/ContactsTab.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/CustomerDetailsView.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/TenantViews/FlexDefaults.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/LocationDetails.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/CustomerWorksiteTab.tsx",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/gmailTasksService.ts",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/aiChat.ts",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/discoverCompanyUrls.ts",
+      "anyCount": 8,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/AIInputComponents.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/EnhancedContactManager.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/GmailSettings.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/FeedbackEngineSettings.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/ProfileOverview.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/AISettingsTab.tsx",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/activityLogger.ts",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/enhanceCompanyWithSerp.ts",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/mobileErrorMonitoring.ts",
+      "anyCount": 7,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ActivityLogTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CreateFollowUpCampaignDialog.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/contexts/AssociationsCacheContext.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/Broadcast.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/Admin/CustomerToneOverrides.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/HelpManagement.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/LogCoverageDashboard.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/MobileAppErrors.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/Admin/PromptBuilder.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 3
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/TraitsEngineSettings.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/VectorSettings.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/SettingsTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/AITrainingTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/AgencyTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/components/CompanySettingsTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Customers.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/PeopleGridView.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserOnboarding.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/NotesTab.tsx",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/types/UserProfile.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/associateDealsWithSalespeople.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/enhancedFieldLoggingTests.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/removeDuplicateCompanies.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/testFirestoreTriggers.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/utils/aiLogging.ts",
+      "anyCount": 6,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CSVUpload.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DealActivityTab.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/LoggableField.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AutoContextEngine.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/DailyMotivation.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/HelloMessageConfig.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/TraitsEngine.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/ContactDetails.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/MomentsEngineSettings.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/ToneStyleSettings.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyViews/AgencyModules.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/pages/TenantViews/ModuleDetailsView.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/PrivacySettingsTab.tsx",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/canAccessModule.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/removeContactsWithoutNames.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/removeDuplicateContacts.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/removePhoneNumberContacts.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/updateCompanyPipelineTotals.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/updateLocationAssociation.ts",
+      "anyCount": 5,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/ai/aiClient.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/ai/cache.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/AIEmailAssistant.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/AIThreadList.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CRMNotesTab.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/components/DealStageAISuggestions.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/KPIManagement.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/TenantSwitcher.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/UnifiedAISuggestions.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/ScheduledMomentsDashboard.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/TenantsTable.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/VectorSettings.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/AddAgencyForm.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/SecurityLevelEngagementSettings.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/AddCustomerForm.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/InsightReports.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/HeatmapView.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/ActivityLogTab.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/AddressTab/AddressFormFields.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/SkillsTab/WorkExperienceSection.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/UserAssignmentsTab.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UsersTable.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/WorkerAssignments.tsx",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/phoneNumberCleaner.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/extractCompanyInfoFromUrls.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/findTenantIds.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/getSalespeople.ts",
+      "anyCount": 4,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/AIAssistantChat.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/AISuggestionsWithClassification.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/CreateTaskDialog.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DealAISummary.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DuplicateCompanyRemover.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/EmailTab.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/components/InviteTokenValidator.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/contexts/AuthContext.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/modules/autoDevOps/runLogFixer.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AIAnalytics.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/AutoDevOpsPipeline.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/ModulesDashboard.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/ToneSettings.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/LocationDetails.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/LocationDetails.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/FlexSettings.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/RecruiterSettings.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/SkillsTab/BackgroundCheckTab.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/SkillsTab/VaccinationStatusTab.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/index.tsx",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/companyNameExtractor.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/denormalizedAssociationService.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/menuGenerator.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/securityLevelAIEngagement.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/autoContextEngine.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/calendarIntegration.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/codeAware.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/findContactEmail.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/findSimilarCompanies.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/getSalespeopleForTenant.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/manageAssociations.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/middleware/aiGuard.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/scheduler.ts",
+      "anyCount": 3,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/BroadcastDialog.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/BroadcastNotification.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ChatUI.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/ContactLinkingManager.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DecisionMakersPanel.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/components/GoogleCalendarConnection.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/KPIDashboard.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/Layout.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 1
+    },
+    {
+      "file": "src/components/MotivationMessageDialog.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/OnboardingProfileForm.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/PipelineFunnel.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/SalespeopleManagement.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/UserInvitationDialog.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/contexts/CRMCacheContext.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AddUserForm.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/MotivationLibrarySeeder.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/RetrievalFilters.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/TenantViews/JobsBoard.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/UserProfile/components/SkillsTab/EducationSection.tsx",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/types/LogEntry.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/addressParser.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/emailService.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 2
+    },
+    {
+      "file": "functions/src/calendarSyncService.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/checkTestMaintenance.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/devopsChat.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 1,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/fetchCompanyNews.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/gmailIntegration.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/linkContactsToCompanies.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/testResultsDashboard.ts",
+      "anyCount": 2,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/componentBlocks/AssignmentsTable.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/componentBlocks/CustomersTableBlock.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/DevOpsChat.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/HelpButton.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/HelpDrawer.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/JSICustomReportBuilder.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/NewsEnrichmentPanel.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/components/SalesNewsFeed.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/firebase/fixLogEntry.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Admin/NotificationsTable.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 2
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AISettingsTabSections/ConversationSettings.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/AgencyProfileHeader.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/AgencyProfile/components/BillingInfoTab.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/CustomerProfile/index.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Help.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/Login.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/PrivacySettings.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/ResumeManagement.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/pages/SetupPassword.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/theme/theme.tsx",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/cropImage.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/csvUpload.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/loggingTriggerMap.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/useModuleAccess.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/checkRecentAILogs.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/fetchFollowedCompanyNews.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/fixPendingUser.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/fixWorkerTenantIds.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/getLocationAssociations.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/getUsersByTenant.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/linkCRMEntities.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/testHarness.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/triggerAINoteReview.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/triggerAISummaryUpdate.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/utils/getWorkers.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/utils/hash.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/utils/loggingTriggerMap.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "functions/src/utils/openaiHelper.ts",
+      "anyCount": 1,
+      "tsIgnoreCount": 0,
+      "todoCount": 0
+    },
+    {
+      "file": "src/utils/activityService.ts",
+      "anyCount": 0,
+      "tsIgnoreCount": 0,
+      "todoCount": 2
+    }
+  ]
+}

@@ -27,11 +27,13 @@ import {
   FormControlLabel,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
 import InfoIcon from '@mui/icons-material/Info';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+
+import { db } from '../../firebase';
+
 import JobOrderShiftsTab from './JobOrderShiftsTab';
 
 const noop = () => {

@@ -4,15 +4,7 @@ import {
   Typography,
   Paper,
   Grid,
-  Slider,
   Button,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
-  Switch,
-  FormControlLabel,
   Snackbar,
   Alert,
   Card,
@@ -22,8 +14,9 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import SaveIcon from '@mui/icons-material/Save';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
+
+import { db } from '../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../components/LoggableField';
 import { useAuth } from '../../contexts/AuthContext';
 

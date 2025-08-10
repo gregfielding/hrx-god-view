@@ -9,9 +9,7 @@ const db = admin.firestore();
 
 // 🏗️ CORE TASK OPERATIONS
 
-export const createTask = onCall({
-  cors: true
-}, async (request) => {
+export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSeconds: 60, memory: '512MiB', minInstances: 0 }, async (request) => {
   const { 
     title, 
     description, 
@@ -54,7 +52,7 @@ export const createTask = onCall({
     
     try {
       // Get assigned user name
-      const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(assignedTo).get();
+      const assignedUserDoc = await db.collection('users').doc(assignedTo).get();
       if (assignedUserDoc.exists) {
         const assignedUserData = assignedUserDoc.data();
         assignedToName = assignedUserData?.displayName || 
@@ -69,7 +67,7 @@ export const createTask = onCall({
     
     try {
       // Get creator name
-      const creatorUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(createdBy).get();
+      const creatorUserDoc = await db.collection('users').doc(createdBy).get();
       if (creatorUserDoc.exists) {
         const creatorUserData = creatorUserDoc.data();
         createdByName = creatorUserData?.displayName || 
@@ -113,6 +111,7 @@ export const createTask = onCall({
       assignedToName, // Add user name for optimization
       associations: associations || {},
       notes: '',
+      category, // Add category field
       quotaCategory,
       estimatedDuration: duration || 30,
       aiSuggested: aiSuggested || false,
@@ -131,10 +130,39 @@ export const createTask = onCall({
       createdBy,
       createdByName, // Add creator name for optimization
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Task-type-specific fields
+      agenda: request.data.agenda || '',
+      goals: request.data.goals || [],
+      researchTopics: request.data.researchTopics || [],
+      callScript: request.data.callScript || '',
+      emailTemplate: request.data.emailTemplate || '',
+      followUpNotes: request.data.followUpNotes || '',
+      meetingAttendees: request.data.meetingAttendees || []
     };
 
-    const taskRef = await db.collection('tenants').doc(tenantId).collection('tasks').add(taskData);
+    // batch single write for symmetry if we expand later
+    const batch = db.batch();
+    const taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc();
+    batch.set(taskRef, taskData);
+    await batch.commit();
+
+    // Sync to Google Calendar if it's an appointment
+    if (classification === 'appointment' && startTime) {
+      try {
+        const { syncTaskToCalendar } = await import('./calendarSyncService');
+        const syncResult = await syncTaskToCalendar(createdBy, tenantId, taskRef.id, taskData);
+        
+        if (syncResult.success) {
+          console.log('✅ Task synced to Google Calendar:', syncResult.message);
+        } else {
+          console.log('ℹ️ Calendar sync skipped:', syncResult.message);
+        }
+      } catch (calendarError) {
+        console.warn('⚠️ Failed to sync task to Google Calendar:', calendarError);
+        // Don't fail the task creation if calendar sync fails
+      }
+    }
 
     // Log AI action if this is an AI-suggested task
     if (aiSuggested) {
@@ -195,7 +223,7 @@ export const updateTask = onCall({
     // If assignedTo is being updated, fetch the user name for optimization
     if (updates.assignedTo && typeof updates.assignedTo === 'string') {
       try {
-        const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(updates.assignedTo).get();
+        const assignedUserDoc = await db.collection('users').doc(updates.assignedTo).get();
         if (assignedUserDoc.exists) {
           const assignedUserData = assignedUserDoc.data();
           const assignedToName = assignedUserData?.displayName || 
@@ -216,7 +244,7 @@ export const updateTask = onCall({
     // If createdBy is being updated, fetch the user name for optimization
     if (updates.createdBy && typeof updates.createdBy === 'string') {
       try {
-        const createdUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(updates.createdBy).get();
+        const createdUserDoc = await db.collection('users').doc(updates.createdBy).get();
         if (createdUserDoc.exists) {
           const createdUserData = createdUserDoc.data();
           const createdByName = createdUserData?.displayName || 
@@ -361,7 +389,7 @@ export const completeTask = onCall({
         
         try {
           // Get assigned user name
-          const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(taskData?.assignedTo).get();
+          const assignedUserDoc = await db.collection('users').doc(taskData?.assignedTo).get();
           if (assignedUserDoc.exists) {
             const assignedUserData = assignedUserDoc.data();
             assignedToName = assignedUserData?.displayName || 
@@ -1452,7 +1480,7 @@ export const acceptAITaskSuggestion = onCall({
     
     try {
       // Get assigned user name
-      const assignedUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(suggestion.suggestedFor).get();
+      const assignedUserDoc = await db.collection('users').doc(suggestion.suggestedFor).get();
       if (assignedUserDoc.exists) {
         const assignedUserData = assignedUserDoc.data();
         assignedToName = assignedUserData?.displayName || 
@@ -1467,7 +1495,7 @@ export const acceptAITaskSuggestion = onCall({
     
     try {
       // Get creator name
-      const creatorUserDoc = await db.collection('tenants').doc(tenantId).collection('users').doc(userId).get();
+      const creatorUserDoc = await db.collection('users').doc(userId).get();
       if (creatorUserDoc.exists) {
         const creatorUserData = creatorUserDoc.data();
         createdByName = creatorUserData?.displayName || 

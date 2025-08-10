@@ -1,6 +1,7 @@
 // /utils/logErrorTypemap.ts - Comprehensive error type mapping and fix strategies
 
-import { LogEntry, LogFixRule } from '../types/LogEntry';
+import { LogFixRule } from '../types/LogEntry';
+
 import { inferModuleFromEventType, inferDestinationModules } from './inferModuleFromEventType';
 
 export const logErrorTypemap: LogFixRule[] = [

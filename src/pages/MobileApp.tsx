@@ -8,12 +8,10 @@ import {
   Grid,
   Card,
   CardContent,
-  CardActions,
   List,
   ListItem,
   ListItemIcon,
   ListItemText,
-  Divider,
   Chip,
 } from '@mui/material';
 import {
@@ -28,6 +26,7 @@ import {
   Assignment,
   Person,
 } from '@mui/icons-material';
+
 import { useAuth } from '../contexts/AuthContext';
 
 const MobileApp: React.FC = () => {

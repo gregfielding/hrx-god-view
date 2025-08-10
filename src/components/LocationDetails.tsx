@@ -24,11 +24,6 @@ import {
   MenuItem,
   Alert,
   CircularProgress,
-  Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   FormControlLabel,
   Switch,
   Snackbar,
@@ -36,33 +31,20 @@ import {
   CardContent,
 } from '@mui/material';
 import {
-  ArrowBack,
-  Edit,
   Delete,
-  Person,
-  Business,
-  AttachMoney,
-  LocationOn,
-  Phone,
-  Language,
-  Group,
-  Work,
   Add,
   Visibility,
   Save,
-  Security as SecurityIcon,
-  AccessTime as TimeClockIcon,
-  Receipt as BillingIcon,
-  Description as ContractsIcon,
   CloudUpload as UploadIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDocs, query, where, updateDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { CRMLocation, CRMContact, CRMDeal } from '../types/CRM';
+
 import CRMNotesTab from './CRMNotesTab';
-import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 
 interface LocationDetailsProps {
   location: CRMLocation;

@@ -1,15 +1,12 @@
 import { 
   doc, 
-  getDoc, 
-  updateDoc, 
-  arrayUnion, 
-  arrayRemove,
-  serverTimestamp,
+  getDoc,
   collection,
   getDocs
 } from 'firebase/firestore';
-import { db } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../firebase';
 
 // 🎯 SIMPLE ASSOCIATION SERVICE
 // Uses maps in each entity document instead of separate association documents

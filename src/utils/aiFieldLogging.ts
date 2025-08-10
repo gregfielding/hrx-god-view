@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../firebase';
 
 // AI Field Patterns - defines which fields are AI-relevant and their metadata

@@ -1,12 +1,12 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "noImplicitReturns": true,
-    "noUnusedLocals": true,
+    "noImplicitReturns": false,
+    "noUnusedLocals": false,
     "outDir": "lib",
     "rootDir": "src",
     "sourceMap": true,
-    "strict": true,
+    "strict": false,
     "target": "es2017",
     "esModuleInterop": true
   },

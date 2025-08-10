@@ -7,7 +7,6 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { auth, db } from '../firebase';
 import {
   Box,
   Card,
@@ -28,7 +27,9 @@ import {
   Divider,
   Paper,
 } from '@mui/material';
-import { PhotoCamera, Phone, Email, Person, Business, CheckCircle } from '@mui/icons-material';
+import { PhotoCamera, CheckCircle } from '@mui/icons-material';
+
+import { auth, db } from '../firebase';
 
 interface OnboardingState {
   token: string;

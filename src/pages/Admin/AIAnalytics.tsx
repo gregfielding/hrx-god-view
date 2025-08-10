@@ -17,7 +17,6 @@ import {
   Alert,
   Snackbar,
   Chip,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -28,20 +27,12 @@ import {
   TextField,
 } from '@mui/material';
 import {
-  TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon,
   Speed as SpeedIcon,
   Psychology as PsychologyIcon,
   Error as ErrorIcon,
   CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Info as InfoIcon,
   Refresh as RefreshIcon,
   ArrowBack as ArrowBackIcon,
-  Timeline as TimelineIcon,
-  Analytics as AnalyticsIcon,
-  BugReport as BugReportIcon,
-  Settings as SettingsIcon,
   Assessment as AssessmentIcon,
   Business as BusinessIcon,
   LocationOn as LocationOnIcon,
@@ -50,14 +41,12 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../firebase';
 import {
   collection,
   getDocs,
   query,
   where,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import {
   LineChart,
   Line,
@@ -75,6 +64,9 @@ import {
   AreaChart,
   Area,
 } from 'recharts';
+
+import { app , db } from '../../firebase';
+
 
 interface AnalyticsData {
   eventFrequency: Array<{ eventType: string; count: number; trend: number }>;
@@ -334,14 +326,18 @@ const AIAnalytics: React.FC = () => {
                 <TextField {...params} label="Filter by Regions" placeholder="Select regions" />
               )}
               renderTags={(tagValue, getTagProps) =>
-                tagValue.map((option, index) => (
-                  <Chip
-                    label={option.name}
-                    {...getTagProps({ index })}
-                    size="small"
-                    icon={<BusinessIcon />}
-                  />
-                ))
+                tagValue.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={option.name}
+                      size="small"
+                      icon={<BusinessIcon />}
+                      {...chipProps}
+                    />
+                  );
+                })
               }
             />
           </Grid>
@@ -356,14 +352,18 @@ const AIAnalytics: React.FC = () => {
                 <TextField {...params} label="Filter by Divisions" placeholder="Select divisions" />
               )}
               renderTags={(tagValue, getTagProps) =>
-                tagValue.map((option, index) => (
-                  <Chip
-                    label={option.name}
-                    {...getTagProps({ index })}
-                    size="small"
-                    icon={<AccountTreeIcon />}
-                  />
-                ))
+                tagValue.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={option.name}
+                      size="small"
+                      icon={<AccountTreeIcon />}
+                      {...chipProps}
+                    />
+                  );
+                })
               }
             />
           </Grid>
@@ -378,14 +378,18 @@ const AIAnalytics: React.FC = () => {
                 <TextField {...params} label="Filter by Departments" placeholder="Select departments" />
               )}
               renderTags={(tagValue, getTagProps) =>
-                tagValue.map((option, index) => (
-                  <Chip
-                    label={option.name}
-                    {...getTagProps({ index })}
-                    size="small"
-                    icon={<GroupIcon />}
-                  />
-                ))
+                tagValue.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={option.name}
+                      size="small"
+                      icon={<GroupIcon />}
+                      {...chipProps}
+                    />
+                  );
+                })
               }
             />
           </Grid>
@@ -400,14 +404,18 @@ const AIAnalytics: React.FC = () => {
                 <TextField {...params} label="Filter by Locations" placeholder="Select locations" />
               )}
               renderTags={(tagValue, getTagProps) =>
-                tagValue.map((option, index) => (
-                  <Chip
-                    label={option.name}
-                    {...getTagProps({ index })}
-                    size="small"
-                    icon={<LocationOnIcon />}
-                  />
-                ))
+                tagValue.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={option.name}
+                      size="small"
+                      icon={<LocationOnIcon />}
+                      {...chipProps}
+                    />
+                  );
+                })
               }
             />
           </Grid>

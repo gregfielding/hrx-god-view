@@ -26,7 +26,8 @@ import {
   Person as PersonIcon,
   Business as BusinessIcon,
 } from '@mui/icons-material';
-import { collection, query, getDocs, doc, updateDoc, where } from 'firebase/firestore';
+import { collection, query, getDocs, doc, updateDoc } from 'firebase/firestore';
+
 import { db } from '../firebase';
 
 interface SalespeopleManagementProps {

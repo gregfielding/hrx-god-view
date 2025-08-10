@@ -74,9 +74,32 @@ export const findDecisionMakers = onCall({
             if (result.link && result.link.includes('linkedin.com/in/') && !seenUrls.has(result.link)) {
               seenUrls.add(result.link);
               
-              // Extract name from LinkedIn URL
+              // Extract name from LinkedIn URL and clean it
               const linkedinPath = result.link.split('linkedin.com/in/')[1];
-              const name = linkedinPath ? linkedinPath.split('/')[0].replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) : 'Unknown';
+              let name = 'Unknown';
+              
+              if (linkedinPath) {
+                // Get the base path without query parameters
+                const basePath = linkedinPath.split('/')[0];
+                
+                // Remove common LinkedIn URL suffixes (numbers, IDs, etc.)
+                // Pattern: name-123456789 or name-abc123 or name-123-456
+                let cleanName = basePath.replace(/-[0-9a-z]{6,}$/i, ''); // Remove trailing alphanumeric IDs
+                cleanName = cleanName.replace(/-[0-9]{3,}$/, ''); // Remove trailing numbers
+                cleanName = cleanName.replace(/-[a-z]{2,3}$/i, ''); // Remove short suffixes
+                
+                // Convert to proper case
+                name = cleanName.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+                
+                // If the name is too short or contains numbers, try to extract from snippet
+                if (name.length < 3 || /\d/.test(name)) {
+                  // Try to extract name from snippet using common patterns
+                  const nameMatch = result.snippet.match(/([A-Z][a-z]+ [A-Z][a-z]+)/);
+                  if (nameMatch) {
+                    name = nameMatch[1];
+                  }
+                }
+              }
               
               // Extract title from snippet
               const title = extractTitleFromSnippet(result.snippet, companyName);

@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Button,
-  Paper,
   Table,
   TableBody,
   TableCell,
@@ -31,11 +30,6 @@ import {
   Snackbar,
   CircularProgress,
   Autocomplete,
-  Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   Badge,
 } from '@mui/material';
 import {
@@ -63,6 +57,7 @@ import {
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -653,13 +648,17 @@ const KPIManagement: React.FC<KPIManagementProps> = ({ tenantId }) => {
                   />
                 )}
                 renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                    />
-                  ))
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        variant="outlined"
+                        label={option}
+                        {...chipProps}
+                      />
+                    );
+                  })
                 }
               />
             </Grid>

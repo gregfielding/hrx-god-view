@@ -27,17 +27,13 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  IconButton,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails
+  IconButton
 } from '@mui/material';
 import {
   Translate as TranslateIcon,
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  ExpandMore as ExpandMoreIcon,
   Language as LanguageIcon,
   Settings as SettingsIcon
 } from '@mui/icons-material';

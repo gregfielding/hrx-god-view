@@ -9,50 +9,36 @@ import {
   Chip,
   IconButton,
   List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
-  LinearProgress,
-  Badge,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
-  Paper
+  LinearProgress
 } from '@mui/material';
-import { createAssociationService } from '../utils/associationService';
 import {
   Add as AddIcon,
   CheckCircle as CheckCircleIcon,
   Schedule as ScheduleIcon,
-  PriorityHigh as PriorityHighIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
   Business as BusinessIcon,
-  Person as PersonIcon,
   Psychology as PsychologyIcon,
   Refresh as RefreshIcon,
-  ExpandMore as ExpandMoreIcon,
   Assignment as AssignmentIcon,
   TrendingUp as TrendingUpIcon
 } from '@mui/icons-material';
+
+import { createAssociationService } from '../utils/associationService';
 import { useAuth } from '../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskClassification } from '../types/Tasks';
+
 import CreateTaskDialog from './CreateTaskDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
 import TaskCard from './TaskCard';
+import EnhancedTasksLayout from './EnhancedTasksLayout';
 
 interface DealTasksDashboardProps {
   dealId: string;
@@ -113,11 +99,9 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   const [associatedCompany, setAssociatedCompany] = useState<any>(null);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [loadingAssociations, setLoadingAssociations] = useState(false);
   const [prefilledTaskData, setPrefilledTaskData] = useState<any>(null);
-  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
-  const [completionTaskId, setCompletionTaskId] = useState<string | null>(null);
-  const [completionNotes, setCompletionNotes] = useState('');
 
   const taskService = TaskService.getInstance();
 
@@ -153,11 +137,13 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         
         // Set contacts
         if (result.entities.contacts) {
+          console.log('📊 Setting associated contacts:', result.entities.contacts);
           setAssociatedContacts(result.entities.contacts);
         }
         
         // Set salespeople
         if (result.entities.salespeople) {
+          console.log('📊 Setting associated salespeople:', result.entities.salespeople);
           setAssociatedSalespeople(result.entities.salespeople);
         }
         
@@ -190,6 +176,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       });
       
       if (contactResult.entities.contacts) {
+        console.log('📊 Setting associated contacts (fallback):', contactResult.entities.contacts);
         setAssociatedContacts(contactResult.entities.contacts);
       }
       
@@ -201,11 +188,31 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       });
       
       if (salespeopleResult.entities.salespeople) {
+        console.log('📊 Setting associated salespeople (fallback):', salespeopleResult.entities.salespeople);
         setAssociatedSalespeople(salespeopleResult.entities.salespeople);
       }
       
     } catch (err) {
       console.error('Error loading associated data:', err);
+      
+      // Fallback: Try to use deal's own association data
+      console.log('🔄 Trying fallback with deal data:', deal);
+      if (deal?.associations) {
+        console.log('📊 Deal associations:', deal.associations);
+        
+        // If we have contact IDs in the deal, try to fetch them directly
+        if (deal.associations.contacts && deal.associations.contacts.length > 0) {
+          console.log('📊 Deal has contact IDs:', deal.associations.contacts);
+          // For now, just set empty array to avoid showing IDs
+          setAssociatedContacts([]);
+        }
+        
+        if (deal.associations.salespeople && deal.associations.salespeople.length > 0) {
+          console.log('📊 Deal has salespeople IDs:', deal.associations.salespeople);
+          // For now, just set empty array to avoid showing IDs
+          setAssociatedSalespeople([]);
+        }
+      }
     } finally {
       setLoadingAssociations(false);
     }
@@ -353,7 +360,22 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       setAiSuggestions(filteredSuggestions);
     } catch (err) {
       console.error('Error loading deal tasks dashboard:', err);
-      setError('Failed to load deal tasks');
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to load deal tasks';
+      if (err instanceof Error) {
+        if (err.message.includes('index')) {
+          errorMessage = 'Task indexes are still building. Please try again in a few minutes.';
+        } else if (err.message.includes('permission')) {
+          errorMessage = 'You do not have permission to view these tasks.';
+        } else if (err.message.includes('network')) {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        } else {
+          errorMessage = `Error: ${err.message}`;
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -363,9 +385,12 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     if (!user) return;
 
     try {
-      // Pre-select the deal association
+      // Pre-select the deal association and add required fields
       const taskWithDeal = {
         ...taskData,
+        assignedTo: taskData.assignedTo || user.uid,
+        createdBy: user.uid,
+        tenantId: tenantId,
         associations: {
           ...taskData.associations,
           deals: [dealId]
@@ -386,28 +411,51 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   };
 
   const handleQuickComplete = async (taskId: string) => {
-    setCompletionTaskId(taskId);
-    setCompletionNotes('');
-    setShowCompletionDialog(true);
-  };
-
-  const handleConfirmQuickComplete = async () => {
-    if (!user || !completionTaskId) return;
-
     try {
-      await taskService.completeTask(completionTaskId, { 
-        outcome: 'positive', 
-        notes: completionNotes || 'Task completed'
-      }, tenantId, user.uid);
+      // Find the task to determine if it's completed or not
+      const task = dashboardData?.today?.tasks?.find(t => t.id === taskId) ||
+                   dashboardData?.thisWeek?.tasks?.find(t => t.id === taskId) ||
+                   dashboardData?.completed?.tasks?.find(t => t.id === taskId);
+      
+      if (!task) return;
+
+      if (task.status === 'completed') {
+        // Task is completed, so uncomplete it by restoring the correct status
+        const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+        const scheduledDate = new Date(dateToUse + 'T00:00:00');
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
+        
+        let newStatus: TaskStatus;
+        if (scheduledDay < today) {
+          newStatus = 'overdue';
+        } else if (scheduledDay.getTime() === today.getTime()) {
+          newStatus = 'due';
+        } else {
+          newStatus = 'upcoming';
+        }
+
+        await taskService.updateTask(taskId, { 
+          status: newStatus,
+          completedAt: null
+        }, tenantId);
+      } else {
+        // Task is not completed, so complete it
+        await taskService.completeTask(taskId, { 
+          outcome: 'positive', 
+          notes: 'Task completed'
+        }, tenantId, user?.uid || '');
+      }
+      
       await loadDashboardData(); // Refresh data
-      setShowCompletionDialog(false);
-      setCompletionTaskId(null);
-      setCompletionNotes('');
     } catch (err) {
-      console.error('Error completing task:', err);
-      setError('Failed to complete task');
+      console.error('Error updating task status:', err);
+      setError('Failed to update task status');
     }
   };
+
+
 
   const handleAcceptSuggestion = (suggestion: any) => {
     // Determine classification based on task type
@@ -452,15 +500,15 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     setShowCreateDialog(true);
   };
 
-  const handleRejectSuggestion = async (suggestionId: string) => {
-    try {
-      await taskService.rejectAITaskSuggestion(suggestionId, tenantId, user?.uid || '');
-      await loadDashboardData(); // Refresh data
-    } catch (err) {
-      console.error('Error rejecting suggestion:', err);
-      setError('Failed to reject suggestion');
-    }
-  };
+  // const handleRejectSuggestion = async (suggestionId: string) => {
+  //   try {
+  //     await taskService.rejectAITaskSuggestion(suggestionId, tenantId, user?.uid || '');
+  //     await loadDashboardData(); // Refresh data
+  //   } catch (err) {
+  //     console.error('Error rejecting suggestion:', err);
+  //     setError('Failed to reject suggestion');
+  //   }
+  // };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -477,7 +525,10 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   const getTaskStatusDisplay = (task: any) => {
     if (task.status === 'completed') return 'completed';
     
-    const scheduledDate = new Date(task.scheduledDate);
+    // Use dueDate for todos, scheduledDate for appointments
+    const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+    // Ensure the date is interpreted as local time by appending a time component
+    const scheduledDate = new Date(dateToUse + 'T00:00:00');
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
@@ -499,7 +550,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   };
 
   const calculateUrgency = (task: any) => {
-    const dueDate = new Date(task.dueDate || task.scheduledDate);
+    const dueDate = new Date((task.dueDate || task.scheduledDate) + 'T00:00:00');
     const now = new Date();
     const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
     
@@ -507,6 +558,24 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     if (diffHours < 24) return 'urgent';
     if (diffHours < 72) return 'soon';
     return 'normal';
+  };
+
+  const handleEditTask = (task: any) => {
+    setSelectedTask(task);
+    setShowDetailsDialog(true);
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (window.confirm('Are you sure you want to delete this task?')) {
+      try {
+        const taskService = TaskService.getInstance();
+        await taskService.deleteTask(taskId, tenantId, user?.uid || '');
+        loadDashboardData(); // Refresh the dashboard
+      } catch (error) {
+        console.error('Error deleting task:', error);
+        setError('Failed to delete task');
+      }
+    }
   };
 
   if (loading) {
@@ -523,7 +592,22 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   if (error) {
     return (
       <Box sx={{ p: 3 }}>
-        <Alert severity="error" onClose={() => setError(null)}>
+        <Alert 
+          severity="error" 
+          onClose={() => setError(null)}
+          action={
+            <Button 
+              color="inherit" 
+              size="small" 
+              onClick={() => {
+                setError(null);
+                loadDashboardData();
+              }}
+            >
+              Retry
+            </Button>
+          }
+        >
           {error}
         </Alert>
       </Box>
@@ -551,7 +635,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
             }}
           >
             <AssignmentIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Today's Tasks
+            Today&apos;s Tasks
           </Button>
           <Typography variant="body2" color="text.secondary">/</Typography>
           <Button
@@ -630,15 +714,18 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         </Box>
       </Box>
 
-      {/* Tab Content */}
+      {/* Tab Content with Enhanced Layout */}
       {activeTab === 0 && (
-        <TasksList
+        <EnhancedTasksLayout
           tasks={dashboardData?.today?.tasks || []}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
+          onEditTask={handleEditTask}
+          onDeleteTask={handleDeleteTask}
+          onCreateTask={() => setShowCreateDialog(true)}
           getStatusColor={getStatusColor}
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
@@ -650,13 +737,16 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       )}
 
       {activeTab === 1 && (
-        <TasksList
+        <EnhancedTasksLayout
           tasks={dashboardData?.thisWeek?.tasks || []}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
+          onEditTask={handleEditTask}
+          onDeleteTask={handleDeleteTask}
+          onCreateTask={() => setShowCreateDialog(true)}
           getStatusColor={getStatusColor}
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
@@ -668,13 +758,16 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       )}
 
       {activeTab === 2 && (
-        <TasksList
+        <EnhancedTasksLayout
           tasks={dashboardData?.completed?.tasks || []}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
+          onEditTask={handleEditTask}
+          onDeleteTask={handleDeleteTask}
+          onCreateTask={() => setShowCreateDialog(true)}
           getStatusColor={getStatusColor}
           getTaskTypeIcon={getTaskTypeIcon}
           calculateUrgency={calculateUrgency}
@@ -718,6 +811,9 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           }}
           onSubmit={handleCreateTask}
           prefilledData={prefilledTaskData}
+          salespeople={associatedSalespeople}
+          contacts={associatedContacts}
+          currentUserId={user?.uid || ''}
         />
       )}
 
@@ -736,45 +832,30 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
           }}
           salespersonId={user?.uid || ''}
           tenantId={tenantId}
+          contacts={associatedContacts}
+          salespeople={associatedSalespeople}
         />
       )}
 
-      {/* Completion Dialog */}
-      <Dialog open={showCompletionDialog} onClose={() => setShowCompletionDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Complete Task</DialogTitle>
-        <DialogContent>
-          <Typography variant="body1" sx={{ mb: 2 }}>
-            Please provide completion notes for this task:
-          </Typography>
-          <TextField
-            fullWidth
-            label="Completion Notes"
-            value={completionNotes}
-            onChange={(e) => setCompletionNotes(e.target.value)}
-            multiline
-            rows={4}
-            placeholder="Describe what was accomplished, any outcomes, or important details..."
-            helperText="These notes will be saved with the task completion"
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowCompletionDialog(false)}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleConfirmQuickComplete} 
-            variant="contained"
-            color="success"
-          >
-            Complete Task
-          </Button>
-        </DialogActions>
-      </Dialog>
+
     </Box>
   );
 };
 
 // Helper Components
+interface ClassificationBasedTasksLayoutProps {
+  tasks: any[];
+  onTaskClick: (task: any) => void;
+  onQuickComplete: (taskId: string) => void;
+  getStatusColor: (status: string) => string;
+  getTaskTypeIcon: (type: string) => React.ReactNode;
+  calculateUrgency: (task: any) => string;
+  getTaskStatusDisplay: (task: any) => string;
+  deal?: any;
+  associatedContacts?: any[];
+  associatedSalespeople?: any[];
+}
+
 interface TasksListProps {
   tasks: any[];
   onTaskClick: (task: any) => void;
@@ -787,6 +868,286 @@ interface TasksListProps {
   associatedContacts?: any[];
   associatedSalespeople?: any[];
 }
+
+const ClassificationBasedTasksLayout: React.FC<ClassificationBasedTasksLayoutProps> = ({
+  tasks,
+  onTaskClick,
+  onQuickComplete,
+  getStatusColor,
+  getTaskTypeIcon,
+  calculateUrgency,
+  getTaskStatusDisplay,
+  deal,
+  associatedContacts = [],
+  associatedSalespeople = []
+}) => {
+  const [expandedTodos, setExpandedTodos] = useState<Set<string>>(new Set());
+  
+  // Separate tasks by classification
+  const todoTasks = tasks.filter(task => task.classification === 'todo');
+  const appointmentTasks = tasks.filter(task => 
+    task.classification === 'appointment' || !task.classification
+  );
+
+  const handleTodoHover = (taskId: string, isHovering: boolean) => {
+    if (isHovering) {
+      setExpandedTodos(prev => new Set(prev).add(taskId));
+    } else {
+      setExpandedTodos(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(taskId);
+        return newSet;
+      });
+    }
+  };
+
+  return (
+    <Box sx={{ display: 'flex', gap: 2, height: 'calc(100vh - 300px)' }}>
+      {/* Left Side - Todo Tasks (25%) */}
+      <Box sx={{ width: '25%', borderRight: 1, borderColor: 'divider', pr: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+          Todo Tasks ({todoTasks.length})
+        </Typography>
+        <Box sx={{ 
+          height: '100%', 
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1
+        }}>
+          {todoTasks.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+              No todo tasks
+            </Typography>
+          ) : (
+            todoTasks.map((task) => (
+              <Card
+                key={task.id}
+                sx={{
+                  cursor: 'pointer',
+                  '&:hover': { 
+                    transform: 'scale(1.02)',
+                    transition: 'all 0.2s ease-in-out'
+                  },
+                  border: 1,
+                  borderColor: 'divider',
+                  p: 1.5,
+                  transition: 'all 0.2s ease-in-out'
+                }}
+                onClick={() => onTaskClick(task)}
+                onMouseEnter={() => handleTodoHover(task.id, true)}
+                onMouseLeave={() => handleTodoHover(task.id, false)}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                      {task.title}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
+                      <Chip
+                        label={getTaskStatusDisplay(task)}
+                        size="small"
+                        variant={task.status === 'overdue' ? 'outlined' : 'filled'}
+                        color={task.status === 'overdue' ? 'error' : (getStatusColor(task.status) as any)}
+                        sx={{ 
+                          fontSize: '0.7rem',
+                          height: '20px',
+                          ...(task.status !== 'overdue' && {
+                            color: 'white'
+                          })
+                        }}
+                      />
+                      <Chip
+                        label={task.priority}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontSize: '0.7rem', height: '20px' }}
+                      />
+                    </Box>
+                    {/* Description appears on hover */}
+                    <Box
+                      sx={{
+                        maxHeight: expandedTodos.has(task.id) ? '100px' : 0,
+                        overflow: 'hidden',
+                        transition: 'max-height 0.3s ease-in-out'
+                      }}
+                    >
+                      {task.description && (
+                        <Typography 
+                          variant="caption" 
+                          color="text.secondary"
+                          sx={{ 
+                            display: 'block',
+                            mt: 1,
+                            lineHeight: 1.4
+                          }}
+                        >
+                          {task.description}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onQuickComplete(task.id);
+                    }}
+                    sx={{ color: 'success.main' }}
+                  >
+                    <CheckCircleIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+              </Card>
+            ))
+          )}
+        </Box>
+      </Box>
+
+      {/* Right Side - Appointment Tasks (75%) */}
+      <Box sx={{ width: '75%', pl: 2 }}>
+        <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+          Appointments ({appointmentTasks.length})
+        </Typography>
+        <Box sx={{ 
+          height: '100%', 
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2
+        }}>
+          {appointmentTasks.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+              No appointments scheduled
+            </Typography>
+          ) : (
+            appointmentTasks.map((task) => (
+              <Card
+                key={task.id}
+                sx={{
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: 'action.hover' },
+                  border: 1,
+                  borderColor: 'divider',
+                  p: 2
+                }}
+                onClick={() => onTaskClick(task)}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 'fit-content' }}>
+                    {getTaskTypeIcon(task.type)}
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                        {task.title}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {task.startTime ? new Date(task.startTime).toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        }) : (task.classification === 'todo' ? task.dueDate : task.scheduledDate)}
+                        {task.duration && ` • ${task.duration} min`}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    {task.description && (
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        {task.description}
+                      </Typography>
+                    )}
+                    
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                      <Chip
+                        label={getTaskStatusDisplay(task)}
+                        size="small"
+                        sx={{ 
+                          bgcolor: getStatusColor(task.status),
+                          color: 'white'
+                        }}
+                      />
+                      <Chip
+                        label={task.priority}
+                        size="small"
+                        variant="outlined"
+                      />
+                      {task.aiSuggested && (
+                        <Chip
+                          label="AI Suggested"
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                          icon={<PsychologyIcon />}
+                        />
+                      )}
+                    </Box>
+                    
+                    {/* Associated contacts/companies */}
+                    {task.associations?.contacts && task.associations.contacts.length > 0 && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Contacts:
+                        </Typography>
+                        {task.associations.contacts.slice(0, 2).map((contactId: string) => {
+                          const contact = associatedContacts.find(c => c.id === contactId);
+                          return (
+                            <Chip
+                              key={contactId}
+                              label={contact?.fullName || contactId}
+                              size="small"
+                              variant="outlined"
+                            />
+                          );
+                        })}
+                        {task.associations.contacts.length > 2 && (
+                          <Typography variant="caption" color="text.secondary">
+                            +{task.associations.contacts.length - 2} more
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                    
+                    {task.associations?.companies && task.associations.companies.length > 0 && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Company:
+                        </Typography>
+                        {task.associations.companies.slice(0, 1).map((companyId: string) => {
+                          const company = deal?.companyId === companyId ? deal : null;
+                          return (
+                            <Chip
+                              key={companyId}
+                              label={company?.companyName || companyId}
+                              size="small"
+                              variant="outlined"
+                            />
+                          );
+                        })}
+                      </Box>
+                    )}
+                  </Box>
+                  
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onQuickComplete(task.id);
+                      }}
+                      sx={{ color: 'success.main' }}
+                    >
+                      <CheckCircleIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </Box>
+              </Card>
+            ))
+          )}
+        </Box>
+      </Box>
+    </Box>
+  );
+};
 
 const TasksList: React.FC<TasksListProps> = ({
   tasks,
@@ -909,73 +1270,74 @@ interface TasksAnalyticsProps {
   dashboardData: TaskDashboardData | null;
 }
 
-const TasksAnalytics: React.FC<TasksAnalyticsProps> = ({ dashboardData }) => {
-  return (
-    <Grid container spacing={3}>
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Priority Breakdown
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">High Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.high || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.high || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="error"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Medium Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.medium || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.medium || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="warning"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Low Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.low || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.low || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="success"
-              />
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-      
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Task Types
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              {Object.entries(dashboardData?.types || {}).map(([type, count]) => (
-                <Box key={type} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                    {type.replace('_', ' ')}
-                  </Typography>
-                  <Typography variant="body2">{count}</Typography>
-                </Box>
-              ))}
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-    </Grid>
-  );
-};
+// Temporarily disable unused component to unblock builds; re-enable when analytics UI is used
+// const TasksAnalytics: React.FC<TasksAnalyticsProps> = ({ dashboardData }) => {
+//   return (
+//     <Grid container spacing={3}>
+//       <Grid item xs={12} md={6}>
+//         <Card>
+//           <CardContent>
+//             <Typography variant="h6" gutterBottom>
+//               Priority Breakdown
+//             </Typography>
+//             <Box sx={{ mt: 2 }}>
+//               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+//                 <Typography variant="body2">High Priority</Typography>
+//                 <Typography variant="body2">{dashboardData?.priorities?.high || 0}</Typography>
+//               </Box>
+//               <LinearProgress 
+//                 variant="determinate" 
+//                 value={((dashboardData?.priorities?.high || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
+//                 color="error"
+//                 sx={{ mb: 2 }}
+//               />
+//               
+//               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+//                 <Typography variant="body2">Medium Priority</Typography>
+//                 <Typography variant="body2">{dashboardData?.priorities?.medium || 0}</Typography>
+//               </Box>
+//               <LinearProgress 
+//                 variant="determinate" 
+//                 value={((dashboardData?.priorities?.medium || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
+//                 color="warning"
+//                 sx={{ mb: 2 }}
+//               />
+//               
+//               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+//                 <Typography variant="body2">Low Priority</Typography>
+//                 <Typography variant="body2">{dashboardData?.priorities?.low || 0}</Typography>
+//               </Box>
+//               <LinearProgress 
+//                 variant="determinate" 
+//                 value={((dashboardData?.priorities?.low || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
+//                 color="success"
+//               />
+//             </Box>
+//           </CardContent>
+//         </Card>
+//       </Grid>
+//       
+//       <Grid item xs={12} md={6}>
+//         <Card>
+//           <CardContent>
+//             <Typography variant="h6" gutterBottom>
+//               Task Types
+//             </Typography>
+//             <Box sx={{ mt: 2 }}>
+//               {Object.entries(dashboardData?.types || {}).map(([type, count]) => (
+//                 <Box key={type} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+//                   <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
+//                     {type.replace('_', ' ')}
+//                   </Typography>
+//                   <Typography variant="body2">{count}</Typography>
+//                 </Box>
+//               ))}
+//             </Box>
+//           </CardContent>
+//         </Card>
+//       </Grid>
+//     </Grid>
+//   );
+// };
 
 export default DealTasksDashboard; 

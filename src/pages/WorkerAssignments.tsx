@@ -25,23 +25,20 @@ import {
   ListItem,
   ListItemText,
   ListItemIcon,
-  Divider,
 } from '@mui/material';
 import {
   Assignment,
   Schedule,
   LocationOn,
   Business,
-  Person,
   CheckCircle,
   Pending,
   Cancel,
   Info,
-  ExpandMore,
-  ExpandLess,
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+
+import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 
 interface Assignment {

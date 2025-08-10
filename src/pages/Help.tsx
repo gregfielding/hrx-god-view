@@ -20,28 +20,24 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Rating,
   Alert,
   CircularProgress,
   Tabs,
   Tab,
-  Badge,
 } from '@mui/material';
 import {
   Search as SearchIcon,
-  Help as HelpIcon,
   Category as CategoryIcon,
   Person as PersonIcon,
   ThumbUp as ThumbUpIcon,
   ThumbDown as ThumbDownIcon,
   Close as CloseIcon,
-  Bookmark as BookmarkIcon,
   TrendingUp as TrendingUpIcon,
-  NewReleases as NewReleasesIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
+
+import { useAuth } from '../contexts/AuthContext';
 
 interface HelpTopic {
   id: string;

@@ -17,10 +17,11 @@ import {
   IconButton,
 } from '@mui/material';
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import AgencyTab from './AgencyTab';
+
+import { db } from '../../../firebase';
+
 
 interface CompanySettingsTabProps {
   tenantId: string;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Stepper,
@@ -22,10 +22,10 @@ import {
   Switch,
   FormControlLabel,
   Slider,
-  Rating,
   Divider
 } from '@mui/material';
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { DealIntelligenceProfile, DealStakeholder, CRMDeal } from '../types/CRM';
@@ -306,20 +306,23 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
       let dealRef;
       if (deal?.id) {
         // Update existing deal
-        const dealDocRef = doc(db, 'tenants', tenantId, 'crm_deals', deal.id);
+        if (!tenantId) throw new Error('Missing tenantId');
+        const dealDocRef = doc(db, 'tenants', tenantId as string, 'crm_deals', deal.id);
         await updateDoc(dealDocRef, dealData);
         dealRef = { id: deal.id };
         console.log('🔄 Updated existing deal:', deal.id);
       } else {
         // Create new deal
         dealData.createdAt = serverTimestamp();
-        dealRef = await addDoc(collection(db, 'tenants', tenantId, 'crm_deals'), dealData);
+        if (!tenantId) throw new Error('Missing tenantId');
+        dealRef = await addDoc(collection(db, 'tenants', tenantId as string, 'crm_deals'), dealData);
         console.log('🆕 Created new deal:', dealRef.id);
       }
       
       // Update company with deal intelligence
       if (basicInfo.companyId) {
-        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', basicInfo.companyId);
+        if (!tenantId) throw new Error('Missing tenantId');
+        const companyRef = doc(db, 'tenants', tenantId as string, 'crm_companies', basicInfo.companyId);
         await updateDoc(companyRef, {
           dealIntelligence: {
             complexityScore,
@@ -666,7 +669,7 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 <FormControl fullWidth>
                   <InputLabel>Role</InputLabel>
                   <Select
-                    value={newStakeholder.role}
+                    value={newStakeholder.role || ''}
                     onChange={(e) => setNewStakeholder({...newStakeholder, role: e.target.value as any})}
                     label="Role"
                   >
@@ -682,7 +685,7 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 <FormControl fullWidth>
                   <InputLabel>Influence</InputLabel>
                   <Select
-                    value={newStakeholder.influence}
+                    value={newStakeholder.influence || ''}
                     onChange={(e) => setNewStakeholder({...newStakeholder, influence: e.target.value as any})}
                     label="Influence"
                   >
@@ -696,7 +699,7 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 <FormControl fullWidth>
                   <InputLabel>Personality</InputLabel>
                   <Select
-                    value={newStakeholder.personality}
+                    value={newStakeholder.personality || ''}
                     onChange={(e) => setNewStakeholder({...newStakeholder, personality: e.target.value as any})}
                     label="Personality"
                   >
@@ -807,24 +810,25 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={buyingProcess.competitors}
                   onChange={(_, newValue) => setBuyingProcess({...buyingProcess, competitors: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="Competitors"
                       placeholder="Add competitor names"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
             </Grid>
@@ -882,24 +886,25 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={implementation.knownBlockers}
                   onChange={(_, newValue) => setImplementation({...implementation, knownBlockers: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="Known Blockers"
                       placeholder="Add potential blockers"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
             </Grid>
@@ -932,66 +937,69 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={competitiveLandscape.vendorLikes}
                   onChange={(_, newValue) => setCompetitiveLandscape({...competitiveLandscape, vendorLikes: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="What They Like About Current Vendor"
                       placeholder="Add vendor strengths"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={competitiveLandscape.vendorDislikes}
                   onChange={(_, newValue) => setCompetitiveLandscape({...competitiveLandscape, vendorDislikes: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="What They Dislike About Current Vendor"
                       placeholder="Add vendor weaknesses"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={competitiveLandscape.internalRelationships}
                   onChange={(_, newValue) => setCompetitiveLandscape({...competitiveLandscape, internalRelationships: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="Internal Relationships"
                       placeholder="Add key internal relationships"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
             </Grid>
@@ -1051,24 +1059,25 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
                 />
               </Grid>
               <Grid item xs={12}>
-                <Autocomplete
+                  <Autocomplete
                   multiple
                   freeSolo
                   options={[]}
                   value={forecast.expansionOpportunities}
                   onChange={(_, newValue) => setForecast({...forecast, expansionOpportunities: newValue})}
                   renderInput={(params) => (
-                    <TextField
-                      {...params}
+                      <TextField
+                        {...(params as any)}
                       label="Expansion Opportunities"
                       placeholder="Add potential expansion areas"
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
-                  }
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option} {...chipProps} />;
+                      })
+                    }
                 />
               </Grid>
             </Grid>

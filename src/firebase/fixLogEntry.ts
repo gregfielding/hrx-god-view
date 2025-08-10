@@ -1,7 +1,8 @@
 // /firebase/fixLogEntry.ts - Firebase function to save fixed log entries
 
-import { db } from '../firebase';
 import { doc, setDoc, writeBatch, addDoc, collection } from 'firebase/firestore';
+
+import { db } from '../firebase';
 import { LogEntry } from '../types/LogEntry';
 
 export async function fixLogEntry(log: LogEntry): Promise<void> {

@@ -11,7 +11,6 @@ import {
   Box,
   Switch,
   FormControlLabel,
-  TextField,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -20,8 +19,6 @@ import {
   Select,
   MenuItem,
   Chip,
-  Slider,
-  Divider,
   Card,
   CardContent,
   CardHeader,
@@ -29,9 +26,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import SecurityIcon from '@mui/icons-material/Security';
-import PeopleIcon from '@mui/icons-material/People';
-import ChatIcon from '@mui/icons-material/Chat';
-import CampaignIcon from '@mui/icons-material/Campaign';
+
 import { useAuth } from '../../../../contexts/AuthContext';
 import { 
   SecurityLevelAIEngagement, 

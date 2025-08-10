@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box,
   Typography,
   Paper,
   Grid,
-  Slider,
   Button,
   IconButton,
   Tooltip,
@@ -12,10 +10,10 @@ import {
   Alert,
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
-import { doc, getDoc, setDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../../../firebase';
+
+import { db , app } from '../../../../firebase';
 import { LoggableSlider } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
 

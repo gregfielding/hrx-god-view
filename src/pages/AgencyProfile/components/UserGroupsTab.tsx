@@ -18,9 +18,10 @@ import {
   Checkbox,
 } from '@mui/material';
 import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
+
+import { db } from '../../../firebase';
 import BroadcastDialog from '../../../components/BroadcastDialog';
 
 const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {

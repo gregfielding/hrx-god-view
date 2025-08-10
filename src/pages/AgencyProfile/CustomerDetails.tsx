@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { Box, Button, Typography, Tabs, Tab, Paper, CircularProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+
+import { db } from '../../firebase';
 import LocationsTab from '../CustomerProfile/components/LocationsTab';
-import AgencyContactsTab from './AgencyContactsTab';
 import AITrainingTab from '../CustomerProfile/components/AITrainingTab';
+
+import AgencyContactsTab from './AgencyContactsTab';
 
 const tabLabels = [
   { label: 'Locations', icon: <LocationOnIcon /> },

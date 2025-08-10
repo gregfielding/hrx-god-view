@@ -10,13 +10,7 @@ import {
   Chip,
   Button,
   IconButton,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
   CircularProgress,
-  Breadcrumbs,
-  Link,
   Paper,
   Tabs,
   Tab,
@@ -30,7 +24,6 @@ import {
   Avatar,
   Snackbar,
   Alert,
-  Divider,
   FormHelperText,
   TableContainer,
   Table,
@@ -39,28 +32,13 @@ import {
   TableCell,
   TableBody,
   FormControlLabel,
-  Radio,
-  RadioGroup,
-  Checkbox,
-  FormGroup,
   Switch,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  ListItemIcon,
-  ListItemButton,
-  Tooltip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
 } from '@mui/material';
-import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import {
-  Business as BusinessIcon,
-  ArrowBack as ArrowBackIcon,
-  Edit as EditIcon,
-  Email as EmailIcon,
   Phone as PhoneIcon,
   Add as AddIcon,
   LocationOn as LocationIcon,
@@ -80,35 +58,13 @@ import {
   Refresh as RefreshIcon,
   OpenInNew as OpenInNewIcon,
   Newspaper as NewspaperIcon,
-  AutoAwesome as AutoAwesomeIcon,
   LocationOn as LocationOnIcon,
   Visibility,
-  Settings as SettingsIcon,
   Security as SecurityIcon,
-  LocalHospital as DrugScreenIcon,
-  WorkOutline as SteelToeIcon,
-  Checkroom as UniformIcon,
-  VerifiedUser as EVerifyIcon,
-  Badge as BadgeIcon,
   AccessTime as TimeClockIcon,
-  Schedule as TimecardIcon,
-  Timer as OvertimeIcon,
-  EventNote as AttendanceIcon,
-  Phone as CallOffIcon,
-  Cancel as NoShowIcon,
-  LocalHospital as InjuryIcon,
-  Analytics as MetricsIcon,
-  Gavel as DisciplinaryIcon,
+  Compare as CompareIcon,
   Receipt as BillingIcon,
-  Description as RateSheetIcon,
-  Assignment as MSAIcon,
-  Event as ExpirationIcon,
-  ShoppingCart as POIcon,
-  ContactMail as InvoiceContactIcon,
-  LocalShipping as InvoiceDeliveryIcon,
-  CalendarToday as InvoiceFrequencyIcon,
   AttachFile as ContractsIcon,
-  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import {
@@ -119,7 +75,6 @@ import {
   where,
   getDocs,
   updateDoc,
-  setDoc,
   onSnapshot,
   addDoc,
   deleteDoc,
@@ -131,18 +86,19 @@ import {
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage';
-import { db, storage } from '../../firebase';
-import { functions } from '../../firebase';
 import { httpsCallable } from 'firebase/functions';
+
+import { db, storage , functions } from '../../firebase';
+import FastAssociationsCard from '../../components/FastAssociationsCard';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCRMCache } from '../../contexts/CRMCacheContext';
 import IndustrySelector from '../../components/IndustrySelector';
 import { geocodeAddress } from '../../utils/geocodeAddress';
 import { INDUSTRIES, getIndustriesByCategory } from '../../data/industries';
 import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
 import DecisionMakersPanel from '../../components/DecisionMakersPanel';
-import CompanyFollowButton from '../../components/CompanyFollowButton';
 import CRMNotesTab from '../../components/CRMNotesTab';
-import StageChip from '../../components/StageChip';
+import { getStageHexColor, getTextContrastColor } from '../../utils/crmStageColors';
 
 
 // Helper function to get sub-industries for a given main industry
@@ -523,6 +479,7 @@ const findFacebookUrl = async (companyName: string): Promise<string> => {
 const CompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
   const { tenantId } = useAuth();
+  const { updateCacheState } = useCRMCache();
   const navigate = useNavigate();
   
   const [company, setCompany] = useState<any>(null);
@@ -752,6 +709,58 @@ const CompanyDetails: React.FC = () => {
     }
   };
 
+  const handleDiscoverUrls = async () => {
+    setAiLoading(true);
+    try {
+      const companyName = company.companyName || company.name;
+      if (!companyName) {
+        setError('Company name is required for URL discovery');
+        setAiLoading(false);
+        return;
+      }
+
+      // Use the enhanced SERP-powered URL discovery function
+      const discoverUrls = httpsCallable(functions, 'discoverCompanyUrls');
+      const urlResult = await discoverUrls({
+        companyName,
+        companyId: company.id,
+        tenantId
+      });
+      
+      const urlData = urlResult.data as any;
+      console.log('SERP-enhanced URL discovery results:', urlData);
+      
+      // Update URLs if found and not already set
+      const enhancedData: any = {};
+      if (urlData.website && !company.website) {
+        enhancedData.website = urlData.website;
+      }
+      if (urlData.linkedin && !company.linkedin) {
+        enhancedData.linkedin = urlData.linkedin;
+      }
+      if (urlData.indeed && !company.indeed) {
+        enhancedData.indeed = urlData.indeed;
+      }
+      if (urlData.facebook && !company.facebook) {
+        enhancedData.facebook = urlData.facebook;
+      }
+
+      // Update the company data in Firestore
+      if (Object.keys(enhancedData).length > 0) {
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), enhancedData);
+        setSuccess('URLs discovered and updated successfully with SERP data!');
+      } else {
+        setSuccess('No new URLs found to update.');
+      }
+      
+    } catch (error) {
+      console.error('URL discovery failed:', error);
+      setError('Failed to discover URLs. Please try again.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const handleEnhanceWithAI = async () => {
     setAiLoading(true);
     try {
@@ -871,22 +880,8 @@ const CompanyDetails: React.FC = () => {
             `https://logo.clearbit.com/${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.org`
           ];
 
-          // Add LinkedIn logo sources if we have a LinkedIn URL
-          if (enhancedData.linkedin || company.linkedin) {
-            const linkedinUrl = enhancedData.linkedin || company.linkedin;
-            // LinkedIn company logos are typically found at specific paths
-            const linkedinLogoSources = [
-              `${linkedinUrl}/logo.png`,
-              `${linkedinUrl}/logo.jpg`,
-              `${linkedinUrl}/logo.jpeg`,
-              `${linkedinUrl}/company-logo.png`,
-              `${linkedinUrl}/company-logo.jpg`,
-              // Alternative LinkedIn logo paths
-              `${linkedinUrl.replace('/company/', '/')}/logo.png`,
-              `${linkedinUrl.replace('/company/', '/')}/logo.jpg`
-            ];
-            logoSources.push(...linkedinLogoSources);
-          }
+          // Note: LinkedIn logo fetching removed to prevent 404 errors
+          // LinkedIn doesn't provide direct access to company logos via URL
 
           // Try each logo source
           for (const logoSource of logoSources) {
@@ -919,31 +914,7 @@ const CompanyDetails: React.FC = () => {
             }
           }
 
-          // If no logo found via direct URLs, try LinkedIn scraping approach
-          if (!logoUrl && (enhancedData.linkedin || company.linkedin)) {
-            try {
-              const linkedinUrl = enhancedData.linkedin || company.linkedin;
-              console.log(`Attempting LinkedIn logo extraction from: ${linkedinUrl}`);
-              
-              // Note: This would require a backend service to scrape LinkedIn
-              // For now, we'll use a simulated approach
-              const simulatedLinkedinLogo = `https://logo.clearbit.com/${companyName.toLowerCase().replace(/\s+/g, '')}.com`;
-              
-              const response = await fetch(simulatedLinkedinLogo);
-              if (response.ok) {
-                const blob = await response.blob();
-                const file = new File([blob], `${companyName.toLowerCase().replace(/\s+/g, '')}-linkedin-logo.png`, { type: 'image/png' });
-
-                const storageRef = ref(storage, `companies/${tenantId}/${company.id}/linkedin-logo.png`);
-                await uploadBytes(storageRef, file);
-                logoUrl = await getDownloadURL(storageRef);
-                enhancedData.logo = logoUrl;
-                console.log(`Successfully uploaded LinkedIn-style logo`);
-              }
-            } catch (linkedinLogoErr) {
-              console.log('LinkedIn logo extraction failed:', linkedinLogoErr);
-            }
-          }
+          // Note: LinkedIn logo extraction removed to prevent 404 errors
         } catch (logoErr) {
           console.log('AI logo detection failed, continuing without logo:', logoErr);
         }
@@ -1230,28 +1201,55 @@ const CompanyDetails: React.FC = () => {
           </Box>
 
           {/* Action Buttons */}
-          <Box sx={{ display: 'flex', gap: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            {/* AI Buttons */}
             <Button
               variant="outlined"
-              onClick={() => navigate('/crm?tab=companies')}
+              size="small"
+              startIcon={<LanguageIcon />}
+              onClick={handleDiscoverUrls}
+              disabled={aiLoading}
+              sx={{ minWidth: 140 }}
+            >
+              {aiLoading ? 'Discovering...' : 'Discover URLs'}
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<AIIcon />}
+              onClick={handleEnhanceWithAI}
+              disabled={aiLoading}
+              sx={{ minWidth: 140 }}
+            >
+              {aiLoading ? 'Enhancing...' : 'Enhance with AI'}
+            </Button>
+            
+            <Button
+              variant="outlined"
+              onClick={() => {
+                // Update cache with current company ID for potential future use
+                updateCacheState({ lastVisitedCompanyId: companyId });
+                // Navigate back to CRM with companies tab
+                navigate('/crm?tab=companies');
+              }}
             >
               Back to Companies
             </Button>
-            <CompanyFollowButton
+            {/* <CompanyFollowButton
               companyId={companyId}
               companyName={company?.companyName || company?.name}
               tenantId={tenantId}
               onSuccess={setSuccess}
               onError={setError}
-            />
-            <Button
+            /> */}
+            {/* <Button
               variant="outlined"
               color="error"
               startIcon={<DeleteIcon />}
               onClick={() => setDeleteDialogOpen(true)}
             >
               Delete
-            </Button>
+            </Button> */}
             {/* <Button
               variant="contained"
               startIcon={<EditIcon />}
@@ -1329,16 +1327,25 @@ const CompanyDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CompareIcon fontSize="small" />
+                Similar
+              </Box>
+            } 
+          />
+
+          {/* <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <SettingsIcon fontSize="small" />
                 Order Defaults
               </Box>
             } 
-          />
+          /> */}
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <WorkIcon fontSize="small" />
-                Indeed Jobs
+                Job Postings
                 <Badge badgeContent={jobPostings.length} color="primary" />
               </Box>
             } 
@@ -1385,11 +1392,13 @@ const CompanyDetails: React.FC = () => {
         <NotesTab company={company} tenantId={tenantId} />
       )}
       
-
-      
       {tabValue === 5 && (
-        <OrderDefaultsTab company={company} tenantId={tenantId} tenantName={tenantName} />
+        <SimilarTab company={company} tenantId={tenantId} />
       )}
+      
+      {/* {tabValue === 6 && (
+        <OrderDefaultsTab company={company} tenantId={tenantId} tenantName={tenantName} />
+      )} */}
       
       {tabValue === 6 && (
         <IndeedJobsTab company={company} jobPostings={jobPostings} setJobPostings={setJobPostings} jobsLoading={jobsLoading} setJobsLoading={setJobsLoading} />
@@ -1615,9 +1624,13 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
         salespersonCount: 0
       };
 
+      const cleanLocationData = Object.fromEntries(
+        Object.entries(locationData).filter(([, v]) => v !== undefined)
+      );
+
       if (headquartersSnap.empty) {
         // Create new headquarters location
-        await addDoc(locationsRef, locationData);
+        await addDoc(locationsRef, cleanLocationData);
         console.log('✅ Created headquarters location');
       } else {
         // Check if any existing headquarters has the same address
@@ -1632,7 +1645,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
         if (existingHeadquarters) {
           // Update the existing headquarters with the same address
           await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations', existingHeadquarters.id), {
-            ...locationData,
+            ...cleanLocationData,
             id: existingHeadquarters.id // Preserve the existing ID
           });
           console.log('✅ Updated existing headquarters location with same address');
@@ -1651,7 +1664,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
           // Update the first headquarters location
           const headquartersDoc = headquartersSnap.docs[0];
           await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations', headquartersDoc.id), {
-            ...locationData,
+            ...cleanLocationData,
             id: headquartersDoc.id // Preserve the existing ID
           });
           console.log('✅ Updated headquarters location');
@@ -2167,6 +2180,48 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
                 </Select>
               </FormControl>
 
+              {/* Pipeline Totals */}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant="subtitle2" color="primary" fontWeight="medium">
+                  Pipeline Value
+                </Typography>
+                {company.pipelineValue ? (
+                  <Box>
+                    <Typography variant="h6" color="success.main" fontWeight="bold">
+                      ${company.pipelineValue.low?.toLocaleString()} - ${company.pipelineValue.high?.toLocaleString()}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {company.pipelineValue.dealCount || 0} deal{(company.pipelineValue.dealCount || 0) !== 1 ? 's' : ''} in pipeline
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No pipeline data available
+                  </Typography>
+                )}
+              </Box>
+
+              {/* Closed Deal Totals */}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, p: 2, bgcolor: 'success.50', borderRadius: 1 }}>
+                <Typography variant="subtitle2" color="success.main" fontWeight="medium">
+                  Closed Deal Value
+                </Typography>
+                {company.closedValue ? (
+                  <Box>
+                    <Typography variant="h6" color="success.main" fontWeight="bold">
+                      ${company.closedValue.total?.toLocaleString()}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {company.closedValue.dealCount || 0} closed deal{(company.closedValue.dealCount || 0) !== 1 ? 's' : ''}
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No closed deals data available
+                  </Typography>
+                )}
+              </Box>
+
               <IndustrySelector
                 value={company.industry || ''}
                 onChange={(industryCode) => {
@@ -2178,7 +2233,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
                 }}
                 label="Industry"
                 variant="select"
-                showCategory={true}
+                showCategory={false}
               />
 
               <FormControl fullWidth size="small" disabled={!company.industry}>
@@ -2286,11 +2341,11 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
 
       {/* Associations Card - Top Right */}
       <Grid item xs={12} md={6}>
-        <SimpleAssociationsCard
+        <FastAssociationsCard
           entityType="company"
           entityId={company.id}
-          entityName={company.companyName || company.name}
           tenantId={tenantId}
+          entityName={company.companyName || company.name}
           showAssociations={{
             locations: false,
             contacts: false,
@@ -2298,15 +2353,6 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
             salespeople: true,
             companies: false, // Don't show companies for companies
             tasks: false
-          }}
-          customLabels={{
-            salespeople: "Account Managers"
-          }}
-          onAssociationChange={(type, action, entityId) => {
-            console.log(`${action} ${type} association: ${entityId}`);
-          }}
-          onError={(error) => {
-            console.error('Association error:', error);
           }}
         />
       </Grid>
@@ -2389,38 +2435,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
         </Card>
       </Grid>
 
-      {/* Discover URLs Button */}
-      <Grid item xs={12}>
-        <Card>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
-              <Button
-                variant="outlined"
-                size="large"
-                startIcon={<LanguageIcon />}
-                onClick={handleDiscoverUrls}
-                disabled={aiLoading}
-                sx={{ minWidth: 180 }}
-              >
-                {aiLoading ? 'Discovering...' : 'Discover URLs'}
-              </Button>
-              <Button
-                variant="contained"
-                size="large"
-                startIcon={<AIIcon />}
-                onClick={handleEnhanceWithAI}
-                disabled={aiLoading}
-                sx={{ minWidth: 200 }}
-              >
-                {aiLoading ? 'Enhancing...' : 'Enhance with AI'}
-              </Button>
-            </Box>
-            <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ mt: 1 }}>
-              <strong>Discover URLs:</strong> Find Website, LinkedIn, Indeed, and Facebook URLs • <strong>Enhance with AI:</strong> Complete company profile with industry, size, revenue, tags, and logo
-            </Typography>
-          </CardContent>
-        </Card>
-      </Grid>
+
 
       {/* Success/Error Snackbars */}
       <Snackbar open={!!success} autoHideDuration={4000} onClose={() => setSuccess(null)}>
@@ -2708,14 +2723,14 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
           Company Locations ({locations.length})
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
+          {/* <Button
             variant="outlined"
             startIcon={<AutoAwesomeIcon />}
             onClick={discoverLocationsWithAI}
             disabled={aiLoading}
           >
             {aiLoading ? 'Discovering...' : 'AI Discover Locations'}
-          </Button>
+          </Button> */}
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -2734,7 +2749,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
       )}
 
       {/* AI Suggestions */}
-      {showSuggestions && suggestedLocations.length > 0 && (
+      {/* {showSuggestions && suggestedLocations.length > 0 && (
         <Card sx={{ mb: 3 }}>
           <CardHeader 
             title={
@@ -2792,7 +2807,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
             </Grid>
           </CardContent>
         </Card>
-      )}
+      )} */}
 
       {/* Manual Add Form */}
       {showAddForm && (
@@ -3106,7 +3121,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
             <Typography variant="h6" color="text.secondary" gutterBottom>
               No Locations Found
             </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {/* <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Use AI to automatically discover company locations or add them manually.
             </Typography>
             <Button
@@ -3116,7 +3131,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
               disabled={aiLoading}
             >
               {aiLoading ? 'Discovering...' : 'Discover with AI'}
-            </Button>
+            </Button> */}
           </CardContent>
         </Card>
       )}
@@ -3126,9 +3141,26 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
 
 const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }> = ({ contacts, company, locations }) => {
   const navigate = useNavigate();
-  const { tenantId } = useAuth();
+  const { tenantId, currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAddContactDialog, setShowAddContactDialog] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  // Contact form state
+  const [contactForm, setContactForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    jobTitle: '',
+    contactType: 'Unknown',
+    tags: [],
+    isActive: true,
+    notes: ''
+  });
   
   // Load locations if not provided
   const [companyLocations, setCompanyLocations] = useState<any[]>(locations);
@@ -3156,6 +3188,66 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     }
   };
 
+  const handleContactFormChange = (field: string, value: string | boolean | string[]) => {
+    setContactForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleTagsChange = (newTags: string[]) => {
+    setContactForm(prev => ({ ...prev, tags: newTags }));
+  };
+
+  const handleSaveContact = async () => {
+    if (!contactForm.firstName || !contactForm.lastName) {
+      setError('First name and last name are required');
+      return;
+    }
+
+    setSavingContact(true);
+    try {
+      const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+      const { db } = await import('../../firebase');
+      
+      const contactData = {
+        ...contactForm,
+        fullName: `${contactForm.firstName} ${contactForm.lastName}`,
+        tenantId,
+        companyId: company.id,
+        companyName: company.companyName || company.name,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        salesOwnerId: currentUser?.uid || null,
+        accountOwnerId: currentUser?.uid || null
+      };
+
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      await addDoc(contactsRef, contactData);
+
+      // Reset form and close dialog
+      setContactForm({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        jobTitle: '',
+        contactType: 'Unknown',
+        tags: [],
+        isActive: true,
+        notes: ''
+      });
+      setShowAddContactDialog(false);
+      setSuccess(true);
+      setSuccessMessage('Contact added successfully!');
+      
+      // Reload the page to refresh contacts
+      window.location.reload();
+    } catch (err: any) {
+      console.error('Error adding contact:', err);
+      setError(err.message || 'Failed to add contact');
+    } finally {
+      setSavingContact(false);
+    }
+  };
+
   const handleLocationChange = async (contactId: string, locationId: string | null) => {
     try {
       console.log('Updating location association:', {
@@ -3168,16 +3260,37 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
       const location = companyLocations.find(loc => loc.id === locationId);
       const updateLocationAssociation = httpsCallable(functions, 'updateLocationAssociation');
       
-      const result = await updateLocationAssociation({
-        tenantId,
-        entityType: 'contact',
-        entityId: contactId,
-        locationId: locationId,
-        companyId: company.id,
-        locationName: location?.name || null
-      });
+      try {
+        const result = await updateLocationAssociation({
+          tenantId,
+          entityType: 'contact',
+          entityId: contactId,
+          locationId: locationId,
+          companyId: company.id,
+          locationName: location?.name || null
+        });
+        console.log('Location association update result:', result);
+      } catch (callableErr) {
+        console.warn('Callable failed, falling back to HTTP:', callableErr);
+        const resp = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/updateLocationAssociationHttp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            entityType: 'contact',
+            entityId: contactId,
+            locationId: locationId,
+            companyId: company.id,
+            locationName: location?.name || null
+          })
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`HTTP fallback failed: ${resp.status} ${errText}`);
+        }
+        console.log('HTTP fallback succeeded');
+      }
       
-      console.log('Location association update result:', result);
       
       // Update the contact in the list
       // Note: In a real implementation, you'd want to refresh the contacts list
@@ -3232,9 +3345,14 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               </Box>
             }
             action={
-              <IconButton size="small">
-                <AddIcon />
-              </IconButton>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddContactDialog(true)}
+              >
+                Add Contact
+              </Button>
             }
           />
           <CardContent>
@@ -3254,6 +3372,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                       <TableCell>Email</TableCell>
                       <TableCell>Phone</TableCell>
                       <TableCell>Location</TableCell>
+                      <TableCell>LinkedIn</TableCell>
                       <TableCell>Actions</TableCell>
                     </TableRow>
                   </TableHead>
@@ -3287,22 +3406,30 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                           </FormControl>
                         </TableCell>
                         <TableCell>
-                          <Box sx={{ display: 'flex', gap: 1 }}>
-                            <Button
+                          {contact.linkedinUrl ? (
+                            <IconButton
                               size="small"
-                              variant="outlined"
-                              startIcon={<Visibility />}
-                              onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                              onClick={() => window.open(contact.linkedinUrl, '_blank')}
+                              color="primary"
+                              title="Open LinkedIn Profile"
                             >
-                              View
-                            </Button>
-                            <IconButton size="small">
-                              <EmailIcon />
+                              <LinkedInIcon />
                             </IconButton>
-                            <IconButton size="small">
-                              <PhoneIcon />
-                            </IconButton>
-                          </Box>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              No LinkedIn
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Visibility />}
+                            onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                          >
+                            View
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -3325,6 +3452,154 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
           </CardContent>
         </Card>
       </Grid>
+
+      {/* Add Contact Dialog */}
+      <Dialog open={showAddContactDialog} onClose={() => setShowAddContactDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Contact</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="First Name"
+                value={contactForm.firstName}
+                onChange={(e) => handleContactFormChange('firstName', e.target.value)}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Last Name"
+                value={contactForm.lastName}
+                onChange={(e) => handleContactFormChange('lastName', e.target.value)}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Email"
+                type="email"
+                value={contactForm.email}
+                onChange={(e) => handleContactFormChange('email', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Phone"
+                value={contactForm.phone}
+                onChange={(e) => handleContactFormChange('phone', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Job Title"
+                value={contactForm.jobTitle}
+                onChange={(e) => handleContactFormChange('jobTitle', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Contact Type</InputLabel>
+                <Select
+                  value={contactForm.contactType}
+                  label="Contact Type"
+                  onChange={(e) => handleContactFormChange('contactType', e.target.value)}
+                >
+                  <MenuItem value="Decision Maker">Decision Maker</MenuItem>
+                  <MenuItem value="Influencer">Influencer</MenuItem>
+                  <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
+                  <MenuItem value="Referrer">Referrer</MenuItem>
+                  <MenuItem value="Evaluator">Evaluator</MenuItem>
+                  <MenuItem value="Unknown">Unknown</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={contactForm.isActive}
+                    onChange={(e) => handleContactFormChange('isActive', e.target.checked)}
+                    color="primary"
+                  />
+                }
+                label="Active Contact"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={contactForm.tags}
+                onChange={(event, newValue) => handleTagsChange(newValue)}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      color="primary"
+                    />
+                  ))
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Tags"
+                    placeholder="Add tags..."
+                  />
+                )}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Notes"
+                multiline
+                rows={3}
+                value={contactForm.notes}
+                onChange={(e) => handleContactFormChange('notes', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Alert severity="info">
+                <Typography variant="body2">
+                  This contact will be automatically associated with <strong>{company.companyName || company.name}</strong>.
+                </Typography>
+              </Alert>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowAddContactDialog(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSaveContact}
+            variant="contained"
+            disabled={savingContact || !contactForm.firstName || !contactForm.lastName}
+            startIcon={savingContact ? <CircularProgress size={16} /> : null}
+          >
+            {savingContact ? 'Saving...' : 'Save Contact'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={success}
+        autoHideDuration={6000}
+        onClose={() => setSuccess(false)}
+      >
+        <Alert onClose={() => setSuccess(false)} severity="success">
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Grid>
   );
 };
@@ -3335,9 +3610,77 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Load locations if not provided
+  // New opportunity dialog state
+  const [showNewOpportunityDialog, setShowNewOpportunityDialog] = useState(false);
+  const [newOpportunityForm, setNewOpportunityForm] = useState({
+    name: '',
+    divisionId: '',
+    locationId: '',
+  });
+  const [companyDivisions, setCompanyDivisions] = useState<any[]>([]);
   const [companyLocations, setCompanyLocations] = useState<any[]>(locations);
+  const [loadingDivisions, setLoadingDivisions] = useState(false);
+  const [loadingLocations, setLoadingLocations] = useState(false);
   
+  // Calculate expected revenue range from qualification data
+  const calculateExpectedRevenueRange = (deal: any) => {
+    if (!deal.stageData?.qualification) {
+      return { min: 0, max: 0, hasData: false };
+    }
+
+    const qualData = deal.stageData.qualification;
+    const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
+    const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
+    const timeline = qualData.staffPlacementTimeline;
+
+    if (!timeline) {
+      return { min: 0, max: 0, hasData: false };
+    }
+
+    // Calculate bill rate: pay rate + markup
+    const billRate = payRate * (1 + markup / 100);
+    
+    // Annual hours per employee (2080 full-time hours)
+    const annualHoursPerEmployee = 2080;
+    
+    // Calculate annual revenue per employee
+    const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+    
+    // Get starting and 180-day numbers
+    const startingCount = timeline.starting || 0;
+    const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+    
+    // Calculate revenue range
+    const minRevenue = annualRevenuePerEmployee * startingCount;
+    const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+    
+    return {
+      min: minRevenue,
+      max: maxRevenue,
+      hasData: startingCount > 0 || after180DaysCount > 0
+    };
+  };
+  
+  // Get expected close date from qualification stage
+  const getExpectedCloseDate = (deal: any) => {
+    if (!deal.stageData?.qualification?.expectedCloseDate) {
+      return null;
+    }
+    
+    // Debug logging to see what date we're getting
+    console.log('Deal close date debug:', {
+      dealId: deal.id,
+      dealName: deal.name,
+      expectedCloseDate: deal.stageData.qualification.expectedCloseDate,
+      closeDate: deal.closeDate,
+      stageData: deal.stageData?.qualification
+    });
+    
+    const date = new Date(deal.stageData.qualification.expectedCloseDate);
+    return date;
+  };
+  
+  // Load locations if not provided
   useEffect(() => {
     if (locations.length === 0 && company?.id && tenantId) {
       loadLocations();
@@ -3361,18 +3704,137 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
     }
   };
 
+  // Load company divisions
+  const loadCompanyDivisions = async (companyId: string) => {
+    try {
+      setLoadingDivisions(true);
+      const getCompanyDivisions = httpsCallable(functions, 'getCompanyDivisions');
+      const result = await getCompanyDivisions({ tenantId, companyId });
+      const data = result.data as { divisions: any[] };
+      setCompanyDivisions(data.divisions || []);
+    } catch (err) {
+      console.error('Error loading company divisions:', err);
+      setCompanyDivisions([]);
+    } finally {
+      setLoadingDivisions(false);
+    }
+  };
+
+  // Load company locations for the dialog
+  const loadCompanyLocationsForDialog = async (companyId: string) => {
+    try {
+      setLoadingLocations(true);
+      const getCompanyLocations = httpsCallable(functions, 'getCompanyLocations');
+      const result = await getCompanyLocations({ tenantId, companyId });
+      const data = result.data as { locations: any[] };
+      setCompanyLocations(data.locations || []);
+    } catch (err) {
+      console.error('Error loading company locations:', err);
+      setCompanyLocations([]);
+    } finally {
+      setLoadingLocations(false);
+    }
+  };
+
+  // Handle company selection (for divisions and locations)
+  const handleCompanySelection = async (selectedCompany: any) => {
+    if (selectedCompany?.id) {
+      setNewOpportunityForm(prev => ({ ...prev, companyId: selectedCompany.id }));
+      
+      // Load divisions and locations for the selected company
+      await Promise.all([
+        loadCompanyDivisions(selectedCompany.id),
+        loadCompanyLocationsForDialog(selectedCompany.id)
+      ]);
+    } else {
+      setNewOpportunityForm(prev => ({ ...prev, companyId: '' }));
+      setCompanyDivisions([]);
+      setCompanyLocations([]);
+    }
+  };
+
+  // Handle creating new opportunity
+  const handleCreateNewOpportunity = async () => {
+    if (!newOpportunityForm.name) {
+      return; // Basic validation
+    }
+
+    try {
+      setLoading(true);
+      
+      // Create the new opportunity
+      const opportunityData = {
+        name: newOpportunityForm.name,
+        companyId: company.id, // Use the current company
+        stage: 'qualification', // Default stage
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        associations: {
+          companies: [company.id],
+          salespeople: [], // Will be set by the system or user
+          divisions: newOpportunityForm.divisionId ? [newOpportunityForm.divisionId] : [],
+          locations: newOpportunityForm.locationId ? [newOpportunityForm.locationId] : [],
+        },
+        // Add division and location data if selected
+        ...(newOpportunityForm.divisionId && { divisionId: newOpportunityForm.divisionId }),
+        ...(newOpportunityForm.locationId && { locationId: newOpportunityForm.locationId }),
+      };
+
+      const opportunitiesRef = collection(db, `tenants/${tenantId}/crm_deals`);
+      const docRef = await addDoc(opportunitiesRef, opportunityData);
+
+      // Close dialog and reset form
+      setShowNewOpportunityDialog(false);
+      setNewOpportunityForm({
+        name: '',
+        divisionId: '',
+        locationId: '',
+      });
+      setCompanyDivisions([]);
+      setCompanyLocations([]);
+
+      // Navigate to the new opportunity details
+      navigate(`/crm/deals/${docRef.id}`);
+    } catch (error) {
+      console.error('Error creating new opportunity:', error);
+      setError('Failed to create new opportunity');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLocationChange = async (dealId: string, locationId: string | null) => {
     try {
       const location = companyLocations.find(loc => loc.id === locationId);
       const updateLocationAssociation = httpsCallable(functions, 'updateLocationAssociation');
-      await updateLocationAssociation({
-        tenantId,
-        entityType: 'deal',
-        entityId: dealId,
-        locationId: locationId,
-        companyId: company.id,
-        locationName: location?.name || null
-      });
+      try {
+        await updateLocationAssociation({
+          tenantId,
+          entityType: 'deal',
+          entityId: dealId,
+          locationId: locationId,
+          companyId: company.id,
+          locationName: location?.name || null
+        });
+      } catch (callableErr) {
+        console.warn('Callable failed, falling back to HTTP:', callableErr);
+        const resp = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/updateLocationAssociationHttp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            entityType: 'deal',
+            entityId: dealId,
+            locationId: locationId,
+            companyId: company.id,
+            locationName: location?.name || null
+          })
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`HTTP fallback failed: ${resp.status} ${errText}`);
+        }
+      }
       
       // Update the deal in the list
       // Note: In a real implementation, you'd want to refresh the deals list
@@ -3395,9 +3857,14 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
               </Box>
             }
             action={
-              <IconButton size="small">
-                <AddIcon />
-              </IconButton>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<AddIcon />}
+                onClick={() => setShowNewOpportunityDialog(true)}
+              >
+                Add New Opportunity
+              </Button>
             }
           />
           <CardContent>
@@ -3443,10 +3910,22 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                           <Chip 
                             label={deal.stage || 'Unknown Stage'} 
                             size="small" 
-                            color="primary"
+                            style={{
+                              backgroundColor: getStageHexColor(deal.stage || ''),
+                              color: getTextContrastColor(getStageHexColor(deal.stage || '')),
+                              fontWeight: 600
+                            }}
                           />
                         </TableCell>
-                        <TableCell>${deal.estimatedRevenue?.toLocaleString() || 0}</TableCell>
+                        <TableCell>
+                          {(() => {
+                            const revenueRange = calculateExpectedRevenueRange(deal);
+                            if (revenueRange.hasData) {
+                              return `$${revenueRange.min.toLocaleString()} - $${revenueRange.max.toLocaleString()}`;
+                            }
+                            return deal.estimatedRevenue ? `$${deal.estimatedRevenue.toLocaleString()}` : '-';
+                          })()}
+                        </TableCell>
                         <TableCell>
                           <Chip 
                             label={`${deal.probability || 0}%`} 
@@ -3455,7 +3934,18 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                           />
                         </TableCell>
                         <TableCell>
-                          {deal.closeDate ? new Date(deal.closeDate).toLocaleDateString() : 'Not set'}
+                          {(() => {
+                            const expectedCloseDate = getExpectedCloseDate(deal);
+                            if (expectedCloseDate) {
+                              return expectedCloseDate.toLocaleDateString();
+                            }
+                            // Fallback to regular closeDate if no qualification date
+                            if (deal.closeDate) {
+                              console.log('Using fallback closeDate:', deal.closeDate);
+                              return new Date(deal.closeDate).toLocaleDateString();
+                            }
+                            return 'Not set';
+                          })()}
                         </TableCell>
                         <TableCell>
                           <FormControl size="small" sx={{ minWidth: 150 }}>
@@ -3477,9 +3967,14 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                         </TableCell>
                         <TableCell>
                           <Box sx={{ display: 'flex', gap: 1 }}>
-                            <IconButton size="small">
-                              <Visibility />
-                            </IconButton>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                              sx={{ minWidth: 'auto', px: 1 }}
+                            >
+                              View
+                            </Button>
                           </Box>
                         </TableCell>
                       </TableRow>
@@ -3503,6 +3998,82 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
           </CardContent>
         </Card>
       </Grid>
+
+      {/* New Opportunity Dialog */}
+      <Dialog open={showNewOpportunityDialog} onClose={() => setShowNewOpportunityDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Create New Opportunity</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Opportunity Name"
+                value={newOpportunityForm.name}
+                onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, name: e.target.value }))}
+                required
+                placeholder="e.g., New Staffing Contract"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Company: {company.companyName || company.name}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Division (Optional)</InputLabel>
+                <Select
+                  value={newOpportunityForm.divisionId}
+                  onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, divisionId: e.target.value }))}
+                  label="Division (Optional)"
+                  disabled={loadingDivisions}
+                >
+                  <MenuItem value="">
+                    <em>No division</em>
+                  </MenuItem>
+                  {companyDivisions.map((division) => (
+                    <MenuItem key={division.id} value={division.id}>
+                      {division.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Location (Optional)</InputLabel>
+                <Select
+                  value={newOpportunityForm.locationId}
+                  onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, locationId: e.target.value }))}
+                  label="Location (Optional)"
+                  disabled={loadingLocations}
+                >
+                  <MenuItem value="">
+                    <em>No location</em>
+                  </MenuItem>
+                  {companyLocations.map((location) => (
+                    <MenuItem key={location.id} value={location.id}>
+                      {location.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowNewOpportunityDialog(false)} disabled={loading}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreateNewOpportunity} 
+            variant="contained"
+            disabled={!newOpportunityForm.name || loading}
+          >
+            {loading ? <CircularProgress size={20} /> : 'Create Opportunity'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Grid>
   );
 };
@@ -4765,6 +5336,264 @@ const OrderDefaultsTab: React.FC<{ company: any; tenantId: string; tenantName: s
           {error}
         </Alert>
       </Snackbar>
+    </Box>
+  );
+};
+
+// Similar Companies Tab Component
+const SimilarTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
+  const { currentUser } = useAuth();
+  const [similarCompanies, setSimilarCompanies] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [addingCompany, setAddingCompany] = useState<string | null>(null);
+
+  // Load similar companies using AI
+  const loadSimilarCompanies = async () => {
+    if (!company) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const findSimilarCompanies = httpsCallable(functions, 'findSimilarCompanies');
+      const result = await findSimilarCompanies({
+        companyName: company.companyName || company.name,
+        industry: company.industry,
+        location: company.city && company.state ? `${company.city}, ${company.state}` : null,
+        tenantId
+      });
+      
+      const data = result.data as { success: boolean; companies: any[]; error?: string };
+      
+      if (data.success) {
+        setSimilarCompanies(data.companies || []);
+      } else {
+        setError(data.error || 'Failed to load similar companies');
+        setSimilarCompanies([]);
+      }
+    } catch (err: any) {
+      console.error('Error loading similar companies:', err);
+      
+      // Extract error message from Firebase error
+      let errorMessage = 'Failed to load similar companies';
+      if (err?.details?.message) {
+        errorMessage = err.details.message;
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add company to CRM
+  const handleAddCompany = async (similarCompany: any) => {
+    if (!currentUser?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setAddingCompany(similarCompany.name);
+    
+    try {
+      const addCompanyToCRM = httpsCallable(functions, 'addCompanyToCRM');
+      await addCompanyToCRM({
+        companyData: {
+          companyName: similarCompany.name,
+          industry: similarCompany.industry,
+          address: similarCompany.address,
+          city: similarCompany.city,
+          state: similarCompany.state,
+          zip: similarCompany.zip,
+          website: similarCompany.website,
+          linkedinUrl: similarCompany.linkedinUrl,
+          phone: similarCompany.phone,
+          email: similarCompany.email,
+          description: similarCompany.description,
+          employeeCount: similarCompany.employeeCount,
+          revenue: similarCompany.revenue,
+          founded: similarCompany.founded,
+          headquarters: similarCompany.headquarters,
+          subsidiaries: similarCompany.subsidiaries,
+          competitors: similarCompany.competitors,
+          technologies: similarCompany.technologies,
+          socialMedia: similarCompany.socialMedia,
+          news: similarCompany.news,
+          logo: similarCompany.logo
+        },
+        tenantId,
+        salespersonId: currentUser.uid
+      });
+      
+      setSuccess(`Successfully added ${similarCompany.name} to CRM`);
+      
+      // Remove the added company from the list
+      setSimilarCompanies(prev => prev.filter(c => c.name !== similarCompany.name));
+    } catch (err) {
+      console.error('Error adding company to CRM:', err);
+      setError(`Failed to add ${similarCompany.name} to CRM`);
+    } finally {
+      setAddingCompany(null);
+    }
+  };
+
+  // Load similar companies on component mount
+  useEffect(() => {
+    loadSimilarCompanies();
+  }, [company]);
+
+  return (
+    <Box sx={{ pt: 0, pb: 0, pl: 1, pr: 1 }}>
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <Card>
+            <CardHeader
+              title={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CompareIcon />
+                  <Typography variant="h6">Similar Companies</Typography>
+                </Box>
+              }
+              action={
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={loadSimilarCompanies}
+                  disabled={loading}
+                >
+                  Refresh
+                </Button>
+              }
+            />
+            <CardContent>
+              {error && (
+                <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
+              
+              {success && (
+                <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+                  {success}
+                </Alert>
+              )}
+
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : similarCompanies.length > 0 ? (
+                <Grid container spacing={2}>
+                  {similarCompanies.map((similarCompany, index) => (
+                    <Grid item xs={12} md={6} lg={4} key={index}>
+                      <Card variant="outlined" sx={{ height: '100%' }}>
+                        <CardContent>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                            <Avatar
+                              src={similarCompany.logo}
+                              alt={similarCompany.name}
+                              sx={{ width: 48, height: 48, bgcolor: 'primary.main' }}
+                            >
+                              {similarCompany.name?.charAt(0)?.toUpperCase()}
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="h6" component="h3" gutterBottom>
+                                {similarCompany.name}
+                              </Typography>
+                              {similarCompany.industry && (
+                                <Chip 
+                                  label={similarCompany.industry} 
+                                  size="small" 
+                                  color="primary" 
+                                  sx={{ mb: 1 }}
+                                />
+                              )}
+                            </Box>
+                          </Box>
+
+                          <Box sx={{ mb: 2 }}>
+                            {similarCompany.description && (
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                {similarCompany.description}
+                              </Typography>
+                            )}
+                            
+                            {similarCompany.headquarters && (
+                              <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                <LocationIcon fontSize="small" />
+                                {similarCompany.headquarters}
+                              </Typography>
+                            )}
+                            
+                            {similarCompany.employeeCount && (
+                              <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                <PersonIcon fontSize="small" />
+                                {similarCompany.employeeCount} employees
+                              </Typography>
+                            )}
+                            
+                            {similarCompany.revenue && (
+                              <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
+                                <DealIcon fontSize="small" />
+                                {similarCompany.revenue}
+                              </Typography>
+                            )}
+                          </Box>
+
+                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            {similarCompany.website && (
+                              <IconButton
+                                size="small"
+                                onClick={() => window.open(similarCompany.website, '_blank')}
+                                title="Visit Website"
+                              >
+                                <LanguageIcon fontSize="small" />
+                              </IconButton>
+                            )}
+                            
+                            {similarCompany.linkedinUrl && (
+                              <IconButton
+                                size="small"
+                                onClick={() => window.open(similarCompany.linkedinUrl, '_blank')}
+                                title="View LinkedIn"
+                              >
+                                <LinkedInIcon fontSize="small" />
+                              </IconButton>
+                            )}
+                          </Box>
+
+                          <Box sx={{ mt: 2 }}>
+                            <Button
+                              variant="contained"
+                              size="small"
+                              fullWidth
+                              onClick={() => handleAddCompany(similarCompany)}
+                              disabled={addingCompany === similarCompany.name}
+                              startIcon={addingCompany === similarCompany.name ? <CircularProgress size={16} /> : <AddIcon />}
+                            >
+                              {addingCompany === similarCompany.name ? 'Adding...' : 'Add to CRM'}
+                            </Button>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  ))}
+                </Grid>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="body1" color="text.secondary">
+                    No similar companies found. Try refreshing to search again.
+                  </Typography>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
     </Box>
   );
 };

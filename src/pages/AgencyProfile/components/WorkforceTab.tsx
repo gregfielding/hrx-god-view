@@ -21,21 +21,16 @@ import {
   OutlinedInput,
   Chip,
   Checkbox,
-  AppBar,
-  Toolbar,
-  IconButton,
-  Fab,
-  Autocomplete,
-} from '@mui/material';
+ Autocomplete as MUIAutocomplete } from '@mui/material';
 import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
+import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
+
+import { db } from '../../../firebase';
 import jobTitles from '../../../data/onetJobTitles.json';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
-import { Autocomplete as MUIAutocomplete } from '@mui/material';
-import { Autocomplete as GoogleMapsAutocomplete } from '@react-google-maps/api';
 import BroadcastDialog from '../../../components/BroadcastDialog';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+
 
 interface WorkforceTabProps {
   tenantId: string;

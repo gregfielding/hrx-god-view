@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Typography, TextField, Button, Grid, Snackbar, Alert, MenuItem } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+
 import { db } from '../firebase';
 
 const roles = ['Agency', 'HRX', 'Employee', 'Contractor', 'Applicant', 'Customer', 'Dismissed'];

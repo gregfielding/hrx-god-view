@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { collection, query, where, orderBy, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import {
   Table,
   TableBody,
@@ -9,7 +8,6 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Button,
   Chip,
   IconButton,
   Tooltip,
@@ -17,6 +15,8 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+
+import { db } from '../../firebase';
 
 interface Notification {
   id: string;

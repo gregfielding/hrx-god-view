@@ -21,12 +21,10 @@ import {
   DialogContent,
   DialogActions,
   FormControl,
-  InputLabel,
   Select,
   MenuItem,
   Chip,
   Avatar,
-  Divider,
   Alert,
   Snackbar,
   Tooltip,
@@ -58,9 +56,10 @@ import {
   where,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { Autocomplete } from '@react-google-maps/api';
+
 import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Autocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../../utils/geocodeAddress';
 import IndustrySelector from '../../components/IndustrySelector';
 

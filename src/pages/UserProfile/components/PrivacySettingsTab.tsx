@@ -2,13 +2,9 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
-  CardHeader,
   Switch,
   FormControlLabel,
   FormGroup,
-  Divider,
   Alert,
   Button,
   Grid,
@@ -16,7 +12,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Chip,
   TextField,
   Accordion,
   AccordionSummary,
@@ -31,6 +26,7 @@ import {
   Save as SaveIcon,
 } from '@mui/icons-material';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 
@@ -247,7 +243,7 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
         <Alert severity="warning">
           <Typography variant="h6">Access Restricted</Typography>
           <Typography variant="body2">
-            You don't have permission to view or edit privacy settings for this user.
+            You don&apos;t have permission to view or edit privacy settings for this user.
           </Typography>
         </Alert>
       </Box>

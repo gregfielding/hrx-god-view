@@ -2,8 +2,10 @@
 // Handles all task-related operations and integrates with backend Firebase Functions
 
 import { httpsCallable } from 'firebase/functions';
+
 import { functions } from '../firebase';
-import { CRMTask, TaskDashboard as TaskDashboardData, AITaskSuggestion } from '../types/Tasks';
+import { CRMTask, TaskDashboard as TaskDashboardData } from '../types/Tasks';
+
 import { ActivityService } from './activityService';
 
 export class TaskService {
@@ -35,7 +37,7 @@ export class TaskService {
         taskData.assignedTo,
         {
           title: taskData.title,
-          description: taskData.description,
+          description: taskData.description || '',
           status: taskData.status === 'completed' ? 'completed' : 'pending',
           priority: taskData.priority === 'urgent' ? 'high' : taskData.priority
         }
@@ -486,7 +488,7 @@ export class TaskService {
       in_progress: '#FFD700', // Gold
       draft: '#D3D3D3' // Light Gray
     };
-    return statusColors[status] || '#000000';
+    return statusColors[status as keyof typeof statusColors] || '#000000';
   }
 
   getTaskTypeIcon(type: string): string {
@@ -510,7 +512,7 @@ export class TaskService {
       closing: '💰',
       administrative: '📋'
     };
-    return typeIcons[type] || '📝';
+    return typeIcons[type as keyof typeof typeIcons] || '📝';
   }
 
   calculateTaskUrgency(task: CRMTask): number {

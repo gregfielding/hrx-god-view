@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   Box,
   Typography,
-  Paper,
   Grid,
   Card,
   CardContent,
@@ -18,16 +17,10 @@ import {
   AccordionSummary,
   AccordionDetails,
   Chip,
-  Divider,
   Alert,
-  IconButton,
-  Tooltip,
 } from '@mui/material';
 import {
   ExpandMore,
-  Add,
-  Remove,
-  Settings,
   Description,
   Assessment,
   TrendingUp,

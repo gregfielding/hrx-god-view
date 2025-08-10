@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Tooltip, Button, Typography } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography } from '@mui/material';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
-import { storage, db } from '../../../firebase'; // adjust path
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
+
+import { storage, db } from '../../../firebase'; // adjust path
 
 interface UserProfileHeaderProps {
   uid: string;

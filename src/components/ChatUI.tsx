@@ -7,7 +7,6 @@ import {
   Paper,
   List,
   ListItem,
-  ListItemText,
   Avatar,
   IconButton,
   Dialog,
@@ -18,7 +17,6 @@ import {
   Chip,
   useTheme,
   useMediaQuery,
-  Fab,
   Drawer,
   AppBar,
   Toolbar,
@@ -27,7 +25,6 @@ import {
   Snackbar,
   CircularProgress,
   Card,
-  CardContent,
   Accordion,
   AccordionSummary,
   AccordionDetails,
@@ -36,15 +33,11 @@ import {
   Send as SendIcon,
   ExpandMore as ExpandMoreIcon,
   Close as CloseIcon,
-  Chat as ChatIcon,
-  ThumbUp as ThumbUpIcon,
-  ThumbDown as ThumbDownIcon,
   Help as HelpIcon,
   Person as PersonIcon,
   SmartToy as BotIcon,
 } from '@mui/icons-material';
-import { httpsCallable } from 'firebase/functions';
-import { getFunctions } from 'firebase/functions';
+import { httpsCallable , getFunctions } from 'firebase/functions';
 
 interface Message {
   id: string;
@@ -277,7 +270,7 @@ const ChatUI: React.FC<ChatUIProps> = ({
               Welcome to HR Assistant
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              I'm here to help with your HR questions. Ask me anything about policies, benefits,
+              I&apos;m here to help with your HR questions. Ask me anything about policies, benefits,
               scheduling, or other workplace matters.
             </Typography>
             {showFAQ && faqs.length > 0 && (

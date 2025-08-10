@@ -295,9 +295,10 @@ const MotivationMessageDialog: React.FC<MotivationMessageDialogProps> = ({
                 <TextField {...params} variant="outlined" placeholder="Select traits..." />
               )}
               renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip label={option} {...getTagProps({ index })} size="small" />
-                ))
+                value.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return <Chip key={key} label={option} size="small" {...chipProps} />;
+                })
               }
             />
           </Box>
@@ -316,15 +317,19 @@ const MotivationMessageDialog: React.FC<MotivationMessageDialogProps> = ({
                 <TextField {...params} variant="outlined" placeholder="Add tags..." />
               )}
               renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    {...getTagProps({ index })}
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                  />
-                ))
+                value.map((option, index) => {
+                  const { key, ...chipProps } = getTagProps({ index });
+                  return (
+                    <Chip
+                      key={key}
+                      label={option}
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      {...chipProps}
+                    />
+                  );
+                })
               }
             />
           </Box>

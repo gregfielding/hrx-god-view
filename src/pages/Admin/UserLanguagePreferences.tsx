@@ -31,8 +31,7 @@ import {
   Paper,
   IconButton,
   Tooltip,
-  Avatar,
-  Badge
+  Avatar
 } from '@mui/material';
 import {
   Language as LanguageIcon,
@@ -40,10 +39,9 @@ import {
   Edit as EditIcon,
   Save as SaveIcon,
   Refresh as RefreshIcon,
-  FilterList as FilterIcon,
   Search as SearchIcon
 } from '@mui/icons-material';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getFunctions } from 'firebase/functions';
 
 interface UserLanguagePreference {
   userId: string;

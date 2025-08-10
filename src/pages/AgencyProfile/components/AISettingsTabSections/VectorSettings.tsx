@@ -9,25 +9,17 @@ import {
   Tooltip,
   IconButton,
   Box,
-  Switch,
-  FormControlLabel,
-  TextField,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Slider,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Chip,
-  Divider,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { db } from '../../../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { db } from '../../../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
 

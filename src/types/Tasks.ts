@@ -4,7 +4,7 @@
 // 🏗️ CORE TASK TYPES
 export type TaskStatus = 'scheduled' | 'upcoming' | 'due' | 'overdue' | 'completed' | 'cancelled';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskType = 'email' | 'phone_call' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
+export type TaskType = 'email' | 'phone_call' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'activity' | 'other';
 export type TaskCategory = 'general' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
 export type QuotaCategory = 'business_generating' | 'business_maintaining' | 'business_developing' | 'non_business';
 
@@ -65,6 +65,7 @@ export interface Task {
   // AI fields
   aiSuggested?: boolean;
   aiPrompt?: string;
+  aiRecommendations?: string;
   aiGenerated?: boolean;
   aiReason?: string;
   aiConfidence?: number;
@@ -75,6 +76,23 @@ export interface Task {
   googleTaskId?: string; // For todos
   lastGoogleSync?: string; // ISO timestamp of last sync
   syncStatus?: 'pending' | 'synced' | 'failed';
+  
+  // Google Meet integration
+  googleMeetLink?: string; // Meet URL for virtual meetings
+  googleMeetConferenceId?: string; // Meet conference ID
+  meetingAttendees?: Array<{
+    email: string;
+    displayName?: string;
+    responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
+  }>;
+  
+  // Task-type-specific fields
+  agenda?: string; // For meetings
+  goals?: string[]; // For in-person meetings
+  researchTopics?: string[]; // For research tasks
+  callScript?: string; // For phone calls
+  emailTemplate?: string; // For email tasks
+  followUpNotes?: string; // For follow-up tasks
   
   // Timestamps
   createdAt: string;
@@ -95,9 +113,7 @@ export interface Task {
   };
 }
 
-export interface CRMTask extends Task {
-  // Additional CRM-specific fields if needed
-}
+export type CRMTask = Task
 
 
 

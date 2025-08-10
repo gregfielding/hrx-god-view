@@ -2,9 +2,10 @@ import React, { useState, useRef } from 'react';
 import { Box, Typography, TextField, Button, Grid, Snackbar, Alert } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { Autocomplete } from '@react-google-maps/api';
+
 import { db } from '../../firebase';
 import { geocodeAddress } from '../../utils/geocodeAddress';
-import { Autocomplete } from '@react-google-maps/api';
 import IndustrySelector from '../../components/IndustrySelector';
 
 const AddCustomerForm = () => {

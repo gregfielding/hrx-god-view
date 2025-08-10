@@ -7,51 +7,26 @@ import {
   Button,
   Chip,
   List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Divider,
   Alert,
   CircularProgress,
-  IconButton,
-  Tooltip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Grid,
-  Tabs,
-  Tab,
-  Paper,
-  Stack
+  TextField
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
-  Email as EmailIcon,
-  Phone as PhoneIcon,
-  Business as BusinessIcon,
   TrendingUp as TrendingUpIcon,
-  Task as TaskIcon,
   Psychology as PsychologyIcon,
-  Assignment as AssignmentIcon,
-  PlayArrow as PlayArrowIcon,
-  Check as CheckIcon,
-  Cancel as CancelIcon,
-  Bedtime as BedtimeIcon,
-  Lightbulb as LightbulbIcon
+  Assignment as AssignmentIcon
 } from '@mui/icons-material';
+
 import { useAuth } from '../contexts/AuthContext';
 import { TaskService } from '../utils/taskService';
-import { createAssociationService } from '../utils/associationService';
-import { TaskStatus, TaskClassification } from '../types/Tasks';
+import { TaskClassification } from '../types/Tasks';
+
 import CreateTaskDialog from './CreateTaskDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
 import TaskCard from './TaskCard';
@@ -251,7 +226,10 @@ const UserTasksDashboard: React.FC<UserTasksDashboardProps> = ({
   const getTaskStatusDisplay = (task: any) => {
     if (task.status === 'completed') return 'completed';
     
-    const scheduledDate = new Date(task.scheduledDate);
+    // Use dueDate for todos, scheduledDate for appointments
+    const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+    // Ensure the date is interpreted as local time by appending a time component
+    const scheduledDate = new Date(dateToUse + 'T00:00:00');
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
@@ -273,7 +251,7 @@ const UserTasksDashboard: React.FC<UserTasksDashboardProps> = ({
   };
 
   const calculateUrgency = (task: any) => {
-    const dueDate = new Date(task.dueDate || task.scheduledDate);
+    const dueDate = new Date((task.dueDate || task.scheduledDate) + 'T00:00:00');
     const now = new Date();
     const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
     
@@ -320,7 +298,7 @@ const UserTasksDashboard: React.FC<UserTasksDashboardProps> = ({
             }}
           >
             <AssignmentIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Today's Tasks
+            Today&apos;s Tasks
           </Button>
           <Typography variant="body2" color="text.secondary">/</Typography>
           <Button

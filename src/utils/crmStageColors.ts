@@ -275,7 +275,7 @@ export const getStageStatistics = (deals: Array<{ stage: string }>) => {
   
   // Count deals by stage
   deals.forEach(deal => {
-    if (deal.stage && stageCounts.hasOwnProperty(deal.stage)) {
+    if (deal.stage && Object.prototype.hasOwnProperty.call(stageCounts, deal.stage)) {
       stageCounts[deal.stage]++;
     }
   });

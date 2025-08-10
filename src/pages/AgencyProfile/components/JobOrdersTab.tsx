@@ -34,11 +34,11 @@ import {
   serverTimestamp,
   where,
 } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
-import JobOrderDetails from './JobOrderDetails';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
 import Autocomplete from '@mui/material/Autocomplete';
+
+import { db } from '../../../firebase';
 import BroadcastDialog from '../../../components/BroadcastDialog';
 
 const JobOrdersTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {

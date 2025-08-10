@@ -2447,7 +2447,7 @@ async function getCustomerBenchmarks(customerId: string, dateRange?: { start: st
 
     return {
       global: globalBenchmark,
-      industry: industryBenchmark
+      ...(industryBenchmark ? { industry: industryBenchmark } : {})
     };
   } catch (error) {
     logger.error('Error getting customer benchmarks:', error);

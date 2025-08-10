@@ -8,7 +8,6 @@ import {
   Typography,
   Button,
   CircularProgress,
-  Alert,
   Container,
   Paper,
 } from '@mui/material';
@@ -120,9 +119,9 @@ const InviteTokenValidator: React.FC = () => {
       <Paper elevation={3} sx={{ p: 4, textAlign: 'center' }}>
         <CheckCircle color="success" sx={{ fontSize: 80, mb: 3 }} />
 
-        <Typography variant="h3" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-          You've Been Invited!
-        </Typography>
+          <Typography variant="h3" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+            You&apos;ve Been Invited!
+          </Typography>
 
         <Box sx={{ my: 4 }}>
           <Business sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
@@ -144,7 +143,7 @@ const InviteTokenValidator: React.FC = () => {
           }}
         >
           <Typography variant="h6" gutterBottom>
-            What you'll get:
+            What you&apos;ll get:
           </Typography>
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             <li>Access to work assignments and schedules</li>

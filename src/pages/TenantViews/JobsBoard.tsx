@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule } from '@mui/icons-material';
 import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 

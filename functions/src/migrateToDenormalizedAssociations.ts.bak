@@ -1,0 +1,230 @@
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
+
+// 🚀 MIGRATION TO DENORMALIZED ASSOCIATIONS
+// This function migrates existing association data to the new denormalized format
+
+export const migrateToDenormalizedAssociations = functions.https.onCall(async (data, context) => {
+  const { tenantId, entityType } = data;
+  
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    console.log(`🔄 Starting migration to denormalized associations for ${entityType} in tenant ${tenantId}`);
+
+    const db = admin.firestore();
+    let processed = 0;
+    let errors = 0;
+
+    // Get all entities of the specified type
+    const entitiesRef = db.collection('tenants').doc(tenantId).collection(`crm_${entityType}s`);
+    const entitiesSnapshot = await entitiesRef.get();
+
+    for (const entityDoc of entitiesSnapshot.docs) {
+      try {
+        const entityData = entityDoc.data();
+        const entityId = entityDoc.id;
+
+        console.log(`🔄 Processing ${entityType}:${entityId}`);
+
+        // Get existing associations from crm_associations collection
+        const associationsRef = db.collection('tenants').doc(tenantId).collection('crm_associations');
+        
+        // Get source associations (where this entity is the source)
+        const sourceQuery = associationsRef
+          .where('sourceEntityType', '==', entityType)
+          .where('sourceEntityId', '==', entityId);
+        const sourceSnapshot = await sourceQuery.get();
+
+        // Get target associations (where this entity is the target)
+        const targetQuery = associationsRef
+          .where('targetEntityType', '==', entityType)
+          .where('targetEntityId', '==', entityId);
+        const targetSnapshot = await targetQuery.get();
+
+        // Build denormalized associations object
+        const denormalizedAssociations = {
+          companies: [],
+          contacts: [],
+          salespeople: [],
+          locations: [],
+          deals: [],
+          divisions: [],
+          tasks: [],
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Process source associations
+        for (const assocDoc of sourceSnapshot.docs) {
+          const assocData = assocDoc.data();
+          await addToDenormalizedAssociations(
+            denormalizedAssociations,
+            assocData.targetEntityType,
+            assocData.targetEntityId,
+            tenantId,
+            db
+          );
+        }
+
+        // Process target associations
+        for (const assocDoc of targetSnapshot.docs) {
+          const assocData = assocDoc.data();
+          await addToDenormalizedAssociations(
+            denormalizedAssociations,
+            assocData.sourceEntityType,
+            assocData.sourceEntityId,
+            tenantId,
+            db
+          );
+        }
+
+        // Update the entity with denormalized associations
+        await entityDoc.ref.update({
+          associations: denormalizedAssociations
+        });
+
+        processed++;
+        console.log(`✅ Migrated ${entityType}:${entityId} (${Object.values(denormalizedAssociations).filter(arr => Array.isArray(arr)).reduce((sum, arr) => sum + arr.length, 0)} associations)`);
+
+      } catch (error) {
+        console.error(`❌ Error processing ${entityType}:${entityDoc.id}:`, error);
+        errors++;
+      }
+    }
+
+    console.log(`✅ Migration completed for ${entityType}: ${processed} entities processed, ${errors} errors`);
+    return { success: true, processed, errors };
+  } catch (error) {
+    console.error('❌ Error in migration:', error);
+    throw new functions.https.HttpsError('internal', 'Migration failed');
+  }
+});
+
+// ➕ ADD TO DENORMALIZED ASSOCIATIONS
+async function addToDenormalizedAssociations(
+  denormalizedAssociations: any,
+  entityType: string,
+  entityId: string,
+  tenantId: string,
+  db: admin.firestore.Firestore
+) {
+  try {
+    // Get the entity data
+    const entityRef = db.collection('tenants').doc(tenantId).collection(`crm_${entityType}s`).doc(entityId);
+    const entityDoc = await entityRef.get();
+
+    if (!entityDoc.exists) {
+      console.log(`Entity ${entityType}:${entityId} not found, skipping`);
+      return;
+    }
+
+    const entityData = entityDoc.data();
+    const entityInfo = {
+      id: entityId,
+      name: entityData.name || entityData.companyName || entityData.title || 'Unknown',
+      ...getEntitySpecificFields(entityType, entityData)
+    };
+
+    // Add to the appropriate array in denormalized associations
+    const arrayKey = entityType + 's';
+    if (denormalizedAssociations[arrayKey]) {
+      // Check if entity already exists
+      const existingIndex = denormalizedAssociations[arrayKey].findIndex(
+        (entity: any) => entity.id === entityId
+      );
+      
+      if (existingIndex >= 0) {
+        // Update existing entity
+        denormalizedAssociations[arrayKey][existingIndex] = {
+          ...denormalizedAssociations[arrayKey][existingIndex],
+          ...entityInfo
+        };
+      } else {
+        // Add new entity
+        denormalizedAssociations[arrayKey].push(entityInfo);
+      }
+    }
+  } catch (error) {
+    console.error(`❌ Error adding ${entityType}:${entityId} to denormalized associations:`, error);
+  }
+}
+
+// 🏷️ GET ENTITY-SPECIFIC FIELDS
+function getEntitySpecificFields(entityType: string, entityData: any): any {
+  switch (entityType) {
+    case 'deal':
+      return {
+        stage: entityData.stage,
+        value: entityData.estimatedRevenue || entityData.value,
+        closeDate: entityData.closeDate
+      };
+    case 'company':
+      return {
+        type: entityData.type || 'primary',
+        industry: entityData.industry
+      };
+    case 'contact':
+      return {
+        email: entityData.email,
+        phone: entityData.phone,
+        title: entityData.title
+      };
+    case 'salesperson':
+      return {
+        email: entityData.email,
+        role: entityData.role
+      };
+    case 'location':
+      return {
+        address: entityData.address,
+        city: entityData.city,
+        state: entityData.state
+      };
+    case 'task':
+      return {
+        status: entityData.status,
+        priority: entityData.priority,
+        dueDate: entityData.dueDate
+      };
+    default:
+      return {};
+  }
+}
+
+// 🧹 CLEANUP OLD ASSOCIATIONS
+export const cleanupOldAssociations = functions.https.onCall(async (data, context) => {
+  const { tenantId } = data;
+  
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  try {
+    console.log(`🧹 Starting cleanup of old associations for tenant ${tenantId}`);
+
+    const db = admin.firestore();
+    const associationsRef = db.collection('tenants').doc(tenantId).collection('crm_associations');
+    const associationsSnapshot = await associationsRef.get();
+
+    let deleted = 0;
+    let errors = 0;
+
+    for (const assocDoc of associationsSnapshot.docs) {
+      try {
+        await assocDoc.ref.delete();
+        deleted++;
+      } catch (error) {
+        console.error(`❌ Error deleting association ${assocDoc.id}:`, error);
+        errors++;
+      }
+    }
+
+    console.log(`✅ Cleanup completed: ${deleted} associations deleted, ${errors} errors`);
+    return { success: true, deleted, errors };
+  } catch (error) {
+    console.error('❌ Error in cleanup:', error);
+    throw new functions.https.HttpsError('internal', 'Cleanup failed');
+  }
+});

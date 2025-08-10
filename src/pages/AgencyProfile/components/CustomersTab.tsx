@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Button,
-  MenuItem,
   TextField,
   Snackbar,
   Alert,
@@ -22,16 +21,15 @@ import {
   updateDoc,
   collection,
   getDocs,
-  query,
-  where,
   addDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import { useNavigate } from 'react-router-dom';
-import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { Autocomplete } from '@react-google-maps/api';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
+
+import { geocodeAddress } from '../../../utils/geocodeAddress';
+import { db } from '../../../firebase';
 import IndustrySelector from '../../../components/IndustrySelector';
 
 interface CustomersTabProps {

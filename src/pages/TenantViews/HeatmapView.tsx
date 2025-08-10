@@ -13,7 +13,8 @@ import {
   IconButton
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 
 interface HeatmapViewProps {

@@ -8,9 +8,7 @@ import {
   Chip,
   IconButton,
   Checkbox,
-  Tooltip,
   Paper,
-  Divider,
   Alert
 } from '@mui/material';
 import {
@@ -18,11 +16,10 @@ import {
   Schedule as ScheduleIcon,
   CheckCircle as CheckCircleIcon,
   Person as PersonIcon,
-  Business as BusinessIcon,
   AttachMoney as AttachMoneyIcon,
   AutoAwesome as AutoAwesomeIcon
 } from '@mui/icons-material';
-import { TaskClassification } from '../types/Tasks';
+
 
 interface TaskSplitViewProps {
   tasks: any[];

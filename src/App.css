@@ -36,3 +36,18 @@
     transform: rotate(360deg);
   }
 }
+
+/* Global x-small button size to visually match MUI Chip small (approx 24px) */
+.btn-xsmall.MuiButton-root {
+  height: 24px;
+  padding: 0 8px;
+  min-width: auto;
+  border-radius: 16px;
+  font-size: 0.75rem;
+  line-height: 1;
+  text-transform: none;
+}
+
+.btn-xsmall .MuiButton-startIcon > *:nth-of-type(1) {
+  font-size: 16px;
+}

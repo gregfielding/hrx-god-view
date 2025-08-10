@@ -10,8 +10,9 @@ import {
   IconButton,
 } from '@mui/material';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../../../../firebase';
 import DeleteIcon from '@mui/icons-material/Delete';
+
+import { db } from '../../../../firebase';
 
 const vaccineTypes = ['COVID-19', 'Flu', 'Hepatitis', 'MMR', 'Tdap', 'Varicella', 'Other'];
 const statusOptions = ['Up to date', 'Not up to date', 'Declined'];

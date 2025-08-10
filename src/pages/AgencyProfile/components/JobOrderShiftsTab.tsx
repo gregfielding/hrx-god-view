@@ -7,7 +7,6 @@ import {
   Grid,
   Card,
   CardContent,
-  CardActions,
   Snackbar,
   Alert,
   MenuItem,
@@ -25,7 +24,6 @@ import {
   TableCell,
   Paper,
   Autocomplete,
-  Chip,
 } from '@mui/material';
 import {
   collection,
@@ -36,13 +34,13 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
-  setDoc,
   query,
   where,
 } from 'firebase/firestore';
-import { db } from '../../../firebase';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useNavigate } from 'react-router-dom';
+
+import { db } from '../../../firebase';
 
 const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
   tenantId,

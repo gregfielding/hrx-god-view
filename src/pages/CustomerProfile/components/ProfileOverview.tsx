@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Box, TextField, Typography, Button, Snackbar, Alert, Grid, MenuItem } from '@mui/material';
-import { db } from '../../../firebase';
 import { doc, onSnapshot, updateDoc, collection, getDocs, getDoc, serverTimestamp } from 'firebase/firestore';
+import { Autocomplete } from '@react-google-maps/api';
+
+import { db } from '../../../firebase';
 import IndustrySelector from '../../../components/IndustrySelector';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
-import { Autocomplete } from '@react-google-maps/api';
+
 
 type Props = {
   tenantId: string;

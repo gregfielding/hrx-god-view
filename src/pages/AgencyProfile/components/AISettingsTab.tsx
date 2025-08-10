@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Paper, Typography, Tabs, Tab, Box } from '@mui/material';
+
 import ToneStyleSettings from './AISettingsTabSections/ToneStyleSettings';
 import CustomPromptsSettings from './AISettingsTabSections/CustomPromptsSettings';
 import PromptFrequencyGoalSettings from './AISettingsTabSections/PromptFrequencyGoalSettings';

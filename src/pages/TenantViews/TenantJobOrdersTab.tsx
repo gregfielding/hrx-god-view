@@ -5,13 +5,6 @@ import {
   TextField,
   Button,
   Grid,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Snackbar,
   Alert,
   MenuItem,
@@ -19,11 +12,6 @@ import {
   InputLabel,
   Select,
   OutlinedInput,
-  Chip,
-  Checkbox,
-  AppBar,
-  Toolbar,
-  IconButton,
   Fab,
 } from '@mui/material';
 import {
@@ -33,16 +21,14 @@ import {
   doc,
   getDoc,
   query,
-  orderBy,
-  limit,
   serverTimestamp,
   where,
   onSnapshot,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
 import { ArrowDropUp, ArrowDropDown, Add as AddIcon } from '@mui/icons-material';
-import Autocomplete from '@mui/material/Autocomplete';
+
+import { db } from '../../firebase';
 import BroadcastDialog from '../../components/BroadcastDialog';
 import { useAuth } from '../../contexts/AuthContext';
 import JobOrdersTable from '../../componentBlocks/JobOrdersTable';

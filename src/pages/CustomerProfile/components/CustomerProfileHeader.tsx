@@ -2,12 +2,12 @@ import React, { useRef, useState } from 'react';
 import { Box, Avatar, IconButton, Tooltip } from '@mui/material';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
-import { storage, db } from '../../../firebase';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
-
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+
+import { storage, db } from '../../../firebase';
 
 interface CustomerProfileHeaderProps {
   uid: string; // Firestore customer document ID

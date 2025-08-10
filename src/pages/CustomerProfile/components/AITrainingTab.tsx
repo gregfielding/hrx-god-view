@@ -17,10 +17,10 @@ import {
   Grid,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import { doc, getDoc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, addDoc, deleteDoc, getDocs , collection } from 'firebase/firestore';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+
 import { db } from '../../../firebase';
-import { collection } from 'firebase/firestore';
 
 const toneTraits = [
   { id: 'formality', label: 'Formality' },

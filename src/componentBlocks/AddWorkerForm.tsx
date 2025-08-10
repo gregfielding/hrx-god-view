@@ -14,7 +14,6 @@ import {
   Autocomplete, 
   Snackbar, 
   Alert,
-  Divider,
   FormHelperText,
   Checkbox,
   FormControlLabel,
@@ -244,7 +243,14 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                   options={jobTitles}
                   value={form.jobTitle || ''}
                   onChange={(_, newValue) => onChange('jobTitle', newValue || '')}
-                  renderInput={(params) => <TextField {...params} label="Job Title" fullWidth />}
+                  renderInput={(params) => (
+                    <TextField 
+                      {...params as any} 
+                      label="Job Title" 
+                      fullWidth 
+                      size="small" 
+                    />
+                  )}
                   freeSolo
                 />
               </Grid>
@@ -346,7 +352,14 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                     getOptionLabel={(option) => `${option.firstName} ${option.lastName}`}
                     value={managers.find(m => m.id === form.managerId) || null}
                     onChange={(_, newValue) => onChange('managerId', newValue?.id || '')}
-                    renderInput={(params) => <TextField {...params} label="Manager" fullWidth />}
+                    renderInput={(params) => (
+                      <TextField 
+                        {...params as any} 
+                        label="Manager" 
+                        fullWidth 
+                        size="small" 
+                      />
+                    )}
                     isOptionEqualToValue={(option, value) => option.id === value.id}
                   />
                 )}
@@ -429,18 +442,20 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                   options={['English', 'Spanish', 'French', 'German', 'Chinese', 'Japanese', 'Korean', 'Arabic', 'Portuguese', 'Russian']}
                   value={form.languages || []}
                   onChange={(_, newValue) => onChange('languages', newValue)}
-                  renderInput={(params) => (
-                    <TextField 
-                      {...params} 
-                      label="Languages" 
-                      fullWidth 
-                      helperText="Spoken/written languages"
-                    />
-                  )}
+                    renderInput={(params) => (
+                      <TextField
+                        {...(params as any)}
+                        label="Languages"
+                        fullWidth
+                        size="small"
+                        helperText="Spoken/written languages"
+                      />
+                    )}
                   renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip label={option} {...getTagProps({ index })} />
-                    ))
+                    value.map((option, index) => {
+                      const { key, ...chipProps } = getTagProps({ index });
+                      return <Chip key={String(key)} label={option} {...chipProps} />;
+                    })
                   }
                   freeSolo
                 />
@@ -470,11 +485,14 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                       const groupIds = newValue.map(group => group.id);
                       setSelectedUserGroups && setSelectedUserGroups(groupIds);
                     }}
-                    renderInput={(params) => <TextField {...params} label="User Groups" fullWidth />}
+                    renderInput={(params) => (
+                      <TextField {...(params as any)} label="User Groups" fullWidth size="small" />
+                    )}
                     renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip label={option.name} {...getTagProps({ index })} />
-                      ))
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return <Chip key={String(key)} label={option.name} {...chipProps} />;
+                      })
                     }
                     isOptionEqualToValue={(option, value) => option.id === value.id}
                   />

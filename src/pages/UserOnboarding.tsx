@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Button, TextField, Typography, CircularProgress, Alert } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
-import { auth, db } from '../firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
-import { geocodeAddress } from '../utils/geocodeAddress';
 import { Autocomplete } from '@react-google-maps/api';
+
+import { geocodeAddress } from '../utils/geocodeAddress';
+import { auth, db } from '../firebase';
 
 // Allow recaptchaVerifier on the window object
 declare global {

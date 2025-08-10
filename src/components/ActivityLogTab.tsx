@@ -1,27 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
   Card,
   CardContent,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Chip,
-  IconButton,
-  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableSortLabel,
+  Paper,
+  TextField,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  TextField,
-  Grid,
+  Chip,
+  IconButton,
+  Tooltip,
   CircularProgress,
   Alert,
-  Divider,
+  Grid,
   Badge,
-  Tooltip,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -31,32 +33,55 @@ import {
   MeetingRoom as MeetingIcon,
   NotificationsActive as FollowUpIcon,
   TrendingUp as StatusChangeIcon,
-  Add as AddIcon,
-  FilterList as FilterIcon,
   Refresh as RefreshIcon,
+  FilterList as FilterIcon,
+  Search as SearchIcon,
   CalendarToday as CalendarIcon,
   Person as PersonIcon,
   Business as BusinessIcon,
   AttachMoney as DealIcon,
-  CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
-  Cancel as CancelIcon,
   Star as PriorityHighIcon,
   StarBorder as PriorityMediumIcon,
   StarOutline as PriorityLowIcon,
+  AutoAwesome as AIIcon,
 } from '@mui/icons-material';
-import { createActivityService, ActivityLog, ActivityQuery } from '../utils/activityService';
-import { useAuth } from '../contexts/AuthContext';
+import { collection, query, where, orderBy, limit, getDocs, Timestamp } from 'firebase/firestore';
+
+// import { useAuth } from '../contexts/AuthContext';
+import { db } from '../firebase';
+
+interface ActivityLog {
+  id: string;
+  eventType: string;
+  targetType: string;
+  targetId: string;
+  reason: string;
+  contextType: string;
+  aiTags: string[];
+  urgencyScore: number;
+  success: boolean;
+  latencyMs: number;
+  tenantId: string;
+  userId: string;
+  associations: any;
+  metadata: any;
+  aiRelevant: boolean;
+  createdAt: Timestamp;
+  aiResponse?: string;
+  errorMessage?: string;
+}
 
 interface ActivityLogTabProps {
-  entityType: 'contact' | 'deal' | 'company' | 'salesperson';
+  entityType: 'contact' | 'deal' | 'company' | 'salesperson' | 'location';
   entityId: string;
   entityName: string;
   tenantId: string;
   maxHeight?: number;
   showFilters?: boolean;
-  showAddActivity?: boolean;
 }
+
+type SortField = 'createdAt' | 'eventType' | 'urgencyScore' | 'latencyMs';
+type SortOrder = 'asc' | 'desc';
 
 const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
   entityType,
@@ -65,66 +90,70 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
   tenantId,
   maxHeight = 600,
   showFilters = true,
-  showAddActivity = true,
 }) => {
-  const { currentUser } = useAuth();
+  // const { user } = useAuth();
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activityService] = useState(() => createActivityService(tenantId, currentUser?.uid || ''));
-
+  
   // Filter states
-  const [selectedActivityType, setSelectedActivityType] = useState<string>('all');
-  const [includeRelated, setIncludeRelated] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedEventType, setSelectedEventType] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [dateRange, setDateRange] = useState<{ start: string; end: string }>({
     start: '',
     end: ''
   });
+  
+  // Sort states
+  const [sortField, setSortField] = useState<SortField>('createdAt');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
-  const activityTypes = [
-    { value: 'all', label: 'All Activities' },
-    { value: 'email', label: 'Emails' },
-    { value: 'task', label: 'Tasks' },
-    { value: 'note', label: 'Notes' },
-    { value: 'call', label: 'Calls' },
-    { value: 'meeting', label: 'Meetings' },
-    { value: 'follow_up', label: 'Follow-ups' },
-    { value: 'status_change', label: 'Status Changes' },
-    { value: 'custom', label: 'Custom' },
+  const eventTypes = [
+    { value: 'all', label: 'All Events' },
+    { value: 'contact', label: 'Contact Events' },
+    { value: 'deal', label: 'Deal Events' },
+    { value: 'company', label: 'Company Events' },
+    { value: 'task', label: 'Task Events' },
+    { value: 'email', label: 'Email Events' },
+    { value: 'note', label: 'Note Events' },
+    { value: 'ai', label: 'AI Events' },
+  ];
+
+  const statusOptions = [
+    { value: 'all', label: 'All Status' },
+    { value: 'success', label: 'Success' },
+    { value: 'error', label: 'Error' },
   ];
 
   useEffect(() => {
     loadActivities();
-  }, [entityId, selectedActivityType, includeRelated, dateRange]);
+  }, [entityId, tenantId]);
 
   const loadActivities = async () => {
+    if (!tenantId || !entityId) return;
+    
     try {
       setLoading(true);
       setError('');
 
-      const queryParams: ActivityQuery = {
-        tenantId,
-        entityType,
-        entityId,
-        includeRelated,
-      };
+      // Query AI logs for this entity
+      const aiLogsRef = collection(db, 'ai_logs');
+      const aiLogsQuery = query(
+        aiLogsRef,
+        where('tenantId', '==', tenantId),
+        where('targetId', '==', entityId),
+        orderBy('createdAt', 'desc'),
+        limit(100)
+      );
 
-      // Add activity type filter
-      if (selectedActivityType !== 'all') {
-        queryParams.activityTypes = [selectedActivityType];
-      }
+      const aiLogsSnapshot = await getDocs(aiLogsQuery);
+      const aiLogs = aiLogsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as ActivityLog[];
 
-      // Add date range filter
-      if (dateRange.start) {
-        queryParams.startDate = new Date(dateRange.start);
-      }
-      if (dateRange.end) {
-        queryParams.endDate = new Date(dateRange.end);
-      }
-
-      const activitiesData = await activityService.queryActivities(queryParams);
-      setActivities(activitiesData);
-
+      setActivities(aiLogs);
     } catch (err: any) {
       console.error('Error loading activities:', err);
       setError(err.message || 'Failed to load activities');
@@ -133,81 +162,136 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
     }
   };
 
-  const getActivityIcon = (activityType: string) => {
-    switch (activityType) {
-      case 'email': return <EmailIcon />;
-      case 'task': return <TaskIcon />;
-      case 'note': return <NoteIcon />;
-      case 'call': return <PhoneIcon />;
-      case 'meeting': return <MeetingIcon />;
-      case 'follow_up': return <FollowUpIcon />;
-      case 'status_change': return <StatusChangeIcon />;
-      default: return <NoteIcon />;
+  // Filter and sort activities
+  const filteredAndSortedActivities = useMemo(() => {
+    const filtered = activities.filter(activity => {
+      // Search filter
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        const matchesSearch = 
+          activity.reason.toLowerCase().includes(searchLower) ||
+          activity.eventType.toLowerCase().includes(searchLower) ||
+          activity.aiTags.some(tag => tag.toLowerCase().includes(searchLower));
+        
+        if (!matchesSearch) return false;
+      }
+
+      // Event type filter
+      if (selectedEventType !== 'all') {
+        if (!activity.eventType.startsWith(selectedEventType)) return false;
+      }
+
+      // Status filter
+      if (selectedStatus !== 'all') {
+        if (selectedStatus === 'success' && !activity.success) return false;
+        if (selectedStatus === 'error' && activity.success) return false;
+      }
+
+      // Date range filter
+      if (dateRange.start) {
+        const startDate = new Date(dateRange.start);
+        if (activity.createdAt.toDate() < startDate) return false;
+      }
+      if (dateRange.end) {
+        const endDate = new Date(dateRange.end);
+        if (activity.createdAt.toDate() > endDate) return false;
+      }
+
+      return true;
+    });
+
+    // Sort activities
+    const sorted = [...filtered].sort((a, b) => {
+      let aValue: any, bValue: any;
+      
+      switch (sortField) {
+        case 'createdAt':
+          aValue = a.createdAt.toDate();
+          bValue = b.createdAt.toDate();
+          break;
+        case 'eventType':
+          aValue = a.eventType;
+          bValue = b.eventType;
+          break;
+        case 'urgencyScore':
+          aValue = a.urgencyScore;
+          bValue = b.urgencyScore;
+          break;
+        case 'latencyMs':
+          aValue = a.latencyMs;
+          bValue = b.latencyMs;
+          break;
+        default:
+          aValue = a.createdAt.toDate();
+          bValue = b.createdAt.toDate();
+      }
+
+      if (sortOrder === 'asc') {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
+
+    return sorted;
+  }, [activities, searchTerm, selectedEventType, selectedStatus, dateRange, sortField, sortOrder]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
     }
   };
 
-  const getActivityColor = (activityType: string) => {
-    switch (activityType) {
-      case 'email': return 'primary';
-      case 'task': return 'secondary';
-      case 'note': return 'info';
-      case 'call': return 'success';
-      case 'meeting': return 'warning';
-      case 'follow_up': return 'error';
-      case 'status_change': return 'default';
-      default: return 'default';
-    }
+  const getEventIcon = (eventType: string) => {
+    const iconMap: { [key: string]: React.ReactElement } = {
+      'contact': <PersonIcon />,
+      'deal': <DealIcon />,
+      'company': <BusinessIcon />,
+      'task': <TaskIcon />,
+      'email': <EmailIcon />,
+      'note': <NoteIcon />,
+      'call': <PhoneIcon />,
+      'meeting': <MeetingIcon />,
+      'follow_up': <FollowUpIcon />,
+      'status_change': <StatusChangeIcon />,
+    };
+
+    return iconMap[eventType.split('.')[0]] || <AIIcon />;
   };
 
-  const getPriorityIcon = (priority?: string) => {
-    switch (priority) {
-      case 'high': return <PriorityHighIcon fontSize="small" />;
-      case 'medium': return <PriorityMediumIcon fontSize="small" />;
-      case 'low': return <PriorityLowIcon fontSize="small" />;
-      default: return null;
-    }
+  const getEventColor = (eventType: string) => {
+    const colorMap: { [key: string]: string } = {
+      'contact': 'primary',
+      'deal': 'success',
+      'company': 'info',
+      'task': 'warning',
+      'email': 'secondary',
+      'note': 'default',
+      'call': 'primary',
+      'meeting': 'info',
+      'follow_up': 'warning',
+      'status_change': 'success',
+    };
+
+    return colorMap[eventType.split('.')[0]] || 'default';
   };
 
-  const getTaskStatusIcon = (status?: string) => {
-    switch (status) {
-      case 'completed': return <CheckCircleIcon fontSize="small" color="success" />;
-      case 'pending': return <ScheduleIcon fontSize="small" color="warning" />;
-      case 'cancelled': return <CancelIcon fontSize="small" color="error" />;
-      default: return null;
-    }
+  const formatTimestamp = (timestamp: Timestamp) => {
+    return timestamp.toDate().toLocaleString();
   };
 
-  const formatTimestamp = (timestamp: any) => {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString();
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
   };
 
-  const getEntityIcon = (entityType: string) => {
-    switch (entityType) {
-      case 'contact': return <PersonIcon fontSize="small" />;
-      case 'deal': return <DealIcon fontSize="small" />;
-      case 'company': return <BusinessIcon fontSize="small" />;
-      default: return <PersonIcon fontSize="small" />;
-    }
-  };
-
-  const getEntityLabel = (entityType: string) => {
-    switch (entityType) {
-      case 'contact': return 'Contact';
-      case 'deal': return 'Deal';
-      case 'company': return 'Company';
-      default: return 'Entity';
-    }
-  };
-
-  const handleRefresh = () => {
-    loadActivities();
-  };
-
-  const handleAddActivity = () => {
-    // TODO: Implement add activity modal
-    console.log('Add activity clicked');
+  const getUrgencyIcon = (score: number) => {
+    if (score >= 8) return <PriorityHighIcon fontSize="small" />;
+    if (score >= 5) return <PriorityMediumIcon fontSize="small" />;
+    return <PriorityLowIcon fontSize="small" />;
   };
 
   if (loading) {
@@ -224,29 +308,16 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">
           Activity Log
-          <Badge badgeContent={activities.length} color="primary" sx={{ ml: 1 }}>
+          <Badge badgeContent={filteredAndSortedActivities.length} color="primary" sx={{ ml: 1 }}>
             <FilterIcon />
           </Badge>
         </Typography>
         
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Tooltip title="Refresh">
-            <IconButton onClick={handleRefresh} size="small">
-              <RefreshIcon />
-            </IconButton>
-          </Tooltip>
-          
-          {showAddActivity && (
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={handleAddActivity}
-              startIcon={<AddIcon />}
-            >
-              Add Activity
-            </Button>
-          )}
-        </Box>
+        <Tooltip title="Refresh">
+          <IconButton onClick={loadActivities} size="small">
+            <RefreshIcon />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {/* Error Alert */}
@@ -256,26 +327,33 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
         </Alert>
       )}
 
-      {!loading && activities.length === 0 && !error && (
-        <Alert severity="info">
-          Activity logging is not yet implemented. This feature will be available soon to track emails, tasks, calls, and other interactions with this {entityType}.
-        </Alert>
-      )}
-
       {/* Filters */}
       {showFilters && (
         <Card sx={{ mb: 2 }}>
           <CardContent>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} sm={3}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  InputProps={{
+                    startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                  }}
+                />
+              </Grid>
+
+              <Grid item xs={12} sm={2}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Activity Type</InputLabel>
+                  <InputLabel>Event Type</InputLabel>
                   <Select
-                    value={selectedActivityType}
-                    label="Activity Type"
-                    onChange={(e) => setSelectedActivityType(e.target.value)}
+                    value={selectedEventType}
+                    label="Event Type"
+                    onChange={(e) => setSelectedEventType(e.target.value)}
                   >
-                    {activityTypes.map((type) => (
+                    {eventTypes.map((type) => (
                       <MenuItem key={type.value} value={type.value}>
                         {type.label}
                       </MenuItem>
@@ -284,7 +362,24 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
                 </FormControl>
               </Grid>
 
-              <Grid item xs={12} sm={3}>
+              <Grid item xs={12} sm={2}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    value={selectedStatus}
+                    label="Status"
+                    onChange={(e) => setSelectedStatus(e.target.value)}
+                  >
+                    {statusOptions.map((status) => (
+                      <MenuItem key={status.value} value={status.value}>
+                        {status.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={2}>
                 <TextField
                   fullWidth
                   size="small"
@@ -296,7 +391,7 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
                 />
               </Grid>
 
-              <Grid item xs={12} sm={3}>
+              <Grid item xs={12} sm={2}>
                 <TextField
                   fullWidth
                   size="small"
@@ -307,164 +402,140 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
                   InputLabelProps={{ shrink: true }}
                 />
               </Grid>
-
-              <Grid item xs={12} sm={3}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Include Related</InputLabel>
-                  <Select
-                    value={includeRelated ? 'yes' : 'no'}
-                    label="Include Related"
-                    onChange={(e) => setIncludeRelated(e.target.value === 'yes')}
-                  >
-                    <MenuItem value="yes">Include Related Entities</MenuItem>
-                    <MenuItem value="no">This Entity Only</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
             </Grid>
           </CardContent>
         </Card>
       )}
 
-      {/* Activities List */}
+      {/* Activities Table */}
       <Card>
         <CardContent sx={{ p: 0 }}>
-          {activities.length > 0 ? (
-            <List sx={{ maxHeight, overflow: 'auto' }}>
-              {activities.map((activity, index) => (
-                <React.Fragment key={activity.id}>
-                  <ListItem alignItems="flex-start">
-                    <ListItemIcon>
-                      {getActivityIcon(activity.activityType)}
-                    </ListItemIcon>
-                    
-                    <ListItemText
-                      primary={
+          {filteredAndSortedActivities.length > 0 ? (
+            <TableContainer component={Paper} sx={{ maxHeight }}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortField === 'createdAt'}
+                        direction={sortField === 'createdAt' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('createdAt')}
+                      >
+                        Timestamp
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>Event</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortField === 'urgencyScore'}
+                        direction={sortField === 'urgencyScore' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('urgencyScore')}
+                      >
+                        Urgency
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel
+                        active={sortField === 'latencyMs'}
+                        direction={sortField === 'latencyMs' ? sortOrder : 'asc'}
+                        onClick={() => handleSort('latencyMs')}
+                      >
+                        Duration
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Tags</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredAndSortedActivities.map((activity) => (
+                    <TableRow key={activity.id} hover>
+                      <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography variant="subtitle2" component="span">
-                            {activity.title}
+                          <CalendarIcon fontSize="small" color="action" />
+                          <Typography variant="caption">
+                            {formatTimestamp(activity.createdAt)}
                           </Typography>
-                          
-                          {/* Activity type chip */}
+                        </Box>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {getEventIcon(activity.eventType)}
                           <Chip
-                            label={activity.activityType}
+                            label={activity.eventType.split('.')[0]}
                             size="small"
-                            color={getActivityColor(activity.activityType) as any}
+                            color={getEventColor(activity.eventType) as any}
                             variant="outlined"
                           />
-                          
-                          {/* Priority icon for tasks */}
-                          {activity.activityType === 'task' && activity.metadata?.priority && (
-                            <Tooltip title={`Priority: ${activity.metadata.priority}`}>
-                              <Box>
-                                {getPriorityIcon(activity.metadata.priority)}
-                              </Box>
-                            </Tooltip>
-                          )}
-                          
-                          {/* Status icon for tasks */}
-                          {activity.activityType === 'task' && activity.metadata?.taskStatus && (
-                            <Tooltip title={`Status: ${activity.metadata.taskStatus}`}>
-                              <Box>
-                                {getTaskStatusIcon(activity.metadata.taskStatus)}
-                              </Box>
-                            </Tooltip>
-                          )}
-                          
-                          {/* AI logged indicator */}
-                          {activity.aiLogged && (
-                            <Tooltip title="AI Logged">
-                              <Chip
-                                label="AI"
-                                size="small"
-                                color="success"
-                                variant="outlined"
-                              />
-                            </Tooltip>
-                          )}
                         </Box>
-                      }
-                      secondary={
-                        <Box>
-                          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                            {activity.description}
-                          </Typography>
-                          
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <CalendarIcon fontSize="small" />
-                              <Typography variant="caption" color="text.secondary">
-                                {formatTimestamp(activity.timestamp)}
-                              </Typography>
-                            </Box>
-                            
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <PersonIcon fontSize="small" />
-                              <Typography variant="caption" color="text.secondary">
-                                {activity.userName}
-                              </Typography>
-                            </Box>
-                            
-                            {/* Show if this activity is from a related entity */}
-                            {activity.entityType !== entityType && (
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                {getEntityIcon(activity.entityType)}
-                                <Typography variant="caption" color="text.secondary">
-                                  {getEntityLabel(activity.entityType)}
-                                </Typography>
-                              </Box>
-                            )}
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Typography variant="body2" sx={{ maxWidth: 300 }}>
+                          {activity.reason}
+                        </Typography>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Tooltip title={`Urgency Score: ${activity.urgencyScore}`}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            {getUrgencyIcon(activity.urgencyScore)}
+                            <Typography variant="caption">
+                              {activity.urgencyScore}
+                            </Typography>
                           </Box>
-                          
-                          {/* Metadata display */}
-                          {activity.metadata && (
-                            <Box sx={{ mt: 1 }}>
-                              {activity.metadata.emailSubject && (
-                                <Chip
-                                  label={`Subject: ${activity.metadata.emailSubject}`}
-                                  size="small"
-                                  variant="outlined"
-                                  sx={{ mr: 1, mb: 1 }}
-                                />
-                              )}
-                              
-                              {activity.metadata.tags && activity.metadata.tags.length > 0 && (
-                                activity.metadata.tags.map((tag, tagIndex) => (
-                                  <Chip
-                                    key={tagIndex}
-                                    label={tag}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{ mr: 1, mb: 1 }}
-                                  />
-                                ))
-                              )}
-                            </Box>
+                        </Tooltip>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Typography variant="caption">
+                          {formatDuration(activity.latencyMs)}
+                        </Typography>
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Chip
+                          label={activity.success ? 'Success' : 'Error'}
+                          size="small"
+                          color={activity.success ? 'success' : 'error'}
+                          variant="outlined"
+                        />
+                      </TableCell>
+                      
+                      <TableCell>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                          {activity.aiTags.slice(0, 3).map((tag, index) => (
+                            <Chip
+                              key={index}
+                              label={tag}
+                              size="small"
+                              variant="outlined"
+                            />
+                          ))}
+                          {activity.aiTags.length > 3 && (
+                            <Chip
+                              label={`+${activity.aiTags.length - 3}`}
+                              size="small"
+                              variant="outlined"
+                            />
                           )}
                         </Box>
-                      }
-                    />
-                  </ListItem>
-                  
-                  {index < activities.length - 1 && <Divider />}
-                </React.Fragment>
-              ))}
-            </List>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
           ) : (
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <Typography color="text.secondary">
                 No activities found
               </Typography>
-              {showAddActivity && (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleAddActivity}
-                  sx={{ mt: 1 }}
-                >
-                  Add First Activity
-                </Button>
-              )}
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                Activities will appear here as AI logging events occur
+              </Typography>
             </Box>
           )}
         </CardContent>

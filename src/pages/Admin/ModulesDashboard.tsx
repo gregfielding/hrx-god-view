@@ -9,7 +9,6 @@ import {
   CardActions,
   Button,
   Chip,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -23,9 +22,7 @@ import {
   CircularProgress,
   Avatar,
   Stack,
-  Badge,
 } from '@mui/material';
-import { LoggableTextField, LoggableSwitch, LoggableSelect } from '../../components/LoggableField';
 import {
   ArrowBack,
   Settings,
@@ -33,7 +30,6 @@ import {
   Add,
   Edit,
   Delete,
-  Visibility,
   VisibilityOff,
   CheckCircle,
   Warning,
@@ -46,15 +42,14 @@ import {
   People,
   Assessment,
   Star,
-  StarBorder,
   PowerSettingsNew,
   Tune,
   Notifications,
-  Work,
-  School,
   TrendingUp,
 } from '@mui/icons-material';
 import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+
+import { LoggableTextField, LoggableSwitch } from '../../components/LoggableField';
 import { db } from '../../firebase';
 
 interface Module {

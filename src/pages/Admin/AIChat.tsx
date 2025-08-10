@@ -16,7 +16,6 @@ import {
   Slider,
   Chip,
   Alert,
-  Divider,
   List,
   ListItem,
   ListItemText,
@@ -28,11 +27,6 @@ import {
   DialogActions,
   Tabs,
   Tab,
-  Paper,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  LinearProgress,
   Badge,
   Tooltip,
   Table,
@@ -40,7 +34,6 @@ import {
   TableRow,
   TableCell,
   TableBody,
-  SelectChangeEvent,
 } from '@mui/material';
 import {
   Chat as ChatIcon,
@@ -50,19 +43,11 @@ import {
   Security as SecurityIcon,
   ArrowBack as ArrowBackIcon,
   Psychology as PsychologyIcon,
-  ExpandMore as ExpandMoreIcon,
   Add as AddIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
-  Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
-  Save as SaveIcon,
-  Refresh as RefreshIcon,
-  Analytics as AnalyticsIcon,
   History as HistoryIcon,
   Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
   SentimentSatisfiedAlt as SentimentSatisfiedAltIcon,
   SentimentDissatisfied as SentimentDissatisfiedIcon,
   SentimentNeutral as SentimentNeutralIcon,
@@ -70,7 +55,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useTheme } from '@mui/material/styles';
 import CircularProgress from '@mui/material/CircularProgress';
-import { Bar, Line, Doughnut } from 'react-chartjs-2';
+import { Line, Doughnut } from 'react-chartjs-2';
 import { useNavigate } from 'react-router-dom';
 import {
   Chart,

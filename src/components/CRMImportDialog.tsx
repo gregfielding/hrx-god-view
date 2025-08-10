@@ -10,7 +10,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  Paper,
   Table,
   TableBody,
   TableCell,
@@ -19,12 +18,6 @@ import {
   TableRow,
   Alert,
   CircularProgress,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
-  Chip,
   Grid,
   Card,
   CardContent,
@@ -32,24 +25,20 @@ import {
   List,
   ListItem,
   ListItemText,
-  ListItemSecondaryAction,
-  Switch,
-  FormControlLabel,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
   CheckCircle as CheckIcon,
   Error as ErrorIcon,
-  Warning as WarningIcon,
   Business as CompanyIcon,
   Person as ContactIcon,
   Group as SalespersonIcon,
   TrendingUp as DealIcon,
 } from '@mui/icons-material';
 import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { geocodeAddress } from '../utils/geocodeAddress';
 import { enhanceCompanyData } from '../utils/companyNameExtractor';
 import { cleanCompanyData, cleanContactData } from '../utils/phoneNumberCleaner';
 import { processCompanyAddress, parseAddress } from '../utils/addressParser';
@@ -98,7 +87,7 @@ const CRMImportDialog: React.FC<{
   const [aiEnhancementProgress, setAiEnhancementProgress] = useState({ current: 0, total: 0, message: '' });
   
   // Field mappings (currently using direct field access, but keeping for future flexibility)
-  const [companyMapping, setCompanyMapping] = useState<ImportMapping>({
+  const [companyMapping] = useState<ImportMapping>({
     'companyId': 'externalId',
     'Name': 'companyName',
     'Website': 'companyUrl',
@@ -113,7 +102,7 @@ const CRMImportDialog: React.FC<{
     'Sales owner': 'externalSalesOwner',
   });
   
-  const [contactMapping, setContactMapping] = useState<ImportMapping>({
+  const [contactMapping] = useState<ImportMapping>({
     'contactId': 'externalId',
     'First name': 'firstName',
     'Last name': 'lastName',
@@ -140,7 +129,7 @@ const CRMImportDialog: React.FC<{
     'Email': 'email',
   });
 
-  const [dealMapping, setDealMapping] = useState<ImportMapping>({
+  const [dealMapping] = useState<ImportMapping>({
     'dealId': 'externalId',
     'Offer name': 'name',
     'Expected Offer value': 'value',
@@ -180,9 +169,9 @@ const CRMImportDialog: React.FC<{
       
       return {
         streetAddress,
-        unit,
-        coordinates: undefined
-      };
+        ...(unit ? { unit } : {}),
+        ...(undefined as any),
+      } as { streetAddress: string; unit?: string; coordinates?: { lat: number; lng: number } };
     }
   };
 
@@ -218,13 +207,13 @@ const CRMImportDialog: React.FC<{
         const reconstructedLines: string[] = [];
         let currentLine = '';
         let inQuotes = false;
-        let quoteCount = 0;
+        // let quoteCount = 0;
         
         for (let i = 0; i < text.length; i++) {
           const char = text[i];
           
           if (char === '"') {
-            quoteCount++;
+            // quoteCount++;
             inQuotes = !inQuotes;
             currentLine += char;
           } else if (char === '\n' && !inQuotes) {
@@ -233,7 +222,7 @@ const CRMImportDialog: React.FC<{
               reconstructedLines.push(currentLine.trim());
             }
             currentLine = '';
-            quoteCount = 0;
+            // quoteCount = 0;
           } else {
             currentLine += char;
           }
@@ -899,7 +888,7 @@ const CRMImportDialog: React.FC<{
           
           // Parse dates
           const expectedCloseDate = deal['Expected close date'] || deal['expectedCloseDate'] || null;
-          const createdAt = deal['Created at'] || deal['createdAt'] || null;
+          // const createdAt = deal['Created at'] || deal['createdAt'] || null;
           
           // Map offer stage to deal stage
           const offerStage = deal['Offer stage'] || deal['offerStage'] || 'qualification';
@@ -958,8 +947,8 @@ const CRMImportDialog: React.FC<{
       console.log(`Deal import summary: ${successfulDeals} successful, ${failedDeals} failed`);
 
       // Show final summary
-      const totalSuccessful = successfulCompanies + successfulContacts + successfulDeals;
-      const totalFailed = failedCompanies + failedContacts + failedDeals;
+      // const totalSuccessful = successfulCompanies + successfulContacts + successfulDeals;
+      // const totalFailed = failedCompanies + failedContacts + failedDeals;
       
       setSuccess(true);
       setImportSteps(prev => prev.map((step, index) => 
@@ -967,7 +956,7 @@ const CRMImportDialog: React.FC<{
       ));
       
       // Show detailed success message
-      const successMessage = `Import completed! ${totalSuccessful} records imported successfully. ${totalFailed > 0 ? `${totalFailed} records failed and were skipped.` : ''}`;
+      // const successMessage = `Import completed! ${totalSuccessful} records imported successfully. ${totalFailed > 0 ? `${totalFailed} records failed and were skipped.` : ''}`;
       setError(''); // Clear any previous errors
       
       setTimeout(() => {

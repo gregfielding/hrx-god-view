@@ -18,8 +18,9 @@ import {
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { db } from '../../../../firebase';
 
 const promptFrequencies = ['Low', 'Medium', 'High'];
 const goalOptions = ['Engagement', 'Retention', 'Wellness', 'Training'];

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Divider } from '@mui/material';
+
 import BackgroundCheckTab from './BackgroundCheckTab';
 import VaccinationStatusTab from './VaccinationStatusTab';
 

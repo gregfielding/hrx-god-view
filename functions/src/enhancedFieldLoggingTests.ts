@@ -206,7 +206,7 @@ export class EnhancedFieldLoggingTester {
         return {
           fieldPath: metadata.fieldPath,
           success: false,
-          error: changeResult.error,
+          ...(changeResult.error ? { error: changeResult.error } : {}),
           logFound: false,
           logValid: false,
           missingKeys: [],
@@ -227,7 +227,7 @@ export class EnhancedFieldLoggingTester {
       return {
         fieldPath: metadata.fieldPath,
         success,
-        error: success ? undefined : 'Log not found or invalid',
+        ...(success ? {} : { error: 'Log not found or invalid' }),
         logFound: logCheck.logFound,
         logValid: logCheck.logValid,
         missingKeys: logCheck.missingKeys,

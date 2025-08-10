@@ -8,11 +8,9 @@ import {
   Divider,
   List,
   ListItem,
-  ListItemText,
   Chip,
   CircularProgress,
   Alert,
-  Rating,
   TextField,
   InputAdornment,
 } from '@mui/material';
@@ -22,12 +20,11 @@ import {
   Search as SearchIcon,
   ThumbUp as ThumbUpIcon,
   ThumbDown as ThumbDownIcon,
-  Bookmark as BookmarkIcon,
-  Link as LinkIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
+
+import { useAuth } from '../contexts/AuthContext';
 
 interface HelpTopic {
   id: string;

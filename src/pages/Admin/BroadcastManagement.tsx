@@ -30,11 +30,9 @@ import {
 import {
   Send as SendIcon,
   Visibility as ViewIcon,
-  Reply as ReplyIcon,
   Delete as DeleteIcon,
   ArrowBack as ArrowBackIcon,
-  Add as AddIcon,
-  FilterList as FilterIcon
+  Add as AddIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate } from 'react-router-dom';

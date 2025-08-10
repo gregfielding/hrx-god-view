@@ -20,9 +20,6 @@ import {
   Tooltip,
   CircularProgress,
   Alert,
-  Pagination,
-  Card,
-  CardHeader,
   CardContent,
   Button,
 } from '@mui/material';
@@ -40,8 +37,9 @@ import {
   Security as SecurityIcon,
   Notifications as NotificationsIcon,
 } from '@mui/icons-material';
-import { db } from '../../../firebase';
 import { collection, query, where, orderBy, limit, getDocs, startAfter, QueryDocumentSnapshot } from 'firebase/firestore';
+
+import { db } from '../../../firebase';
 
 interface ActivityLog {
   id: string;

@@ -1,0 +1,757 @@
+{
+  "generatedAt": "2025-08-08T03:02:52.348Z",
+  "report": [
+    {
+      "file": "functions/src/addCompanyToCRM.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/aiChat.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/aiEngineProcessor.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/analyticsEngine.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/associateDealsWithSalespeople.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/autoActivityLogger.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/autoContextEngine.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/autoDevAssistant.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/autoDevOpsMonitoring.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/backfillShiftsAndAssignments.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/calendarIntegration.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/calendarSyncService.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/checkRecentAILogs.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/checkTestMaintenance.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/codeAware.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/createTestLogs.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/crmEngine.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/dealStageAIEngine.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/devopsChat.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/discoverCompanyLocations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/discoverCompanyUrls.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/enhanceCompanyWithSerp.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/enhanceContactWithAI.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/enhancedFieldLoggingTests.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/extractCompanyInfoFromUrls.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/feedbackEngine.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fetchCompanyNews.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fetchFollowedCompanyNews.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fieldLoggingTests.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/findContactEmail.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/findDecisionMakers.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/findSimilarCompanies.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 1,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/findTenantIds.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/firestoreTriggers.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fixContactAssociations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fixContactCompanyAssociations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fixPendingUser.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/fixWorkerTenantIds.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/generateDealAISummary.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/getCompanyLocations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/getLocationAssociations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/getSalespeople.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/getSalespeopleForTenant.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/getUsersByTenant.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/gmailIntegration.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/gmailTasksIntegration.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/googleCalendarIntegration.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/gptGateway.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/index.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/initializeJSIPrompts.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/integrations.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/jobSatisfactionInsights.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/linkCRMEntities.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/linkContactsToCompanies.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/manageAssociations.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/middleware/aiGuard.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/migrateContactSchema.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/migrateHelpDrafts.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/mobileChatPhase2.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/mobileErrorMonitoring.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/modules/index.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/modules/miniLearningBoosts.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/modules/professionalGrowth.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/modules/resetMode.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/modules/workLifeBalance.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/removeContactsWithoutNames.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/removeDuplicateCompanies.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/removeDuplicateContacts.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/removePhoneNumberContacts.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/resumeParser.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/retrievalFilters.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/scheduler.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/scrapeIndeedJobs.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/seedMotivationLibrary.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/taskAIEngine.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/taskContentAIEngine.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/taskEngine.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/test.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/testFirestoreTriggers.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/testHarness.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/testResultsDashboard.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/testTriggersCLI.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/triggerAINoteReview.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/triggerAISummaryUpdate.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/updateCompanyPipelineTotals.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/updateLocationAssociation.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/aiLogging.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/createNotification.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/getWorkers.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/hash.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/loggingTriggerMap.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/openaiHelper.ts",
+      "usesGen2": false,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/utils/triggerTemplate.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    },
+    {
+      "file": "functions/src/vectorSettings.ts",
+      "usesGen2": true,
+      "regions": 0,
+      "minInstances": 0,
+      "timeout": 0,
+      "concurrency": 0
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Typography, Chip, Paper } from '@mui/material';
+
 import { useAssociationsCache } from '../contexts/AssociationsCacheContext';
 
 interface AssociationsCacheDebugProps {

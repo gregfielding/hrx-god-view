@@ -9,46 +9,26 @@ import {
   Chip,
   IconButton,
   List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
-  LinearProgress,
-  Badge,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider
+  LinearProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
   CheckCircle as CheckCircleIcon,
   Schedule as ScheduleIcon,
-  PriorityHigh as PriorityHighIcon,
   Email as EmailIcon,
   Phone as PhoneIcon,
   Business as BusinessIcon,
-  Person as PersonIcon,
   Psychology as PsychologyIcon,
   Refresh as RefreshIcon,
-  ExpandMore as ExpandMoreIcon,
   Assignment as AssignmentIcon,
-  TrendingUp as TrendingUpIcon,
-  Insights as InsightsIcon
+  TrendingUp as TrendingUpIcon
 } from '@mui/icons-material';
+
 import { useAuth } from '../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskClassification } from '../types/Tasks';
+
 import CreateTaskDialog from './CreateTaskDialog';
 import CreateFollowUpCampaignDialog from './CreateFollowUpCampaignDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
@@ -285,8 +265,7 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
         priority: suggestion.priority,
         status: 'upcoming' as TaskStatus,
         classification: classification as TaskClassification,
-        startTime: classification === 'appointment' ? new Date().toISOString() : null,
-        duration: classification === 'appointment' ? 60 : null,
+        ...(classification === 'appointment' ? { startTime: new Date().toISOString(), duration: 60 } : {}),
         scheduledDate: new Date().toISOString(),
         assignedTo: user.uid,
         createdBy: user.uid,
@@ -344,7 +323,7 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
   };
 
   const calculateUrgency = (task: any) => {
-    const dueDate = new Date(task.dueDate || task.scheduledDate);
+    const dueDate = new Date((task.dueDate || task.scheduledDate) + 'T00:00:00');
     const now = new Date();
     const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
     
@@ -406,7 +385,7 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
           <Card>
             <CardContent>
               <Typography color="textSecondary" gutterBottom>
-                Today's Tasks
+                Today&apos;s Tasks
               </Typography>
               <Typography variant="h4">
                 {dashboardData?.today?.totalTasks || 0}
@@ -466,46 +445,118 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
         </Grid>
       </Grid>
 
-      {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Grid container spacing={2}>
-          <Grid item>
-            <Button
-              variant={activeTab === 0 ? 'contained' : 'text'}
-              onClick={() => setActiveTab(0)}
-              startIcon={<AssignmentIcon />}
-            >
-              Today's Tasks
-            </Button>
-          </Grid>
-          <Grid item>
-            <Button
-              variant={activeTab === 1 ? 'contained' : 'text'}
-              onClick={() => setActiveTab(1)}
-              startIcon={<TrendingUpIcon />}
-            >
-              This Week
-            </Button>
-          </Grid>
-          <Grid item>
-            <Button
-              variant={activeTab === 2 ? 'contained' : 'text'}
-              onClick={() => setActiveTab(2)}
-              startIcon={<PsychologyIcon />}
-            >
-              AI Suggestions
-            </Button>
-          </Grid>
-          <Grid item>
-            <Button
-              variant={activeTab === 3 ? 'contained' : 'text'}
-              onClick={() => setActiveTab(3)}
-              startIcon={<InsightsIcon />}
-            >
-              Analytics
-            </Button>
-          </Grid>
-        </Grid>
+      {/* Breadcrumb-style subnavigation to match DealTasksDashboard */}
+      <Box sx={{ mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setActiveTab(0)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: activeTab === 0 ? 'bold' : 'normal',
+              textDecoration: activeTab === 0 ? 'underline' : 'none',
+              color: activeTab === 0 ? 'primary.main' : 'text.secondary'
+            }}
+          >
+            <AssignmentIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Today&apos;s Tasks
+          </Button>
+          <Typography variant="body2" color="text.secondary">/</Typography>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setActiveTab(1)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: activeTab === 1 ? 'bold' : 'normal',
+              textDecoration: activeTab === 1 ? 'underline' : 'none',
+              color: activeTab === 1 ? 'primary.main' : 'text.secondary'
+            }}
+          >
+            <TrendingUpIcon fontSize="small" sx={{ mr: 0.5 }} />
+            This Week
+          </Button>
+          <Typography variant="body2" color="text.secondary">/</Typography>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setActiveTab(2)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: activeTab === 2 ? 'bold' : 'normal',
+              textDecoration: activeTab === 2 ? 'underline' : 'none',
+              color: activeTab === 2 ? 'primary.main' : 'text.secondary'
+            }}
+          >
+            <CheckCircleIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Completed
+          </Button>
+          <Typography variant="body2" color="text.secondary">/</Typography>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setActiveTab(3)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: activeTab === 3 ? 'bold' : 'normal',
+              textDecoration: activeTab === 3 ? 'underline' : 'none',
+              color: activeTab === 3 ? 'primary.main' : 'text.secondary'
+            }}
+          >
+            <PsychologyIcon fontSize="small" sx={{ mr: 0.5 }} />
+            AI Suggestions
+          </Button>
+          <Typography variant="body2" color="text.secondary">/</Typography>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setShowCreateDialog(true)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: 'normal'
+            }}
+          >
+            <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Add Task
+          </Button>
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setShowFollowUpDialog(true)}
+            sx={{ 
+              borderRadius: 0,
+              px: 2,
+              py: 1,
+              minWidth: 'auto',
+              textTransform: 'none',
+              fontWeight: 'normal'
+            }}
+          >
+            <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
+            Add Campaign
+          </Button>
+        </Box>
       </Box>
 
       {/* Tab Content */}
@@ -538,18 +589,31 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
       )}
 
       {activeTab === 2 && (
+        <TasksList
+          tasks={(() => {
+            const today = dashboardData?.today?.tasks || [];
+            const week = dashboardData?.thisWeek?.tasks || [];
+            const combined = [...today, ...week];
+            return combined.filter((t: any) => t.status === 'completed');
+          })()}
+          onTaskClick={(task) => {
+            setSelectedTask(task);
+            setShowDetailsDialog(true);
+          }}
+          onQuickComplete={handleQuickComplete}
+          getStatusColor={getStatusColor}
+          getTaskTypeIcon={getTaskTypeIcon}
+          calculateUrgency={calculateUrgency}
+        />
+      )}
+
+      {activeTab === 3 && (
         <AISuggestionsList
           suggestions={aiSuggestions}
           onAccept={handleAcceptSuggestion}
           onReject={handleRejectSuggestion}
           getPriorityColor={getStatusColor}
           getTaskIcon={getTaskTypeIcon}
-        />
-      )}
-
-      {activeTab === 3 && (
-        <TasksAnalytics
-          dashboardData={dashboardData}
         />
       )}
 
@@ -655,7 +719,7 @@ const TasksList: React.FC<TasksListProps> = ({
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Typography variant="caption" color="textSecondary">
-                    {new Date(task.scheduledDate).toLocaleDateString()}
+                    {new Date((task.classification === 'todo' ? task.dueDate : task.scheduledDate) + 'T00:00:00').toLocaleDateString()}
                   </Typography>
                   {task.estimatedDuration && (
                     <Typography variant="caption" color="textSecondary">
@@ -775,77 +839,11 @@ const AISuggestionsList: React.FC<AISuggestionsListProps> = ({
   );
 };
 
-interface TasksAnalyticsProps {
-  dashboardData: TaskDashboardData | null;
-}
-
-const TasksAnalytics: React.FC<TasksAnalyticsProps> = ({ dashboardData }) => {
-  return (
-    <Grid container spacing={3}>
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Priority Breakdown
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">High Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.high || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.high || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="error"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Medium Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.medium || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.medium || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="warning"
-                sx={{ mb: 2 }}
-              />
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2">Low Priority</Typography>
-                <Typography variant="body2">{dashboardData?.priorities?.low || 0}</Typography>
-              </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={((dashboardData?.priorities?.low || 0) / Math.max(1, (dashboardData?.priorities?.high || 0) + (dashboardData?.priorities?.medium || 0) + (dashboardData?.priorities?.low || 0))) * 100}
-                color="success"
-              />
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-      
-      <Grid item xs={12} md={6}>
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Task Types
-            </Typography>
-            <Box sx={{ mt: 2 }}>
-              {Object.entries(dashboardData?.types || {}).map(([type, count]) => (
-                <Box key={type} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                    {type.replace('_', ' ')}
-                  </Typography>
-                  <Typography variant="body2">{count}</Typography>
-                </Box>
-              ))}
-            </Box>
-          </CardContent>
-        </Card>
-      </Grid>
-    </Grid>
-  );
-};
+// interface TasksAnalyticsProps {
+//   dashboardData: TaskDashboardData | null;
+// }
+// const TasksAnalytics: React.FC<TasksAnalyticsProps> = ({ dashboardData }) => {
+//   return null;
+// };
 
 export default ContactTasksDashboard; 

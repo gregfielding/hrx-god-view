@@ -13,10 +13,11 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Chip,
   Stack
 } from '@mui/material';
-import { CRM_STAGE_COLORS, getAllStages, getStageStatistics, isActiveStage, isWonStage, isLostStage, getTextContrastColor } from '../utils/crmStageColors';
+
+import { CRM_STAGE_COLORS, getAllStages, getStageStatistics, getTextContrastColor } from '../utils/crmStageColors';
+
 import StageChip from './StageChip';
 
 // Sample data for demo

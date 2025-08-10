@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
-import { auth } from '../firebase';
-import { useAuth } from '../contexts/AuthContext';
 import {
   Box,
   Button,
@@ -13,6 +11,9 @@ import {
   CircularProgress,
   Container,
 } from '@mui/material';
+
+import { auth } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
 
 const SetupPassword = () => {
   const navigate = useNavigate();

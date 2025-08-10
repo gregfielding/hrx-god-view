@@ -24,6 +24,14 @@ export const logAIAction = async (logData: {
   userId?: string;
   associations?: any;
   metadata?: any;
+  promptHash?: string;
+  promptVersion?: string;
+  schemaVersion?: string;
+  model?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  cacheHit?: boolean;
+  requestId?: string;
 }): Promise<string> => {
   try {
     const logId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -53,7 +61,15 @@ export const logAIAction = async (logData: {
       processingCompletedAt: null,
       engineTouched: [],
       processingResults: [],
-      errors: []
+      errors: [],
+      promptHash: logData.promptHash || '',
+      promptVersion: logData.promptVersion || '',
+      schemaVersion: logData.schemaVersion || '',
+      model: logData.model || '',
+      tokensIn: logData.tokensIn || 0,
+      tokensOut: logData.tokensOut || 0,
+      cacheHit: logData.cacheHit ?? false,
+      requestId: logData.requestId || ''
     };
 
     await db.collection('ai_logs').doc(logId).set(aiLogData);
@@ -86,8 +102,8 @@ export const createSimpleAILog = async (
     contextType: 'general',
     aiTags: [eventType.split('.')[0]],
     urgencyScore: 3,
-    tenantId,
-    userId
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId ? { userId } : {})
   });
 };
 
@@ -111,10 +127,10 @@ export const createTaskAILog = async (
     contextType: 'tasks',
     aiTags: ['task', eventType.split('.')[1] || 'general'],
     urgencyScore: 5,
-    tenantId,
-    userId,
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId ? { userId } : {}),
     associations,
-    aiResponse
+    ...(aiResponse ? { aiResponse } : {})
   });
 };
 
@@ -138,10 +154,10 @@ export const createDealAILog = async (
     contextType: 'deals',
     aiTags: ['deal', eventType.split('.')[1] || 'general'],
     urgencyScore: 6,
-    tenantId,
-    userId,
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId ? { userId } : {}),
     associations,
-    aiResponse
+    ...(aiResponse ? { aiResponse } : {})
   });
 };
 
@@ -165,10 +181,10 @@ export const createContactAILog = async (
     contextType: 'contacts',
     aiTags: ['contact', eventType.split('.')[1] || 'general'],
     urgencyScore: 4,
-    tenantId,
-    userId,
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId ? { userId } : {}),
     associations,
-    aiResponse
+    ...(aiResponse ? { aiResponse } : {})
   });
 };
 
@@ -192,9 +208,9 @@ export const createCompanyAILog = async (
     contextType: 'companies',
     aiTags: ['company', eventType.split('.')[1] || 'general'],
     urgencyScore: 4,
-    tenantId,
-    userId,
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId ? { userId } : {}),
     associations,
-    aiResponse
+    ...(aiResponse ? { aiResponse } : {})
   });
 }; 

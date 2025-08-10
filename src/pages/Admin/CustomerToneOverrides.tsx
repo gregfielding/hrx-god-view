@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../firebase';
 import {
   Box,
   Typography,
@@ -25,6 +24,8 @@ import EditIcon from '@mui/icons-material/Edit';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
+
+import { app } from '../../firebase';
 
 const TONE_KEYS = [
   { key: 'formality', label: 'Formality' },

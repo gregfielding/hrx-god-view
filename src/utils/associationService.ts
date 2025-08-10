@@ -10,10 +10,11 @@ import {
   deleteDoc, 
   writeBatch,
   serverTimestamp,
-  orderBy,
   limit as firestoreLimit
 } from 'firebase/firestore';
+
 import { db } from '../firebase';
+import { companyConverter, contactConverter, dealConverter } from '../firebase/converters';
 import { 
   CRMAssociation, 
   AssociationQuery, 
@@ -105,14 +106,15 @@ export class AssociationService {
 
       if (existingAssociation) {
         // Update existing association
-        await this.updateAssociation(existingAssociation.id, {
+        const updateData: any = {
           associationType,
-          role,
           strength,
-          metadata,
           updatedAt: serverTimestamp(),
           updatedBy: this.userId
-        });
+        };
+        if (role !== undefined) updateData.role = role;
+        if (metadata !== undefined) updateData.metadata = metadata;
+        await this.updateAssociation(existingAssociation.id, updateData);
         return existingAssociation.id;
       }
 
@@ -152,7 +154,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error creating association:', error);
-      throw new Error(`Failed to create association: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to create association: ${message}`);
     }
   }
 
@@ -208,7 +211,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error updating association:', error);
-      throw new Error(`Failed to update association: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to update association: ${message}`);
     }
   }
 
@@ -232,7 +236,7 @@ export class AssociationService {
         const targetEntityId = parts[3];
         
         // Determine the source entity type and field to update
-        let sourceEntityType: string;
+        let sourceEntityType: string | null = null;
         
         // Try to determine source entity type by checking different collections
         const collections = ['crm_companies', 'crm_contacts', 'crm_deals'];
@@ -269,7 +273,7 @@ export class AssociationService {
         }
         
         // Update the source entity to remove the association
-        const sourceEntityRef = doc(db, 'tenants', this.tenantId, `crm_${sourceEntityType}s`, sourceEntityId);
+        const sourceEntityRef = doc(db, 'tenants', this.tenantId, `crm_${(sourceEntityType as string)}s`, sourceEntityId);
         const sourceEntityDoc = await getDoc(sourceEntityRef);
         
         if (!sourceEntityDoc.exists()) {
@@ -340,7 +344,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error deleting association:', error);
-      throw new Error(`Failed to delete association: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to delete association: ${message}`);
     }
   }
 
@@ -478,7 +483,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error querying associations:', error);
-      throw new Error(`Failed to query associations: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to query associations: ${message}`);
     }
   }
 
@@ -522,14 +528,14 @@ export class AssociationService {
           targetEntityType: association.targetEntityType,
           targetEntityId: association.targetEntityId,
           associationType: association.associationType || 'primary',
-          role: association.role,
           strength: association.strength || 'medium',
-          metadata: association.metadata,
           tenantId: this.tenantId,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           createdBy: this.userId,
-          updatedBy: this.userId
+          updatedBy: this.userId,
+          ...(association.role !== undefined ? { role: association.role } : {}),
+          ...(association.metadata !== undefined ? { metadata: association.metadata } : {})
         };
 
         const docRef = doc(collection(db, 'tenants', this.tenantId, 'crm_associations'));
@@ -560,7 +566,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error in bulk association creation:', error);
-      throw new Error(`Failed to bulk create associations: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to bulk create associations: ${message}`);
     }
   }
 
@@ -633,7 +640,8 @@ export class AssociationService {
 
     } catch (error) {
       console.error('❌ Error getting AI context:', error);
-      throw new Error(`Failed to get AI context: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get AI context: ${message}`);
     }
   }
 
@@ -792,24 +800,24 @@ export class AssociationService {
     // Load companies
     if (entityIds.companies.size > 0) {
       loadPromises.push(
-        this.loadEntities('crm_companies', Array.from(entityIds.companies))
-          .then(companies => entities.companies.push(...companies as CRMCompany[]))
+        this.loadCompanies(Array.from(entityIds.companies))
+          .then(companies => entities.companies.push(...companies))
       );
     }
 
     // Load contacts
     if (entityIds.contacts.size > 0) {
       loadPromises.push(
-        this.loadEntities('crm_contacts', Array.from(entityIds.contacts))
-          .then(contacts => entities.contacts.push(...contacts as CRMContact[]))
+        this.loadContacts(Array.from(entityIds.contacts))
+          .then(contacts => entities.contacts.push(...contacts))
       );
     }
 
     // Load deals
     if (entityIds.deals.size > 0) {
       loadPromises.push(
-        this.loadEntities('crm_deals', Array.from(entityIds.deals))
-          .then(deals => entities.deals.push(...deals as CRMDeal[]))
+        this.loadDeals(Array.from(entityIds.deals))
+          .then(deals => entities.deals.push(...deals))
       );
     }
 
@@ -860,20 +868,37 @@ export class AssociationService {
     return entities;
   }
 
-  private async loadEntities<T>(collectionName: string, entityIds: string[]): Promise<T[]> {
-    const entities: T[] = [];
-    const collectionRef = collection(db, 'tenants', this.tenantId, collectionName);
-
-    for (const entityId of entityIds) {
-      const entityRef = doc(collectionRef, entityId);
-      const entityDoc = await getDoc(entityRef);
-      if (entityDoc.exists()) {
-        entities.push({ id: entityDoc.id, ...entityDoc.data() } as T);
-      } else {
-        console.warn(`⚠️ Entity document not found: ${collectionName}/${entityId}`);
-      }
+  private async loadCompanies(entityIds: string[]): Promise<CRMCompany[]> {
+    const out: CRMCompany[] = [];
+    const col = collection(db, 'tenants', this.tenantId, 'crm_companies').withConverter(companyConverter);
+    for (const id of entityIds) {
+      const ref = doc(col, id);
+      const snap = await getDoc(ref);
+      if (snap.exists()) out.push(snap.data() as unknown as CRMCompany); else console.warn(`⚠️ Company not found: crm_companies/${id}`);
     }
-    return entities;
+    return out;
+  }
+
+  private async loadContacts(entityIds: string[]): Promise<CRMContact[]> {
+    const out: CRMContact[] = [];
+    const col = collection(db, 'tenants', this.tenantId, 'crm_contacts').withConverter(contactConverter);
+    for (const id of entityIds) {
+      const ref = doc(col, id);
+      const snap = await getDoc(ref);
+      if (snap.exists()) out.push(snap.data() as unknown as CRMContact); else console.warn(`⚠️ Contact not found: crm_contacts/${id}`);
+    }
+    return out;
+  }
+
+  private async loadDeals(entityIds: string[]): Promise<CRMDeal[]> {
+    const out: CRMDeal[] = [];
+    const col = collection(db, 'tenants', this.tenantId, 'crm_deals').withConverter(dealConverter);
+    for (const id of entityIds) {
+      const ref = doc(col, id);
+      const snap = await getDoc(ref);
+      if (snap.exists()) out.push(snap.data() as unknown as CRMDeal); else console.warn(`⚠️ Deal not found: crm_deals/${id}`);
+    }
+    return out;
   }
 
   private async loadLocations(locationIds: string[]): Promise<CRMLocation[]> {
@@ -954,7 +979,7 @@ export class AssociationService {
     const implicitAssociations: CRMAssociation[] = [];
 
     switch (entityType) {
-      case 'company':
+      case 'company': {
         // Check if the company has a salesOwnerId
         const companyRef = doc(db, 'tenants', this.tenantId, 'crm_companies', entityId);
         const companyDoc = await getDoc(companyRef);
@@ -981,7 +1006,8 @@ export class AssociationService {
           }
         }
         break;
-      case 'contact':
+      }
+      case 'contact': {
         // Check if the contact has a company
         const contactRef = doc(db, 'tenants', this.tenantId, 'crm_contacts', entityId);
         const contactDoc = await getDoc(contactRef);
@@ -1005,7 +1031,8 @@ export class AssociationService {
           }
         }
         break;
-      case 'deal':
+      }
+      case 'deal': {
         // Check if the deal has a company
         const dealRef = doc(db, 'tenants', this.tenantId, 'crm_deals', entityId);
         const dealDoc = await getDoc(dealRef);
@@ -1029,7 +1056,8 @@ export class AssociationService {
           }
         }
         break;
-      case 'salesperson':
+      }
+      case 'salesperson': {
         // Check if the salesperson has a company
         const salespersonRef = doc(db, 'tenants', this.tenantId, 'workforce', entityId);
         const salespersonDoc = await getDoc(salespersonRef);
@@ -1053,7 +1081,8 @@ export class AssociationService {
           }
         }
         break;
-      case 'division':
+      }
+      case 'division': {
         // Check if the division has a company
         const divisionRef = doc(db, 'tenants', this.tenantId, 'crm_companies', entityId);
         const divisionDoc = await getDoc(divisionRef);
@@ -1077,6 +1106,7 @@ export class AssociationService {
           }
         }
         break;
+      }
       default:
         break;
     }

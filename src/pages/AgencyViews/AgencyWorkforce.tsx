@@ -4,40 +4,25 @@ import {
   Typography,
   TextField,
   Button,
-  Grid,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Paper,
   Snackbar,
   Alert,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Select,
-  OutlinedInput,
-  Chip,
-  Autocomplete,
-  Checkbox,
-  Tooltip,
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import { collection, addDoc, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import jobTitles from '../../data/onetJobTitles.json';
-import { geocodeAddress } from '../../utils/geocodeAddress';
 import BroadcastDialog from '../../components/BroadcastDialog';
 import AddWorkerForm from '../../componentBlocks/AddWorkerForm';
 import CSVUpload from '../../components/CSVUpload';
 import WorkersTable from '../../componentBlocks/WorkersTable';
 import { CSVWorkerData } from '../../utils/csvUpload';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+
 
 function formatPhoneNumber(value: string) {
   const cleaned = value.replace(/\D/g, '');

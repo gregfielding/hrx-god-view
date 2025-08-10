@@ -8,7 +8,6 @@ import {
   Alert,
   Tooltip,
   IconButton,
-  Box,
   Switch,
   FormControlLabel,
   TextField,
@@ -20,12 +19,12 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Divider,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { db } from '../../../../firebase';
 import { useAuth } from '../../../../contexts/AuthContext';
 
 interface ConversationSettingsProps {

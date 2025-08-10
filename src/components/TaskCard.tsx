@@ -288,7 +288,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
             {/* Metadata */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Typography variant="caption" color="textSecondary">
-                {formatDate(task.scheduledDate)}
+                {formatDate(task.classification === 'todo' ? task.dueDate : task.scheduledDate)}
               </Typography>
               {task.estimatedDuration && (
                 <Typography variant="caption" color="textSecondary">

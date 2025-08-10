@@ -4,20 +4,12 @@ import {
   Card,
   CardContent,
   Typography,
-  Button,
   Chip,
   List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Divider,
   Alert,
   CircularProgress,
   IconButton,
   Tooltip,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   ToggleButton,
   ToggleButtonGroup
 } from '@mui/material';
@@ -30,11 +22,10 @@ import {
   Phone as PhoneIcon,
   Business as BusinessIcon,
   TrendingUp as TrendingUpIcon,
-  ExpandMore as ExpandMoreIcon,
-  Task as TaskIcon,
-  Psychology as PsychologyIcon
+  Task as TaskIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { TaskClassification } from '../types/Tasks';
 
 interface AISuggestion {

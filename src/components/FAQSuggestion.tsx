@@ -1,5 +1,5 @@
 import React from 'react';
-import { Chip, Box, Typography } from '@mui/material';
+import { Chip } from '@mui/material';
 
 interface FAQSuggestionProps {
   question: string;

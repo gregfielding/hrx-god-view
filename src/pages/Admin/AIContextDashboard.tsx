@@ -37,9 +37,10 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+
+import { db } from '../../firebase';
 
 const AIContextDashboard: React.FC = () => {
   // Tone & Style

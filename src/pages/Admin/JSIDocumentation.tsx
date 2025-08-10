@@ -6,13 +6,11 @@ import {
   Grid,
   Card,
   CardContent,
-  Divider,
   List,
   ListItem,
   ListItemIcon,
   ListItemText,
   Alert,
-  Chip,
   Table,
   TableBody,
   TableCell,
@@ -24,9 +22,7 @@ import {
   AccordionDetails,
 } from '@mui/material';
 import {
-  Book,
   Security,
-  Analytics,
   Psychology,
   Work,
   SupervisorAccount,
@@ -37,10 +33,6 @@ import {
   CheckCircle,
   Info,
   ExpandMore,
-  Assessment,
-  TrendingUp,
-  TrendingDown,
-  Remove,
 } from '@mui/icons-material';
 
 const JSIDocumentation: React.FC = () => {

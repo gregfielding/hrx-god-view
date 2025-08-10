@@ -20,111 +20,38 @@ import {
   Paper,
   LinearProgress,
   IconButton,
-  Tooltip,
   Divider,
-  Alert,
-  Badge,
   Avatar,
   List,
   ListItem,
   ListItemText,
   ListItemAvatar,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
-  Switch,
-  FormControlLabel,
   Tabs,
   Tab,
-  CircularProgress,
   Rating,
 
 } from '@mui/material';
 import {
   Person,
-  Business,
   Email,
   Phone,
-  LocationOn,
-  Work,
   Star,
-  TrendingUp,
-  TrendingDown,
-  CheckCircle,
-  Warning,
-  Error,
-  ExpandMore,
   Add,
   Edit,
   Visibility,
   Assignment,
   People,
-  AttachMoney,
-  Schedule,
   BusinessCenter,
-  Store,
-  Apartment,
-  Psychology,
-  Group,
   Link,
   Timeline as TimelineIcon,
-  Assessment,
-  Insights,
   ContactSupport,
-  PersonAdd,
-  PersonRemove,
-  PersonSearch,
-  FilterList,
-  Sort,
-  Refresh,
-  Download,
-  Upload,
-  Settings,
-  Notifications,
-  Chat,
   VideoCall,
-  CalendarToday,
-  AccessTime,
-  Flag,
-  PriorityHigh,
-  LowPriority,
   Block,
   ThumbUp,
-  ThumbDown,
-  Favorite,
-  FavoriteBorder,
-  VisibilityOff,
-  Lock,
-  LockOpen,
-  Security,
-  VerifiedUser,
-  GpsFixed,
-  LocationSearching,
   Map,
-  Public,
-  Share,
-  ContentCopy,
-  QrCode,
-  ContactPhone,
-  ContactMail,
-  ContactPage,
-  ContactEmergency,
-  Contactless,
-  Contacts,
-  ContactPhoneOutlined,
-  ContactMailOutlined,
-  ContactPageOutlined,
-  ContactEmergencyOutlined,
-  ContactSupportOutlined,
-  ContactlessOutlined,
-  ContactsOutlined,
 } from '@mui/icons-material';
-import { collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { CRMContact, CRMCompany, CRMDeal } from '../types/CRM';
 import { useAIFieldLogging } from '../utils/aiFieldLogging';
@@ -177,8 +104,8 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [showContactDialog, setShowContactDialog] = useState(false);
-  const [showStakeholderDialog, setShowStakeholderDialog] = useState(false);
-  const [showRelationshipDialog, setShowRelationshipDialog] = useState(false);
+  // const [showStakeholderDialog, setShowStakeholderDialog] = useState(false);
+  // const [showRelationshipDialog, setShowRelationshipDialog] = useState(false);
   const [editingContact, setEditingContact] = useState<CRMContact | null>(null);
 
   // AI Field Logging
@@ -198,19 +125,19 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
       setLoading(true);
       
       // Load contacts
-      const contactsQuery = query(collection(db, 'contacts'), where('tenantId', '==', tenantId));
+      const contactsQuery = query(collection(db, 'tenants', tenantId, 'crm_contacts'));
       const contactsSnapshot = await getDocs(contactsQuery);
       const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMContact));
       setContacts(contactsData);
 
       // Load companies
-      const companiesQuery = query(collection(db, 'companies'), where('tenantId', '==', tenantId));
+      const companiesQuery = query(collection(db, 'tenants', tenantId, 'crm_companies'));
       const companiesSnapshot = await getDocs(companiesQuery);
       const companiesData = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMCompany));
       setCompanies(companiesData);
 
       // Load deals
-      const dealsQuery = query(collection(db, 'deals'), where('tenantId', '==', tenantId));
+      const dealsQuery = query(collection(db, 'tenants', tenantId, 'crm_deals'));
       const dealsSnapshot = await getDocs(dealsQuery);
       const dealsData = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMDeal));
       setDeals(dealsData);
@@ -273,9 +200,9 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
     return companies.find(company => company.id === contact.companyId);
   };
 
-  const getContactDeals = (contact: CRMContact) => {
-    return deals.filter(deal => deal.contactIds?.includes(contact.id));
-  };
+  // const getContactDeals = (contact: CRMContact) => {
+  //   return deals.filter(deal => deal.contactIds?.includes(contact.id));
+  // };
 
   const getContactStakeholderMaps = (contactId: string) => {
     return stakeholderMaps.filter(map => map.contactId === contactId);
@@ -287,9 +214,9 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
     );
   };
 
-  const getContactActivities = (contactId: string) => {
-    return contactActivities.filter(activity => activity.contactId === contactId);
-  };
+  // const getContactActivities = (contactId: string) => {
+  //   return contactActivities.filter(activity => activity.contactId === contactId);
+  // };
 
   const getRoleIcon = (role: string) => {
     switch (role) {

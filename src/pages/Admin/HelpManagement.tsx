@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Container,
   Typography,
   Grid,
   Card,
@@ -30,28 +29,20 @@ import {
   Tabs,
   Tab,
   Badge,
-  Tooltip,
-  Switch,
-  FormControlLabel,
   Checkbox,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
   ThumbUp as ThumbUpIcon,
   ThumbDown as ThumbDownIcon,
-  TrendingUp as TrendingUpIcon,
-  Help as HelpIcon,
   Refresh as RefreshIcon,
   ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { useAuth } from '../../contexts/AuthContext';
-import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
+
+import { useAuth } from '../../contexts/AuthContext';
 
 interface HelpTopic {
   id: string;

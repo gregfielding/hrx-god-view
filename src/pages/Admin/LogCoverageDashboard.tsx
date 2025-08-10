@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+
 import { app } from '../../firebase';
 import { 
-  loggingTriggerMap, 
-  getTestRequiredTriggers,
+  loggingTriggerMap,
   getTriggersByModule 
 } from '../../utils/loggingTriggerMap';
 

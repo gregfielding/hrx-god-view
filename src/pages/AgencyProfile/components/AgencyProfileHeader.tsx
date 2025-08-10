@@ -1,10 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Tooltip } from '@mui/material';
+import { Box, Avatar, IconButton } from '@mui/material';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
-import { db, storage } from '../../../firebase';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
+
+import { db, storage } from '../../../firebase';
 
 interface AgencyProfileHeaderProps {
   uid: string;

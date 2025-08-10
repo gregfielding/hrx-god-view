@@ -22,22 +22,20 @@ import {
 } from '@mui/material';
 import {
   doc,
-  getDoc,
-  updateDoc,
   collection,
   getDocs,
-  query,
-  where,
   addDoc,
   deleteDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useNavigate } from 'react-router-dom';
-import { geocodeAddress } from '../../utils/geocodeAddress';
 import { Autocomplete } from '@react-google-maps/api';
 import { ArrowDropUp, ArrowDropDown } from '@mui/icons-material';
+
+import { geocodeAddress } from '../../utils/geocodeAddress';
+import { db } from '../../firebase';
 import IndustrySelector from '../../components/IndustrySelector';
+
 import CustomerDetailsView from './CustomerDetailsView';
 
 interface TenantCustomersTabProps {

@@ -3,9 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
-  Paper,
   Button,
-  IconButton,
   Grid,
   Card,
   CardContent,
@@ -13,34 +11,22 @@ import {
   Divider,
   CircularProgress,
   Alert,
-  Chip,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   TextField,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Autocomplete,
 } from '@mui/material';
-import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import {
   ArrowBack as ArrowBackIcon,
   Edit as EditIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
   Delete as DeleteIcon,
-  LocationOn as LocationIcon,
-  Business as BusinessIcon,
-  Person as PersonIcon,
-  AttachMoney as DealIcon,
-  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+
+import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 

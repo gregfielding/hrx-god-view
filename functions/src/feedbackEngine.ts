@@ -78,7 +78,7 @@ export const createFeedbackCampaign = onCall(async (request) => {
       // --- New schema fields ---
       eventType: 'feedback.campaign.created',
       targetType: 'campaign',
-      targetId: ref ? ref.id : undefined,
+      ...(ref ? { targetId: ref.id } : {}),
       aiRelevant: true,
       contextType: 'feedback',
       traitsAffected: null,

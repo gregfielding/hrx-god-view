@@ -197,10 +197,9 @@ export class AutoDevAssistant {
        }
 
       success = true;
-      return { 
-        success: true, 
-        deploymentId: productionDeployment.deploymentId 
-      };
+      return productionDeployment.deploymentId
+        ? { success: true, deploymentId: productionDeployment.deploymentId }
+        : { success: true };
 
     } catch (error: any) {
       errorMessage = error.message;

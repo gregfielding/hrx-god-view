@@ -18,8 +18,7 @@ import {
   Chip,
   CircularProgress,
   Alert,
-  Stack,
-  Divider
+  Stack
 } from '@mui/material';
 import {
   Business as BusinessIcon,
@@ -32,15 +31,14 @@ import {
   OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import { httpsCallable } from 'firebase/functions';
+import { collection, getDocs } from 'firebase/firestore';
+
 import { createAssociationService } from '../utils/associationService';
 import { useAuth } from '../contexts/AuthContext';
 import { useAssociationsCache, generateEntityKey } from '../contexts/AssociationsCacheContext';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../firebase';
+import { functions , db } from '../firebase';
 import { 
-  CRMAssociation, 
   AssociationQuery, 
   AssociationResult,
   CRMCompany,

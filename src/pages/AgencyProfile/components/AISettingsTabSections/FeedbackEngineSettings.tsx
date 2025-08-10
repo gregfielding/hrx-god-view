@@ -8,7 +8,6 @@ import {
   Alert,
   Tooltip,
   IconButton,
-  Box,
   Switch,
   FormControlLabel,
   TextField,
@@ -16,19 +15,14 @@ import {
   AccordionSummary,
   AccordionDetails,
   Slider,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Divider,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { db } from '../../../../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../../../firebase';
-import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../../../components/LoggableField';
+
+import { db , app } from '../../../../firebase';
+import { LoggableSlider, LoggableSelect, LoggableSwitch } from '../../../../components/LoggableField';
 
 interface FeedbackEngineSettingsProps {
   tenantId: string;

@@ -1,16 +1,13 @@
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { TaskService } from './taskService';
+
 
 const functions = getFunctions();
 
 // Gmail-Tasks Integration Service
 export class GmailTasksService {
   private static instance: GmailTasksService;
-  private taskService: TaskService;
 
-  private constructor() {
-    this.taskService = TaskService.getInstance();
-  }
+  private constructor() {}
 
   public static getInstance(): GmailTasksService {
     if (!GmailTasksService.instance) {

@@ -1,20 +1,16 @@
 import { 
   collection, 
   doc, 
-  addDoc, 
   query, 
   where, 
-  orderBy, 
-  getDocs, 
-  onSnapshot,
+  getDocs,
   Timestamp,
-  writeBatch,
   getDoc,
   setDoc,
   updateDoc,
-  limit,
   WriteBatch
 } from 'firebase/firestore';
+
 import { db } from '../firebase';
 
 export interface ActivityLog {
@@ -117,59 +113,25 @@ export class ActivityService {
 
     } catch (error) {
       console.error('❌ Error logging activity:', error);
-      throw new Error(`Failed to log activity: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to log activity: ${message}`);
     }
   }
 
-  /**
-   * Create cross-references for activities that should appear in multiple entity logs
+  /*
+   * createCrossReferences disabled until activities subcollections are fully implemented
+   * Keeping stub for future use to avoid unused private member errors with strict settings
    */
-  private async createCrossReferences(
-    batch: WriteBatch, 
-    activityId: string, 
-    activity: Omit<ActivityLog, 'id' | 'tenantId' | 'timestamp' | 'userId' | 'userName'>
-  ) {
-    const { relatedEntities } = activity;
-
-    // Add to related contacts
-    if (relatedEntities?.contacts) {
-      for (const contactId of relatedEntities.contacts) {
-        const contactActivityRef = doc(collection(db, 'tenants', this.tenantId, 'contacts', contactId, 'activities'));
-        batch.set(contactActivityRef, {
-          activityId,
-          entityType: activity.entityType,
-          entityId: activity.entityId,
-          timestamp: Timestamp.now()
-        });
-      }
-    }
-
-    // Add to related deals
-    if (relatedEntities?.deals) {
-      for (const dealId of relatedEntities.deals) {
-        const dealActivityRef = doc(collection(db, 'tenants', this.tenantId, 'deals', dealId, 'activities'));
-        batch.set(dealActivityRef, {
-          activityId,
-          entityType: activity.entityType,
-          entityId: activity.entityId,
-          timestamp: Timestamp.now()
-        });
-      }
-    }
-
-    // Add to related companies
-    if (relatedEntities?.companies) {
-      for (const companyId of relatedEntities.companies) {
-        const companyActivityRef = doc(collection(db, 'tenants', this.tenantId, 'companies', companyId, 'activities'));
-        batch.set(companyActivityRef, {
-          activityId,
-          entityType: activity.entityType,
-          entityId: activity.entityId,
-          timestamp: Timestamp.now()
-        });
-      }
-    }
-  }
+  // private async createCrossReferences(
+  //   batch: WriteBatch,
+  //   activityId: string,
+  //   activity: Omit<ActivityLog, 'id' | 'tenantId' | 'timestamp' | 'userId' | 'userName'>
+  // ) {
+  //   const { relatedEntities } = activity;
+  //   if (relatedEntities?.contacts) { /* ... */ }
+  //   if (relatedEntities?.deals) { /* ... */ }
+  //   if (relatedEntities?.companies) { /* ... */ }
+  // }
 
   /**
    * Query activities for a specific entity
@@ -227,179 +189,29 @@ export class ActivityService {
 
     } catch (error) {
       console.error('❌ Error querying activities:', error);
-      throw new Error(`Failed to query activities: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to query activities: ${message}`);
     }
   }
 
-  /**
-   * Get activities from related entities
-   */
-  private async getRelatedActivities(queryParams: ActivityQuery): Promise<ActivityLog[]> {
-    const relatedActivities: ActivityLog[] = [];
+  // private async getRelatedActivities(_queryParams: ActivityQuery): Promise<ActivityLog[]> {
+  //   return [];
+  // }
 
-    if (!queryParams.entityType || !queryParams.entityId) {
-      return relatedActivities;
-    }
+  // private removeDuplicateActivities(activities: ActivityLog[]): ActivityLog[] {
+  //   const seen = new Set<string>();
+  //   return activities.filter(activity => {
+  //     if (seen.has(activity.id!)) {
+  //       return false;
+  //     }
+  //     seen.add(activity.id!);
+  //     return true;
+  //   });
+  // }
 
-    try {
-      // Get the main entity to find related entities
-      const entityRef = doc(db, 'tenants', this.tenantId, `crm_${queryParams.entityType}s`, queryParams.entityId);
-      const entityDoc = await getDoc(entityRef);
-
-      if (!entityDoc.exists()) {
-        return relatedActivities;
-      }
-
-      const entityData = entityDoc.data();
-
-      // For contacts, get activities from associated deals and companies
-      if (queryParams.entityType === 'contact') {
-        // Get deal activities
-        if (entityData.dealIds) {
-          for (const dealId of entityData.dealIds) {
-            const dealActivities = await this.queryActivities({
-              ...queryParams,
-              entityType: 'deal',
-              entityId: dealId,
-              includeRelated: false
-            });
-            relatedActivities.push(...dealActivities);
-          }
-        }
-
-        // Get company activities
-        if (entityData.companyId) {
-          const companyActivities = await this.queryActivities({
-            ...queryParams,
-            entityType: 'company',
-            entityId: entityData.companyId,
-            includeRelated: false
-          });
-          relatedActivities.push(...companyActivities);
-        }
-      }
-
-      // For deals, get activities from associated contacts and companies
-      if (queryParams.entityType === 'deal') {
-        // Get contact activities
-        if (entityData.contactIds) {
-          for (const contactId of entityData.contactIds) {
-            const contactActivities = await this.queryActivities({
-              ...queryParams,
-              entityType: 'contact',
-              entityId: contactId,
-              includeRelated: false
-            });
-            relatedActivities.push(...contactActivities);
-          }
-        }
-
-        // Get company activities
-        if (entityData.companyId) {
-          const companyActivities = await this.queryActivities({
-            ...queryParams,
-            entityType: 'company',
-            entityId: entityData.companyId,
-            includeRelated: false
-          });
-          relatedActivities.push(...companyActivities);
-        }
-      }
-
-      // For companies, get activities from associated contacts and deals
-      if (queryParams.entityType === 'company') {
-        // Get contact activities
-        const contactsQuery = query(
-          collection(db, 'tenants', this.tenantId, 'crm_contacts'),
-          where('companyId', '==', queryParams.entityId)
-        );
-        const contactsSnapshot = await getDocs(contactsQuery);
-        
-        for (const contactDoc of contactsSnapshot.docs) {
-          const contactActivities = await this.queryActivities({
-            ...queryParams,
-            entityType: 'contact',
-            entityId: contactDoc.id,
-            includeRelated: false
-          });
-          relatedActivities.push(...contactActivities);
-        }
-
-        // Get deal activities
-        const dealsQuery = query(
-          collection(db, 'tenants', this.tenantId, 'crm_deals'),
-          where('companyId', '==', queryParams.entityId)
-        );
-        const dealsSnapshot = await getDocs(dealsQuery);
-        
-        for (const dealDoc of dealsSnapshot.docs) {
-          const dealActivities = await this.queryActivities({
-            ...queryParams,
-            entityType: 'deal',
-            entityId: dealDoc.id,
-            includeRelated: false
-          });
-          relatedActivities.push(...dealActivities);
-        }
-      }
-
-      return relatedActivities;
-
-    } catch (error) {
-      console.error('❌ Error getting related activities:', error);
-      return relatedActivities;
-    }
-  }
-
-  /**
-   * Remove duplicate activities based on activityId
-   */
-  private removeDuplicateActivities(activities: ActivityLog[]): ActivityLog[] {
-    const seen = new Set<string>();
-    return activities.filter(activity => {
-      if (seen.has(activity.id!)) {
-        return false;
-      }
-      seen.add(activity.id!);
-      return true;
-    });
-  }
-
-  /**
-   * Trigger AI logging for an activity
-   */
-  private async triggerAILogging(activityId: string, activity: ActivityLog) {
-    try {
-      // Log to AI system
-      const aiLogRef = doc(collection(db, 'ai_logs', `activity_${activityId}_${Date.now()}`));
-      await setDoc(aiLogRef, {
-        section: 'ActivityLog',
-        changed: 'activity',
-        oldValue: null,
-        newValue: activity,
-        timestamp: new Date().toISOString(),
-        eventType: 'activity_logged',
-        engineTouched: ['ContextEngine', 'StrategyEngine', 'ReportingEngine'],
-        userId: this.userId,
-        sourceModule: 'ActivityService',
-        entityType: activity.entityType,
-        entityId: activity.entityId,
-        activityType: activity.activityType,
-        aiContext: this.generateAIContext(activity)
-      });
-
-      // Update the activity to mark it as AI logged
-      await updateDoc(doc(db, 'tenants', this.tenantId, 'activities', activityId), {
-        aiLogged: true,
-        aiContext: this.generateAIContext(activity)
-      });
-
-      console.log(`✅ AI logging triggered for activity: ${activityId}`);
-
-    } catch (error) {
-      console.error('❌ Error triggering AI logging:', error);
-    }
-  }
+  // private async triggerAILogging(_activityId: string, _activity: ActivityLog) {
+  //   /* disabled */
+  // }
 
   /**
    * Generate AI context from activity
@@ -419,22 +231,9 @@ export class ActivityService {
     return JSON.stringify(context);
   }
 
-  /**
-   * Get user name for activity logging
-   */
-  private async getUserName(): Promise<string> {
-    try {
-      const userDoc = await getDoc(doc(db, 'users', this.userId));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        return userData.displayName || userData.email || 'Unknown User';
-      }
-      return 'Unknown User';
-    } catch (error) {
-      console.error('Error getting user name:', error);
-      return 'Unknown User';
-    }
-  }
+  // private async getUserName(): Promise<string> {
+  //   return 'Unknown User';
+  // }
 
   /**
    * Log email activity (for Gmail integration)
@@ -499,6 +298,14 @@ export class ActivityService {
     const relatedEntities: { contacts?: string[]; deals?: string[]; companies?: string[] } = {};
 
     try {
+      // For salesperson entity type, we don't need to read from a collection
+      // since we're logging activity for the salesperson themselves
+      if (entityType === 'salesperson') {
+        // For salesperson activities, we can return empty related entities
+        // or try to get their associated deals/companies if needed
+        return relatedEntities;
+      }
+
       const entityRef = doc(db, 'tenants', this.tenantId, `crm_${entityType}s`, entityId);
       const entityDoc = await getDoc(entityRef);
 

@@ -8,22 +8,12 @@ import {
   Tab,
   Avatar,
   Chip,
-  Button,
   IconButton,
   Grid,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
-  Badge,
   CircularProgress,
   Alert,
   TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Card,
   CardContent,
   CardHeader,
@@ -31,33 +21,16 @@ import {
 import {
   ArrowBack as ArrowBackIcon,
   Edit as EditIcon,
-  Email as EmailIcon,
-  Phone as PhoneIcon,
-  Business as BusinessIcon,
-  LocationOn as LocationIcon,
-  LinkedIn as LinkedInIcon,
-  Work as WorkIcon,
-  Person as PersonIcon,
-  CalendarToday as CalendarIcon,
-  Notes as NotesIcon,
   List as ListIcon,
-  Add as AddIcon,
-  Save as SaveIcon,
-  Cancel as CancelIcon,
-  Delete as DeleteIcon,
   Info as InfoIcon,
-  AttachMoney as OpportunitiesIcon,
-  AutoAwesome as AutoAwesomeIcon,
   Group as GroupIcon,
-  Assessment as AssessmentIcon,
   TrendingUp as TrendingUpIcon,
   Assignment as AssignmentIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, onSnapshot, orderBy } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import CRMNotesTab from '../../components/CRMNotesTab';
 import ActivityLogTab from '../../components/ActivityLogTab';
 import { TasksDashboard } from '../../components/TasksDashboard';
 
