@@ -243,7 +243,7 @@ export const calendarWebhook = onRequest({
 /**
  * Process a calendar event and create/update CRM activities
  */
-async function processCalendarEvent(event: CalendarEvent, tenantId: string, userId: string) {
+async function processCalendarEvent(event: any, tenantId: string, userId: string) {
   try {
     if (!event.id || !event.summary) {
       return;

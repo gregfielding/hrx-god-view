@@ -9,6 +9,7 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "test": "mocha -r ts-node/register -r src/__tests__/setup.ts src/__tests__/**/*.test.ts",
     "test:triggers": "npx ts-node src/testTriggersCLI.ts",
     "test:triggers:coverage": "npx ts-node src/testTriggersCLI.ts --coverage",
     "test:triggers:deployed": "firebase functions:call runTriggerTests",
@@ -47,6 +48,12 @@
     "eslint-config-google": "^0.14.0",
     "eslint-plugin-import": "^2.25.4",
     "firebase-functions-test": "^3.1.0",
+    "mocha": "^10.4.0",
+    "ts-node": "^10.9.2",
+    "chai": "^4.5.0",
+    "sinon": "^17.0.1",
+    "@types/chai": "^4.3.16",
+    "@types/sinon": "^10.0.20",
     "typescript": "^5.8.3"
   },
   "private": true

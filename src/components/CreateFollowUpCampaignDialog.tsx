@@ -110,7 +110,7 @@ const CreateFollowUpCampaignDialog: React.FC<CreateFollowUpCampaignDialogProps> 
     setLoadingSalespeople(true);
     try {
       const functions = getFunctions();
-      const getSalespeople = httpsCallable(functions, 'getSalespeople');
+              const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
       const result = await getSalespeople({ tenantId });
       const data = result.data as { salespeople: any[] };
       

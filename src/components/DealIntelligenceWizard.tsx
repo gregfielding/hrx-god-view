@@ -70,8 +70,8 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
   // Step 1: Basic Deal Info
   const [basicInfo, setBasicInfo] = useState({
     dealName: deal?.name || initialData?.dealName || '',
-    companyId: deal?.companyId || initialData?.companyId || '',
-    contactIds: deal?.contactIds || initialData?.contactIds || [],
+    companyId: initialData?.companyId || '',
+    contactIds: initialData?.contactIds || [],
     industry: '',
     estimatedHeadcount: deal?.dealProfile?.forecast?.estimatedHeadcount || 0,
     priorityScore: 5
@@ -273,8 +273,10 @@ const DealIntelligenceWizard: React.FC<DealIntelligenceWizardProps> = ({
       // Create deal document with AI logging metadata
       const dealData: any = {
         name: basicInfo.dealName,
-        companyId: basicInfo.companyId,
-        contactIds: basicInfo.contactIds,
+        associations: {
+          companies: basicInfo.companyId ? [basicInfo.companyId] : [],
+          contacts: Array.isArray(basicInfo.contactIds) ? basicInfo.contactIds : []
+        },
         stage: deal?.stage || 'qualification',
         estimatedRevenue: forecast.dealValue,
         probability: deal?.probability || 25, // Start low, will be updated by AI

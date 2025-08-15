@@ -16,19 +16,19 @@ interface AssociationResponse {
   associations?: any;
 }
 
-export const manageAssociations = functions.https.onCall(async (request, context) => {
+export const handleManageAssociations = async (request: any, context: any) => {
   // Check if user is authenticated
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
 
-  const { action, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId, tenantId } = request.data as AssociationRequest;
+  const { action, sourceEntityType, sourceEntityId, targetEntityType, targetEntityId, tenantId, soft } = request.data as any;
   const userId = request.auth.uid;
 
   try {
     console.log(`🔗 Managing association: ${action} ${sourceEntityType}:${sourceEntityId} → ${targetEntityType}:${targetEntityId}`);
 
-    // Verify user has access to the tenant
+    // Verify user has access to the tenant (or holds a CRM role)
     const userDoc = await admin.firestore().collection('users').doc(userId).get();
     if (!userDoc.exists) {
       throw new functions.https.HttpsError('permission-denied', 'User not found');
@@ -38,19 +38,15 @@ export const manageAssociations = functions.https.onCall(async (request, context
     const userTenants = userData?.tenantIds || [];
     const userTenantIds = Array.isArray(userTenants) ? userTenants : Object.keys(userTenants);
 
-    if (!userTenantIds.includes(tenantId)) {
-      throw new functions.https.HttpsError('permission-denied', 'User does not have access to this tenant');
-    }
+    // CRM role flags
+    const hasCRMAccess = userData?.crm_sales === true ||
+      userData?.role === 'HRX' ||
+      ['4', '5', '6', '7'].includes(userData?.securityLevel || '');
 
-    // Check if user has CRM access
-    // Temporarily allow any authenticated user for testing
-    const hasCRMAccess = userData?.crm_sales === true || 
-                        userData?.role === 'HRX' || 
-                        ['4', '5', '6', '7'].includes(userData?.securityLevel || '');
-    
-    if (!hasCRMAccess) {
-      console.log('⚠️ User does not have explicit CRM access, but allowing for testing');
-      // throw new functions.https.HttpsError('permission-denied', 'User does not have CRM access');
+    const allowedTenant = !!tenantId && userTenantIds.includes(tenantId);
+    if (!allowedTenant && !hasCRMAccess) {
+      console.warn('🚫 Tenant access check failed', { userId, tenantId, userTenantIds });
+      throw new functions.https.HttpsError('permission-denied', 'User does not have access to this tenant');
     }
 
     // Get collection paths
@@ -101,25 +97,21 @@ export const manageAssociations = functions.https.onCall(async (request, context
     // Special handling for locations since they're stored as subcollections under companies
     let targetRef: admin.firestore.DocumentReference | undefined;
     if (targetEntityType === 'location' || targetEntityType === 'locations') {
-      // For locations, we need to find which company they belong to
-      // Since we don't have the companyId in the request, we'll need to search for it
-      const companiesRef = admin.firestore().collection(`tenants/${tenantId}/crm_companies`);
-      const companiesSnapshot = await companiesRef.get();
-      
-      let locationFound = false;
-      for (const companyDoc of companiesSnapshot.docs) {
-        const locationRef = companyDoc.ref.collection('locations').doc(targetEntityId);
-        const locationDoc = await locationRef.get();
-        if (locationDoc.exists) {
-          targetRef = locationRef;
-          locationFound = true;
-          break;
-        }
-      }
-      
-      if (!locationFound) {
+      // Optimized: resolve location via collection group instead of scanning all companies
+      const cgSnap = await admin
+        .firestore()
+        .collectionGroup('locations')
+        .where(admin.firestore.FieldPath.documentId(), '==', targetEntityId)
+        .limit(5)
+        .get();
+
+      if (cgSnap.empty) {
         throw new functions.https.HttpsError('not-found', `Target entity ${targetEntityType}:${targetEntityId} not found`);
       }
+
+      // Prefer the location under the specified tenant if multiple are found
+      const match = cgSnap.docs.find(d => d.ref.path.startsWith(`tenants/${tenantId}/crm_companies/`));
+      targetRef = (match ?? cgSnap.docs[0]).ref;
     } else {
       targetRef = admin.firestore().collection(targetCollection).doc(targetEntityId);
     }
@@ -142,33 +134,70 @@ export const manageAssociations = functions.https.onCall(async (request, context
       throw new functions.https.HttpsError('not-found', `Target entity ${targetEntityType}:${targetEntityId} not found`);
     }
 
+    // Feature flags
+    const enableDualWrite = (() => {
+      try {
+        const cfg = functions.config() as any;
+        const v = cfg?.flags?.enable_dual_write;
+        if (v === 'false') return false;
+        if (v === false) return false;
+        return true; // default on
+      } catch {
+        return true;
+      }
+    })();
+
     // Prepare update operations
     const batch = admin.firestore().batch();
     const targetArrayKey = getCorrectPluralKey(targetEntityType);
     const sourceArrayKey = getCorrectPluralKey(sourceEntityType);
+
+    // Helper: update deal id arrays (companyIds/contactIds/salespersonIds/locationIds)
+    const updateDealIdArrays = (dealRef: admin.firestore.DocumentReference, assocKey: string, id: string, op: 'add' | 'remove') => {
+      const map: Record<string, string> = {
+        companies: 'companyIds',
+        contacts: 'contactIds',
+        salespeople: 'salespersonIds',
+        locations: 'locationIds'
+      };
+      const idArrayField = map[assocKey];
+      if (!idArrayField) return;
+      const FieldValue = admin.firestore.FieldValue as any;
+      batch.update(dealRef, {
+        [idArrayField]: op === 'add' ? FieldValue.arrayUnion(id) : FieldValue.arrayRemove(id)
+      });
+    };
 
     if (action === 'add') {
       // Create association objects with names for quick reference
       const targetEntityData = targetDoc.data();
       const sourceEntityData = sourceDoc.data();
       
-      // Build target association object
+      // Build target association object (normalized with schemaVersion)
       const targetAssociation = {
         id: targetEntityId,
         name: targetEntityData?.name || targetEntityData?.fullName || targetEntityData?.companyName || targetEntityData?.title || 'Unknown',
         email: targetEntityData?.email || '',
         phone: targetEntityData?.phone || '',
-        type: targetEntityType === 'company' ? 'primary' : undefined
-      };
+        ...(targetEntityType === 'company' ? { type: 'primary' } : {}),
+        schemaVersion: 1,
+        addedBy: userId,
+        // Firestore does not allow FieldValue.serverTimestamp() inside array elements
+        addedAt: admin.firestore.Timestamp.now()
+      } as any;
       
-      // Build source association object
+      // Build source association object (normalized with schemaVersion)
       const sourceAssociation = {
         id: sourceEntityId,
         name: sourceEntityData?.name || sourceEntityData?.fullName || sourceEntityData?.companyName || sourceEntityData?.title || 'Unknown',
         email: sourceEntityData?.email || '',
         phone: sourceEntityData?.phone || '',
-        type: sourceEntityType === 'company' ? 'primary' : undefined
-      };
+        ...(sourceEntityType === 'company' ? { type: 'primary' } : {}),
+        schemaVersion: 1,
+        addedBy: userId,
+        // Firestore does not allow FieldValue.serverTimestamp() inside array elements
+        addedAt: admin.firestore.Timestamp.now()
+      } as any;
       
       // Add target to source associations (as object with name)
       batch.update(sourceRef, {
@@ -184,8 +213,73 @@ export const manageAssociations = functions.https.onCall(async (request, context
         updatedBy: userId
       });
 
+      if (enableDualWrite) {
+        // Dual-write: maintain deal id arrays and reverse indexes
+        const isSourceDeal = sourceEntityType === 'deal' || sourceEntityType === 'deals';
+        const isTargetDeal = targetEntityType === 'deal' || targetEntityType === 'deals';
+
+        if (isSourceDeal) {
+          // source is deal → update its id arrays
+          updateDealIdArrays(sourceRef, targetArrayKey, targetEntityId, 'add');
+
+          // Intentionally do not set legacy deal.companyId/companyName
+
+          // Update reverse index on target entity: associations.deals
+          batch.update(targetRef, {
+            'associations.deals': admin.firestore.FieldValue.arrayUnion({ id: sourceEntityId, addedAt: admin.firestore.Timestamp.now() })
+          });
+        } else if (isTargetDeal) {
+          // target is deal → update its id arrays
+          updateDealIdArrays(targetRef, sourceArrayKey, sourceEntityId, 'add');
+
+          // Intentionally do not set legacy deal.companyId/companyName
+
+          // Update reverse index on source entity: associations.deals
+          batch.update(sourceRef, {
+            'associations.deals': admin.firestore.FieldValue.arrayUnion({ id: targetEntityId, addedAt: admin.firestore.Timestamp.now() })
+          });
+        }
+      }
+
       console.log(`✅ Added association: ${sourceEntityType}:${sourceEntityId} ↔ ${targetEntityType}:${targetEntityId}`);
     } else if (action === 'remove') {
+      // Optional soft-delete path
+      if (soft === true) {
+        const sourceData = sourceDoc.data();
+        const targetData = targetDoc.data();
+        const currentSourceAssociations = sourceData?.associations?.[targetArrayKey] || [];
+        const updatedSourceAssociations = currentSourceAssociations.map((assoc: any) => {
+          if (typeof assoc === 'object' && assoc.id === targetEntityId) {
+            return {
+              schemaVersion: assoc.schemaVersion ?? 1,
+              ...assoc,
+              // Firestore does not allow FieldValue.serverTimestamp() inside array elements
+              removedAt: admin.firestore.Timestamp.now(),
+              removedBy: userId
+            };
+          }
+          return assoc;
+        });
+        const currentTargetAssociations = targetData?.associations?.[sourceArrayKey] || [];
+        const updatedTargetAssociations = currentTargetAssociations.map((assoc: any) => {
+          if (typeof assoc === 'object' && assoc.id === sourceEntityId) {
+            return {
+              schemaVersion: assoc.schemaVersion ?? 1,
+              ...assoc,
+              // Firestore does not allow FieldValue.serverTimestamp() inside array elements
+              removedAt: admin.firestore.Timestamp.now(),
+              removedBy: userId
+            };
+          }
+          return assoc;
+        });
+
+        await admin.firestore().runTransaction(async (trx) => {
+          trx.update(sourceRef, { [`associations.${targetArrayKey}`]: updatedSourceAssociations, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: userId });
+          trx.update(targetRef, { [`associations.${sourceArrayKey}`]: updatedTargetAssociations, updatedAt: admin.firestore.FieldValue.serverTimestamp(), updatedBy: userId });
+        });
+        return { success: true, message: 'Soft-removed association' } as AssociationResponse;
+      }
       // For removal, we need to remove by ID since we can't use arrayRemove with objects
       // We'll need to get the current associations and filter out the target
       const sourceData = sourceDoc.data();
@@ -215,6 +309,28 @@ export const manageAssociations = functions.https.onCall(async (request, context
         updatedBy: userId
       });
 
+      if (enableDualWrite) {
+        const isSourceDeal = sourceEntityType === 'deal' || sourceEntityType === 'deals';
+        const isTargetDeal = targetEntityType === 'deal' || targetEntityType === 'deals';
+
+        if (isSourceDeal) {
+          updateDealIdArrays(sourceRef, targetArrayKey, targetEntityId, 'remove');
+
+          // Remove reverse index on target entity: associations.deals (needs read-modify-write)
+          const targetDataFresh = (await targetRef.get()).data() || {};
+          const currentDeals = (targetDataFresh.associations?.deals || []) as any[];
+          const updatedDeals = currentDeals.filter((d: any) => (typeof d === 'string' ? d !== sourceEntityId : d.id !== sourceEntityId));
+          batch.update(targetRef, { 'associations.deals': updatedDeals });
+        } else if (isTargetDeal) {
+          updateDealIdArrays(targetRef, sourceArrayKey, sourceEntityId, 'remove');
+
+          const sourceDataFresh = (await sourceRef.get()).data() || {};
+          const currentDeals = (sourceDataFresh.associations?.deals || []) as any[];
+          const updatedDeals = currentDeals.filter((d: any) => (typeof d === 'string' ? d !== targetEntityId : d.id !== targetEntityId));
+          batch.update(sourceRef, { 'associations.deals': updatedDeals });
+        }
+      }
+
       console.log(`✅ Removed association: ${sourceEntityType}:${sourceEntityId} ↔ ${targetEntityType}:${targetEntityId}`);
     }
 
@@ -232,4 +348,6 @@ export const manageAssociations = functions.https.onCall(async (request, context
     console.error('❌ Error managing association:', error);
     throw new functions.https.HttpsError('internal', `Failed to ${action} association: ${error.message}`);
   }
-}); 
+};
+
+export const manageAssociations = functions.https.onCall(handleManageAssociations);

@@ -293,16 +293,16 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
 
   const getCategoryColor = (category: string) => {
     const colors: { [key: string]: any } = {
-      general: 'default',
+      general: 'primary',
       sales: 'primary',
       meeting: 'secondary',
       follow_up: 'info',
       proposal: 'warning',
       negotiation: 'error',
       closing: 'success',
-      other: 'default'
+      other: 'primary'
     };
-    return colors[category] || 'default';
+    return colors[category] || 'primary';
   };
 
   const getPriorityColor = (priority: string) => {
@@ -312,7 +312,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
       high: 'error',
       urgent: 'error'
     };
-    return colors[priority] || 'default';
+    return colors[priority] || 'primary';
   };
 
   const truncateText = (text: string, maxLength = 100) => {
@@ -330,22 +330,28 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   };
 
   return (
-    <Box>
+    <Box sx={{ px: 0, py: 0 }}>
       {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h5" gutterBottom>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0 }}>
+        <Typography variant="h6" fontWeight={700}>
           {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : 'Company'} Notes
         </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {entityType === 'location' 
-            ? `Add notes about this location. Location-specific notes and company notes tagged for this location will be shown together.`
-            : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`
-          }
-        </Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => {
+          const el = document.getElementById('add-note-form');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}>
+          Add Note
+        </Button>
       </Box>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+        {entityType === 'location' 
+          ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
+          : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
+      </Typography>
+      <Divider sx={{ my: 0 }} />
 
       {/* Add New Note Section */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3 }} id="add-note-form">
         <CardHeader 
           title={
             <Box display="flex" alignItems="center" gap={1}>

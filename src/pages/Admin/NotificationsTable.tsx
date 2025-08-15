@@ -111,7 +111,7 @@ export default function NotificationsTable() {
                 <Chip label={n.type} />
               </TableCell>
               <TableCell>
-                <Chip label={n.status} color={n.status === 'unread' ? 'primary' : 'default'} />
+                <Chip label={n.status} color={n.status === 'unread' ? 'primary' : 'secondary'} />
               </TableCell>
               <TableCell>
                 {n.status === 'unread' && (

@@ -3,7 +3,6 @@ import {
   Box,
   Typography,
   Button,
-  MenuItem,
   TextField,
   Snackbar,
   Alert,
@@ -15,6 +14,8 @@ import {
   TableRow,
   TableCell,
   Paper,
+  Autocomplete,
+  Chip,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { Link, useNavigate } from 'react-router-dom';
@@ -110,25 +111,26 @@ const CustomerWorksiteTab: React.FC<CustomerWorksiteTabProps> = ({ userId }) => 
           View Customer
         </MuiLink>
       </Box>
-      <TextField
-        select
-        label="Assigned Locations"
-        value={selectedLocations}
-        onChange={(e) =>
-          setSelectedLocations(
-            typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value,
-          )
+      <Autocomplete
+        multiple
+        options={locations as any[]}
+        getOptionLabel={(option: any) => option?.nickname || ''}
+        value={(locations || []).filter((l: any) => selectedLocations.includes(l.id)) as any[]}
+        onChange={(_, newValue: any[]) => {
+          setSelectedLocations(newValue.map(v => v.id));
+        }}
+        renderTags={(value, getTagProps) =>
+          value.map((option: any, index: number) => (
+            <Chip {...getTagProps({ index })} key={option.id} label={option.nickname || option.id} size="small" />
+          ))
         }
-        SelectProps={{ multiple: true }}
+        renderInput={(params) => (
+          <TextField {...params} label="Assigned Locations" placeholder="Select locations" />
+        )}
+        disablePortal
         fullWidth
         sx={{ mb: 2 }}
-      >
-        {locations.map((loc: any) => (
-          <MenuItem key={loc.id} value={loc.id}>
-            {loc.nickname}
-          </MenuItem>
-        ))}
-      </TextField>
+      />
       <Button
         variant="contained"
         onClick={handleSave}

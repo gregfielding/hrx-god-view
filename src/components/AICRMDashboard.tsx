@@ -48,6 +48,7 @@ import {
 import { collection, onSnapshot } from 'firebase/firestore';
 
 import { db } from '../firebase';
+import { getDealPrimaryCompanyId } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   CRMDeal, 
@@ -472,7 +473,8 @@ const AICRMDashboard: React.FC = () => {
               </TableHead>
               <TableBody>
                 {metrics.topDeals.map((deal) => {
-                  const company = companies.find(c => c.id === deal.companyId);
+                  const primaryCompanyId = getDealPrimaryCompanyId(deal as any);
+                  const company = companies.find(c => c.id === primaryCompanyId);
                   const hasIntelligence = !!deal.dealProfile;
                   
                   return (

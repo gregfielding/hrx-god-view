@@ -90,6 +90,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db , functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
+import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import CRMImportDialog from '../../components/CRMImportDialog';
 import DealIntelligenceWizard from '../../components/DealIntelligenceWizard';
 import KPIManagement from '../../components/KPIManagement';
@@ -511,7 +512,7 @@ const TenantCRM: React.FC = () => {
       }
       
       // Use Firebase Function to get salespeople with proper tenant filtering
-      const getSalespeople = httpsCallable(functions, 'getSalespeople');
+              const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
       
       const params = { 
         tenantId,
@@ -604,34 +605,19 @@ const TenantCRM: React.FC = () => {
           return;
         }
         
-        // Then, get contacts that belong to these companies
-        const contactsQuery = query(
-          contactsRef,
-          where('companyId', 'in', myCompanyIds),
-          orderBy('createdAt', 'desc'),
-          limit(contactsPageSize)
-        );
-        
-        try {
-          const snapshot = await getDocs(contactsQuery);
-          const contactsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          
-          console.log('Found', contactsData.length, 'contacts from user\'s companies');
-          
-          setContacts(prev => append ? [...prev, ...contactsData] : contactsData);
-          setContactsHasMore(snapshot.docs.length === contactsPageSize);
-          setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-          
-        } catch (error) {
-          console.error('Error loading contacts from user\'s companies:', error);
-          // Fallback to loading all contacts if query fails
-          const q = query(contactsRef, orderBy('createdAt', 'desc'), limit(contactsPageSize));
-          const snapshot = await getDocs(q);
-          const contactsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setContacts(prev => append ? [...prev, ...contactsData] : contactsData);
-          setContactsHasMore(snapshot.docs.length === contactsPageSize);
-          setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-        }
+        // Then, load recent contacts and filter client-side for association to those companies
+        // Note: We avoid legacy companyId queries; associations.companies is the source of truth
+        const q = query(contactsRef, orderBy('createdAt', 'desc'), limit(contactsPageSize * 5));
+        const snapshot = await getDocs(q);
+        const allCandidates = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
+        const filtered = allCandidates.filter((c: any) => {
+          const assocCompanies = (c.associations?.companies || []).map((v: any) => (typeof v === 'string' ? v : v?.id)).filter(Boolean);
+          return assocCompanies.some((cid: string) => myCompanyIds.includes(cid));
+        });
+        const page = filtered.slice(0, contactsPageSize);
+        setContacts(prev => append ? [...prev, ...page] : page);
+        setContactsHasMore(filtered.length > page.length);
+        setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
         
         setContactsLoading(false);
         return;
@@ -1042,15 +1028,28 @@ const TenantCRM: React.FC = () => {
 
     setSavingContact(true);
     try {
+      const associations: any = {};
+      if (contactForm.companyId) associations.companies = [contactForm.companyId];
       const contactData = {
-        ...contactForm,
+        firstName: contactForm.firstName,
+        lastName: contactForm.lastName,
         fullName: `${contactForm.firstName} ${contactForm.lastName}`,
+        email: contactForm.email,
+        phone: contactForm.phone,
+        jobTitle: contactForm.jobTitle,
+        linkedinUrl: contactForm.linkedinUrl,
+        leadSource: contactForm.leadSource,
+        contactType: contactForm.contactType,
+        tags: contactForm.tags,
+        isActive: contactForm.isActive,
+        notes: contactForm.notes,
+        associations,
         tenantId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         salesOwnerId: currentUser?.uid || null,
         accountOwnerId: currentUser?.uid || null
-      };
+      } as any;
 
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       await addDoc(contactsRef, contactData);
@@ -1196,7 +1195,7 @@ const TenantCRM: React.FC = () => {
           scrollButtons="auto"
           aria-label="CRM management tabs"
         >
-          <Tab 
+          <Tab data-testid="tab-tasks"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <TaskIcon fontSize="small" />
@@ -1204,7 +1203,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-contacts"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PersonIcon fontSize="small" />
@@ -1212,7 +1211,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-companies"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <BusinessIcon fontSize="small" />
@@ -1220,7 +1219,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-deals"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DealIcon fontSize="small" />
@@ -1228,7 +1227,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-sales"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <GroupIcon fontSize="small" />
@@ -1236,7 +1235,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-pipeline"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PipelineIcon fontSize="small" />
@@ -1252,7 +1251,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-reports"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PeopleIcon fontSize="small" />
@@ -1260,7 +1259,7 @@ const TenantCRM: React.FC = () => {
               </Box>
             } 
           />
-          <Tab 
+          <Tab data-testid="tab-settings"
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <BusinessIcon fontSize="small" />
@@ -1326,42 +1325,46 @@ const TenantCRM: React.FC = () => {
       )}
       
       {tabValue === 2 && (
-        <CompaniesTab 
-          companies={companies}
-          contacts={contacts}
-          deals={deals}
-          salesTeam={salesTeam}
-          search={search}
-          onSearchChange={handleSearchChange}
-          onAddNew={() => handleAddNew('company')}
-          loading={companiesLoading}
-          hasMore={companiesHasMore}
-          onLoadMore={loadMoreCompanies}
-          companyFilter={companyFilter}
-          onCompanyFilterChange={handleCompanyFilterChange}
-          tenantId={tenantId}
-          onUpdatePipelineTotals={handleUpdatePipelineTotals}
-        />
+        <Box data-testid="companies-panel">
+          <CompaniesTab 
+            companies={companies}
+            contacts={contacts}
+            deals={deals}
+            salesTeam={salesTeam}
+            search={search}
+            onSearchChange={handleSearchChange}
+            onAddNew={() => handleAddNew('company')}
+            loading={companiesLoading}
+            hasMore={companiesHasMore}
+            onLoadMore={loadMoreCompanies}
+            companyFilter={companyFilter}
+            onCompanyFilterChange={handleCompanyFilterChange}
+            tenantId={tenantId}
+            onUpdatePipelineTotals={handleUpdatePipelineTotals}
+          />
+        </Box>
       )}
       
       {tabValue === 3 && (
-        <DealsTab 
-          deals={deals}
-          allDeals={allDeals}
-          companies={companies}
-          allCompanies={allCompanies}
-          loadingAllCompanies={loadingAllCompanies}
-          contacts={contacts}
-          pipelineStages={pipelineStages}
-          search={search}
-          onSearchChange={setSearch}
-          onAddNew={() => handleAddNew('deal')}
-          dealFilter={dealFilter}
-          onDealFilterChange={handleDealFilterChange}
-          currentUser={currentUser}
-          salesTeam={salesTeam}
-          tenantId={tenantId}
-        />
+        <Box data-testid="deals-panel">
+          <DealsTab 
+            deals={deals}
+            allDeals={allDeals}
+            companies={companies}
+            allCompanies={allCompanies}
+            loadingAllCompanies={loadingAllCompanies}
+            contacts={contacts}
+            pipelineStages={pipelineStages}
+            search={search}
+            onSearchChange={setSearch}
+            onAddNew={() => handleAddNew('deal')}
+            dealFilter={dealFilter}
+            onDealFilterChange={handleDealFilterChange}
+            currentUser={currentUser}
+            salesTeam={salesTeam}
+            tenantId={tenantId}
+          />
+        </Box>
       )}
       
       {tabValue === 4 && (
@@ -2341,7 +2344,10 @@ const ContactsTab: React.FC<{
     
     // Apply company filter if selected
     if (selectedCompanyFilter) {
-      filtered = filtered.filter(contact => contact.companyId === selectedCompanyFilter);
+      filtered = filtered.filter((contact: any) => {
+        const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+        return assocCompanies.includes(selectedCompanyFilter);
+      });
     }
     
     return filtered;
@@ -2564,7 +2570,12 @@ const ContactsTab: React.FC<{
                 </TableCell>
                 <TableCell>{contact.jobTitle || contact.title || '-'}</TableCell>
                 <TableCell>
-                  {contact.companyName || companies.find(c => c.id === contact.companyId)?.companyName || '-'}
+                  {(() => {
+                    const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+                    const primaryCompanyId = assocCompanies[0];
+                    const company = companies.find(c => c.id === primaryCompanyId);
+                    return company?.companyName || '-';
+                  })()}
                 </TableCell>
                 <TableCell>
                   {contact.email ? (
@@ -2587,15 +2598,14 @@ const ContactsTab: React.FC<{
                   ) : '-'}
                 </TableCell>
                 <TableCell>
-                  {contact.locationName ? (
-                    <Typography variant="body2">
-                      {contact.locationName}
-                    </Typography>
-                  ) : contact.city && contact.state ? (
-                    <Typography variant="body2">
-                      {contact.city}, {contact.state}
-                    </Typography>
-                  ) : '-'}
+                  {(() => {
+                    const assocLocs = (contact.associations?.locations || []) as any[];
+                    const obj = assocLocs.find(l => typeof l === 'object');
+                    const locName = obj?.snapshot?.name || obj?.name;
+                    if (locName) return <Typography variant="body2">{locName}</Typography>;
+                    if (contact.city && contact.state) return <Typography variant="body2">{contact.city}, {contact.state}</Typography>;
+                    return '-';
+                  })()}
                 </TableCell>
                 <TableCell>
                   {lastActivities[contact.id] ? (
@@ -2716,11 +2726,17 @@ const CompaniesTab: React.FC<{
   };
 
   const getCompanyContacts = (companyId: string) => {
-    return contacts.filter(contact => contact.companyId === companyId);
+    return contacts.filter((contact: any) => {
+      const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+      return assocCompanies.includes(companyId);
+    });
   };
 
   const getCompanyDeals = (companyId: string) => {
-    return deals.filter(deal => deal.companyId === companyId);
+    return deals.filter((deal: any) => {
+      const ids = getDealCompanyIds(deal);
+      return ids.includes(companyId);
+    });
   };
 
   // Helper function to get salesperson name from ID
@@ -2914,7 +2930,7 @@ const CompaniesTab: React.FC<{
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <BusinessIcon color="primary" />
                     <Typography variant="body2" fontWeight="medium">
-                      {company.companyName}
+                      {company.companyName || company.name || company.legalName || '-'}
                     </Typography>
                   </Box>
                 </TableCell>
@@ -3239,8 +3255,10 @@ const CompaniesTab: React.FC<{
   // Salesperson filter state
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
 
-  const getDealContacts = (contactIds: string[]) => {
-    return contacts.filter(contact => contactIds.includes(contact.id));
+  const getDealContactsFromAssociations = (deal: any) => {
+    const assocContacts = (deal?.associations?.contacts || []) as any[];
+    const ids = assocContacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+    return contacts.filter((c: any) => ids.includes(c.id));
   };
 
   // Load company divisions when company is selected
@@ -3304,29 +3322,12 @@ const CompaniesTab: React.FC<{
   };
 
   const getDealCompanyName = (deal: any) => {
-    // First try to get company name from direct companyId reference
-    if (deal.companyId) {
-      const company = companies.find(c => c.id === deal.companyId);
-      if (company?.name) {
-        return company.name;
-      }
+    const primaryId = getDealPrimaryCompanyId(deal);
+    if (primaryId) {
+      const company = companies.find(c => c.id === primaryId);
+      if (company) return company.companyName || company.name || '-';
     }
-
-    // Fallback to external company name
-    if (deal.externalCompanyName) {
-      return deal.externalCompanyName;
-    }
-
-    // Fallback to first company in associations
-    if (deal.associations?.companies && deal.associations.companies.length > 0) {
-      const firstCompanyId = deal.associations.companies[0];
-      const company = companies.find(c => c.id === firstCompanyId);
-      if (company?.name) {
-        return company.name;
-      }
-    }
-
-    // Final fallback
+    if (deal.externalCompanyName) return deal.externalCompanyName;
     return '-';
   };
 
@@ -3552,8 +3553,8 @@ const CompaniesTab: React.FC<{
       name: deal.name || '',
       estimatedRevenue: deal.estimatedRevenue || '',
       stage: deal.stage || '',
-      companyId: deal.companyId || '',
-      contactIds: deal.contactIds || [],
+      companyId: getDealPrimaryCompanyId(deal) || '',
+      contactIds: (deal.associations?.contacts || []).map((c: any) => typeof c === 'string' ? c : c?.id).filter(Boolean),
       description: deal.description || '',
       closeDate: deal.closeDate || '',
       probability: deal.probability || 50,
@@ -3579,7 +3580,6 @@ const CompaniesTab: React.FC<{
       // Create the new opportunity
       const opportunityData = {
         name: newOpportunityForm.name,
-        companyId: newOpportunityForm.companyId,
         stage: 'qualification', // Default stage
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -3592,7 +3592,7 @@ const CompaniesTab: React.FC<{
         // Add division and location data if selected
         ...(newOpportunityForm.divisionId && { divisionId: newOpportunityForm.divisionId }),
         ...(newOpportunityForm.locationId && { locationId: newOpportunityForm.locationId }),
-      };
+      } as any;
 
       const opportunitiesRef = collection(db, `tenants/${tenantId}/crm_deals`);
       const docRef = await addDoc(opportunitiesRef, opportunityData);
@@ -3686,8 +3686,8 @@ const CompaniesTab: React.FC<{
       </Box>
 
       {/* Deals Table */}
-      <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
-        <Table sx={{ minWidth: 1400 }}>
+        <TableContainer component={Paper} sx={{ overflowX: 'auto' }} data-testid="customers-list">
+          <Table sx={{ minWidth: 1400 }} data-testid="customers-table">
           <TableHead>
             <TableRow>
               <TableCell sx={{ width: 250 }}>
@@ -4125,12 +4125,16 @@ const PipelineTab: React.FC<{
               <CardContent sx={{ pt: 0 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                   {stageDeals.map((deal) => (
-                    <Card key={deal.id} variant="outlined" sx={{ p: 1 }}>
+                    <Card key={deal.id} variant="outlined" sx={{ p: 1 }} data-testid="deal-card">
                       <Typography variant="body2" fontWeight="medium">
                         {deal.name}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {companies.find(c => c.id === deal.companyId)?.name}
+                        {(() => {
+                          const primaryId = getDealPrimaryCompanyId(deal as any);
+                          const company = companies.find((c: any) => c.id === primaryId);
+                          return company?.companyName || company?.name || '';
+                        })()}
                       </Typography>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
                         <Typography variant="caption" fontWeight="medium">

@@ -37,6 +37,14 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Collapse,
+  Skeleton,
+  Checkbox,
+  List,
+  ListItem,
+  ListItemText,
+  Breadcrumbs,
+  Link as MUILink,
 } from '@mui/material';
 import {
   Phone as PhoneIcon,
@@ -46,7 +54,7 @@ import {
   Work as WorkIcon,
   AttachMoney as DealIcon,
   Person as PersonIcon,
-  Info as InfoIcon,
+  Dashboard as DashboardIcon,
   Place as PlaceIcon,
   AttachMoney as OpportunitiesIcon,
   Note as NoteIcon,
@@ -65,6 +73,13 @@ import {
   Compare as CompareIcon,
   Receipt as BillingIcon,
   AttachFile as ContractsIcon,
+  Edit as EditIcon,
+  KeyboardArrowDown as KeyboardArrowDownIcon,
+  Business as BusinessIcon,
+  Event as EventIcon,
+  Email as EmailIcon,
+  Timeline as TimelineIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import {
@@ -74,6 +89,8 @@ import {
   query,
   where,
   getDocs,
+  orderBy,
+  limit,
   updateDoc,
   onSnapshot,
   addDoc,
@@ -96,33 +113,51 @@ import IndustrySelector from '../../components/IndustrySelector';
 import { geocodeAddress } from '../../utils/geocodeAddress';
 import { INDUSTRIES, getIndustriesByCategory } from '../../data/industries';
 import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
+import AIEnrichmentWidget from '../../components/AIEnrichmentWidget';
 import DecisionMakersPanel from '../../components/DecisionMakersPanel';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import { getStageHexColor, getTextContrastColor } from '../../utils/crmStageColors';
+import AIAssistantChat from '../../components/AIAssistantChat';
 
-
-// Helper function to get sub-industries for a given main industry
-const getSubIndustries = (mainIndustryCode: string) => {
-  if (!mainIndustryCode) return [];
-  
-  // Get the main industry to find its category
-  const mainIndustry = INDUSTRIES.find(ind => ind.code === mainIndustryCode);
-  if (!mainIndustry) return [];
-  
-  // Get all industries in the same category
-  const categoryIndustries = getIndustriesByCategory(mainIndustry.category);
-  
-  // Filter out the main industry itself and return sub-industries
-  const subIndustries = categoryIndustries.filter(ind => ind.code !== mainIndustryCode && ind.code.length > mainIndustryCode.length);
-  
-  // Debug logging
-  console.log('getSubIndustries called with:', mainIndustryCode);
-  console.log('Main industry:', mainIndustry);
-  console.log('Category industries:', categoryIndustries);
-  console.log('Sub-industries found:', subIndustries);
-  
-  return subIndustries;
+// Types for company activity items
+type CompanyActivityItem = {
+  id: string;
+  type: 'task' | 'note' | 'deal_stage' | 'email';
+  timestamp: Date;
+  title: string;
+  description?: string;
+  metadata?: any;
 };
+
+// Normalizers
+const normalizeSizeValue = (value?: string): string => {
+  if (!value) return '';
+  if (value === '50-100') return '51-100';
+  return value;
+};
+
+
+  // Helper function to get sub-industries for a given main industry
+  const getSubIndustries = (mainIndustryCode: string) => {
+    if (!mainIndustryCode) return [];
+
+    // Food Manufacturing (311) — prefer 3111-3119
+    if (mainIndustryCode === '311') {
+      return INDUSTRIES.filter(ind => ind.code.startsWith('311') && ind.code !== '311');
+    }
+
+    // Manufacturing sector (31x): return children where code starts with selected code and is longer
+    if (/^\d{3}$/.test(mainIndustryCode) && mainIndustryCode.startsWith('31')) {
+      return INDUSTRIES.filter(ind => ind.code.startsWith(mainIndustryCode) && ind.code !== mainIndustryCode);
+    }
+
+    // Generic: same category and longer codes, but bias to prefix matches if present
+    const main = INDUSTRIES.find(ind => ind.code === mainIndustryCode);
+    if (!main) return [];
+    const inCategory = getIndustriesByCategory(main.category).filter(ind => ind.code !== mainIndustryCode);
+    const prefixed = inCategory.filter(ind => ind.code.startsWith(mainIndustryCode));
+    return prefixed.length > 0 ? prefixed : inCategory.filter(ind => ind.code.length > mainIndustryCode.length);
+  };
 
 // Helper function to find company website using multiple strategies
 // Helper function to find company website using Google search
@@ -478,7 +513,7 @@ const findFacebookUrl = async (companyName: string): Promise<string> => {
 
 const CompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
-  const { tenantId } = useAuth();
+  const { tenantId, currentUser } = useAuth();
   const { updateCacheState } = useCRMCache();
   const navigate = useNavigate();
   
@@ -489,6 +524,7 @@ const CompanyDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
+  // Removed inline company name edit (managed in Core Identity widget)
   
   // Get active tab from URL parameters
   useEffect(() => {
@@ -496,11 +532,13 @@ const CompanyDetails: React.FC = () => {
     const activeTab = urlParams.get('tab');
     if (activeTab !== null) {
       const tabIndex = parseInt(activeTab);
-      if (tabIndex >= 0 && tabIndex <= 8) {
+      if (tabIndex >= 0 && tabIndex <= 11) {
         setTabValue(tabIndex);
       }
     }
   }, []);
+
+  // Inline edit logic removed
   const [salespeople, setSalespeople] = useState<any[]>([]);
   const [salespeopleLoading, setSalespeopleLoading] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
@@ -511,6 +549,19 @@ const CompanyDetails: React.FC = () => {
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [companyContextOpen, setCompanyContextOpen] = useState(false);
+  const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
+  const [patternAlerts, setPatternAlerts] = useState<Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}>>([]);
+  
+  // Feature Flags
+  const featureFlags = {
+    newDashboard: localStorage.getItem('feature.newDashboard') !== 'false',
+    dealCoach: localStorage.getItem('feature.dealCoach') !== 'false',
+    keyboardShortcuts: localStorage.getItem('feature.keyboardShortcuts') !== 'false',
+    patternAlerts: localStorage.getItem('feature.patternAlerts') !== 'false',
+    pinnedWidgets: localStorage.getItem('feature.pinnedWidgets') !== 'false',
+    companyAI: localStorage.getItem('feature.companyAI') !== 'false'
+  };
 
   useEffect(() => {
     if (!companyId || !tenantId) return;
@@ -578,6 +629,67 @@ const CompanyDetails: React.FC = () => {
     };
   }, [companyId, tenantId]);
 
+  // Pattern Detection and Alerts
+  const detectPatterns = () => {
+    const alerts: Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}> = [];
+    
+    if (company) {
+      // Check for companies with no contacts
+      if (contacts.length === 0) {
+        alerts.push({
+          id: 'no_contacts',
+          type: 'warning',
+          message: 'This company has no contacts. Consider adding key decision makers.',
+          action: 'View Contacts'
+        });
+      }
+
+      // Check for companies with no active deals
+      const activeDeals = deals.filter(deal => deal.stage !== 'closed_won' && deal.stage !== 'closed_lost');
+      if (activeDeals.length === 0 && deals.length > 0) {
+        alerts.push({
+          id: 'no_active_deals',
+          type: 'warning',
+          message: 'All deals for this company are closed. Consider creating new opportunities.',
+          action: 'View Opportunities'
+        });
+      }
+
+      // Check for companies with high potential but no deals
+      if (deals.length === 0 && company.industry) {
+        alerts.push({
+          id: 'no_deals',
+          type: 'info',
+          message: 'This company has potential but no deals yet. Consider creating your first opportunity.',
+          action: 'View Opportunities'
+        });
+      }
+
+      // Check for companies missing key information
+      const missingInfo = [];
+      if (!company.website) missingInfo.push('website');
+      if (!company.linkedin) missingInfo.push('LinkedIn');
+      if (!company.industry) missingInfo.push('industry');
+      
+      if (missingInfo.length > 0) {
+        alerts.push({
+          id: 'missing_info',
+          type: 'info',
+          message: `Missing key information: ${missingInfo.join(', ')}. Consider enhancing company data.`,
+          action: 'Enhance Data'
+        });
+      }
+    }
+
+    setPatternAlerts(alerts);
+  };
+
+  useEffect(() => {
+    if (company && contacts && deals) {
+      detectPatterns();
+    }
+  }, [company, contacts, deals]);
+
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
     
@@ -594,7 +706,7 @@ const CompanyDetails: React.FC = () => {
         setSalespeopleLoading(true);
         try {
           // Use Firebase Function to get salespeople (has admin privileges)
-          const getSalespeople = httpsCallable(functions, 'getSalespeople');
+          const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
           const result = await getSalespeople({ tenantId });
           const data = result.data as { salespeople: any[] };
           setSalespeople(data.salespeople || []);
@@ -819,7 +931,7 @@ const CompanyDetails: React.FC = () => {
       try {
         const summaryKeywords = companyName.toLowerCase().split(' ');
         let industryGuess = 'general business';
-        const sizeGuess = '50-100';
+        const sizeGuess = '51-100';
         const revenueGuess = '$10M-$50M';
         
         // Simple keyword-based industry detection
@@ -978,7 +1090,16 @@ const CompanyDetails: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* Header */}
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2 }}>
+        <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
+            Companies
+          </MUILink>
+          <Typography color="text.primary">{company?.companyName || company?.name || 'Company'}</Typography>
+        </Breadcrumbs>
+      </Box>
+      {/* Enhanced Header - Persistent Company Information */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
@@ -1013,7 +1134,7 @@ const CompanyDetails: React.FC = () => {
                 >
                   <DeleteIcon sx={{ fontSize: 16, color: 'white' }} />
                 </IconButton>
-              )}
+  )}
               <IconButton
                 size="small"
                 sx={{
@@ -1033,13 +1154,25 @@ const CompanyDetails: React.FC = () => {
 
             {/* Company Information */}
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                {company.companyName || company.name}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+                  {company.companyName || company.name}
+                </Typography>
+              </Box>
+              {company?.pipelineValue && typeof company.pipelineValue.low === 'number' && typeof company.pipelineValue.high === 'number' && (
+                <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    ${Number(company.pipelineValue.low || 0).toLocaleString()} – ${Number(company.pipelineValue.high || 0).toLocaleString()}
+                  </Typography>
+                </Box>
+              )}
               
+              {/* Industry line removed per request */}
               {/* Address */}
               {(company.address || company.city || company.state) && (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationIcon sx={{ fontSize: 16 }} />
                   {[
                     company.address,
                     company.city,
@@ -1049,22 +1182,8 @@ const CompanyDetails: React.FC = () => {
                 </Typography>
               )}
               
-              {/* Status Badge */}
-              {/* {company.status && (
-                <Chip
-                  label={company.status}
-                  size="small"
-                  color={
-                    company.status === 'active' ? 'success' : 
-                    company.status === 'lead' ? 'primary' : 
-                    company.status === 'lost' ? 'error' : 'default'
-                  }
-                  sx={{ alignSelf: 'flex-start', mt: 0.5 }}
-                />
-              )} */}
-              
               {/* Social Media Icons */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0, mt: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
                 <IconButton
                   size="small"
                   sx={{ 
@@ -1079,18 +1198,11 @@ const CompanyDetails: React.FC = () => {
                   }}
                   onClick={() => {
                     if (company.website) {
-                      // Ensure URL has protocol
                       let url = company.website;
                       if (!url.startsWith('http://') && !url.startsWith('https://')) {
                         url = 'https://' + url;
                       }
                       window.open(url, '_blank');
-                    } else {
-                      // Focus on Website field in the form
-                      const websiteField = document.querySelector('input[placeholder*="Website"]') as HTMLInputElement;
-                      if (websiteField) {
-                        websiteField.focus();
-                      }
                     }
                   }}
                   title={company.website ? 'Visit Website' : 'Add Website URL'}
@@ -1112,18 +1224,11 @@ const CompanyDetails: React.FC = () => {
                   }}
                   onClick={() => {
                     if (company.linkedin) {
-                      // Ensure URL has protocol
                       let url = company.linkedin;
                       if (!url.startsWith('http://') && !url.startsWith('https://')) {
                         url = 'https://' + url;
                       }
                       window.open(url, '_blank');
-                    } else {
-                      // Focus on LinkedIn field in the form
-                      const linkedinField = document.querySelector('input[placeholder*="LinkedIn"]') as HTMLInputElement;
-                      if (linkedinField) {
-                        linkedinField.focus();
-                      }
                     }
                   }}
                   title={company.linkedin ? 'Open LinkedIn' : 'Add LinkedIn URL'}
@@ -1145,18 +1250,11 @@ const CompanyDetails: React.FC = () => {
                   }}
                   onClick={() => {
                     if (company.indeed) {
-                      // Ensure URL has protocol
                       let url = company.indeed;
                       if (!url.startsWith('http://') && !url.startsWith('https://')) {
                         url = 'https://' + url;
                       }
                       window.open(url, '_blank');
-                    } else {
-                      // Focus on Indeed field in the form
-                      const indeedField = document.querySelector('input[placeholder*="Indeed"]') as HTMLInputElement;
-                      if (indeedField) {
-                        indeedField.focus();
-                      }
                     }
                   }}
                   title={company.indeed ? 'View Jobs on Indeed' : 'Add Indeed URL'}
@@ -1178,18 +1276,11 @@ const CompanyDetails: React.FC = () => {
                   }}
                   onClick={() => {
                     if (company.facebook) {
-                      // Ensure URL has protocol
                       let url = company.facebook;
                       if (!url.startsWith('http://') && !url.startsWith('https://')) {
                         url = 'https://' + url;
                       }
                       window.open(url, '_blank');
-                    } else {
-                      // Focus on Facebook field in the form
-                      const facebookField = document.querySelector('input[placeholder*="Facebook"]') as HTMLInputElement;
-                      if (facebookField) {
-                        facebookField.focus();
-                      }
                     }
                   }}
                   title={company.facebook ? 'View Facebook Page' : 'Add Facebook URL'}
@@ -1200,64 +1291,7 @@ const CompanyDetails: React.FC = () => {
             </Box>
           </Box>
 
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-            {/* AI Buttons */}
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<LanguageIcon />}
-              onClick={handleDiscoverUrls}
-              disabled={aiLoading}
-              sx={{ minWidth: 140 }}
-            >
-              {aiLoading ? 'Discovering...' : 'Discover URLs'}
-            </Button>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<AIIcon />}
-              onClick={handleEnhanceWithAI}
-              disabled={aiLoading}
-              sx={{ minWidth: 140 }}
-            >
-              {aiLoading ? 'Enhancing...' : 'Enhance with AI'}
-            </Button>
-            
-            <Button
-              variant="outlined"
-              onClick={() => {
-                // Update cache with current company ID for potential future use
-                updateCacheState({ lastVisitedCompanyId: companyId });
-                // Navigate back to CRM with companies tab
-                navigate('/crm?tab=companies');
-              }}
-            >
-              Back to Companies
-            </Button>
-            {/* <CompanyFollowButton
-              companyId={companyId}
-              companyName={company?.companyName || company?.name}
-              tenantId={tenantId}
-              onSuccess={setSuccess}
-              onError={setError}
-            /> */}
-            {/* <Button
-              variant="outlined"
-              color="error"
-              startIcon={<DeleteIcon />}
-              onClick={() => setDeleteDialogOpen(true)}
-            >
-              Delete
-            </Button> */}
-            {/* <Button
-              variant="contained"
-              startIcon={<EditIcon />}
-              onClick={() => navigate(`/crm/companies/${companyId}/edit`)}
-            >
-              Edit Company
-            </Button> */}
-          </Box>
+          {/* Quick Actions removed per design simplification */}
         </Box>
         
         {/* Hidden file input for logo upload */}
@@ -1269,6 +1303,70 @@ const CompanyDetails: React.FC = () => {
           onChange={handleLogoUpload}
         />
       </Box>
+
+      {/* Pattern Alerts */}
+      {featureFlags.patternAlerts && patternAlerts.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          {patternAlerts.map((alert) => (
+            <Alert 
+              key={alert.id}
+              severity={alert.type}
+              sx={{ mb: 1 }}
+              action={
+                alert.action && (
+                  <Button 
+                    color="inherit" 
+                    size="small"
+                    onClick={() => {
+                      if (alert.action === 'View Contacts') {
+                        setTabValue(2); // Switch to Contacts tab
+                      } else if (alert.action === 'View Opportunities') {
+                        setTabValue(3); // Switch to Opportunities tab
+                      }
+                    }}
+                  >
+                    {alert.action}
+                  </Button>
+                )
+              }
+            >
+              {alert.message}
+            </Alert>
+          ))}
+        </Box>
+      )}
+
+      {/* Collapsible Company Context Drawer */}
+      <Collapse in={companyContextOpen} timeout="auto" unmountOnExit>
+        <Card sx={{ mb: 3, border: '1px solid', borderColor: 'primary.main' }}>
+          <CardHeader 
+            title="Company Context" 
+            action={
+              <IconButton onClick={() => setCompanyContextOpen(false)}>
+                <CloseIcon />
+              </IconButton>
+            }
+            sx={{ p: 2, pb: 1 }}
+            titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+          />
+          <CardContent sx={{ p: 2, pt: 0 }}>
+            <FastAssociationsCard
+              entityType="company"
+              entityId={company.id}
+              tenantId={tenantId}
+              entityName={company.companyName || company.name}
+              showAssociations={{
+                companies: false,
+                locations: true,
+                contacts: true,
+                salespeople: true,
+                deals: true,
+                tasks: false
+              }}
+            />
+          </CardContent>
+        </Card>
+      </Collapse>
 
       {/* Tabs Navigation */}
       <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
@@ -1284,8 +1382,8 @@ const CompanyDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <InfoIcon fontSize="small" />
-                Overview
+                <DashboardIcon fontSize="small" />
+                Dashboard
               </Box>
             } 
           />
@@ -1306,12 +1404,30 @@ const CompanyDetails: React.FC = () => {
               </Box>
             } 
           />
+          {company.centralizedVendorProcess && (
+            <Tab 
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <BusinessIcon fontSize="small" />
+                  Vendor Process
+                </Box>
+              } 
+            />
+          )}
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <OpportunitiesIcon fontSize="small" />
                 Opportunities
                 <Badge badgeContent={deals.length} color="primary" />
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AIIcon fontSize="small" />
+                Sales Coach
               </Box>
             } 
           />
@@ -1366,12 +1482,20 @@ const CompanyDetails: React.FC = () => {
               </Box>
             } 
           />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <TimelineIcon fontSize="small" />
+                Activity
+              </Box>
+            } 
+          />
         </Tabs>
       </Paper>
 
       {/* Tab Panels */}
       {tabValue === 0 && (
-        <OverviewTab company={company} tenantId={tenantId} />
+        <CompanyDashboardTab company={company} tenantId={tenantId} contacts={contacts} deals={deals} />
       )}
       
       {tabValue === 1 && (
@@ -1384,37 +1508,139 @@ const CompanyDetails: React.FC = () => {
         <ContactsTab contacts={contacts} company={company} locations={[]} />
       )}
       
-      {tabValue === 3 && (
-        <OpportunitiesTab deals={deals} company={company} locations={[]} />
+      {/* Conditional Vendor Process tab renders at index 3 when enabled */}
+      {company.centralizedVendorProcess ? (
+        <>
+          {tabValue === 3 && (
+            <Box sx={{ p: 2 }}>
+              <Box sx={{ width: '100%', height: 400, bgcolor: 'black' }} />
+            </Box>
+          )}
+          {tabValue === 4 && (
+            <OpportunitiesTab deals={deals} company={company} locations={[]} />
+          )}
+        </>
+      ) : (
+        tabValue === 3 && (
+          <OpportunitiesTab deals={deals} company={company} locations={[]} />
+        )
       )}
       
-      {tabValue === 4 && (
-        <NotesTab company={company} tenantId={tenantId} />
+      {company.centralizedVendorProcess ? (
+        <>
+          {tabValue === 5 && (
+            <Box sx={{ height: 600 }}>
+              <Typography variant="h6" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AIIcon fontSize="small" /> Sales Coach
+              </Typography>
+              <AIAssistantChat 
+                tenantId={tenantId} 
+                userId={currentUser?.uid || 'unknown'}
+                suggestedPrompts={[
+                  `Give me 3 ways to win business from ${(company.companyName || company.name) || 'this company'} this month`,
+                  'Draft a cold email to the Ops/Logistics decision maker for a 15-min discovery',
+                  'List likely pain points and suggest a brief outreach script for each',
+                  'Identify 3 creative pretexts to start a conversation with leadership',
+                  'Propose a 2-week micro-campaign to land our first meeting'
+                ]}
+                title="Sales Coach"
+                onOpenRequested={() => setTabValue(company.centralizedVendorProcess ? 5 : 4)}
+              />
+            </Box>
+          )}
+          {tabValue === 6 && (
+            <NotesTab company={company} tenantId={tenantId} />
+          )}
+          {tabValue === 7 && (
+            <SimilarTab company={company} tenantId={tenantId} />
+          )}
+          {tabValue === 8 && (
+            <IndeedJobsTab company={company} jobPostings={jobPostings} setJobPostings={setJobPostings} jobsLoading={jobsLoading} setJobsLoading={setJobsLoading} />
+          )}
+          {tabValue === 9 && (
+            <NewsTab company={company} />
+          )}
+          {tabValue === 10 && (
+            <DecisionMakersPanel 
+              companyName={company.companyName || company.name}
+              companyId={company.id}
+              tenantId={tenantId}
+            />
+          )}
+          {tabValue === 11 && (
+            <CompanyActivityTab company={company} tenantId={tenantId} />
+          )}
+        </>
+      ) : (
+        <>
+          {tabValue === 4 && (
+            <Box sx={{ height: 600 }}>
+              <Typography variant="h6" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AIIcon fontSize="small" /> Sales Coach
+              </Typography>
+              <AIAssistantChat 
+                tenantId={tenantId} 
+                userId={currentUser?.uid || 'unknown'}
+                suggestedPrompts={[
+                  `Give me 3 ways to win business from ${(company.companyName || company.name) || 'this company'} this month`,
+                  'Draft a cold email to the Ops/Logistics decision maker for a 15-min discovery',
+                  'List likely pain points and suggest a brief outreach script for each',
+                  'Identify 3 creative pretexts to start a conversation with leadership',
+                  'Propose a 2-week micro-campaign to land our first meeting'
+                ]}
+                title="Sales Coach"
+                onOpenRequested={() => setTabValue(4)}
+              />
+            </Box>
+          )}
+          {tabValue === 5 && (
+            <NotesTab company={company} tenantId={tenantId} />
+          )}
+          {tabValue === 6 && (
+            <SimilarTab company={company} tenantId={tenantId} />
+          )}
+          {tabValue === 7 && (
+            <IndeedJobsTab company={company} jobPostings={jobPostings} setJobPostings={setJobPostings} jobsLoading={jobsLoading} setJobsLoading={setJobsLoading} />
+          )}
+          {tabValue === 8 && (
+            <NewsTab company={company} />
+          )}
+          {tabValue === 9 && (
+            <DecisionMakersPanel 
+              companyName={company.companyName || company.name}
+              companyId={company.id}
+              tenantId={tenantId}
+            />
+          )}
+          {tabValue === 10 && (
+            <CompanyActivityTab company={company} tenantId={tenantId} />
+          )}
+        </>
       )}
-      
-      {tabValue === 5 && (
-        <SimilarTab company={company} tenantId={tenantId} />
-      )}
-      
-      {/* {tabValue === 6 && (
-        <OrderDefaultsTab company={company} tenantId={tenantId} tenantName={tenantName} />
-      )} */}
-      
-      {tabValue === 6 && (
-        <IndeedJobsTab company={company} jobPostings={jobPostings} setJobPostings={setJobPostings} jobsLoading={jobsLoading} setJobsLoading={setJobsLoading} />
-      )}
-      
-      {tabValue === 7 && (
-        <NewsTab company={company} />
-      )}
-      
-      {tabValue === 8 && (
-        <DecisionMakersPanel 
-          companyName={company.companyName || company.name}
-          companyId={company.id}
-          tenantId={tenantId}
-        />
-      )}
+
+      {/* Delete Company Button - Bottom of page */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        mt: 9,
+        pb: 3 
+      }}>
+        <Button 
+          variant="outlined" 
+          color="error"
+          sx={{ 
+            borderColor: 'error.main',
+            '&:hover': {
+              borderColor: 'error.dark',
+              backgroundColor: 'error.light'
+            }
+          }}
+          startIcon={<DeleteIcon />}
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          Delete Company
+        </Button>
+      </Box>
 
       {/* Success/Error Snackbars */}
       <Snackbar open={!!success} autoHideDuration={4000} onClose={() => setSuccess(null)}>
@@ -1454,7 +1680,1092 @@ const CompanyDetails: React.FC = () => {
   );
 };
 
+// Aggregated activity across company, its contacts, and its deals
+const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
+  const [items, setItems] = useState<CompanyActivityItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  // Filters
+  const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'note' | 'deal_stage' | 'email'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  // Pagination
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState<number>(1);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!company?.id || !tenantId) return;
+      setLoading(true);
+      setError('');
+      try {
+        const companyId: string = company.id;
+        const contactIds: string[] = Array.isArray(company.associations?.contacts) ? company.associations.contacts : [];
+        const dealIds: string[] = Array.isArray(company.associations?.deals) ? company.associations.deals : [];
+
+        const aggregated: CompanyActivityItem[] = [];
+
+        // Tasks: completed tasks associated to this company
+        try {
+          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+          const tq = query(
+            tasksRef,
+            where('associations.companies', 'array-contains', companyId),
+            where('status', '==', 'completed'),
+            orderBy('updatedAt', 'desc'),
+            limit(200)
+          );
+          const ts = await getDocs(tq);
+          ts.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `task_${docSnap.id}`,
+              type: 'task',
+              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+              title: d.title || 'Task completed',
+              description: d.description || '',
+              metadata: { priority: d.priority, taskType: d.type }
+            });
+          });
+        } catch {}
+
+        // Notes: company + contact + deal notes
+        const notesScopes = [
+          { coll: 'company_notes', ids: [companyId] },
+          { coll: 'contact_notes', ids: contactIds },
+          { coll: 'deal_notes', ids: dealIds },
+        ];
+        for (const scope of notesScopes) {
+          for (const id of scope.ids) {
+            try {
+              const notesRef = collection(db, 'tenants', tenantId, scope.coll);
+              const nq = query(notesRef, where('entityId', '==', id), orderBy('timestamp', 'desc'), limit(200));
+              const ns = await getDocs(nq);
+              ns.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `note_${scope.coll}_${docSnap.id}`,
+                  type: 'note',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: d.category ? `Note (${d.category})` : 'Note',
+                  description: d.content,
+                  metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+                });
+              });
+            } catch {}
+          }
+        }
+
+        // Deal stage progression: subcollection stage_history under each deal
+        for (const dealId of dealIds) {
+          try {
+            const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+            const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+            const ss = await getDocs(sq);
+            ss.forEach((docSnap) => {
+              const d = docSnap.data() as any;
+              aggregated.push({
+                id: `dealstage_${dealId}_${docSnap.id}`,
+                type: 'deal_stage',
+                timestamp: d.timestamp?.toDate?.() || new Date(),
+                title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+                description: d.reason || 'Stage updated',
+                metadata: { dealId }
+              });
+            });
+          } catch {}
+        }
+
+        // Emails: email_logs filtered by companyId and by each contactId
+        try {
+          const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+          const cq = query(emailsRef, where('companyId', '==', companyId), orderBy('timestamp', 'desc'), limit(200));
+          const cs = await getDocs(cq);
+          cs.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `email_company_${docSnap.id}`,
+              type: 'email',
+              timestamp: d.timestamp?.toDate?.() || new Date(),
+              title: `Email: ${d.subject || '(no subject)'}`,
+              description: d.bodySnippet,
+              metadata: { from: d.from, to: d.to, direction: d.direction }
+            });
+          });
+          for (const contactId of contactIds) {
+            try {
+              const cq2 = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+              const cs2 = await getDocs(cq2);
+              cs2.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `email_contact_${contactId}_${docSnap.id}`,
+                  type: 'email',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: `Email: ${d.subject || '(no subject)'}`,
+                  description: d.bodySnippet,
+                  metadata: { from: d.from, to: d.to, direction: d.direction }
+                });
+              });
+            } catch {}
+          }
+        } catch {}
+
+        // Sort newest first
+        aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+        setItems(aggregated);
+        setPage(1);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load activity');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [company?.id, tenantId]);
+
+  // Derived list after filters
+  const filtered = items.filter((it) => {
+    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
+    if (startDate) {
+      const s = new Date(startDate + 'T00:00:00');
+      if (it.timestamp < s) return false;
+    }
+    if (endDate) {
+      const e = new Date(endDate + 'T23:59:59');
+      if (it.timestamp > e) return false;
+    }
+    return true;
+  });
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  return (
+    <Box>
+      <Card>
+        <CardHeader title={(<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><TimelineIcon /><Typography variant="h6">Company Activity</Typography></Box>)} />
+        <CardContent>
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {/* Filters */}
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Type</InputLabel>
+              <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="task">Tasks</MenuItem>
+                <MenuItem value="note">Notes</MenuItem>
+                <MenuItem value="deal_stage">Deal Stages</MenuItem>
+                <MenuItem value="email">Emails</MenuItem>
+              </Select>
+            </FormControl>
+            <TextField
+              type="date"
+              size="small"
+              label="Start"
+              InputLabelProps={{ shrink: true }}
+              value={startDate}
+              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+            />
+            <TextField
+              type="date"
+              size="small"
+              label="End"
+              InputLabelProps={{ shrink: true }}
+              value={endDate}
+              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+            />
+            <Box sx={{ flex: 1 }} />
+            <Typography variant="body2" color="text.secondary" sx={{ alignSelf: 'center' }}>
+              {total} results
+            </Typography>
+          </Box>
+          {loading ? (
+            <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
+          ) : filtered.length === 0 ? (
+            <Box textAlign="center" py={4}>
+              <Typography color="text.secondary">No activity yet.</Typography>
+              <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
+            </Box>
+          ) : (
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Title</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell>When</TableCell>
+                    <TableCell align="right">Link</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pageItems.map((it) => (
+                    <TableRow key={it.id}>
+                      <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
+                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
+                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
+                      <TableCell align="right">
+                        <LinkForActivity it={it} tenantId={tenantId} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+          {/* Pagination */}
+          {filtered.length > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+              <Button size="small" variant="outlined" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+              <Typography variant="caption">Page {page} of {totalPages}</Typography>
+              <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+    </Box>
+  );
+};
+
+// Render link to originating record: deals or contacts; fallback to company
+const LinkForActivity: React.FC<{ it: CompanyActivityItem; tenantId: string }> = ({ it, tenantId }) => {
+  // Basic heuristics using metadata: for deal_stage use metadata.dealId; for email prefer metadata.dealId else first contact; for task/note no direct id unless captured – link to company as fallback
+  let href: string | null = null;
+  let label = 'Open';
+  if (it.type === 'deal_stage' && it.metadata?.dealId) {
+    href = `/crm/deals/${it.metadata.dealId}`;
+    label = 'View Deal';
+  } else if (it.type === 'email') {
+    const dealId = it.metadata?.dealId;
+    const contactId = Array.isArray(it.metadata?.contacts) ? it.metadata.contacts[0] : it.metadata?.contactId;
+    if (dealId) {
+      href = `/crm/deals/${dealId}`;
+      label = 'View Deal';
+    } else if (contactId) {
+      href = `/crm/contacts/${contactId}`;
+      label = 'View Contact';
+    }
+  }
+  if (!href) {
+    href = `/crm/companies/${(it as any).companyId || ''}`;
+    label = 'View Company';
+  }
+  return (
+    <Button size="small" href={href} target="_self" variant="text">{label}</Button>
+  );
+};
+
+// Reusable SectionCard helper to standardize headings and spacing (no border/shadow changes)
+const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, action, children }) => (
+  <Card sx={{ mb: 3 }}>
+    <CardHeader title={title} action={action} titleTypographyProps={{ variant: 'h6' }} sx={{ pb: 0 }} />
+    <CardContent sx={{ pt: 2 }}>{children}</CardContent>
+  </Card>
+);
+
 // Tab Components
+const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: any[]; deals: any[] }> = ({ company, tenantId, contacts, deals }) => {
+  const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
+  const [rebuildingActive, setRebuildingActive] = useState(false);
+  const [localSuccess, setLocalSuccess] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // Local helper: URL protocol enforcement
+  const ensureUrlProtocol = (url: string): string => {
+    if (!url) return url as any;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return 'https://' + url;
+  };
+  // Local helper: update a single company field
+  const updateCompanyField = async (field: string, value: any) => {
+    try {
+      let processed = value;
+      if (['website', 'linkedin', 'indeed', 'facebook'].includes(field) && value) {
+        processed = ensureUrlProtocol(value as string);
+      }
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), { [field]: processed });
+    } catch (e) {
+      console.error('Error updating company field', field, e);
+    }
+  };
+
+  // Lazy load AI components
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAiComponentsLoaded(true);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const calculateCompanyMetrics = () => {
+    const totalRevenue = deals.reduce((sum, deal) => {
+      const revenue = deal.expectedRevenue || 0;
+      return sum + revenue;
+    }, 0);
+
+    const activeDeals = deals.filter(deal => deal.stage !== 'closed_won' && deal.stage !== 'closed_lost').length;
+    const wonDeals = deals.filter(deal => deal.stage === 'closed_won').length;
+
+    return {
+      totalRevenue: totalRevenue.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+      activeDeals,
+      wonDeals,
+      totalContacts: contacts.length
+    };
+  };
+
+  // AI Company Insights
+  const generateCompanyInsights = () => {
+    const insights = [];
+    
+    // Revenue analysis
+    const totalRevenue = deals.reduce((sum, deal) => sum + (deal.expectedRevenue || 0), 0);
+    if (totalRevenue > 100000) {
+      insights.push({ type: 'success', message: 'High-value client with significant revenue potential' });
+    } else if (totalRevenue > 50000) {
+      insights.push({ type: 'info', message: 'Medium-value client with good growth potential' });
+    } else {
+      insights.push({ type: 'warning', message: 'Low revenue - consider upselling opportunities' });
+    }
+
+    // Deal velocity analysis
+    const recentDeals = deals.filter(deal => {
+      const dealDate = deal.createdAt?.toDate?.() || new Date(deal.createdAt);
+      return dealDate > new Date(Date.now() - 90 * 24 * 60 * 60 * 1000); // Last 90 days
+    });
+    if (recentDeals.length > 3) {
+      insights.push({ type: 'success', message: 'High deal velocity - active engagement' });
+    } else if (recentDeals.length === 0) {
+      insights.push({ type: 'warning', message: 'No recent deals - re-engagement needed' });
+    }
+
+    // Contact depth analysis
+    if (contacts.length > 5) {
+      insights.push({ type: 'success', message: 'Strong contact network established' });
+    } else if (contacts.length === 0) {
+      insights.push({ type: 'error', message: 'No contacts - critical gap to address' });
+    }
+
+    return insights;
+  };
+
+  // Relationship mapping data
+  const generateRelationshipMap = () => {
+    const relationships = [];
+    
+    // Company to contacts relationships
+    contacts.forEach(contact => {
+      relationships.push({
+        source: company.companyName || company.name,
+        target: `${contact.firstName} ${contact.lastName}`,
+        type: 'contact',
+        strength: contact.title?.toLowerCase().includes('ceo') || contact.title?.toLowerCase().includes('president') ? 'strong' : 'medium'
+      });
+    });
+
+    // Company to deals relationships
+    deals.forEach(deal => {
+      relationships.push({
+        source: company.companyName || company.name,
+        target: deal.name,
+        type: 'deal',
+        strength: deal.expectedRevenue > 50000 ? 'strong' : 'medium'
+      });
+    });
+
+    return relationships;
+  };
+
+  // Pipeline insights
+  const generatePipelineInsights = () => {
+    const pipelineData = {
+      totalDeals: deals.length,
+      activeDeals: deals.filter(deal => deal.stage !== 'closed_won' && deal.stage !== 'closed_lost').length,
+      wonDeals: deals.filter(deal => deal.stage === 'closed_won').length,
+      totalValue: deals.reduce((sum, deal) => sum + (deal.expectedRevenue || 0), 0),
+      averageDealSize: deals.length > 0 ? deals.reduce((sum, deal) => sum + (deal.expectedRevenue || 0), 0) / deals.length : 0,
+      winRate: deals.length > 0 ? (deals.filter(deal => deal.stage === 'closed_won').length / deals.length) * 100 : 0
+    };
+
+    return pipelineData;
+  };
+
+  const metrics = calculateCompanyMetrics();
+  const insights = generateCompanyInsights();
+  const relationships = generateRelationshipMap();
+  const pipelineData = generatePipelineInsights();
+
+  // Enrichment UI state
+  const [enrichingFull, setEnrichingFull] = useState(false);
+  const [enrichingMeta, setEnrichingMeta] = useState(false);
+  const [enrichToastOpen, setEnrichToastOpen] = useState(false);
+  const [enrichToastMsg, setEnrichToastMsg] = useState('');
+  const [enrichToastError, setEnrichToastError] = useState(false);
+  const [copiedMsg, setCopiedMsg] = useState<string>('');
+
+  return (
+      <Grid container spacing={3}>
+      {/* Left Column - Action Focused */}
+      <Grid item xs={12} md={4}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Core Identity (Widget) */}
+          <SectionCard title="Core Identity">
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  label="Company Name"
+                  defaultValue={company.companyName || company.name || ''}
+                  onBlur={(e) => {
+                    const next = (e.target.value || '').trim();
+                    if ((company.companyName || company.name || '') !== next) {
+                      updateCompanyField('companyName', next);
+                    }
+                  }}
+                  fullWidth
+                  size="small"
+                  inputProps={{ 'data-testid': 'company-name-input' }}
+                />
+                <TextField
+                  label="Website URL"
+                  value={company.website || company.companyUrl || company.url || ''}
+                  onChange={(e) => updateCompanyField('website', e.target.value)}
+                  fullWidth
+                  size="small"
+                  InputProps={{ startAdornment: <LanguageIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                />
+                <TextField
+                  label="LinkedIn URL"
+                  value={company.linkedin || ''}
+                  onChange={(e) => updateCompanyField('linkedin', e.target.value)}
+                  fullWidth
+                  size="small"
+                  InputProps={{ startAdornment: <LinkedInIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                />
+                <TextField
+                  label="Indeed Company URL"
+                  value={company.indeed || ''}
+                  onChange={(e) => updateCompanyField('indeed', e.target.value)}
+                  fullWidth
+                  size="small"
+                  placeholder="https://www.indeed.com/cmp/company-name"
+                  helperText="View job listings and company reviews"
+                  InputProps={{ startAdornment: <WorkIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                />
+                <TextField
+                  label="Facebook Page URL"
+                  value={company.facebook || ''}
+                  onChange={(e) => updateCompanyField('facebook', e.target.value)}
+                  fullWidth
+                  size="small"
+                  placeholder="https://www.facebook.com/company-name"
+                  helperText="Company's Facebook business page"
+                  InputProps={{ startAdornment: <FacebookIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                />
+                <TextField
+                  label="Corporate Phone Number"
+                  value={company.phone || ''}
+                  onChange={(e) => updateCompanyField('phone', e.target.value)}
+                  fullWidth
+                  size="small"
+                  InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                />
+               </Box>
+          </SectionCard>
+
+          {/* Company Details (Widget) */}
+          <SectionCard title="Company Details">
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={!!company.centralizedVendorProcess}
+                      onChange={(e) => updateCompanyField('centralizedVendorProcess', e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label="Centralized Vendor Process"
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel>Size (Employees)</InputLabel>
+                  <Select
+                    value={normalizeSizeValue(company.size || '')}
+                    label="Size (Employees)"
+                    onChange={(e) => updateCompanyField('size', e.target.value)}
+                  >
+                    <MenuItem value="1-10">1-10</MenuItem>
+                    <MenuItem value="11-50">11-50</MenuItem>
+                    <MenuItem value="51-100">51-100</MenuItem>
+                    <MenuItem value="101-250">101-250</MenuItem>
+                    <MenuItem value="251-500">251-500</MenuItem>
+                    <MenuItem value="501-1000">501-1000</MenuItem>
+                    <MenuItem value="1001-5000">1001-5000</MenuItem>
+                    <MenuItem value="5001-10000">5001-10000</MenuItem>
+                    <MenuItem value="10000+">10000+</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <FormControl fullWidth size="small">
+                  <InputLabel>Revenue</InputLabel>
+                  <Select
+                    value={company.revenue || ''}
+                    label="Revenue"
+                    onChange={(e) => updateCompanyField('revenue', e.target.value)}
+                  >
+                    <MenuItem value="<$1M">&lt;$1M</MenuItem>
+                    <MenuItem value="$1M-$5M">$1M-$5M</MenuItem>
+                    <MenuItem value="$5M-$10M">$5M-$10M</MenuItem>
+                    <MenuItem value="$10M-$50M">$10M-$50M</MenuItem>
+                    <MenuItem value="$50M-$100M">$50M-$100M</MenuItem>
+                    <MenuItem value="$100M-$500M">$100M-$500M</MenuItem>
+                    <MenuItem value="$500M-$1B">$500M-$1B</MenuItem>
+                    <MenuItem value="$1B+">$1B+</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <IndustrySelector
+                  value={company.industry || ''}
+                  onChange={async (industryCode) => {
+                    await updateCompanyField('industry', industryCode);
+                    // Always clear subIndustry when primary changes
+                    await updateCompanyField('subIndustry', '');
+                  }}
+                  label="Industry"
+                  variant="select"
+                  showCategory={false}
+                />
+
+                <FormControl fullWidth size="small" disabled={!company.industry}>
+                  <InputLabel>Sub-Industry</InputLabel>
+                  <Select
+                    value={(company.subIndustry && getSubIndustries(company.industry).some(si => si.code === company.subIndustry)) ? company.subIndustry : ''}
+                    label="Sub-Industry"
+                    onChange={(e) => updateCompanyField('subIndustry', e.target.value)}
+                  >
+                    <MenuItem value="">
+                      <em>Select a sub-industry</em>
+                    </MenuItem>
+                    {(() => {
+                      const subIndustries = company.industry ? getSubIndustries(company.industry) : [];
+                      return subIndustries.map((industry) => (
+                        <MenuItem key={industry.code} value={industry.code}>
+                          <Box>
+                            <Typography variant="body2">{industry.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {industry.code}
+                            </Typography>
+                          </Box>
+                        </MenuItem>
+                      ));
+                    })()}
+                  </Select>
+                  <FormHelperText>
+                    {company.industry 
+                      ? `Select a more specific industry classification (${getSubIndustries(company.industry).length} options available)`
+                      : 'Select a more specific industry classification'}
+                  </FormHelperText>
+                </FormControl>
+
+                <Autocomplete
+                  multiple
+                  freeSolo
+                  options={[]}
+                  value={company.tags || []}
+                  onChange={(event, newValue) => updateCompanyField('tags', newValue)}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => {
+                      const tagProps = getTagProps({ index });
+                      const { key, ...otherProps } = tagProps as any;
+                      return (
+                        <Chip
+                          key={key}
+                          variant="outlined"
+                          label={option}
+                          {...otherProps}
+                          size="small"
+                        />
+                      );
+                    })
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...(params as any)}
+                      label="Tags"
+                      size="small"
+                      placeholder="Add tags..."
+                    />
+                  )}
+                />
+               </Box>
+          </SectionCard>
+          {/* Recent Contacts moved to right column below Recent Activity */}
+
+          {/* AI Suggestions */}
+          <Card>
+            <CardHeader 
+              title="Suggested by AI" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              {aiComponentsLoaded ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Research company growth opportunities
+                  </Button>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Identify key decision makers
+                  </Button>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Analyze competitor landscape
+                  </Button>
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+      </Grid>
+
+      {/* Center Column - Company Intelligence */}
+      <Grid item xs={12} md={5}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Company Intelligence */}
+          <Card>
+            <CardHeader 
+              title="Company Intelligence" 
+              action={
+                <IconButton size="small">
+                  <AIIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              }
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              {aiComponentsLoaded ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {/* AI Insights */}
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                      AI Insights
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {insights.slice(0, 3).map((insight, index) => (
+                        <Box key={index} sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 1, 
+                          p: 1, 
+                          borderRadius: 1, 
+                          bgcolor: insight.type === 'success' ? 'success.50' : 
+                                   insight.type === 'warning' ? 'warning.50' : 
+                                   insight.type === 'error' ? 'error.50' : 'info.50',
+                          border: '1px solid',
+                          borderColor: insight.type === 'success' ? 'success.200' : 
+                                      insight.type === 'warning' ? 'warning.200' : 
+                                      insight.type === 'error' ? 'error.200' : 'info.200'
+                        }}>
+                          <Box sx={{ 
+                            width: 8, 
+                            height: 8, 
+                            borderRadius: '50%', 
+                            bgcolor: insight.type === 'success' ? 'success.main' : 
+                                    insight.type === 'warning' ? 'warning.main' : 
+                                    insight.type === 'error' ? 'error.main' : 'info.main' 
+                          }} />
+                          <Typography variant="caption" fontSize="0.75rem">
+                            {insight.message}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+
+                  {/* Relationship Strength */}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">Relationship Strength</Typography>
+                    <Chip 
+                      label={relationships.length > 5 ? 'Strong' : relationships.length > 2 ? 'Medium' : 'Weak'} 
+                      color={relationships.length > 5 ? 'success' : relationships.length > 2 ? 'warning' : 'error'} 
+                      size="small" 
+                    />
+                  </Box>
+
+                  {/* Pipeline Health */}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">Pipeline Health</Typography>
+                    <Chip 
+                      label={pipelineData.winRate > 60 ? 'Excellent' : pipelineData.winRate > 40 ? 'Good' : 'Needs Attention'} 
+                      color={pipelineData.winRate > 60 ? 'success' : pipelineData.winRate > 40 ? 'warning' : 'error'} 
+                      size="small" 
+                    />
+                  </Box>
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Skeleton variant="rectangular" height={24} />
+                  <Skeleton variant="rectangular" height={24} />
+                  <Skeleton variant="rectangular" height={24} />
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Key Metrics */}
+          <Card>
+            <CardHeader 
+              title="Key Metrics" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={6}>
+                  <Box sx={{ textAlign: 'center', p: 1 }}>
+                    <Typography variant="h4" color="primary" fontWeight="bold">
+                      {metrics.totalRevenue}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Total Revenue
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6}>
+                  <Box sx={{ textAlign: 'center', p: 1 }}>
+                    <Typography variant="h4" color="primary" fontWeight="bold">
+                      {metrics.activeDeals}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Active Deals
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6}>
+                  <Box sx={{ textAlign: 'center', p: 1 }}>
+                    <Typography variant="h4" color="success.main" fontWeight="bold">
+                      {metrics.wonDeals}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Won Deals
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={6}>
+                  <Box sx={{ textAlign: 'center', p: 1 }}>
+                    <Typography variant="h4" color="info.main" fontWeight="bold">
+                      {metrics.totalContacts}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Total Contacts
+                    </Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+
+              {/* Pipeline Insights */}
+              <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                  Pipeline Insights
+                </Typography>
+                <Grid container spacing={1}>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h6" color="primary" fontWeight="bold">
+                        {pipelineData.winRate.toFixed(0)}%
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Win Rate
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h6" color="secondary" fontWeight="bold">
+                        ${pipelineData.averageDealSize.toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Avg Deal Size
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* AI Enrichment – replaced with structured widget */}
+          <AIEnrichmentWidget company={company} tenantId={tenantId} />
+
+          {/* Company Details (Widget) moved to left column */}
+
+          {/* AI Company Coach */}
+          <Card>
+            <CardHeader 
+              title="Company Coach" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              {aiComponentsLoaded ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Expand to new markets
+                  </Button>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Strengthen client relationships
+                  </Button>
+                  <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                    Optimize sales strategy
+                  </Button>
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+      </Grid>
+
+      {/* Right Column - AI Enrichment + Active Salespeople + Recent Activity */}
+      <Grid item xs={12} md={3}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Active Salespeople */}
+          <Card>
+            <CardHeader 
+              title="Active Salespeople" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              action={
+                <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                  try {
+                    setRebuildingActive(true);
+                    // eslint-disable-next-line no-console
+                    console.log('Rebuild active salespeople – calling', { tenantId, companyId: company.id });
+                    const fn = httpsCallable(functions, 'rebuildCompanyActiveSalespeople');
+                    const resp: any = await fn({ tenantId, companyId: company.id });
+                    // eslint-disable-next-line no-console
+                    console.log('Rebuild active salespeople – response', resp, resp?.data);
+                    const data = resp?.data || {};
+                    if (data.ok) {
+                      setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                    } else if (data.error) {
+                      setLocalError(`Rebuild failed: ${data.error}`);
+                    } else {
+                      setLocalSuccess('Rebuild requested');
+                    }
+                    // Light refresh (no state wire-in here, but triggers firestore listener paths elsewhere)
+                    try {
+                      await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id));
+                    } catch {}
+                  } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.error('Rebuild active salespeople – error', e);
+                    setLocalError('Failed to rebuild active salespeople');
+                  } finally {
+                    setRebuildingActive(false);
+                  }
+                }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+              }
+            />
+            <CardContent sx={{ p: 2 }}>
+              {company?.activeSalespeople && Object.keys(company.activeSalespeople).length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {Object.values(company.activeSalespeople as any)
+                    .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                    .slice(0, 5)
+                    .map((sp: any) => (
+                      <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                        <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                          {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" fontWeight="medium">
+                            {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {sp.jobTitle || sp.department || ''}
+                          </Typography>
+                        </Box>
+                        {/* Date removed per request */}
+                      </Box>
+                    ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No recent salesperson activity</Typography>
+              )}
+            </CardContent>
+          </Card>
+          {/* Local snackbars for rebuild feedback */}
+          <Snackbar open={!!localSuccess} autoHideDuration={3000} onClose={() => setLocalSuccess(null)}>
+            <Alert severity="success" onClose={() => setLocalSuccess(null)} sx={{ width: '100%' }}>
+              {localSuccess}
+            </Alert>
+          </Snackbar>
+          <Snackbar open={!!localError} autoHideDuration={4000} onClose={() => setLocalError(null)}>
+            <Alert severity="error" onClose={() => setLocalError(null)} sx={{ width: '100%' }}>
+              {localError}
+            </Alert>
+          </Snackbar>
+
+          {/* Recent Activity */}
+          <SectionCard title="Recent Activity">
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
+                  <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                    <PersonIcon sx={{ fontSize: 16 }} />
+                  </Avatar>
+                  <Typography variant="body2" fontSize="0.75rem">
+                    New contact added
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
+                  <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                    <DealIcon sx={{ fontSize: 16 }} />
+                  </Avatar>
+                  <Typography variant="body2" fontSize="0.75rem">
+                    Deal stage updated
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
+                  <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                    <NoteIcon sx={{ fontSize: 16 }} />
+                  </Avatar>
+                  <Typography variant="body2" fontSize="0.75rem">
+                    Note added
+                  </Typography>
+                </Box>
+              </Box>
+          </SectionCard>
+
+          {/* Recent Contacts (moved here) */}
+          <SectionCard title="Recent Contacts" action={<Typography variant="body2" color="text.secondary">{contacts.length} total contacts</Typography>}>
+              {contacts.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {contacts.slice(0, 5).map((contact) => (
+                    <Box
+                      key={contact.id}
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                      onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
+                    >
+                      <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                        {contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {contact.firstName} {contact.lastName}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {contact.title || 'No title'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 3 }}>
+                  <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                    No contacts yet
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Add your first contact to get started
+                  </Typography>
+                  <Button variant="outlined" size="small">
+                    Add Contact
+                  </Button>
+                </Box>
+               )}
+          </SectionCard>
+
+          {/* Relationship Mapping */}
+          <SectionCard title="Relationship Map" action={<IconButton size="small"><AIIcon sx={{ fontSize: 16 }} /></IconButton>}>
+              {aiComponentsLoaded ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {/* Company Node */}
+                  <Box sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 1, 
+                    p: 1, 
+                    bgcolor: 'primary.50', 
+                    borderRadius: 1, 
+                    border: '2px solid',
+                    borderColor: 'primary.main'
+                  }}>
+                    <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                      {company.companyName?.charAt(0) || company.name?.charAt(0) || 'C'}
+                    </Avatar>
+                    <Typography variant="body2" fontWeight="bold" fontSize="0.75rem">
+                      {company.companyName || company.name}
+                    </Typography>
+                  </Box>
+
+                  {/* Connection Lines */}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, pl: 2 }}>
+                    {relationships.slice(0, 4).map((rel, index) => (
+                      <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ 
+                          width: 1, 
+                          height: 20, 
+                          bgcolor: rel.strength === 'strong' ? 'success.main' : 'warning.main',
+                          borderRadius: 0.5
+                        }} />
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 0.5, 
+                          p: 0.5, 
+                          bgcolor: 'grey.50', 
+                          borderRadius: 0.5,
+                          flex: 1
+                        }}>
+                          <Avatar sx={{ width: 16, height: 16, fontSize: '0.625rem' }}>
+                            {rel.type === 'contact' ? <PersonIcon sx={{ fontSize: 12 }} /> : <DealIcon sx={{ fontSize: 12 }} />}
+                          </Avatar>
+                          <Typography variant="caption" fontSize="0.625rem" sx={{ flex: 1 }}>
+                            {rel.target.length > 15 ? rel.target.substring(0, 15) + '...' : rel.target}
+                          </Typography>
+                          <Chip 
+                            label={rel.strength} 
+                            size="small" 
+                            color={rel.strength === 'strong' ? 'success' : 'warning'}
+                            sx={{ height: 16, fontSize: '0.625rem' }}
+                          />
+                        </Box>
+                      </Box>
+                    ))}
+                  </Box>
+
+                  {relationships.length > 4 && (
+                    <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                      +{relationships.length - 4} more relationships
+                    </Typography>
+                  )}
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={24} />
+                  <Skeleton variant="rectangular" height={24} />
+                  <Skeleton variant="rectangular" height={24} />
+                </Box>
+               )}
+          </SectionCard>
+
+
+        </Box>
+      </Grid>
+      </Grid>
+  );
+};
+
 const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
   const [aiLoading, setAiLoading] = useState(false);
   const [logoLoading, setLogoLoading] = useState(false);
@@ -1465,6 +2776,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
   
   // Local state for company name input
   const [companyNameInput, setCompanyNameInput] = useState(company.companyName || company.name || '');
+  const [isEditingName, setIsEditingName] = useState(false);
   
   // Update local input when company data changes
   useEffect(() => {
@@ -1593,6 +2905,14 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       console.error('Error updating company:', err);
       setError('Failed to update company. Please try again.');
     }
+  };
+
+  const commitCompanyName = async () => {
+    const trimmed = (companyNameInput || '').trim();
+    if ((company.companyName || company.name || '') !== trimmed) {
+      await handleCompanyUpdate('companyName', trimmed);
+    }
+    setIsEditingName(false);
   };
 
   // Function to create or update headquarters location
@@ -1869,7 +3189,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       try {
         const summaryKeywords = companyName.toLowerCase().split(' ');
         let industryGuess = 'general business';
-        let sizeGuess = '50-100';
+        let sizeGuess = '51-100';
         let revenueGuess = '$10M-$50M';
         
         // Enhanced keyword-based industry detection
@@ -1922,7 +3242,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
         } else {
           // Default for general business
           enhancedData.industry = '55'; // Professional, Scientific, and Technical Services
-          sizeGuess = '50-100';
+          sizeGuess = '51-100';
           revenueGuess = '$10M-$50M';
         }
 
@@ -2058,7 +3378,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       {/* Core Identity */}
       <Grid item xs={12} md={6}>
         <Card>
-          <CardHeader title="Core Identity" />
+          <CardHeader title="Core Identity" titleTypographyProps={{ variant: 'h6' }} />
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <TextField
@@ -2140,13 +3460,13 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       {/* Company Details */}
       <Grid item xs={12} md={6}>
         <Card>
-          <CardHeader title="Company Details" />
+          <CardHeader title="Company Details" titleTypographyProps={{ variant: 'h6' }} />
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Size (Employees)</InputLabel>
                 <Select
-                  value={company.size || ''}
+                  value={normalizeSizeValue(company.size || '')}
                   label="Size (Employees)"
                   onChange={(e) => handleCompanyUpdate('size', e.target.value)}
                 >
@@ -2236,10 +3556,10 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
                 showCategory={false}
               />
 
-              <FormControl fullWidth size="small" disabled={!company.industry}>
+              <FormControl fullWidth size="small" disabled={!company.industry || !getSubIndustries(company.industry).some(si => si.code === (company.subIndustry || ''))}>
                 <InputLabel>Sub-Industry</InputLabel>
                 <Select
-                  value={company.subIndustry || ''}
+                  value={getSubIndustries(company.industry).some(si => si.code === (company.subIndustry || '')) ? company.subIndustry : ''}
                   label="Sub-Industry"
                   onChange={(e) => handleCompanyUpdate('subIndustry', e.target.value)}
                 >
@@ -2716,10 +4036,10 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
 
 
   return (
-    <Box sx={{ p: 0, pb: 0 }}>
+    <Box sx={{ p: 0 }}>
       {/* Header with AI Discovery Button */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h6">
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3 }}>
+        <Typography variant="h6" fontWeight={700}>
           Company Locations ({locations.length})
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -2740,6 +4060,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
           </Button>
         </Box>
       </Box>
+      {/* divider intentionally removed to keep layout compact */}
 
       {/* Error Display */}
       {error && (
@@ -2812,7 +4133,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
       {/* Manual Add Form */}
       {showAddForm && (
         <Card sx={{ mb: 3 }}>
-          <CardHeader title="Add New Location" />
+          <CardHeader title="Add New Location" titleTypographyProps={{ variant: 'h6' }} />
           <CardContent>
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>
@@ -3334,10 +4655,18 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   };
   
   return (
-    <Grid container spacing={3}>
+    <Grid container spacing={0}>
+      <Grid item xs={12}>
+        <Box sx={{ py: 0, px: 3}}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mt: 0, mb: 1 }}>
+            <Typography variant="h6" fontWeight={700}>Contacts</Typography>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setShowAddContactDialog(true)}>Add Contact</Button>
+          </Box>
+        </Box>
+      </Grid>
       <Grid item xs={12}>
         <Card>
-          <CardHeader 
+          {/* <CardHeader 
             title={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PersonIcon />
@@ -3354,7 +4683,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 Add Contact
               </Button>
             }
-          />
+          /> */}
           <CardContent>
             {error && (
               <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -3846,27 +5175,38 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   };
   
   return (
-    <Grid container spacing={3}>
+    <Grid container spacing={0}>
+      <Grid item xs={12}>
+        <Box sx={{ p:0, pl:3, pr:3 }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mt: 0, mb: 1 }}>
+            <Typography variant="h6" fontWeight={700}>Opportunities ({deals.length})</Typography>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setShowNewOpportunityDialog(true)}>Add Opportunity</Button>
+          </Box>
+        </Box>
+      </Grid>
       <Grid item xs={12}>
         <Card>
+          {/* <Box sx={{ py: 0, px: 3}}>
           <CardHeader 
             title={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 3 }}>
                 <OpportunitiesIcon />
-                <Typography>Opportunities ({deals.length})</Typography>
+                <Typography variant="h6">Opportunities ({deals.length})</Typography>
               </Box>
             }
             action={
               <Button
+    
                 variant="contained"
                 color="primary"
                 startIcon={<AddIcon />}
                 onClick={() => setShowNewOpportunityDialog(true)}
               >
-                Add New Opportunity
+                Add New Opportunit
               </Button>
             }
           />
+          </Box> */}
           <CardContent>
             {error && (
               <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -3950,7 +5290,11 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                         <TableCell>
                           <FormControl size="small" sx={{ minWidth: 150 }}>
                             <Select
-                              value={deal.locationId || ''}
+                              value={(() => {
+                                const locs = (deal.associations?.locations || []) as any[];
+                                const first = locs.find(l => typeof l === 'object') || locs[0];
+                                return typeof first === 'string' ? first : (first?.id || '');
+                              })()}
                               onChange={(e) => handleLocationChange(deal.id, e.target.value || null)}
                               displayEmpty
                             >
@@ -4326,23 +5670,24 @@ const IndeedJobsTab: React.FC<{
 
   return (
     <Box>
-      {/* Header with refresh button */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h6">Job Postings</Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={loadJobPostings}
-          disabled={jobsLoading}
-        >
-          {jobsLoading ? 'Loading...' : 'Refresh Jobs'}
-        </Button>
+      <Box sx={{ p:0 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, px: 3 }}>
+          <Typography variant="h6" fontWeight={700}>Job Postings</Typography>
+          <Button
+            variant="contained"
+            startIcon={<RefreshIcon />}
+            onClick={loadJobPostings}
+            disabled={jobsLoading}
+          >
+            {jobsLoading ? 'Loading...' : 'Refresh Jobs'}
+          </Button>
+        </Box>
       </Box>
 
       {/* Job Insights */}
       {jobPostings.length > 0 && (
         <Card sx={{ mb: 3 }}>
-          <CardHeader title="Hiring Insights" />
+          <CardHeader title="Hiring Insights" titleTypographyProps={{ variant: 'h6' }} />
           <CardContent>
             <Grid container spacing={2}>
               <Grid item xs={12} md={4}>
@@ -5447,28 +6792,19 @@ const SimilarTab: React.FC<{ company: any; tenantId: string }> = ({ company, ten
   }, [company]);
 
   return (
-    <Box sx={{ pt: 0, pb: 0, pl: 1, pr: 1 }}>
+    <Box sx={{ p:0}}>
+      <Box sx={{ px: 3, mb: 1 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mt: 0, mb: 0 }}>
+          <Typography variant="h6" fontWeight={700}>Similar Companies</Typography>
+          <Button variant="contained" startIcon={<RefreshIcon />} onClick={loadSimilarCompanies} disabled={loading}>
+            Refresh
+          </Button>
+        </Box>
+      </Box>
       <Grid container spacing={3}>
         <Grid item xs={12}>
           <Card>
-            <CardHeader
-              title={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CompareIcon />
-                  <Typography variant="h6">Similar Companies</Typography>
-                </Box>
-              }
-              action={
-                <Button
-                  variant="outlined"
-                  startIcon={<RefreshIcon />}
-                  onClick={loadSimilarCompanies}
-                  disabled={loading}
-                >
-                  Refresh
-                </Button>
-              }
-            />
+          
             <CardContent>
               {error && (
                 <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -5584,10 +6920,8 @@ const SimilarTab: React.FC<{ company: any; tenantId: string }> = ({ company, ten
                   ))}
                 </Grid>
               ) : (
-                <Box sx={{ textAlign: 'center', py: 4 }}>
-                  <Typography variant="body1" color="text.secondary">
-                    No similar companies found. Try refreshing to search again.
-                  </Typography>
+                <Box sx={{ py: 4, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">No similar companies found</Typography>
                 </Box>
               )}
             </CardContent>
@@ -5596,6 +6930,6 @@ const SimilarTab: React.FC<{ company: any; tenantId: string }> = ({ company, ten
       </Grid>
     </Box>
   );
-};
+}
 
-export default CompanyDetails; 
+export default CompanyDetails;

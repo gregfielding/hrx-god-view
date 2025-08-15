@@ -57,6 +57,10 @@ interface TaskDashboardData {
     };
     tasks: any[];
   };
+  completed: {
+    totalTasks: number;
+    tasks: any[];
+  };
   priorities: {
     high: number;
     medium: number;
@@ -92,6 +96,72 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
   useEffect(() => {
     loadDashboardData();
   }, [contactId, tenantId]);
+
+  // Set up real-time subscription for task updates
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = taskService.subscribeToTasks(
+      user.uid,
+      tenantId,
+      { contactId },
+      (tasks) => {
+        // Process tasks into dashboard format for backward compatibility
+        const openTasks = tasks.filter(task => task.status !== 'completed');
+        const completedTasks = tasks.filter(task => task.status === 'completed');
+        
+        const today = new Date().toISOString().split('T')[0];
+        const thisWeekStart = new Date();
+        const thisWeekEnd = new Date(thisWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+        
+        const todayTasks = openTasks.filter(task => task.dueDate === today);
+        const thisWeekTasks = openTasks.filter(task => {
+          const taskDate = new Date(task.dueDate + 'T00:00:00');
+          return taskDate >= thisWeekStart && taskDate <= thisWeekEnd;
+        });
+        
+        setDashboardData({
+          today: { 
+            totalTasks: todayTasks.length,
+            completedTasks: todayTasks.filter(t => t.status === 'completed').length,
+            pendingTasks: todayTasks.filter(t => t.status !== 'completed').length,
+            tasks: todayTasks
+          },
+          thisWeek: { 
+            totalTasks: thisWeekTasks.length,
+            completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
+            pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
+            quotaProgress: {
+              percentage: thisWeekTasks.length > 0 ? (thisWeekTasks.filter(t => t.status === 'completed').length / thisWeekTasks.length) * 100 : 0,
+              completed: thisWeekTasks.filter(t => t.status === 'completed').length,
+              target: thisWeekTasks.length
+            },
+            tasks: thisWeekTasks
+          },
+          completed: { 
+            totalTasks: completedTasks.length,
+            tasks: completedTasks
+          },
+          priorities: {
+            high: openTasks.filter(t => t.priority === 'high').length,
+            medium: openTasks.filter(t => t.priority === 'medium').length,
+            low: openTasks.filter(t => t.priority === 'low').length
+          },
+          types: {
+            email: openTasks.filter(t => t.type === 'email').length,
+            phone_call: openTasks.filter(t => t.type === 'phone_call').length,
+            scheduled_meeting_virtual: openTasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
+            research: openTasks.filter(t => t.type === 'research').length,
+            custom: openTasks.filter(t => t.type === 'custom').length
+          }
+        });
+        setLoading(false);
+        setError(null);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user, tenantId, contactId]);
 
   const loadDashboardData = async () => {
     if (!user) return;
@@ -141,20 +211,32 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
       const result = await taskService.createTask(taskWithContact);
       
       if (result.success) {
-        // Associate the assigned salesperson with the contact if not already associated
-        const assignedSalespersonId = taskData.assignedTo;
-        if (assignedSalespersonId && assignedSalespersonId !== user.uid) {
-          try {
-            // Import the simple association service
-            const { createSimpleAssociationService } = await import('../utils/simpleAssociationService');
-            const associationService = createSimpleAssociationService(tenantId, user.uid);
-            
-            // Add the salesperson association to the contact
-            await associationService.addAssociation('contact', contactId, 'salesperson', assignedSalespersonId);
-            console.log(`✅ Associated salesperson ${assignedSalespersonId} with contact ${contactId}`);
-          } catch (associationError) {
-            console.warn('Failed to associate salesperson with contact:', associationError);
-            // Don't fail the task creation if association fails
+                // Associate the assigned salespeople with the contact if not already associated
+        const assignedSalespersonIds = Array.isArray(taskData.assignedTo) ? taskData.assignedTo : (taskData.assignedTo ? [taskData.assignedTo] : []);
+        for (const assignedSalespersonId of assignedSalespersonIds) {
+          if (assignedSalespersonId && assignedSalespersonId !== user.uid) {
+            try {
+              // Import the simple association service
+              const { getFunctions, httpsCallable } = await import('firebase/functions');
+              const functions = getFunctions();
+              const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
+              try {
+                await manageAssociationsCallable({
+                  action: 'add',
+                  sourceEntityType: 'contact',
+                  sourceEntityId: contactId,
+                  targetEntityType: 'salesperson',
+                  targetEntityId: assignedSalespersonId,
+                  tenantId
+                });
+              } catch (fnErr) {
+                console.warn('manageAssociations failed, skipping salesperson-contact association:', fnErr);
+              }
+              console.log(`✅ Associated salesperson ${assignedSalespersonId} with contact ${contactId}`);
+            } catch (associationError) {
+              console.warn('Failed to associate salesperson with contact:', associationError);
+              // Don't fail the task creation if association fails
+            }
           }
         }
         
@@ -190,7 +272,9 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
           status: 'scheduled' as TaskStatus,
           associations: {
             contacts: [contactId],
-            companies: contact?.companyId ? [contact.companyId] : [],
+            companies: Array.isArray(contact?.associations?.companies)
+              ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+              : [],
             deals: []
           },
           isFollowUpTask: true,
@@ -206,20 +290,32 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
         await taskService.createTask(task);
       }
       
-      // Associate the assigned salesperson with the contact if not already associated
-      const assignedSalespersonId = campaignData.assignedTo;
-      if (assignedSalespersonId && assignedSalespersonId !== user.uid) {
-        try {
-          // Import the simple association service
-          const { createSimpleAssociationService } = await import('../utils/simpleAssociationService');
-          const associationService = createSimpleAssociationService(tenantId, user.uid);
-          
-          // Add the salesperson association to the contact
-          await associationService.addAssociation('contact', contactId, 'salesperson', assignedSalespersonId);
-          console.log(`✅ Associated salesperson ${assignedSalespersonId} with contact ${contactId} for follow-up campaign`);
-        } catch (associationError) {
-          console.warn('Failed to associate salesperson with contact:', associationError);
-          // Don't fail the campaign creation if association fails
+            // Associate the assigned salespeople with the contact if not already associated
+      const assignedSalespersonIds = Array.isArray(campaignData.assignedTo) ? campaignData.assignedTo : (campaignData.assignedTo ? [campaignData.assignedTo] : []);
+      for (const assignedSalespersonId of assignedSalespersonIds) {
+        if (assignedSalespersonId && assignedSalespersonId !== user.uid) {
+          try {
+            // Import the simple association service
+            const { getFunctions, httpsCallable } = await import('firebase/functions');
+            const functions = getFunctions();
+            const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
+            try {
+              await manageAssociationsCallable({
+                action: 'add',
+                sourceEntityType: 'contact',
+                sourceEntityId: contactId,
+                targetEntityType: 'salesperson',
+                targetEntityId: assignedSalespersonId,
+                tenantId
+              });
+            } catch (fnErr) {
+              console.warn('manageAssociations failed, skipping salesperson-contact association:', fnErr);
+            }
+            console.log(`✅ Associated salesperson ${assignedSalespersonId} with contact ${contactId} for follow-up campaign`);
+          } catch (associationError) {
+            console.warn('Failed to associate salesperson with contact:', associationError);
+            // Don't fail the campaign creation if association fails
+          }
         }
       }
       
@@ -239,11 +335,43 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
     if (!user) return;
 
     try {
-      await taskService.quickCompleteTask(taskId, tenantId, user.uid);
-      await loadDashboardData(); // Refresh data
+      // Find the task to determine if it's completed or not
+      const task = dashboardData?.today?.tasks?.find(t => t.id === taskId) ||
+                   dashboardData?.thisWeek?.tasks?.find(t => t.id === taskId) ||
+                   dashboardData?.completed?.tasks?.find(t => t.id === taskId);
+      
+      if (!task) return;
+
+      if (task.status === 'completed') {
+        // Task is completed, so uncomplete it by restoring the correct status
+        const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+        const scheduledDate = new Date(dateToUse + 'T00:00:00');
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
+        
+        let newStatus: TaskStatus;
+        if (scheduledDay < today) {
+          newStatus = 'overdue';
+        } else if (scheduledDay.getTime() === today.getTime()) {
+          newStatus = 'due';
+        } else {
+          newStatus = 'upcoming';
+        }
+
+        await taskService.updateTask(taskId, { 
+          status: newStatus,
+          completedAt: null
+        }, tenantId);
+      } else {
+        // Task is not completed, so complete it
+        await taskService.quickCompleteTask(taskId, tenantId, user.uid);
+      }
+      
+      // No need to refresh data - real-time subscription will handle updates
     } catch (err) {
-      console.error('Error completing task:', err);
-      setError('Failed to complete task');
+      console.error('Error updating task status:', err);
+      setError('Failed to update task status');
     }
   };
 
@@ -274,8 +402,12 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
         quotaCategory: suggestion.category || 'business_generating',
         associations: {
           contacts: [contactId],
-          companies: contact?.companyId ? [contact.companyId] : [],
-          deals: contact?.dealIds || []
+          companies: Array.isArray(contact?.associations?.companies)
+            ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+            : [],
+          deals: Array.isArray(contact?.associations?.deals)
+            ? contact.associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+            : []
         },
         aiSuggested: true,
         aiPrompt: suggestion.aiPrompt || '',
@@ -594,7 +726,14 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
             const today = dashboardData?.today?.tasks || [];
             const week = dashboardData?.thisWeek?.tasks || [];
             const combined = [...today, ...week];
-            return combined.filter((t: any) => t.status === 'completed');
+            
+            // Deduplicate by task ID
+            const taskMap = new Map();
+            combined.forEach(task => {
+              taskMap.set(task.id, task);
+            });
+            
+            return Array.from(taskMap.values()).filter((t: any) => t.status === 'completed');
           })()}
           onTaskClick={(task) => {
             setSelectedTask(task);
@@ -634,7 +773,9 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
           salespersonId={user?.uid || ''}
           tenantId={tenantId}
           contactId={contactId}
-          contactCompanyId={contact?.companyId}
+          contactCompanyId={Array.isArray((contact as any)?.associations?.companies)
+            ? ((contact as any).associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)[0] || '')
+            : ''}
           hideAssociations={true}
         />
       )}

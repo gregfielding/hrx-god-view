@@ -269,7 +269,7 @@ const ModuleDetailsView: React.FC<ModuleDetailsViewProps> = ({
                   <Chip label="Always Enabled" color="primary" size="small" />
                 )}
                 {localModule.isComingSoon && (
-                  <Chip label="Coming Soon" color="default" size="small" />
+                  <Chip label="Coming Soon" color="primary" size="small" />
                 )}
               </Box>
 

@@ -1878,7 +1878,7 @@ const MomentsEngine: React.FC = () => {
                                 size="small"
                                 color={getPriorityColor(moment.priority) as any}
                               />
-                              <Chip label="Paused" size="small" color="default" />
+                              <Chip label="Paused" size="small" color="primary" />
                               {moment.statusReason && (
                                 <Chip label={moment.statusReason} size="small" variant="outlined" />
                               )}

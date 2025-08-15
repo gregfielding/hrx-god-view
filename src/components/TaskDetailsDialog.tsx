@@ -19,8 +19,6 @@ import {
   Switch,
   Alert,
   CircularProgress,
-  Tabs,
-  Tab,
   LinearProgress,
   Chip
 } from '@mui/material';
@@ -57,27 +55,7 @@ interface TaskDetailsDialogProps {
   onTaskUpdated?: (taskId: string) => void;
 }
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
 
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
-
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`task-tabpanel-${index}`}
-      aria-labelledby={`task-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-    </div>
-  );
-}
 
 const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   open,
@@ -139,7 +117,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [tabValue, setTabValue] = useState(0);
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [completionNotes, setCompletionNotes] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -178,13 +155,19 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     
     setLoading(true);
     try {
+      console.log('🔍 TaskDetailsDialog: Loading associated data');
+      console.log('🔍 Props contacts:', contacts);
+      console.log('🔍 Props salespeople:', salespeople);
+      
       // Use the contacts and salespeople data that's already available from props
       // These should contain the deal's associated contacts and salespeople
       if (contacts && contacts.length > 0) {
+        console.log('📊 Setting associated contacts from props:', contacts);
         setAssociatedContacts(contacts);
       }
       
       if (salespeople && salespeople.length > 0) {
+        console.log('📊 Setting associated salespeople from props:', salespeople);
         setAssociatedSalespeople(salespeople);
       }
       
@@ -206,7 +189,8 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       if (task.associations?.salespeople?.length > 0) {
         const salespeoplePromises = task.associations.salespeople.map(async (salespersonId: string) => {
           try {
-            const salespersonDoc = await getDoc(doc(db, 'tenants', tenantId, 'users', salespersonId));
+            // Users are stored at the top-level `users` collection, not under tenant
+            const salespersonDoc = await getDoc(doc(db, 'users', salespersonId));
             return salespersonDoc.exists() ? { id: salespersonDoc.id, ...salespersonDoc.data() } : null;
           } catch (err) {
             console.error('Error loading salesperson:', salespersonId, err);
@@ -215,6 +199,22 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         });
         const salespeople = (await Promise.all(salespeoplePromises)).filter(Boolean);
         setAssociatedSalespeople(prev => [...prev, ...salespeople.filter(s => !prev.find(p => p.id === s.id))]);
+      }
+
+      // Also include any users in assignedTo so labels render even if associations.salespeople is empty
+      const assignedIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+      if (assignedIds.length > 0) {
+        const assignedPromises = assignedIds.map(async (salespersonId: string) => {
+          try {
+            const salespersonDoc = await getDoc(doc(db, 'users', salespersonId));
+            return salespersonDoc.exists() ? { id: salespersonDoc.id, ...salespersonDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading assigned salesperson:', salespersonId, err);
+            return null;
+          }
+        });
+        const assignedUsers = (await Promise.all(assignedPromises)).filter(Boolean);
+        setAssociatedSalespeople(prev => [...prev, ...assignedUsers.filter(s => !prev.find(p => p.id === s.id))]);
       }
 
     } catch (err) {
@@ -238,7 +238,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         duration: (task.classification === 'appointment' ? (task.duration ?? undefined) : undefined),
         scheduledDate: task.scheduledDate ? new Date(task.scheduledDate) : new Date(),
         dueDate: task.dueDate || '',
-        assignedTo: task.assignedTo || salespersonId,
+        assignedTo: Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : [salespersonId]),
         category: task.category || 'follow_up',
         reason: task.reason || '',
         notes: task.notes || '',
@@ -379,7 +379,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     // Add company contacts from associations
     if (formData.associations?.contacts) {
       formData.associations.contacts.forEach((contactId: string) => {
-        const contactData = contacts.find(c => c.id === contactId);
+        const contactData = associatedContacts.find(c => c.id === contactId);
         if (contactData?.email) {
           attendees.push({
             email: contactData.email,
@@ -393,7 +393,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     // Add assigned salespeople
     if (formData.associations?.salespeople) {
       formData.associations.salespeople.forEach((salespersonId: string) => {
-        const salespersonData = salespeople.find(s => s.id === salespersonId);
+        const salespersonData = associatedSalespeople.find(s => s.id === salespersonId);
         if (salespersonData?.email && !attendees.find(a => a.email === salespersonData.email)) {
           attendees.push({
             email: salespersonData.email,
@@ -563,18 +563,10 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
             </Alert>
           )}
 
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-            <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
-              <Tab label="Task Details" />
-              <Tab label="AI Suggestions" />
-            </Tabs>
-          </Box>
 
-          <TabPanel value={tabValue} index={0}>
-            <Grid container spacing={3} sx={{ mt: 1 }}>
+            <Grid container spacing={3}>
               {/* Task Classification */}
               <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>Task Type</Typography>
                 <ToggleButtonGroup
                   value={formData.classification}
                   exclusive
@@ -736,14 +728,17 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                     renderValue={(selected) => (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                         {selected.map((contactId) => {
-                          const displayName = getAssociationDisplayName(contactId, associatedContacts);
+                          const contact = associatedContacts.find(c => c.id === contactId);
+                          const displayName = contact?.fullName || contact?.name || contact?.email || contactId;
                           
                           return (
                             <Chip 
                               key={contactId} 
                               label={displayName} 
                               size="small"
-                              onDelete={() => {
+                              sx={{ zIndex: 2 }}
+                              onDelete={(e) => {
+                                e.stopPropagation();
                                 const currentContactIds = toSelectValue(formData.associations?.contacts);
                                 const newContactIds = currentContactIds.filter(id => id !== contactId);
                                 handleAssociationChange('contacts', newContactIds);
@@ -756,7 +751,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   >
                     {associatedContacts.map((contact) => (
                       <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName || contact.name}
+                        {contact.fullName || contact.name || contact.email}
                       </MenuItem>
                     ))}
                   </Select>
@@ -769,23 +764,29 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   <InputLabel>Assigned To</InputLabel>
                   <Select
                     multiple
-                    value={toSelectValue(formData.associations?.salespeople)}
-                    onChange={(e) => handleAssociationChange('salespeople', e.target.value)}
+                    value={Array.isArray(formData.assignedTo) ? formData.assignedTo : formData.assignedTo ? [formData.assignedTo] : []}
+                    onChange={(e) => handleInputChange('assignedTo', e.target.value)}
                     label="Assigned To"
                     renderValue={(selected) => (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                         {selected.map((salespersonId) => {
-                          const displayName = getAssociationDisplayName(salespersonId, associatedSalespeople);
+                          const salesperson = associatedSalespeople.find(s => s.id === salespersonId);
+                          const displayName = salesperson?.fullName || salesperson?.name || salesperson?.displayName || salesperson?.email || salespersonId;
+                          console.log('🔍 Rendering salesperson chip:', { salespersonId, displayName, associatedSalespeople });
                           
                           return (
                             <Chip 
                               key={salespersonId} 
                               label={displayName} 
                               size="small"
-                              onDelete={() => {
-                                const currentSalespersonIds = toSelectValue(formData.associations?.salespeople);
+                              sx={{ zIndex: 2 }}
+                              onDelete={(e) => {
+                                e.stopPropagation();
+                                console.log('🗑️ Deleting salesperson:', salespersonId);
+                                const currentSalespersonIds = Array.isArray(formData.assignedTo) ? formData.assignedTo : formData.assignedTo ? [formData.assignedTo] : [];
                                 const newSalespersonIds = currentSalespersonIds.filter(id => id !== salespersonId);
-                                handleAssociationChange('salespeople', newSalespersonIds);
+                                console.log('🗑️ New salesperson IDs:', newSalespersonIds);
+                                handleInputChange('assignedTo', newSalespersonIds);
                               }}
                             />
                           );
@@ -848,10 +849,10 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   </Grid>
                   <Grid item xs={12}>
                     <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
-                      <Typography variant="body2" color="info.contrastText" sx={{ fontWeight: 500, mb: 1 }}>
+                      <Typography variant="body2" color="info.main" sx={{ fontWeight: 500, mb: 1 }}>
                         🎥 Google Meet Integration
                       </Typography>
-                      <Typography variant="caption" color="info.contrastText">
+                      <Typography variant="caption" color="info.main">
                         A Google Meet link will be automatically generated when this task is saved. 
                         Attendees will receive calendar invites with the meeting link.
                       </Typography>
@@ -938,13 +939,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
 
 
             </Grid>
-          </TabPanel>
-
-          <TabPanel value={tabValue} index={1}>
-            <Typography variant="body1" color="text.secondary">
-              AI Suggestions functionality coming soon...
-            </Typography>
-          </TabPanel>
         </DialogContent>
 
         <DialogActions>

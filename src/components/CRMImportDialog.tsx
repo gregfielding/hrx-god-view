@@ -824,7 +824,7 @@ const CRMImportDialog: React.FC<{
             lastActivityType: contact['Last activity type'] || '',
             lastActivityDate: contact['Last activity date'] || null,
             recentNote: contact['Recent note'] || '',
-            companyId: companyId || '',
+            associations: companyId ? { companies: [companyId] } : {},
             externalCompanyId: contact['Company id'] || '',
             companyName: contact['Company'] || '',
             salesOwnerId: contact['Sales owner id'] || '', // Store external ID
@@ -911,8 +911,7 @@ const CRMImportDialog: React.FC<{
           
           const dealData = {
             name: dealName,
-            companyId: companyId,
-            contactIds: [], // Will be populated later if needed
+            associations: { companies: companyId ? [companyId] : [], contacts: [] },
             stage: dealStage,
             estimatedRevenue: dealValue,
             probability: dealStage === 'closed_won' ? 100 : dealStage === 'closed_lost' ? 0 : 25, // Default probability

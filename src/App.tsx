@@ -76,6 +76,7 @@ import ResumeManagement from './pages/ResumeManagement';
 import Reports from './pages/Reports';
 import AIAnalytics from './pages/Admin/AIAnalytics';
 import AIFeedbackDashboard from './pages/Admin/AIFeedbackDashboard';
+import AssociationsAdmin from './pages/Admin/AssociationsAdmin';
 import SetupPassword from './pages/SetupPassword';
 import MobileApp from './pages/MobileApp';
 import PrivacySettings from './pages/PrivacySettings';
@@ -117,6 +118,14 @@ function MyTenantWrapper() {
 
 function App() {
   console.log('App rendered');
+  useEffect(() => {
+    try {
+      // Enable new associations read by default
+      localStorage.setItem('feature.newAssociationsRead', 'true');
+    } catch (e) {
+      // ignore storage issues
+    }
+  }, []);
   
   const routes = (
     <Routes>
@@ -268,6 +277,11 @@ function App() {
         <Route path="admin/ai-analytics" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <AIAnalytics />
+          </ProtectedRoute>
+        } />
+        <Route path="admin/associations" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <AssociationsAdmin />
           </ProtectedRoute>
         } />
         <Route path="admin/ai/traits" element={

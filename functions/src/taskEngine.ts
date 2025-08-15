@@ -1014,7 +1014,11 @@ async function generateStageBasedSuggestions(dealContext: any, stageAnalysis: an
         estimatedDuration: 30,
         associations: {
           deals: [dealContext.deal.id],
-          companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+          companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+            ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                ? [dealContext.deal.associations.companies[0]]
+                : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+            : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
         },
         aiGenerated: true,
         aiReason: `Missing required field for ${currentStage} stage`,
@@ -1267,9 +1271,13 @@ async function generateDealSpecificSuggestions(dealContext: any, pipelineData: a
     if (!deal) return suggestions;
     
     // Research tasks for deal company
-    if (deal?.companyId && !dealContext.company?.researched) {
+    const primaryCompanyId = (deal.associations?.primaryCompanyId) 
+      || (Array.isArray(deal.associations?.companies) && deal.associations.companies.length > 0 
+            ? (typeof deal.associations.companies[0] === 'string' ? deal.associations.companies[0] : deal.associations.companies[0]?.id) 
+            : deal.companyId);
+    if (primaryCompanyId && !dealContext.company?.researched) {
       suggestions.push({
-        id: `research_${deal.companyId}_${Date.now()}`,
+        id: `research_${primaryCompanyId}_${Date.now()}`,
         title: `Research ${dealContext.company?.name || 'company'}`,
         description: `Gather information about company background and needs`,
         type: 'research',
@@ -1278,7 +1286,7 @@ async function generateDealSpecificSuggestions(dealContext: any, pipelineData: a
         estimatedDuration: 30,
         associations: { 
           deals: [deal.id],
-          companies: [deal.companyId]
+          companies: [primaryCompanyId]
         },
         aiGenerated: true,
         aiReason: `Company research needed for deal`,
@@ -1387,21 +1395,28 @@ async function getDealContext(dealId: string, tenantId: string, userId: string) 
     
     // Get associated company
     let company = null;
-    if (deal.companyId) {
-      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(deal.companyId).get();
+    const ctxPrimaryCompanyId = (deal.associations?.primaryCompanyId) 
+      || (Array.isArray(deal.associations?.companies) && deal.associations.companies.length > 0 
+            ? (typeof deal.associations.companies[0] === 'string' ? deal.associations.companies[0] : deal.associations.companies[0]?.id)
+            : deal.companyId);
+    if (ctxPrimaryCompanyId) {
+      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(ctxPrimaryCompanyId).get();
       if (companyDoc.exists) {
         company = companyDoc.data();
       }
     }
 
-    // Get associated contacts
-    const contacts = [];
-    if (deal.contactIds && deal.contactIds.length > 0) {
-      for (const contactId of deal.contactIds) {
-        const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).get();
-        if (contactDoc.exists) {
-          contacts.push(contactDoc.data());
-        }
+    // Get associated contacts (associations-first)
+    const contacts: any[] = [];
+    const assocContactIds = Array.isArray(deal.associations?.contacts)
+      ? deal.associations.contacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+      : [];
+    const legacyContactIds = Array.isArray(deal.contactIds) ? deal.contactIds : [];
+    const contactIds = assocContactIds.length > 0 ? assocContactIds : legacyContactIds;
+    for (const contactId of contactIds) {
+      const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).get();
+      if (contactDoc.exists) {
+        contacts.push(contactDoc.data());
       }
     }
 

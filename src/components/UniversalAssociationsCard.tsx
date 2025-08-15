@@ -34,7 +34,8 @@ import { useNavigate } from 'react-router-dom';
 import { httpsCallable } from 'firebase/functions';
 import { collection, getDocs } from 'firebase/firestore';
 
-import { createAssociationService } from '../utils/associationService';
+import { createUnifiedAssociationService } from '../utils/unifiedAssociationService';
+import { getFunctions, httpsCallable as httpsCallableDirect } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
 import { useAssociationsCache, generateEntityKey } from '../contexts/AssociationsCacheContext';
 import { functions , db } from '../firebase';
@@ -149,7 +150,8 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
 
 
   // Association service
-  const associationService = createAssociationService(tenantId, user?.uid || '');
+  const unifiedService = createUnifiedAssociationService(tenantId, user?.uid || '');
+  const functionsDirect = getFunctions();
 
   // Load associations and available entities
   useEffect(() => {
@@ -199,55 +201,40 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
           includeMetadata: true
         };
 
-        const result = await associationService.queryAssociations(query);
-        setAssociations(result);
-
-        console.log(`🔍 UniversalAssociationsCard: Associations result:`, {
-          associations: result.associations?.length || 0,
+        const unified = await unifiedService.queryAssociations(query);
+        const mapped: AssociationResult = {
+          associations: (unified.associations || []).map((a: any) => ({
+            id: a.id,
+            sourceEntityType: a.sourceEntityType,
+            sourceEntityId: a.sourceEntityId,
+            targetEntityType: a.targetEntityType,
+            targetEntityId: a.targetEntityId,
+            associationType: a.associationType as any,
+            role: a.metadata?.role,
+            strength: a.strength as any,
+            metadata: a.metadata || {},
+            tenantId: tenantId,
+            createdAt: a.createdAt || new Date(),
+            updatedAt: a.updatedAt || new Date(),
+            createdBy: (a.metadata && a.metadata.createdBy) || (user?.uid || ''),
+            updatedBy: (a.metadata && a.metadata.updatedBy) || (user?.uid || '')
+          })),
           entities: {
-            companies: result.entities?.companies?.length || 0,
-            locations: result.entities?.locations?.length || 0,
-            contacts: result.entities?.contacts?.length || 0,
-            deals: result.entities?.deals?.length || 0,
-            salespeople: result.entities?.salespeople?.length || 0,
-            divisions: result.entities?.divisions?.length || 0
+            companies: (unified.entities?.companies || []) as any,
+            locations: (unified.entities?.locations || []) as any,
+            contacts: (unified.entities?.contacts || []) as any,
+            deals: (unified.entities?.deals || []) as any,
+            salespeople: (unified.entities?.salespeople || []) as any,
+            divisions: []
           },
-          summary: result.summary
-        });
+          summary: unified.summary
+        };
+        setAssociations(mapped);
+
+        console.log(`🔍 UniversalAssociationsCard: Associations result mapped`);
 
         // For companies, also load salespeople associated with locations and deals (filter up)
-        if (entityType === 'company' && showAssociations.salespeople) {
-          try {
-            // Query for salespeople associated with this company's locations
-            const locationSalespeopleQuery: AssociationQuery = {
-              entityType: 'location',
-              entityId: '', // We'll need to get company locations first
-              targetTypes: ['salesperson'],
-              includeMetadata: true
-            };
-
-            // Query for salespeople associated with this company's deals
-            const dealSalespeopleQuery: AssociationQuery = {
-              entityType: 'deal',
-              entityId: '', // We'll need to get company deals first
-              targetTypes: ['salesperson'],
-              includeMetadata: true
-            };
-
-            // For now, we'll use the AI context approach which should catch these
-            const aiContext = await associationService.getAIContext(entityType, entityId, 'medium');
-            
-            // Extract salespeople from indirect associations
-            const indirectSalespeople = aiContext.indirectAssociations.entities.salespeople || [];
-            
-            if (indirectSalespeople.length > 0) {
-              console.log('✅ Found indirect salespeople:', indirectSalespeople.length);
-              // These will appear in the associations table as they're part of the result
-            }
-          } catch (err) {
-            console.error('Error loading indirect salespeople:', err);
-          }
-        }
+        // (Indirect salespeople discovery removed with legacy service cleanup)
 
         // Load available entities for dropdowns
         await loadAvailableEntities(targetTypes);
@@ -259,7 +246,7 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
         // Cache the successful result - use setTimeout to avoid setState during render
         setTimeout(() => {
           setCachedData(entityKey, {
-            associations: result,
+            associations: mapped,
             availableEntities,
             loading: false,
             error: null,
@@ -600,32 +587,57 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
     
     try {
       console.log(`🔍 Creating association...`);
-      await associationService.createAssociation(
-        entityType,
-        entityId,
-        targetType as any,
-        targetEntity.id,
-        'primary',
-        'medium'
-      );
+      const manageAssociationsCallable = httpsCallableDirect(functionsDirect, 'manageAssociations');
+      await manageAssociationsCallable({
+        action: 'add',
+        sourceEntityType: entityType,
+        sourceEntityId: entityId,
+        targetEntityType: targetType,
+        targetEntityId: targetEntity.id,
+        tenantId
+      });
       console.log(`🔍 Association created successfully`);
 
       // Refresh associations
       console.log(`🔍 Refreshing associations...`);
-      const result = await associationService.queryAssociations({
+      const unified = await unifiedService.queryAssociations({
         entityType,
         entityId,
         includeMetadata: true
       });
-      console.log(`🔍 Refreshed associations result:`, result);
-      console.log(`🔍 Refreshed associations entities:`, result.entities);
-      console.log(`🔍 Refreshed associations entities keys:`, Object.keys(result.entities));
-      setAssociations(result);
+      const mapped: AssociationResult = {
+        associations: (unified.associations || []).map((a: any) => ({
+          id: a.id,
+          sourceEntityType: a.sourceEntityType,
+          sourceEntityId: a.sourceEntityId,
+          targetEntityType: a.targetEntityType,
+          targetEntityId: a.targetEntityId,
+          associationType: a.associationType as any,
+          role: a.metadata?.role,
+          strength: a.strength as any,
+          metadata: a.metadata || {},
+          tenantId: tenantId,
+          createdAt: a.createdAt || new Date(),
+          updatedAt: a.updatedAt || new Date(),
+          createdBy: (a.metadata && a.metadata.createdBy) || (user?.uid || ''),
+          updatedBy: (a.metadata && a.metadata.updatedBy) || (user?.uid || '')
+        })),
+        entities: {
+          companies: (unified.entities?.companies || []) as any,
+          locations: (unified.entities?.locations || []) as any,
+          contacts: (unified.entities?.contacts || []) as any,
+          deals: (unified.entities?.deals || []) as any,
+          salespeople: (unified.entities?.salespeople || []) as any,
+          divisions: []
+        },
+        summary: unified.summary
+      };
+      setAssociations(mapped);
 
       // Update cache with new associations - use setTimeout to avoid setState during render
       setTimeout(() => {
         setCachedData(entityKey, {
-          associations: result,
+          associations: mapped,
           availableEntities,
           loading: false,
           error: null,
@@ -650,20 +662,52 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
         throw new Error('Association ID is required');
       }
 
-      await associationService.deleteAssociation(associationId);
+      const manageAssociationsCallable = httpsCallableDirect(functionsDirect, 'manageAssociations');
+      await manageAssociationsCallable({
+        action: 'remove_by_association_id',
+        associationId,
+        tenantId
+      });
 
       // Refresh associations
-      const result = await associationService.queryAssociations({
+      const unified = await unifiedService.queryAssociations({
         entityType,
         entityId,
         includeMetadata: true
       });
-      setAssociations(result);
+      const mapped: AssociationResult = {
+        associations: (unified.associations || []).map((a: any) => ({
+          id: a.id,
+          sourceEntityType: a.sourceEntityType,
+          sourceEntityId: a.sourceEntityId,
+          targetEntityType: a.targetEntityType,
+          targetEntityId: a.targetEntityId,
+          associationType: a.associationType as any,
+          role: a.metadata?.role,
+          strength: a.strength as any,
+          metadata: a.metadata || {},
+          tenantId: tenantId,
+          createdAt: a.createdAt || new Date(),
+          updatedAt: a.updatedAt || new Date(),
+          createdBy: (a.metadata && a.metadata.createdBy) || (user?.uid || ''),
+          updatedBy: (a.metadata && a.metadata.updatedBy) || (user?.uid || '')
+        })),
+        entities: {
+          companies: (unified.entities?.companies || []) as any,
+          locations: (unified.entities?.locations || []) as any,
+          contacts: (unified.entities?.contacts || []) as any,
+          deals: (unified.entities?.deals || []) as any,
+          salespeople: (unified.entities?.salespeople || []) as any,
+          divisions: []
+        },
+        summary: unified.summary
+      };
+      setAssociations(mapped);
 
       // Update cache with new associations - use setTimeout to avoid setState during render
       setTimeout(() => {
         setCachedData(entityKey, {
-          associations: result,
+          associations: mapped,
           availableEntities,
           loading: false,
           error: null,

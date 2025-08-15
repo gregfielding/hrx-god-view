@@ -101,7 +101,7 @@ const getTheme = (mode: 'light' | 'dark') => {
   
   return createTheme({
     palette: {
-      mode,
+      mode: 'light', // Force light mode for now to simplify
       background: {
         default: '#F7F8FB',
         paper: '#FFFFFF',
@@ -125,20 +125,27 @@ const getTheme = (mode: 'light' | 'dark') => {
       },
       error: {
         main: '#D14343',
+        dark: '#B71C1C',
         light: '#FDECEC',
         contrastText: '#FFFFFF',
       },
       warning: {
         main: '#B88207',
+        dark: '#8B6B05',
         light: '#FFF7E6',
+        contrastText: '#FFFFFF',
       },
       success: {
         main: '#1E9E6A',
+        dark: '#158A5A',
         light: '#E7F7F0',
+        contrastText: '#FFFFFF',
       },
       info: {
         main: '#2A7BBF',
+        dark: '#1F6FC9',
         light: '#E8F3FC',
+        contrastText: '#FFFFFF',
       },
       divider: 'rgba(0,0,0,.06)',
     },
@@ -298,6 +305,16 @@ const getTheme = (mode: 'light' | 'dark') => {
             paddingInline: 8,
             height: 28,
           },
+          colorPrimary: {
+            backgroundColor: '#4A90E2',
+            color: '#FFFFFF',
+            border: 'none'
+          },
+          colorSecondary: {
+            backgroundColor: '#8B94A3',
+            color: '#FFFFFF',
+            border: 'none'
+          },
           colorError: {
             backgroundColor: '#FDECEC',
             color: '#D14343',
@@ -391,7 +408,7 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiDivider: {
         styleOverrides: {
           root: {
-            borderColor: 'rgba(0,0,0,.06)'
+            borderColor: mode === 'light' ? 'rgba(0,0,0,.06)' : '#2C2C2C'
           }
         }
       },
@@ -418,27 +435,27 @@ const getTheme = (mode: 'light' | 'dark') => {
         styleOverrides: {
           root: {
             '& .MuiFilledInput-root': {
-              backgroundColor: '#F7F9FC',
+              backgroundColor: mode === 'light' ? '#F7F9FC' : '#1C1C1E',
               borderRadius: radius,
               '&:hover': {
-                backgroundColor: '#F0F2F5',
+                backgroundColor: mode === 'light' ? '#F0F2F5' : '#2C2C2C',
               },
               '&.Mui-focused': {
-                backgroundColor: '#FFFFFF',
+                backgroundColor: mode === 'light' ? '#FFFFFF' : '#111111',
                 border: '1px solid #4A90E2',
               },
             },
             '& .MuiInputLabel-root': {
-              color: '#5A6372',
+              color: mode === 'light' ? '#5A6372' : '#AAAAAA',
               '&.Mui-focused': {
                 color: '#4A90E2',
               },
             },
             '& .MuiInputBase-input': {
-              color: '#0B0D12',
+              color: mode === 'light' ? '#0B0D12' : '#FFFFFF',
             },
             '& .MuiFormHelperText-root': {
-              color: '#8B94A3',
+              color: mode === 'light' ? '#8B94A3' : '#555555',
               fontSize: '0.75rem',
             },
           }
@@ -489,8 +506,8 @@ const getTheme = (mode: 'light' | 'dark') => {
               textTransform: 'uppercase',
               fontSize: '0.75rem',
               letterSpacing: '0.5px',
-              color: '#5A6372',
-              borderBottom: '1px solid rgba(0,0,0,.06)',
+              color: mode === 'light' ? '#5A6372' : '#AAAAAA',
+              borderBottom: mode === 'light' ? '1px solid rgba(0,0,0,.06)' : '1px solid #2C2C2C',
               padding: '16px 12px',
             },
           },
@@ -501,13 +518,13 @@ const getTheme = (mode: 'light' | 'dark') => {
           root: {
             '& .MuiTableRow-root': {
               '&:hover': {
-                backgroundColor: '#F7F9FC',
+                backgroundColor: mode === 'light' ? '#F7F9FC' : '#1C1C1E',
                 cursor: 'pointer',
               },
             },
             '& .MuiTableCell-root': {
-              borderBottom: '1px solid rgba(0,0,0,.06)',
-              color: '#0B0D12',
+              borderBottom: mode === 'light' ? '1px solid rgba(0,0,0,.06)' : '1px solid #2C2C2C',
+              color: mode === 'light' ? '#0B0D12' : '#FFFFFF',
               padding: '16px 12px',
             },
           },
@@ -533,8 +550,8 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiDrawer: {
         styleOverrides: {
           paper: {
-            backgroundColor: '#FFFFFF',
-            borderRight: '1px solid rgba(0,0,0,.06)',
+            backgroundColor: mode === 'light' ? '#FFFFFF' : '#111111',
+            borderRight: mode === 'light' ? '1px solid rgba(0,0,0,.06)' : '1px solid #2C2C2C',
             boxShadow: 'none',
             width: '72px',
             '&:hover': {
@@ -545,9 +562,9 @@ const getTheme = (mode: 'light' | 'dark') => {
               borderRadius: 12,
               margin: '4px 8px',
               minHeight: '48px',
-              color: '#5A6372',
+              color: mode === 'light' ? '#5A6372' : '#AAAAAA',
               '&:hover': {
-                backgroundColor: '#F7F9FC',
+                backgroundColor: mode === 'light' ? '#F7F9FC' : '#1C1C1E',
                 color: '#4A90E2'
               },
               '&.Mui-selected': {
@@ -556,7 +573,7 @@ const getTheme = (mode: 'light' | 'dark') => {
                 borderLeft: '4px solid #4A90E2',
                 paddingLeft: '12px',
                 '&:hover': {
-                  backgroundColor: '#F7F9FC'
+                  backgroundColor: mode === 'light' ? '#F7F9FC' : '#1C1C1E'
                 }
               }
             }
@@ -591,7 +608,7 @@ const getTheme = (mode: 'light' | 'dark') => {
       MuiSkeleton: {
         styleOverrides: {
           root: {
-            backgroundColor: '#F0F2F5',
+            backgroundColor: mode === 'light' ? '#F0F2F5' : '#2C2C2C',
             '&::after': {
               background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
             },
@@ -602,37 +619,37 @@ const getTheme = (mode: 'light' | 'dark') => {
         styleOverrides: {
           root: {
             borderRadius: 12,
-            border: '1px solid rgba(0,0,0,.08)',
+            border: mode === 'light' ? '1px solid rgba(0,0,0,.08)' : '1px solid #2C2C2C',
             '& .MuiAlert-icon': {
               fontSize: 20,
             },
           },
           standardInfo: {
-            backgroundColor: '#E8F3FC',
-            color: '#1F6FC9',
+            backgroundColor: mode === 'light' ? '#E8F3FC' : '#4A90E2',
+            color: mode === 'light' ? '#1F6FC9' : '#FFFFFF',
             '& .MuiAlert-icon': {
-              color: '#1F6FC9',
+              color: mode === 'light' ? '#1F6FC9' : '#FFFFFF',
             },
           },
           standardSuccess: {
-            backgroundColor: '#E7F7F0',
-            color: '#1E9E6A',
+            backgroundColor: mode === 'light' ? '#E7F7F0' : '#2ECC71',
+            color: mode === 'light' ? '#1E9E6A' : '#FFFFFF',
             '& .MuiAlert-icon': {
-              color: '#1E9E6A',
+              color: mode === 'light' ? '#1E9E6A' : '#FFFFFF',
             },
           },
           standardWarning: {
-            backgroundColor: '#FFF7E6',
-            color: '#B88207',
+            backgroundColor: mode === 'light' ? '#FFF7E6' : '#F39C12',
+            color: mode === 'light' ? '#B88207' : '#FFFFFF',
             '& .MuiAlert-icon': {
-              color: '#B88207',
+              color: mode === 'light' ? '#B88207' : '#FFFFFF',
             },
           },
           standardError: {
-            backgroundColor: '#FDECEC',
-            color: '#D14343',
+            backgroundColor: mode === 'light' ? '#FDECEC' : '#E74C3C',
+            color: mode === 'light' ? '#D14343' : '#FFFFFF',
             '& .MuiAlert-icon': {
-              color: '#D14343',
+              color: mode === 'light' ? '#D14343' : '#FFFFFF',
             },
           },
         },

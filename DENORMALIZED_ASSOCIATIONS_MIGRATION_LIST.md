@@ -4,19 +4,19 @@
 
 ### **1. Core Association Services (Replace with Denormalized)**
 
-#### **❌ OLD SERVICES TO REMOVE:**
-- `src/utils/unifiedAssociationService.ts` - Complex, slow service
-- `src/utils/simpleAssociationService.ts` - Fallback service  
-- `src/utils/associationService.ts` - Main service with timeouts
+#### **❌ OLD SERVICES REMOVED:**
+- `src/utils/simpleAssociationService.ts`  
+- `src/utils/associationService.ts`
+- `src/utils/denormalizedAssociationService.ts`
 
-#### **✅ NEW SERVICE TO USE:**
-- `src/utils/denormalizedAssociationService.ts` - Fast, simple service
+#### **✅ CURRENT APPROACH:**
+- Unified reads via `deal.associations` and helpers in `src/utils/associationsAdapter.ts`
+- Writes via callable `manageAssociations`
 
 ### **2. Association Components (Replace with FastAssociationsCard)**
 
-#### **❌ OLD COMPONENTS TO REPLACE:**
-- `src/components/SimpleAssociationsCard.tsx` - Slow, complex component
-- `src/components/UniversalAssociationsCard.tsx` - Another slow component
+#### **Components:**
+- `SimpleAssociationsCard.tsx` and `UniversalAssociationsCard.tsx` use unified reads and callable writes
 
 #### **✅ NEW COMPONENT TO USE:**
 - `src/components/FastAssociationsCard.tsx` - Instant loading component
@@ -35,10 +35,8 @@
 - `src/pages/TenantViews/ContactDetails.tsx` - Uses `SimpleAssociationsCard` and `createSimpleAssociationService`
 
 #### **🔧 Task-Related Components:**
-- `src/components/DealTasksDashboard.tsx` - Uses `createUnifiedAssociationService` and `createAssociationService`
-- `src/components/UserTasksDashboard.tsx` - Uses `createAssociationService`
-- `src/components/ContactTasksDashboard.tsx` - Uses `createSimpleAssociationService`
-- `src/components/TaskDetailsDialog.tsx` - Uses `createUnifiedAssociationService`
+- `src/components/DealTasksDashboard.tsx` - Unified reads only
+- `src/components/ContactTasksDashboard.tsx` - Uses callable for add/remove
 
 ### **4. Cloud Functions (Add new sync functions)**
 

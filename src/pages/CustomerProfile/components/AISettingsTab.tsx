@@ -257,7 +257,7 @@ const AISettingsTab: React.FC<AISettingsTabProps> = ({ tenantId }) => {
   return (
     <Box sx={{ p: 2, width: '100%', maxWidth: 900, mx: 'auto' }}>
       {isAgencyManaged && (
-        <Paper sx={{ p: 3, mb: 4, bgcolor: 'info.light', color: 'info.contrastText' }}>
+        <Paper sx={{ p: 3, mb: 4, bgcolor: 'info.light', color: 'info.main' }}>
           <Typography variant="h6" gutterBottom>
             Managed by {agencyName}
           </Typography>

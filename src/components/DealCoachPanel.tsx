@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert } from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Add as AddIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -11,6 +11,8 @@ interface DealCoachPanelProps {
   dealId: string;
   stageKey: string;
   tenantId: string;
+  onStartNew?: () => void;
+  key?: string; // Add key prop to detect when to start new conversation
 }
 
 interface CoachMessage {
@@ -20,7 +22,7 @@ interface CoachMessage {
   actions?: Array<any>;
 }
 
-const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenantId }) => {
+const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenantId, onStartNew }) => {
   const { user } = useAuth();
   const [summary, setSummary] = useState<string>('');
   const [suggestions, setSuggestions] = useState<Array<{ label: string; action: any }>>([]);
@@ -49,39 +51,51 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
     analyze();
     loadConversations();
     
-    // Check for proactive conversation if no messages exist
-    const checkForProactiveConversation = async () => {
-      if (messages.length === 0) {
-        try {
-          const functions = getFunctions(undefined, 'us-central1');
-          const proactiveFn = httpsCallable(functions, 'dealCoachProactiveCallable');
-          const result = await proactiveFn({ 
-            tenantId, 
-            dealId, 
-            trigger: 'auto_check' 
-          });
-          const data = result.data as any;
-          
-          if (data.success && data.message && data.urgency !== 'low') {
-            // Add proactive message to chat naturally
-            const newMessage: CoachMessage = {
-              role: 'assistant',
-              text: data.message,
-              at: Date.now()
-            };
-            setMessages([newMessage]);
-          }
-        } catch (error) {
-          console.error('Error checking for proactive conversation:', error);
-        }
-      }
-    };
+    // Proactive conversation check disabled - function not available
+    // const checkForProactiveConversation = async () => {
+    //   if (messages.length === 0) {
+    //     try {
+    //       const functions = getFunctions(undefined, 'us-central1');
+    //       const proactiveFn = httpsCallable(functions, 'dealCoachProactiveCallable');
+    //       const result = await proactiveFn({ 
+    //         tenantId, 
+    //         dealId, 
+    //         trigger: 'auto_check' 
+    //       });
+    //       const data = result.data as any;
+    //       
+    //       if (data.success && data.message && data.urgency !== 'low') {
+    //         // Add proactive message to chat naturally
+    //         const newMessage: CoachMessage = {
+    //           role: 'assistant',
+    //           text: data.message,
+    //           at: Date.now()
+    //         };
+    //         setMessages([newMessage]);
+    //       }
+    //     } catch (error) {
+    //       // Handle the error gracefully - this is an optional feature
+    //       console.log('Proactive conversation feature not available:', error);
+    //       // Don't show error toast since this is optional functionality
+    //     }
+    //   }
+    // };
 
     // Check after a short delay to allow component to mount
-    const timer = setTimeout(checkForProactiveConversation, 2000);
-    return () => clearTimeout(timer);
+    // const timer = setTimeout(checkForProactiveConversation, 2000);
+    // return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dealId, stageKey]);
+
+  // Effect to handle new conversation when key changes
+  useEffect(() => {
+    if (onStartNew) {
+      onStartNew();
+    } else {
+      // Default behavior: start new conversation
+      startNewConversation();
+    }
+  }, [dealId]); // This will trigger when the dealId changes (which happens when key changes)
 
   useEffect(() => {
     localStorage.setItem(threadKey, JSON.stringify(messages));
@@ -99,7 +113,10 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
       setSummary(data.summary || '');
       setSuggestions(data.suggestions || []);
     } catch (e) {
-      setToast({ open: true, message: 'Analyze failed', severity: 'error' });
+      console.log('Deal Coach analyze feature not available:', e);
+      // Don't show error toast since this is optional functionality
+      setSummary('');
+      setSuggestions([]);
     } finally {
       setAnalyzing(false);
     }
@@ -272,36 +289,8 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
     }
   };
 
-  return (
-    <Card>
-      <CardHeader
-        title="Deal Coach"
-        action={
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Chip
-              label="Start New"
-              onClick={startNewConversation}
-              color="primary"
-              size="small"
-              clickable
-              sx={{ 
-                cursor: 'pointer',
-                mr: 1.5, // Added for 12px right margin
-                '& .MuiChip-label': {
-                  fontSize: '0.875rem'
-                }
-              }}
-            />
-            <IconButton onClick={() => {}} size="small">
-              <CloseIcon />
-            </IconButton>
-          </Box>
-        }
-        sx={{ p: 0, mb: 1 }}
-        titleTypographyProps={{ variant: 'h6' }}
-      />
-      <CardContent>
-
+    return (
+    <Box sx={{ p: 0 }}>
 
         {/* Suggestions */}
         {suggestions.length > 0 && (
@@ -320,11 +309,11 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
 
 
         {/* Chat */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: '60vh', minHeight: 300 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: '450px', minHeight: 350 }}>
           <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
             {messages.map((m, i) => (
               <Box key={i} sx={{ mb: 1, textAlign: m.role === 'user' ? 'right' : 'left' }}>
-                <Box sx={{ display: 'inline-block', px: 1.25, py: 0.75, borderRadius: 1, bgcolor: m.role === 'user' ? 'primary.main' : 'grey.100', color: m.role === 'user' ? 'primary.contrastText' : 'text.primary' }}>
+                <Box sx={{ display: 'inline-block', px: 1.25, py: 0.75, borderRadius: 1, bgcolor: m.role === 'user' ? 'primary.main' : 'grey.100', color: m.role === 'user' ? 'white' : 'text.primary' }}>
                   <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{m.text}</Typography>
                   {m.actions && m.actions.length > 0 && (
                     <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -381,11 +370,9 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
             </Box>
           )}
         </Box>
-
-      </CardContent>
-    </Card>
-  );
-};
+      </Box>
+    );
+  };
 
 export default DealCoachPanel;
 

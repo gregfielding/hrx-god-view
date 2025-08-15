@@ -86,7 +86,7 @@ const OnboardingCompleteScreen: React.FC = () => {
         <Box
           sx={{
             bgcolor: 'success.light',
-            color: 'success.contrastText',
+            color: 'success.main',
             p: 3,
             borderRadius: 2,
             mb: 4,

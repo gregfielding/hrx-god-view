@@ -20,7 +20,7 @@ The current association system is causing severe performance issues:
 ## 💡 **Solution: Denormalized Associations**
 
 ### **Core Concept:**
-Store all association data directly on each entity instance, then use Cloud Functions to keep them in sync.
+Store lean association snapshots directly on each entity (e.g., deals), then use Cloud Functions to keep snapshots and reverse indexes in sync. Use callable `manageAssociations` for writes.
 
 ### **Data Structure:**
 ```typescript
@@ -60,7 +60,7 @@ associations: {
 - ✅ **Predictable Performance**: O(1) lookup time
 
 ### **2. Simplified Architecture**
-- ✅ **One Service**: Single `DenormalizedAssociationService`
+- ✅ **Unified Reads**: Direct from `associations` + adapter helpers
 - ✅ **No Caching Needed**: Data is always fresh
 - ✅ **No Fallbacks**: Single source of truth
 - ✅ **Simple Error Handling**: One try-catch block
@@ -74,23 +74,8 @@ associations: {
 
 ### **Phase 1: Core Infrastructure**
 
-#### **1.1 Denormalized Association Service**
-```typescript
-// src/utils/denormalizedAssociationService.ts
-export class DenormalizedAssociationService {
-  // 🚀 INSTANT LOADING - No queries needed!
-  async getAssociations(entityType: string, entityId: string): Promise<DenormalizedAssociations>
-  
-  // 🔄 UPDATE ASSOCIATIONS (triggers cloud function to sync)
-  async updateAssociations(entityType: string, entityId: string, associations: Partial<DenormalizedAssociations>)
-  
-  // ➕ ADD ASSOCIATION
-  async addAssociation(entityType: string, entityId: string, targetType: keyof DenormalizedAssociations, targetEntity: any)
-  
-  // ➖ REMOVE ASSOCIATION
-  async removeAssociation(entityType: string, entityId: string, targetType: keyof DenormalizedAssociations, targetEntityId: string)
-}
-```
+#### **1.1 Writes via Callable**
+`functions/src/manageAssociations.ts` handles add/remove with dual-write and reverse index maintenance.
 
 #### **1.2 Cloud Function for Sync**
 ```typescript
@@ -125,7 +110,7 @@ export const migrateToDenormalizedAssociations = functions.https.onCall(async (d
 // src/components/FastAssociationsCard.tsx
 const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({ entityType, entityId }) => {
   // ⚡ INSTANT LOADING - No loading states needed!
-  const associations = await denormalizedService.getAssociations(entityType, entityId);
+// Read via onSnapshot of the entity and render from entity.associations
   
   return (
     <Card>

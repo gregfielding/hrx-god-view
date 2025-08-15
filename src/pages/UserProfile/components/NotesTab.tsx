@@ -304,8 +304,8 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
       case 'behavior': return 'warning';
       case 'compliance': return 'error';
       case 'training': return 'success';
-      case 'general': return 'default';
-      default: return 'default';
+      case 'general': return 'primary';
+      default: return 'primary';
     }
   };
 

@@ -7,7 +7,7 @@ if (!admin.apps.length) {
 }
 
 export const startAIThread = onCall({ cors: true }, async (request) => {
-  const { tenantId } = request.data || {};
+  const { tenantId, context } = request.data || {};
   const uid = request.auth?.uid || request.data?.userId;
   if (!uid || !tenantId) {
     throw new Error('Missing tenantId or user');
@@ -16,7 +16,8 @@ export const startAIThread = onCall({ cors: true }, async (request) => {
   const threadRef = await db.collection('tenants').doc(tenantId).collection('ai_chats').add({
     createdBy: uid,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    title: 'New Conversation'
+    title: 'New Conversation',
+    context: typeof context === 'string' && context.trim() ? String(context).trim() : 'assistant'
   });
   return { threadId: threadRef.id };
 });

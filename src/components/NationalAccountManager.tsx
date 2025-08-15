@@ -53,6 +53,7 @@ import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/fire
 
 import { db } from '../firebase';
 import { CRMCompany, CRMDeal } from '../types/CRM';
+import { getDealCompanyIds } from '../utils/associationsAdapter';
 import { useAIFieldLogging } from '../utils/aiFieldLogging';
 
 interface NationalAccountManagerProps {
@@ -155,13 +156,13 @@ const NationalAccountManager: React.FC<NationalAccountManagerProps> = ({ tenantI
 
           // Calculate performance for each parent company
       for (const parent of parents) {
-        const parentDeals = deals.filter(deal => deal.companyId === parent.id);
+        const parentDeals = deals.filter((deal: any) => getDealCompanyIds(deal).includes(parent.id));
         const childCompanies = children.filter(child => 
           child.companyStructure?.parentId === parent.externalId
         );
         
         const childDeals = childCompanies.flatMap(child =>
-          deals.filter(deal => deal.companyId === child.id)
+          deals.filter((deal: any) => getDealCompanyIds(deal).includes(child.id))
         );
         
         const allDeals = [...parentDeals, ...childDeals];
@@ -212,9 +213,10 @@ const NationalAccountManager: React.FC<NationalAccountManagerProps> = ({ tenantI
         const regionalCompanies = children.filter(child => 
           child.companyStructure?.region === region
         );
-        const regionalDeals = deals.filter(deal =>
-          regionalCompanies.some(company => company.id === deal.companyId)
-        );
+        const regionalDeals = deals.filter((deal: any) => {
+          const ids = getDealCompanyIds(deal);
+          return regionalCompanies.some(company => ids.includes(company.id));
+        });
         
         data.deals = regionalDeals.length;
         data.value = regionalDeals.reduce((sum, deal) => sum + (deal.estimatedRevenue || 0), 0);

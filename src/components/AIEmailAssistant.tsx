@@ -40,6 +40,7 @@ import {
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
 import { db } from '../firebase';
+import { getDealPrimaryCompanyId } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   CRMDeal, 
@@ -176,19 +177,26 @@ Best regards,
         setDealProfile(deal.dealProfile);
       }
 
-      // Load company data
+      // Load company data using primary company from associations adapter
       if (!tenantId) throw new Error('Missing tenantId');
-      const companiesRef = collection(db, 'tenants', tenantId as string, 'crm_companies');
-      const companyQuery = query(companiesRef, where('__name__', '==', deal.companyId));
-      const companySnapshot = await getDocs(companyQuery);
-      if (!companySnapshot.empty) {
-        setCompany({ id: companySnapshot.docs[0].id, ...companySnapshot.docs[0].data() } as CRMCompany);
+      const primaryCompanyId = getDealPrimaryCompanyId(deal as any);
+      if (primaryCompanyId) {
+        const companiesRef = collection(db, 'tenants', tenantId as string, 'crm_companies');
+        const companyQuery = query(companiesRef, where('__name__', '==', primaryCompanyId));
+        const companySnapshot = await getDocs(companyQuery);
+        if (!companySnapshot.empty) {
+          setCompany({ id: companySnapshot.docs[0].id, ...companySnapshot.docs[0].data() } as CRMCompany);
+        }
+      } else {
+        setCompany(null);
       }
 
-      // Load contacts
+      // Load contacts for primary company
       const contactsRef = collection(db, 'tenants', tenantId as string, 'crm_contacts');
-      const contactsQuery = query(contactsRef, where('companyId', '==', deal.companyId));
-      const contactsSnapshot = await getDocs(contactsQuery);
+      const contactsQuery = primaryCompanyId
+        ? query(contactsRef, where('companyId', '==', primaryCompanyId))
+        : null;
+      const contactsSnapshot = contactsQuery ? await getDocs(contactsQuery) : { docs: [] as any[] } as any;
       const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CRMContact));
       setAvailableContacts(contactsData);
 

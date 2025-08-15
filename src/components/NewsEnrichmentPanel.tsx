@@ -11,6 +11,8 @@ import {
   Grid,
   IconButton,
   Tooltip,
+  Divider,
+  Stack,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -154,28 +156,23 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          📰 In the News
+    <Box sx={{ px: 3, py: 4 }}>
+      <Typography variant="h6" fontWeight={700}>In the News</Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2, mb: 3 }}>
+        <Typography variant="subtitle2" color="text.secondary">
+          {lastUpdated ? `Last updated: ${formatDate(lastUpdated.toISOString())}` : 'Latest articles and signals' }
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {lastUpdated && (
-            <Typography variant="caption" color="text.secondary">
-              Last updated: {formatDate(lastUpdated.toISOString())}
-            </Typography>
-          )}
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<RefreshIcon />}
-            onClick={handleRefresh}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
-        </Box>
-      </Box>
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={<RefreshIcon />}
+          onClick={handleRefresh}
+          disabled={loading}
+        >
+          {loading ? 'Loading...' : 'Refresh'}
+        </Button>
+      </Stack>
+      <Divider sx={{ my: 2 }} />
 
       {loading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>

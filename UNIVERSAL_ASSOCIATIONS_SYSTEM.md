@@ -8,11 +8,9 @@ The Universal Associations System is a bulletproof, scalable solution for managi
 
 ### Core Components
 
-1. **Association Service** (`src/utils/associationService.ts`)
-   - Handles all association CRUD operations
-   - Provides AI context research capabilities
-   - Manages association counts and metadata
-   - Ensures data consistency and validation
+1. **Unified Associations** (reads via `deal.associations`, writes via callable)
+   - Reads: subscribe to entity docs and render from `associations`
+   - Writes: `manageAssociations` callable performs dual-write and reverse index updates
 
 2. **Universal Associations Card** (`src/components/UniversalAssociationsCard.tsx`)
    - Reusable UI component for any entity type
@@ -155,35 +153,10 @@ import UniversalAssociationsCard from '../components/UniversalAssociationsCard';
 ## 🤖 AI Context Research
 
 ### Basic Context Query
-```typescript
-const associationService = createAssociationService(tenantId, userId);
-
-const context = await associationService.getAIContext(
-  'deal',
-  dealId,
-  'medium' // 'shallow' | 'medium' | 'deep'
-);
-
-console.log(context.contextSummary);
-// Output: "Direct associations: 5 total (2 contacts, 1 company, 1 location, 1 salesperson) | Indirect associations: 12 total (3 companies, 4 contacts, 2 deals, 3 salespeople)"
-```
+Use entity-level data and AI modules that read from `associations` for context.
 
 ### Advanced Association Query
-```typescript
-const result = await associationService.queryAssociations({
-  entityType: 'contact',
-  entityId: contactId,
-  targetTypes: ['deal', 'company'],
-  associationTypes: ['primary', 'ownership'],
-  strength: ['strong', 'medium'],
-  includeMetadata: true,
-  limit: 50
-});
-
-console.log(`Found ${result.summary.totalAssociations} associations`);
-console.log(`By type:`, result.summary.byType);
-console.log(`By strength:`, result.summary.byStrength);
-```
+Filter by denormalized ID arrays on entities (e.g., `where('companyIds', 'array-contains', companyId)`) and read snapshots from `associations`.
 
 ## 🔄 Migration Strategy
 

@@ -676,7 +676,7 @@ const AICampaigns: React.FC = () => {
       case 'wellness':
         return 'error';
       default:
-        return 'default';
+        return 'primary';
     }
   };
 

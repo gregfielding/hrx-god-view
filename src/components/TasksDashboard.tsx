@@ -958,12 +958,18 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
 
   // Filter contacts based on selected company
   const filteredContacts = formData.selectedCompany 
-    ? contacts.filter((contact: any) => contact.companyId === formData.selectedCompany)
+    ? contacts.filter((contact: any) => {
+        const assocCompanies = (contact.associations?.companies || []).map((c: any) => typeof c === 'string' ? c : c?.id).filter(Boolean);
+        return assocCompanies.includes(formData.selectedCompany);
+      })
     : contacts;
 
   // Filter deals based on selected company
   const filteredDeals = formData.selectedCompany 
-    ? deals.filter((deal: any) => deal.companyId === formData.selectedCompany)
+    ? deals.filter((deal: any) => {
+        const assocCompanies = (deal.associations?.companies || []).map((c: any) => typeof c === 'string' ? c : c?.id);
+        return assocCompanies.includes(formData.selectedCompany);
+      })
     : deals;
 
   return (

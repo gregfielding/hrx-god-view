@@ -43,6 +43,16 @@ export const INDUSTRIES: Industry[] = [
   // Manufacturing
   { code: '31', name: 'Manufacturing', category: 'Manufacturing' },
   { code: '311', name: 'Food Manufacturing', category: 'Manufacturing' },
+  // Food Manufacturing subsectors (NAICS 3111-3119)
+  { code: '3111', name: 'Animal Food Manufacturing', category: 'Manufacturing' },
+  { code: '3112', name: 'Grain and Oilseed Milling', category: 'Manufacturing' },
+  { code: '3113', name: 'Sugar and Confectionery Product Manufacturing', category: 'Manufacturing' },
+  { code: '3114', name: 'Fruit and Vegetable Preserving and Specialty Food Manufacturing', category: 'Manufacturing' },
+  { code: '3115', name: 'Dairy Product Manufacturing', category: 'Manufacturing' },
+  { code: '3116', name: 'Animal Slaughtering and Processing', category: 'Manufacturing' },
+  { code: '3117', name: 'Seafood Product Preparation and Packaging', category: 'Manufacturing' },
+  { code: '3118', name: 'Bakeries and Tortilla Manufacturing', category: 'Manufacturing' },
+  { code: '3119', name: 'Other Food Manufacturing', category: 'Manufacturing' },
   { code: '312', name: 'Beverage and Tobacco Product Manufacturing', category: 'Manufacturing' },
   { code: '313', name: 'Textile Mills', category: 'Manufacturing' },
   { code: '314', name: 'Textile Product Mills', category: 'Manufacturing' },

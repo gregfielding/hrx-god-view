@@ -708,45 +708,25 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                     </FormControl>
                   </Grid>
                   <Grid item xs={12} sm={6} md={6}>
-                    <FormControl fullWidth required>
-                      <InputLabel id="user-groups-label">User Groups</InputLabel>
-                      <Select
-                        labelId="user-groups-label"
-                        multiple
-                        value={selectedUserGroups}
-                        onChange={(e) =>
-                          setSelectedUserGroups(
-                            Array.isArray(e.target.value) ? e.target.value : [e.target.value],
-                          )
-                        }
-                        input={<OutlinedInput label="User Groups" />}
-                        renderValue={(selected) => (
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                            {(selected as string[]).map((id) => {
-                              const group = userGroups.find((g: any) => g.id === id);
-                              return (
-                                <Chip
-                                  key={id}
-                                  label={group ? group.title : id}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onDelete={() =>
-                                    setSelectedUserGroups(
-                                      selectedUserGroups.filter((gid: string) => gid !== id),
-                                    )
-                                  }
-                                />
-                              );
-                            })}
-                          </Box>
-                        )}
-                      >
-                        {userGroups.map((g: any) => (
-                          <MenuItem key={g.id} value={g.id}>
-                            {g.title}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
+                    <Autocomplete
+                      multiple
+                      options={userGroups as any[]}
+                      getOptionLabel={(g: any) => g?.title || ''}
+                      value={(userGroups || []).filter((g: any) => selectedUserGroups.includes(g.id)) as any[]}
+                      onChange={(_, newValue: any[]) => {
+                        setSelectedUserGroups(newValue.map((g: any) => g.id));
+                      }}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option: any, index: number) => (
+                          <Chip {...getTagProps({ index })} key={option.id} label={option.title || option.id} size="small" />
+                        ))
+                      }
+                      renderInput={(params) => (
+                        <TextField {...params} label="User Groups" fullWidth />
+                      )}
+                      disablePortal
+                      fullWidth
+                    />
                   </Grid>
                   <Grid item xs={12}>
                     <TableContainer

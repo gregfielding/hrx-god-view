@@ -49,8 +49,8 @@ const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
 const appBarHeight = 64;
 
-const Layout: React.FC = () => {
-  console.log('Layout rendered');
+const Layout: React.FC = React.memo(function Layout() {
+  // REMOVED: Excessive logging causing re-renders
   const { toggleMode, mode } = useThemeMode();
   const { user, role, securityLevel, logout, avatarUrl, orgType, tenantId, tenantIds, activeTenant, setActiveTenant, loading: authLoading } = useAuth();
   const isMobile = useMediaQuery('(max-width:768px)');
@@ -142,16 +142,15 @@ const Layout: React.FC = () => {
   // const fetchTenants = useCallback(async () => { ... }, [tenantIds, tenantId]);
 
   useEffect(() => {
-    console.log('useEffect triggered:', { authLoading, tenantIds, user });
     if (!authLoading && user && tenantIds && tenantIds.length > 0 && !tenantsLoading) {
-      console.log('Auth loaded and tenantIds available, fetching tenants');
+      // REMOVED: Excessive logging causing re-renders
       // Call fetchTenants directly without including it in dependencies
       const fetchTenantsDirectly = async () => {
         // Convert tenantIds to array if it's a map/object
         const tenantIdList = Array.isArray(tenantIds)
           ? tenantIds
           : (tenantIds ? Object.keys(tenantIds) : []);
-        console.log('DEBUG: tenantIdList', tenantIdList);
+        // REMOVED: Excessive logging causing re-renders
         if (!tenantIdList || tenantIdList.length === 0) {
           return;
         }
@@ -162,7 +161,7 @@ const Layout: React.FC = () => {
             const tenantSnap = await getDoc(tenantRef);
             if (tenantSnap.exists()) {
               const data = tenantSnap.data();
-              console.log('DEBUG: tenant data for', tid, data);
+              // REMOVED: Excessive logging causing re-renders
               return {
                 id: tid,
                 name: data.name || 'Unknown Tenant',
@@ -177,7 +176,7 @@ const Layout: React.FC = () => {
           });
           const tenantResults = await Promise.all(tenantPromises);
           const validTenants = tenantResults.filter((t): t is NonNullable<typeof t> => t !== null);
-          console.log('DEBUG: validTenants', validTenants);
+          // REMOVED: Excessive logging causing re-renders
           setTenants(validTenants);
           // Only set initial tenant if we haven't already and activeTenant is not set
           if (!hasSetInitialTenant.current && !activeTenant) {
@@ -199,11 +198,9 @@ const Layout: React.FC = () => {
           setTenantsLoading(false);
         }
       };
-      fetchTenantsDirectly();
-    } else {
-      console.log('Waiting for auth to load or tenantIds to be available');
-    }
-  }, [authLoading, user, tenantIds, tenantId]); // Removed tenantsLoading from dependencies to prevent infinite loop
+              fetchTenantsDirectly();
+      }
+    }, [authLoading, user, tenantIds, tenantId]); // Removed tenantsLoading from dependencies to prevent infinite loop
 
   // Simplify handleSetActiveTenant to only call setActiveTenant
   const handleSetActiveTenant = (tenant) => {
@@ -245,7 +242,7 @@ const Layout: React.FC = () => {
     const unsubscribe = onSnapshot(flexModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
-        console.log('Flex module status changed:', isEnabled);
+        // REMOVED: Excessive logging causing re-renders
         setFlexModuleEnabled(isEnabled);
       } else {
         console.log('Flex module document does not exist, defaulting to disabled');
@@ -271,7 +268,7 @@ const Layout: React.FC = () => {
     const unsubscribe = onSnapshot(recruiterModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
-        console.log('Recruiter module status changed:', isEnabled);
+        // REMOVED: Excessive logging causing re-renders
         setRecruiterModuleEnabled(isEnabled);
       } else {
         console.log('Recruiter module document does not exist, defaulting to disabled');
@@ -297,7 +294,7 @@ const Layout: React.FC = () => {
     const unsubscribe = onSnapshot(customersModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
-        console.log('Customers module status changed:', isEnabled);
+        // REMOVED: Excessive logging causing re-renders
         setCustomersModuleEnabled(isEnabled);
       } else {
         console.log('Customers module document does not exist, defaulting to disabled');
@@ -323,7 +320,7 @@ const Layout: React.FC = () => {
     const unsubscribe = onSnapshot(jobsBoardModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
-        console.log('Jobs Board module status changed:', isEnabled);
+        // REMOVED: Excessive logging causing re-renders
         setJobsBoardModuleEnabled(isEnabled);
       } else {
         console.log('Jobs Board module document does not exist, defaulting to disabled');
@@ -349,7 +346,7 @@ const Layout: React.FC = () => {
     const unsubscribe = onSnapshot(crmModuleRef, (doc) => {
       if (doc.exists()) {
         const isEnabled = doc.data()?.isEnabled || false;
-        console.log('CRM module status changed:', isEnabled);
+        // REMOVED: Excessive logging causing re-renders
         setCrmModuleEnabled(isEnabled);
       } else {
         console.log('CRM module document does not exist, defaulting to disabled');
@@ -367,9 +364,9 @@ const Layout: React.FC = () => {
     const generateMenu = async () => {
       setMenuLoading(true);
       try {
-        console.log('Generating menu with:', { userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled });
+        // REMOVED: Excessive logging causing re-renders
         const items = await generateMenuItems(userAccessRole, (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), activeTenant?.id, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled);
-        console.log('Generated menu items:', items);
+                  // REMOVED: Excessive logging causing re-renders
         setMenuItems(items);
       } catch (error) {
         console.error('Error generating menu:', error);
@@ -435,15 +432,7 @@ const Layout: React.FC = () => {
     ? activeTenant.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2)
     : `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
 
-  console.log('Layout: Rendering with:', { 
-    tenants: tenants.length, 
-    activeTenant, 
-    tenantsLoading, 
-    tenantIds, 
-    tenantId,
-    authLoading,
-    user: !!user
-  });
+  // REMOVED: Excessive logging causing re-renders
 
   // Ensure only allowed values for devOrgType, devRole, devSecurityLevel
   const allowedOrgTypes = ['Agency', 'Customer', 'HRX', 'Tenant'];
@@ -553,10 +542,10 @@ const Layout: React.FC = () => {
           ) : (
             menuItemsWithIcons.map(({ text, to, icon }) => (
             <ListItem key={text} disablePadding sx={{ display: 'block' }}>
-              <ListItemButton
+                <ListItemButton
                 component={text === 'Log out' ? 'button' : Link}
                 {...(text !== 'Log out' ? { to } : {})}
-                {...(text !== 'Log out' ? { selected: location.pathname == to } : {})}
+                  {...(text !== 'Log out' ? { selected: (location.pathname === to) || location.pathname.startsWith(to + '/') } : {})}
                 onClick={text === 'Log out' ? async () => { await logout(); } : undefined}
                 sx={{
                   backgroundColor: location.pathname.startsWith(to)
@@ -766,6 +755,6 @@ const Layout: React.FC = () => {
       </Box>
     </Box>
   );
-};
+});
 
-export default Layout;
+export default React.memo(Layout);

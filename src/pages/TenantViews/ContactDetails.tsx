@@ -364,13 +364,13 @@ const ContactDetails: React.FC = () => {
       setAssociationsData(prev => ({ ...prev, loading: true, error: null }));
       
       // Use the simple association service
-      const { createSimpleAssociationService } = await import('../../utils/simpleAssociationService');
-      const associationService = createSimpleAssociationService(tenantId, user.uid);
+      const { createUnifiedAssociationService } = await import('../../utils/unifiedAssociationService');
+      const associationService = createUnifiedAssociationService(tenantId, user.uid);
       
-      const result = await associationService.getAssociations('contact', contactId);
+      const result = await associationService.getEntityAssociations('contact', contactId);
       
       setAssociationsData({
-        associations: result.associations,
+        associations: {},
         entities: result.entities,
         loading: false,
         error: null
@@ -402,21 +402,16 @@ const ContactDetails: React.FC = () => {
       const contactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
       setContact(contactData);
 
-      // Load associated company if contact has companyId
-      if (contactData.companyId) {
-        const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId));
+      // Load associated company via associations.companies if present
+      const assocCompanies = (contactData.associations?.companies || []) as any[];
+      const primaryCompanyId = assocCompanies.length > 0 ? (typeof assocCompanies[0] === 'string' ? assocCompanies[0] : assocCompanies[0]?.id) : undefined;
+      if (primaryCompanyId) {
+        const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primaryCompanyId));
         if (companyDoc.exists()) {
           const companyData = { id: companyDoc.id, ...companyDoc.data() };
           setCompany(companyData);
           setSelectedCompany(companyData);
-          
-          // Load company locations
-          await loadCompanyLocations(contactData.companyId);
-          
-          // Set selected location if contact has one
-          if (contactData.locationId) {
-            setSelectedLocation(contactData.locationId);
-          }
+          await loadCompanyLocations(primaryCompanyId);
         }
       }
 
@@ -492,24 +487,15 @@ const ContactDetails: React.FC = () => {
     
     if (company) {
       await loadCompanyLocations(company.id);
-      await handleContactUpdate('companyId', company.id);
-      await handleContactUpdate('companyName', company.companyName || company.name);
-      
-      // Add company to associations
-      if (contact && contact.associations) {
-        const updatedAssociations = { ...contact.associations };
-        if (!updatedAssociations.companies) {
-          updatedAssociations.companies = [];
-        }
-        if (!updatedAssociations.companies.includes(company.id)) {
-          updatedAssociations.companies.push(company.id);
-          await handleContactUpdate('associations', updatedAssociations);
-        }
-      }
+      // Update associations only; do not write legacy company fields
+      const updatedAssociations = { ...(contact?.associations || {}) } as any;
+      const current = Array.isArray(updatedAssociations.companies) ? updatedAssociations.companies : [];
+      const next = [...current.filter((c: any) => (typeof c === 'string' ? c : c?.id) !== company.id), company.id];
+      await handleContactUpdate('associations', { ...updatedAssociations, companies: next });
     } else {
       setCompanyLocations([]);
-      await handleContactUpdate('companyId', null);
-      await handleContactUpdate('companyName', '');
+      const updatedAssociations = { ...(contact?.associations || {}) } as any;
+      await handleContactUpdate('associations', { ...updatedAssociations, companies: [] });
     }
   };
 
@@ -530,11 +516,17 @@ const ContactDetails: React.FC = () => {
         entityType: 'contact',
         entityId: contactId,
         locationId,
-        companyId: selectedCompany?.id || contact?.companyId || '',
+        companyId: selectedCompany?.id || '',
         locationName: location?.name || null
       });
-      // Optimistically update local state
-      setContact(prev => prev ? { ...prev, locationId, locationName: location?.name || '' } : prev);
+      // Optimistically update associations.locations in local state
+      setContact(prev => {
+        if (!prev) return prev;
+        const assoc = { ...(prev.associations || {}) } as any;
+        const current = Array.isArray(assoc.locations) ? assoc.locations : [];
+        const next = [...current.filter((l: any) => (typeof l === 'string' ? l : l?.id) !== locationId), { id: locationId, name: location?.name || '' }];
+        return { ...prev, associations: { ...assoc, locations: next } } as any;
+      });
     } catch (err) {
       console.error('Error updating location association via function:', err);
       setError('Failed to update work location');
@@ -628,31 +620,11 @@ const ContactDetails: React.FC = () => {
     setFixingAssociations(true);
     try {
       const associations = { ...(contact.associations || {}) };
-      let fixedCount = 0;
+      const fixedCount = 0;
       
-      // Check if contact has companyId but no associations.companies
-      const hasCompanyId = contact.companyId && contact.companyId.trim() !== '';
-      const hasCompanyAssociations = associations.companies && associations.companies.length > 0;
+      // Migration helper removed: do not mirror legacy contact.companyId into associations
       
-      if (hasCompanyId && !hasCompanyAssociations) {
-        associations.companies = [...(associations.companies || [])];
-        if (!associations.companies.includes(contact.companyId)) {
-          associations.companies.push(contact.companyId);
-          fixedCount++;
-        }
-      }
-      
-      // Check if contact has locationId but no associations.locations
-      const hasLocationId = contact.locationId && contact.locationId.trim() !== '';
-      const hasLocationAssociations = associations.locations && associations.locations.length > 0;
-      
-      if (hasLocationId && !hasLocationAssociations) {
-        associations.locations = [...(associations.locations || [])];
-        if (!associations.locations.includes(contact.locationId)) {
-          associations.locations.push(contact.locationId);
-          fixedCount++;
-        }
-      }
+      // Migration-era mirroring from locationId to associations.locations removed
       
       if (fixedCount > 0) {
         // Update the contact document
@@ -767,13 +739,7 @@ const ContactDetails: React.FC = () => {
   };
 
   // Check if Fix Associations button should be shown
-  const shouldShowFixAssociationsButton = () => {
-    // Show if contact has a companyId but no company associations
-    const hasCompanyId = contact?.companyId && contact.companyId.trim() !== '';
-    const hasCompanyAssociations = contact?.associations?.companies && contact.associations.companies.length > 0;
-    
-    return hasCompanyId && !hasCompanyAssociations;
-  };
+  const shouldShowFixAssociationsButton = () => false;
 
   // Check if Find Contact Info button should be shown
   const shouldShowFindContactInfoButton = () => {

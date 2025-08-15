@@ -25,6 +25,8 @@ import {
   Tabs,
   Tab,
   TextField,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   Speed as SpeedIcon,
@@ -66,6 +68,7 @@ import {
 } from 'recharts';
 
 import { app , db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 
 
 interface AnalyticsData {
@@ -147,6 +150,14 @@ const AIAnalytics: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   
   const navigate = useNavigate();
+  const { tenantId } = useAuth();
+
+  // Batch enrichment controls
+  const [batchLimit, setBatchLimit] = useState<number>(100);
+  const [batchMode, setBatchMode] = useState<'full' | 'metadata'>('metadata');
+  const [batchForce, setBatchForce] = useState<boolean>(false);
+  const [runningBatch, setRunningBatch] = useState<boolean>(false);
+  const [enrichmentStats, setEnrichmentStats] = useState<{ companies: number; enriched: number; updatedLast7Days: number; avgLeadScore: number } | null>(null);
 
   const timeRanges: TimeRange[] = [
     { label: 'Last Hour', value: '1h', hours: 1 },
@@ -213,6 +224,7 @@ const AIAnalytics: React.FC = () => {
       setLoading(true);
       const functions = getFunctions(app);
       const getAnalytics = httpsCallable(functions, 'getAIAnalytics');
+      const getEnrichmentStats = httpsCallable(functions, 'getEnrichmentStats');
 
       const result = await getAnalytics({ 
         timeRange: timeRange.value,
@@ -225,12 +237,42 @@ const AIAnalytics: React.FC = () => {
       });
       console.log('Analytics result:', result);
       setAnalyticsData(result.data as AnalyticsData);
+
+      if (tenantId) {
+        const enr = await getEnrichmentStats({ tenantId });
+        const stats = (enr.data || {}) as any;
+        setEnrichmentStats({
+          companies: stats.companies || 0,
+          enriched: stats.enriched || 0,
+          updatedLast7Days: stats.updatedLast7Days || 0,
+          avgLeadScore: stats.avgLeadScore || 0,
+        });
+      }
     } catch (err: any) {
       const errorMessage = err?.message || err?.details || 'Failed to fetch analytics data';
       setError(`Analytics error: ${errorMessage}`);
       console.error('Analytics error:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const runBatchEnrichment = async () => {
+    if (!tenantId) {
+      setError('Missing tenant context');
+      return;
+    }
+    try {
+      setRunningBatch(true);
+      const functions = getFunctions(app);
+      const batch = httpsCallable(functions, 'enrichCompanyBatch');
+      const result = await batch({ tenantId, limit: batchLimit, mode: batchMode, force: batchForce });
+      const data = result.data as any;
+      setSuccess(`Queued ${data?.queued ?? 0} companies for ${batchMode} enrichment`);
+    } catch (err: any) {
+      setError(err?.message || 'Batch enrichment failed');
+    } finally {
+      setRunningBatch(false);
     }
   };
 
@@ -299,9 +341,71 @@ const AIAnalytics: React.FC = () => {
               >
                 Refresh Analytics
               </Button>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Batch Mode</InputLabel>
+                <Select
+                  label="Batch Mode"
+                  value={batchMode}
+                  onChange={(e) => setBatchMode(e.target.value as any)}
+                >
+                  <MenuItem value="metadata">Metadata</MenuItem>
+                  <MenuItem value="full">Full</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                label="Limit"
+                type="number"
+                size="small"
+                value={batchLimit}
+                onChange={(e) => setBatchLimit(parseInt(e.target.value || '0', 10))}
+                inputProps={{ min: 10, max: 500 }}
+                sx={{ width: 120 }}
+              />
+              <FormControlLabel control={<Switch checked={batchForce} onChange={(e) => setBatchForce(e.target.checked)} />} label="Force" />
+              <Button variant="outlined" onClick={runBatchEnrichment} disabled={runningBatch}>
+                {runningBatch ? 'Queuing…' : 'Run Batch'}
+              </Button>
             </Box>
           </Grid>
         </Grid>
+      </Paper>
+
+      {/* Enrichment Stats */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Typography variant="h6">Company Enrichment Summary</Typography>
+          <Button size="small" variant="outlined" onClick={fetchAnalytics}>Refresh</Button>
+        </Box>
+        {enrichmentStats ? (
+          <Grid container spacing={2}>
+            <Grid item xs={6} md={3}>
+              <Card><CardContent>
+                <Typography variant="h4">{enrichmentStats.companies}</Typography>
+                <Typography variant="caption" color="text.secondary">Total Companies</Typography>
+              </CardContent></Card>
+            </Grid>
+            <Grid item xs={6} md={3}>
+              <Card><CardContent>
+                <Typography variant="h4">{enrichmentStats.enriched}</Typography>
+                <Typography variant="caption" color="text.secondary">With AI Enrichment</Typography>
+              </CardContent></Card>
+            </Grid>
+            <Grid item xs={6} md={3}>
+              <Card><CardContent>
+                <Typography variant="h4">{enrichmentStats.updatedLast7Days}</Typography>
+                <Typography variant="caption" color="text.secondary">Updated (7 days)</Typography>
+              </CardContent></Card>
+            </Grid>
+            <Grid item xs={6} md={3}>
+              <Card><CardContent>
+                <Typography variant="h4">{enrichmentStats.avgLeadScore.toFixed(1)}</Typography>
+                <Typography variant="caption" color="text.secondary">Avg Lead Score</Typography>
+              </CardContent></Card>
+            </Grid>
+          </Grid>
+        ) : (
+          <Typography variant="body2" color="text.secondary">No enrichment stats available.</Typography>
+        )}
       </Paper>
 
       {/* Organizational Filtering */}

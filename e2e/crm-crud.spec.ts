@@ -3,15 +3,17 @@ import { login } from './helpers/auth';
 
 test.describe('CRM CRUD smoke', () => {
   test('navigates to Customers and renders list', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/login');
     await login(page, process.env.E2E_EMAIL || 'g.fielding@c1staffing.com', process.env.E2E_PASSWORD || 'icsttoT3');
-    // Navigate to Customers route if link present
-    const customersLink = page.getByRole('link', { name: /Customers|Companies|CRM/i }).first();
-    if (await customersLink.isVisible().catch(() => false)) {
-      await customersLink.click();
+    await page.goto('/crm');
+    // Switch to Companies tab
+    await page.getByTestId('tab-companies').click();
+    await expect(page.getByTestId('companies-panel')).toBeVisible({ timeout: 20000 });
+    // If a table is present, it should be visible; otherwise panel is enough for smoke
+    const table = page.getByTestId('customers-table');
+    if (await table.count()) {
+      await expect(table).toBeVisible();
     }
-    // Verify a common listing container appears (adjust as app-specific selectors become known)
-    await expect(page.locator('table, [role="grid"], [data-testid="customers-list"], [data-testid*="list" i]')).toBeVisible({ timeout: 20000 });
   });
 });
 

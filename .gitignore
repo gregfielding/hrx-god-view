@@ -29,3 +29,5 @@ firestore-debug.log
 pglite-debug.log
 functions/firebase-debug.log
 functions/pglite-debug.log
+
+functions/.env*

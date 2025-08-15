@@ -27,7 +27,13 @@ const AIDashboard: React.FC = () => {
           </Paper>
         </Grid>
         <Grid item xs={12} md={9} lg={9} sx={{ height: '100%' }}>
-          <AIAssistantChat tenantId={tenantId} userId={user.uid} threadId={threadId} onThreadCreated={setThreadId} />
+          <AIAssistantChat
+            tenantId={tenantId}
+            userId={user.uid}
+            threadId={threadId}
+            onThreadCreated={setThreadId}
+            showThreadListPanel={false}
+          />
         </Grid>
       </Grid>
     </Box>

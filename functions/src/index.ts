@@ -46,6 +46,11 @@ import { updateCompanyPipelineTotals, onDealUpdated } from './updateCompanyPipel
 import { generateDealAISummary } from './generateDealAISummary';
 import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
 import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
+import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
+import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
+import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
+import { logContactEnhanced } from './activityLogCallables';
+import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -74,6 +79,20 @@ export {
   refreshCalendarWatch,
   getCalendarWebhookStatus
 };
+
+// Export association snapshot fan-out triggers
+export {
+  firestoreCompanySnapshotFanout,
+  firestoreContactSnapshotFanout,
+  firestoreLocationSnapshotFanout,
+  firestoreSalespersonSnapshotFanout
+};
+
+// Associations telemetry and rebuilders
+export { associationsIntegrityReport, associationsIntegrityNightly };
+export { rebuildDealAssociations, rebuildEntityReverseIndex };
+export { logContactEnhanced };
+export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors
@@ -123,7 +142,7 @@ export {
 // Export deal association functions
 export {
   associateDealsWithSalespeople,
-  createExplicitAssociations
+  createExplicitAssociations,
 };
 
 // Get SendGrid API key from environment variables
@@ -10273,6 +10292,7 @@ export { scrapeIndeedJobs };
 
 // Company Data Functions
 export { getCompanyLocations };
+// (deduped) associationsIntegrityReport export is declared above
 
 // Location Association Functions
 export { getLocationAssociations } from './getLocationAssociations';
@@ -10324,6 +10344,11 @@ export { enhancedChatWithGPT } from './enhancedMainChat';
 export { upsertCodeChunks, searchCodeChunks, upsertCodeChunksHttp } from './codeAware';
 export { metricsIngest } from './telemetry/metrics';
 export { app_ai_generateResponse } from './appAi';
+// Apollo scaffolding will use utils; callables/triggers to be added next iteration
+export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRecommendedContacts, apolloPing, apolloPingHttp } from './apolloIntegration';
+
+// Active Salespeople (Company)
+export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes } from './activeSalespeople';
 
 // Auto Activity Logger
 export { 
@@ -10338,7 +10363,6 @@ export {
   logNoteActivity,
   logContactCreated,
   logContactUpdated,
-  logContactEnhanced,
   logContactEmailFound,
   logContactPhoneFound,
   logDealCreated,

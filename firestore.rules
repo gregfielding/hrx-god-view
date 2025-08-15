@@ -244,6 +244,11 @@ service cloud.firestore {
         allow read: if isAuthenticated();
         // Unified Association Service access
         allow read: if isAuthenticated() && request.auth.uid != null;
+
+        // Prevent direct writes to associations arrays; must go through callable
+        allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess() &&
+          !(request.resource.data.diff(resource.data).changedKeys().hasAny(['associations']) ||
+            request.resource.data.keys().hasAny(['associations']));
       }
       
       match /crm_companies/{companyId} {
@@ -256,6 +261,11 @@ service cloud.firestore {
         allow read: if isAuthenticated();
         // Unified Association Service access
         allow read: if isAuthenticated() && request.auth.uid != null;
+
+        // Prevent direct writes to associations arrays; must go through callable
+        allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess() &&
+          !(request.resource.data.diff(resource.data).changedKeys().hasAny(['associations']) ||
+            request.resource.data.keys().hasAny(['associations']));
         
         // --- COMPANY LOCATIONS ---
         match /locations/{locationId} {
@@ -285,8 +295,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        // Allow updating any fields for authenticated users with CRM access
-        allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        // Allow updating fields except associations directly (enforce callable for associations)
+        allow update: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess() &&
+          !(request.resource.data.diff(resource.data).changedKeys().hasAny(['associations']) ||
+            request.resource.data.keys().hasAny(['associations']));
         allow read: if isAuthenticated() && isHighSecurityLevel(); // Admin override
         // Temporary: Allow all authenticated users for debugging
         allow read: if isAuthenticated();
@@ -313,7 +325,11 @@ service cloud.firestore {
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
         allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
-        allow update: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
+        // Prevent direct writes to associations arrays; must go through callable if introduced
+        allow update: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId)) && (
+          !(request.resource.data.diff(resource.data).changedKeys().hasAny(['associations']) ||
+            request.resource.data.keys().hasAny(['associations']))
+        );
         allow delete: if isAuthenticated() && (resource.data.assignedTo == request.auth.uid || isTenantAdmin(tenantId));
         allow read, write, create, update, delete: if isAuthenticated() && isHighSecurityLevel(); // Admin override
       }

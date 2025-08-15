@@ -16,8 +16,7 @@ import {
   Alert,
   MenuItem,
   Chip,
-  Select,
-  OutlinedInput,
+  Autocomplete,
   FormControl,
   InputLabel,
 } from '@mui/material';
@@ -308,48 +307,25 @@ const ContactsTab: React.FC<ContactsTabProps> = ({ tenantId, showForm: showFormP
                 ) : locations.length === 0 ? (
                   <TextField label="Location" fullWidth disabled value="No locations available" />
                 ) : (
-                  <FormControl fullWidth required>
-                    <InputLabel id="location-label">Location</InputLabel>
-                    <Select
-                      labelId="location-label"
-                      multiple
-                      value={form.locationIds}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        handleChange('locationIds', Array.isArray(value) ? value : [value]);
-                      }}
-                      input={<OutlinedInput label="Location" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {(selected as string[]).map((id) => {
-                            const loc = locations.find((l: any) => l.id === id);
-                            return (
-                              <Chip
-                                key={id}
-                                label={loc ? loc.nickname : id}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onDelete={() => {
-                                  const ids = Array.isArray(form.locationIds)
-                                    ? form.locationIds
-                                    : [form.locationIds];
-                                  handleChange(
-                                    'locationIds',
-                                    ids.filter((lid: string) => lid !== id),
-                                  );
-                                }}
-                              />
-                            );
-                          })}
-                        </Box>
-                      )}
-                    >
-                      {locations.map((loc: any) => (
-                        <MenuItem key={loc.id} value={loc.id}>
-                          {loc.nickname}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                  <Autocomplete
+                    multiple
+                    options={locations as any[]}
+                    getOptionLabel={(loc: any) => loc?.nickname || ''}
+                    value={(locations || []).filter((l: any) => (Array.isArray(form.locationIds) ? form.locationIds : [form.locationIds]).includes(l.id)) as any[]}
+                    onChange={(_, newValue: any[]) => {
+                      handleChange('locationIds', newValue.map((l: any) => l.id));
+                    }}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option: any, index: number) => (
+                        <Chip {...getTagProps({ index })} key={option.id} label={option.nickname || option.id} size="small" />
+                      ))
+                    }
+                    renderInput={(params) => (
+                      <TextField {...params} label="Location" fullWidth required />
+                    )}
+                    disablePortal
+                    fullWidth
+                  />
                 )}
               </Grid>
               <Grid item xs={12} sm={4}>

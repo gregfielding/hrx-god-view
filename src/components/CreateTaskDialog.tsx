@@ -19,7 +19,8 @@ import {
   Switch,
   Alert,
   CircularProgress,
-  Chip
+  Chip,
+  Autocomplete
 } from '@mui/material';
 import {
   Assignment as AssignmentIcon,
@@ -40,16 +41,17 @@ interface CreateTaskDialogProps {
   currentUserId?: string;
 }
 
-const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
-  open,
-  onClose,
-  onSubmit,
-  prefilledData,
-  loading = false,
-  salespeople = [],
-  contacts = [],
-  currentUserId = ''
-}) => {
+  const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
+    open,
+    onClose,
+    onSubmit,
+    prefilledData,
+    loading = false,
+    salespeople = [],
+    contacts = [],
+    currentUserId = ''
+  }) => {
+          // REMOVED: Excessive logging causing re-renders
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -61,7 +63,7 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
     duration: undefined as number | undefined,
     scheduledDate: new Date().toISOString().split('T')[0],
     dueDate: '',
-    assignedTo: currentUserId,
+    assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 0,
     category: 'general',
     quotaCategory: 'business_generating',
@@ -98,10 +100,15 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
         ...prefilledData,
         classification: prefilledData.classification || 'todo',
         startTime: prefilledData.startTime || (prefilledData.classification === 'appointment' ? new Date().toISOString().slice(0, 16) : ''),
-        duration: prefilledData.classification === 'appointment' ? prefilledData.duration || undefined : undefined
+        duration: prefilledData.classification === 'appointment' ? prefilledData.duration || undefined : undefined,
+        // Ensure associations are properly merged
+        associations: {
+          companies: prefilledData.associations?.companies || [],
+          contacts: prefilledData.associations?.contacts || [],
+          deals: prefilledData.associations?.deals || [],
+          salespeople: prefilledData.associations?.salespeople || []
+        }
       });
-      
-
     }
   }, [prefilledData]);
 
@@ -233,7 +240,7 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
       duration: undefined,
       scheduledDate: new Date().toISOString().split('T')[0],
       dueDate: '',
-      assignedTo: currentUserId,
+      assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 0,
       category: 'general',
       quotaCategory: 'business_generating',
@@ -282,41 +289,37 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
       </DialogTitle>
       
       <DialogContent>
-        <Box sx={{ mb: 3 }}>
-          {/* Task Classification Toggle */}
-          <Typography variant="subtitle1" sx={{ mb: 2 }}>
-            Task Type
-          </Typography>
-          <ToggleButtonGroup
-            value={formData.classification}
-            exclusive
-            onChange={(_, value) => value && handleInputChange('classification', value)}
-            sx={{ mb: 2 }}
-          >
-            <ToggleButton value="todo">
-              <CheckCircleIcon sx={{ mr: 1 }} />
-              To-Do Item
-            </ToggleButton>
-            <ToggleButton value="appointment">
-              <ScheduleIcon sx={{ mr: 1 }} />
-              Appointment
-            </ToggleButton>
-          </ToggleButtonGroup>
-          
-          {formData.classification === 'appointment' && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Appointments will sync to Google Calendar
-            </Alert>
-          )}
-          
-          {formData.classification === 'todo' && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              To-do items will sync to Google Tasks
-            </Alert>
-          )}
-        </Box>
-
         <Grid container spacing={2}>
+          {/* Task Classification */}
+          <Grid item xs={12}>
+            <ToggleButtonGroup
+              value={formData.classification}
+              exclusive
+              onChange={(_, value) => value && handleInputChange('classification', value)}
+              sx={{ mb: 2 }}
+            >
+              <ToggleButton value="todo">
+                <CheckCircleIcon sx={{ mr: 1 }} />
+                To-Do Item
+              </ToggleButton>
+              <ToggleButton value="appointment">
+                <ScheduleIcon sx={{ mr: 1 }} />
+                Appointment
+              </ToggleButton>
+            </ToggleButtonGroup>
+            
+            {formData.classification === 'appointment' && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Appointments will sync to Google Calendar
+              </Alert>
+            )}
+            
+            {formData.classification === 'todo' && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                To-do items will sync to Google Tasks
+              </Alert>
+            )}
+          </Grid>
           {/* Basic Information */}
           <Grid item xs={12}>
             <TextField
@@ -458,63 +461,50 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
           </Grid>
 
           {/* Company Contacts */}
-          {contacts.length > 0 && (
-            <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Company Contacts</InputLabel>
-                <Select
-                  multiple
-                  value={formData.associations?.contacts || []}
-                  onChange={(e) => handleAssociationChange('contacts', e.target.value)}
-                  label="Company Contacts"
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((contactId: string) => {
-                        const contact = contacts.find(c => c.id === contactId);
-                        return (
-                          <Chip 
-                            key={contactId} 
-                            label={contact?.fullName || contact?.name || contactId} 
-                            size="small"
-                            onDelete={() => {
-                              const newContacts = (formData.associations?.contacts || []).filter(id => id !== contactId);
-                              handleAssociationChange('contacts', newContacts);
-                            }}
-                          />
-                        );
-                      })}
-                    </Box>
-                  )}
-                >
-                  {contacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName || contact.name || contact.email}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-          )}
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              options={contacts as any[]}
+              getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
+              value={(contacts || []).filter((c: any) => (formData.associations?.contacts || []).includes(c.id)) as any[]}
+              onChange={(_, newValue: any[]) => {
+                handleAssociationChange('contacts', newValue.map(v => v.id));
+              }}
+              renderTags={(value, getTagProps) =>
+                value.map((option: any, index: number) => (
+                  <Chip {...getTagProps({ index })} key={option.id} label={option.fullName || option.name || option.email || option.id} size="small" />
+                ))
+              }
+              renderInput={(params) => (
+                <TextField {...params} label="Company Contacts" placeholder="Select contacts" />
+              )}
+              disablePortal
+              fullWidth
+            />
+          </Grid>
 
-          {/* Assigned To */}
-          {salespeople.length > 0 && (
-            <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Assigned To</InputLabel>
-                <Select
-                  value={formData.assignedTo}
-                  onChange={(e) => handleInputChange('assignedTo', e.target.value)}
-                  label="Assigned To"
-                >
-                  {salespeople.map((salesperson) => (
-                    <MenuItem key={salesperson.id} value={salesperson.id}>
-                      {salesperson.fullName || salesperson.name || salesperson.displayName || salesperson.email}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-          )}
+          {/* Salespeople */}
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              options={salespeople as any[]}
+              getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
+              value={(salespeople || []).filter((s: any) => (formData.associations?.salespeople || []).includes(s.id)) as any[]}
+              onChange={(_, newValue: any[]) => {
+                handleAssociationChange('salespeople', newValue.map(v => v.id));
+              }}
+              renderTags={(value, getTagProps) =>
+                value.map((option: any, index: number) => (
+                  <Chip {...getTagProps({ index })} key={option.id} label={option.displayName || option.fullName || option.name || option.email || option.id} size="small" />
+                ))
+              }
+              renderInput={(params) => (
+                <TextField {...params} label="Salespeople" placeholder="Select salespeople" />
+              )}
+              disablePortal
+              fullWidth
+            />
+          </Grid>
 
           {/* Task Type Specific Fields */}
           {formData.type === 'scheduled_meeting_virtual' ? (
@@ -559,10 +549,10 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
               </Grid>
               <Grid item xs={12}>
                 <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
-                  <Typography variant="body2" color="info.contrastText" sx={{ fontWeight: 500, mb: 1 }}>
+                  <Typography variant="body2" color="info.main" sx={{ fontWeight: 500, mb: 1 }}>
                     🎥 Google Meet Integration
                   </Typography>
-                  <Typography variant="caption" color="info.contrastText">
+                  <Typography variant="caption" color="info.main">
                     A Google Meet link will be automatically generated when this task is created. 
                     Attendees will receive calendar invites with the meeting link.
                   </Typography>
@@ -667,4 +657,4 @@ const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
   );
 };
 
-export default CreateTaskDialog; 
+export default React.memo(CreateTaskDialog); 

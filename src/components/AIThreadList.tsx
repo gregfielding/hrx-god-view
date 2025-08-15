@@ -72,17 +72,9 @@ const AIThreadList: React.FC<AIThreadListProps> = ({ tenantId, userId, selectedT
         <Button
           size="small"
           startIcon={<AddIcon />}
-          onClick={async () => {
-            try {
-              const functions = getFunctions();
-              const startAIThread = httpsCallable(functions, 'startAIThread');
-              const res = await startAIThread({ tenantId });
-              const id = (res.data as any)?.threadId as string;
-              onSelect(id);
-            } catch (e) {
-              console.error('Failed to create thread:', e);
-              onCreate();
-            }
+          onClick={() => {
+            // Delegate new chat creation to parent so it can finalize current ephemeral session
+            onCreate();
           }}
           variant="outlined"
         >

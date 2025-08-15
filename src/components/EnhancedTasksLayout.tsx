@@ -39,8 +39,7 @@ import {
   Directions as DirectionsIcon,
   VideoCall as VideoCallIcon,
   Person as PersonIcon,
-  Business as BusinessIcon,
-  List as ListIcon
+  Business as BusinessIcon
 } from '@mui/icons-material';
 
 interface Task {
@@ -50,11 +49,11 @@ interface Task {
   status: string;
   priority: string;
   type: string;
-  classification?: string; // Add classification field
+  classification?: string;
   startTime?: string;
   duration?: number;
   scheduledDate?: string;
-  dueDate?: string; // Add dueDate field
+  dueDate?: string;
   aiSuggested?: boolean;
   completedAt?: string;
   assignedTo?: string;
@@ -64,7 +63,6 @@ interface Task {
     companies?: (string | any)[];
     salespeople?: (string | any)[];
   };
-  // Google Meet integration
   googleMeetLink?: string;
   googleMeetConferenceId?: string;
   meetingAttendees?: Array<{
@@ -72,7 +70,6 @@ interface Task {
     displayName?: string;
     responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
   }>;
-  // Task-type-specific fields
   agenda?: string;
   goals?: string[];
   researchTopics?: string[];
@@ -95,6 +92,7 @@ interface EnhancedTasksLayoutProps {
   deal?: any;
   associatedContacts?: any[];
   associatedSalespeople?: any[];
+  showOnlyTodos?: boolean;
 }
 
 const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
@@ -110,33 +108,30 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
   getTaskStatusDisplay,
   deal,
   associatedContacts = [],
-  associatedSalespeople = []
+  associatedSalespeople = [],
+  showOnlyTodos = false
 }) => {
   const [hoveredTask, setHoveredTask] = useState<string | null>(null);
   const [expandedTodos, setExpandedTodos] = useState<Set<string>>(new Set());
-  const [showCompleted, setShowCompleted] = useState(false); // Collapsed by default
-  const [activeFilter, setActiveFilter] = useState<'open' | 'completed'>('open');
 
-                // Separate tasks by classification and filter
-              const allTodoTasks = tasks.filter(task => task.classification === 'todo');
-              const appointmentTasks = tasks.filter(task => task.classification === 'appointment' && task.status !== 'completed');
+  const allTodoTasks = tasks.filter(task => task.classification === 'todo');
+  const appointmentTasks = tasks.filter(task => task.classification === 'appointment' && task.status !== 'completed');
   
-  // Filter tasks based on active filter
-  const todoTasks = allTodoTasks.filter(task => {
-    if (activeFilter === 'open') {
-      return task.status !== 'completed';
-    } else if (activeFilter === 'completed') {
-      return task.status === 'completed';
-    }
-    return true;
-                }).sort((a, b) => {
-                // Sort by date in descending order (newest first)
-                const dateA = (a.classification === 'todo' ? a.dueDate : a.scheduledDate) ? new Date((a.classification === 'todo' ? a.dueDate : a.scheduledDate) + 'T00:00:00').getTime() : 0;
-                const dateB = (b.classification === 'todo' ? b.dueDate : b.scheduledDate) ? new Date((b.classification === 'todo' ? b.dueDate : b.scheduledDate) + 'T00:00:00').getTime() : 0;
-                return dateB - dateA;
-              });
+  const openTasks = allTodoTasks
+    .filter(task => task.status !== 'completed')
+    .sort((a, b) => {
+      const dateA = (a.classification === 'todo' ? a.dueDate : a.scheduledDate) ? new Date((a.classification === 'todo' ? a.dueDate : a.scheduledDate) + 'T00:00:00').getTime() : 0;
+      const dateB = (b.classification === 'todo' ? b.dueDate : b.scheduledDate) ? new Date((b.classification === 'todo' ? b.dueDate : b.scheduledDate) + 'T00:00:00').getTime() : 0;
+      return dateB - dateA;
+    });
   
-  const completedTasks = allTodoTasks.filter(task => task.status === 'completed');
+  const completedTasks = allTodoTasks
+    .filter(task => task.status === 'completed')
+    .sort((a, b) => {
+      const dateA = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+      const dateB = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+      return dateB - dateA;
+    });
 
   const handleTodoHover = (taskId: string, isHovering: boolean) => {
     setHoveredTask(isHovering ? taskId : null);
@@ -160,15 +155,6 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
     }
   };
 
-  const getStatusChipColor = (status: string): 'error' | 'success' | 'default' => {
-    switch (status.toLowerCase()) {
-      case 'overdue': return 'error';
-      case 'completed': return 'success';
-      case 'upcoming': return 'default';
-      default: return 'default';
-    }
-  };
-
   const getStatusChipBackground = (status: string) => {
     switch (status.toLowerCase()) {
       case 'overdue': return 'error.main';
@@ -177,54 +163,10 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
     }
   };
 
-  const getStatusChipVariant = (status: string): 'filled' | 'outlined' => {
-    switch (status.toLowerCase()) {
-      case 'overdue': return 'filled';
-      case 'completed': return 'filled';
-      default: return 'filled';
-    }
-  };
-
-  const getRelativeTime = (startTime: string) => {
-    const now = new Date();
-    const taskTime = new Date(startTime);
-    const diffMs = taskTime.getTime() - now.getTime();
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-    if (diffMs < 0) {
-      return 'Past';
-    } else if (diffHours === 0) {
-      return `In ${diffMinutes}m`;
-    } else if (diffHours === 1) {
-      return `In 1h ${diffMinutes}m`;
-    } else {
-      return `In ${diffHours}h ${diffMinutes}m`;
-    }
-  };
-
-  const isTaskApproaching = (startTime: string) => {
-    const now = new Date();
-    const taskTime = new Date(startTime);
-    const diffMs = taskTime.getTime() - now.getTime();
-    const diffHours = diffMs / (1000 * 60 * 60);
-    return diffHours >= 0 && diffHours <= 2; // Within 2 hours
-  };
-
   const isTaskOverdue = (startTime: string) => {
     const now = new Date();
     const taskTime = new Date(startTime);
     return taskTime < now;
-  };
-
-  const formatTaskDate = (dateString: string) => {
-    if (!dateString) return '';
-    // Ensure the date is interpreted as local time by appending a time component
-    const date = new Date(dateString + 'T00:00:00');
-    return date.toLocaleDateString('en-US', { 
-      month: 'numeric', 
-      day: 'numeric' 
-    });
   };
 
   const formatAppointmentDate = (startTime: string) => {
@@ -233,14 +175,12 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
     const now = new Date();
     const isToday = date.toDateString() === now.toDateString();
     
-    // Format: "Tue, Aug 12"
     const dayFormat = date.toLocaleDateString('en-US', {
       weekday: 'short',
       month: 'short',
       day: 'numeric'
     });
     
-    // Calculate relative time
     const diffTime = date.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
@@ -262,36 +202,23 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
     const contacts = task.associations?.contacts || [];
     const salespeople = task.associations?.salespeople || [];
     
-    console.log('🔍 getAssociatedPeopleDisplay called for task:', task.id);
-    console.log('  - Task contacts:', contacts);
-    console.log('  - Task salespeople:', salespeople);
-    console.log('  - Available associatedContacts:', associatedContacts.length);
-    console.log('  - Available associatedSalespeople:', associatedSalespeople.length);
-    
-    // Handle both string IDs and objects
     const contactNames = contacts.map(contact => {
       if (typeof contact === 'string') {
         const foundContact = associatedContacts.find(c => c.id === contact);
-        console.log(`  - Looking for contact ${contact}, found:`, foundContact);
-        // Only return name if we found the contact, otherwise return null to filter out
         return foundContact ? (foundContact.fullName || foundContact.name) : null;
       }
       return contact.name || contact.fullName || contact.id;
-    }).filter(Boolean); // Remove null values
+    }).filter(Boolean);
     
     const salespeopleNames = salespeople.map(salesperson => {
       if (typeof salesperson === 'string') {
         const foundSalesperson = associatedSalespeople.find(s => s.id === salesperson);
-        console.log(`  - Looking for salesperson ${salesperson}, found:`, foundSalesperson);
-        // Only return name if we found the salesperson, otherwise return null to filter out
         return foundSalesperson ? (foundSalesperson.fullName || foundSalesperson.name || foundSalesperson.displayName) : null;
       }
       return salesperson.name || salesperson.fullName || salesperson.displayName || salesperson.id;
-    }).filter(Boolean); // Remove null values
+    }).filter(Boolean);
     
     const allPeople = [...contactNames, ...salespeopleNames];
-    
-    console.log('  - Final people list:', allPeople);
     
     if (allPeople.length === 0) return '';
     
@@ -299,7 +226,6 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
       return allPeople.join(', ');
     }
     
-    // Show first 2-3 people and then count
     const displayCount = Math.min(3, allPeople.length);
     const displayed = allPeople.slice(0, displayCount).join(', ');
     const remaining = allPeople.length - displayCount;
@@ -307,500 +233,34 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
     return `${displayed} +${remaining} more`;
   };
 
-  const groupCompletedTasksByDate = (tasks: Task[]) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const thisWeekStart = new Date(today.getTime() - (today.getDay() * 24 * 60 * 60 * 1000));
-    
-    const groups = {
-      today: [] as Task[],
-      thisWeek: [] as Task[],
-      earlier: [] as Task[]
-    };
-    
-    tasks.forEach(task => {
-      if (!task.completedAt) {
-        groups.earlier.push(task);
-        return;
-      }
-      
-      const completedDate = new Date(task.completedAt);
-      const completedDay = new Date(completedDate.getFullYear(), completedDate.getMonth(), completedDate.getDate());
-      
-      if (completedDay.getTime() === today.getTime()) {
-        groups.today.push(task);
-      } else if (completedDay >= thisWeekStart) {
-        groups.thisWeek.push(task);
-      } else {
-        groups.earlier.push(task);
-      }
-    });
-    
-    return groups;
-  };
-
-    return (
+  return (
     <Box sx={{ 
       display: 'flex', 
       gap: 3, 
-      height: 'calc(100vh - 300px)',
       flexDirection: { xs: 'column', md: 'row' }
     }}>
-      {/* Left Column - Todo Tasks (30%) */}
       <Box sx={{
-        width: { xs: '100%', md: '30%' },
+        width: { xs: '100%', md: showOnlyTodos ? '100%' : '30%' },
         display: 'flex',
         flexDirection: 'column',
         position: 'relative'
       }}>
-        {/* Header with Filters */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ListIcon sx={{ color: 'primary.main', fontSize: '1.2rem' }} />
-            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-              To-Dos
-            </Typography>
-            {todoTasks.length > 0 && (
-              <Chip
-                label={todoTasks.length}
-                size="small"
-                variant="outlined"
-                sx={{ fontSize: '0.75rem', height: '20px' }}
-              />
-            )}
-          </Box>
-          <Button
-            size="small"
-            onClick={onCreateTask}
-            sx={{ minWidth: 'auto' }}
-          >
-            + Todo
-          </Button>
-        </Box>
 
-        {/* Filter Pills */}
-        <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-          {[
-            { key: 'open', label: 'Open' },
-            { key: 'completed', label: 'Completed' }
-          ].map((filter) => (
-            <Chip
-              key={filter.key}
-              label={filter.label}
-              size="small"
-              variant={activeFilter === filter.key ? 'filled' : 'outlined'}
-              onClick={() => setActiveFilter(filter.key as any)}
-              sx={{ fontSize: '0.75rem' }}
-            />
-          ))}
-        </Box>
 
-        {/* Todo Tasks List - Compact Dense Style */}
         <Box sx={{
-          flex: 1,
-          overflowY: 'auto'
+          flex: 1
         }}>
-          {todoTasks.length === 0 ? (
+          {(openTasks.length + completedTasks.length) === 0 ? (
             <Card sx={{ p: 3, textAlign: 'center', borderRadius: 2 }}>
               <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
                 <Typography variant="h6" color="text.secondary" sx={{ fontSize: '2rem' }}>
                   🎉
                 </Typography>
                 <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
-                  {activeFilter === 'open' ? 'All caught up!' : 'No completed tasks yet'}
+                  All caught up!
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {activeFilter === 'open' ? 'No tasks pending.' : 'Complete some tasks to see them here.'}
-                </Typography>
-                {activeFilter === 'open' && (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<AddIcon />}
-                    onClick={onCreateTask}
-                    sx={{ mt: 1 }}
-                  >
-                    Add Task
-                  </Button>
-                )}
-              </Box>
-            </Card>
-          ) : (
-            <List sx={{ p: 0 }}>
-              {todoTasks.map((task) => (
-                <ListItemButton
-                  key={task.id}
-                  dense
-                  onClick={() => onTaskClick(task)}
-                  onMouseEnter={() => setHoveredTask(task.id)}
-                  onMouseLeave={() => setHoveredTask(null)}
-                  sx={{
-                    borderRadius: 2,
-                    mb: 0.5,
-                    boxShadow: 1,
-                    py: 0.5, // Tightened vertical padding
-                    px: 1,
-                    '&:hover': {
-                      boxShadow: 3,
-                      transform: 'translateY(-1px)',
-                      backgroundColor: 'action.hover'
-                    },
-                    transition: 'all 0.2s ease-in-out'
-                  }}
-                >
-                  {/* Priority indicator bar - 2px */}
-                  <Box
-                    sx={{
-                      width: 2,
-                      bgcolor: getPriorityColor(task.priority),
-                      borderRadius: 1,
-                      mr: 0.5, // Reduced margin
-                      height: '100%'
-                    }}
-                  />
-                  
-                  {/* Checkbox with tooltip */}
-                  <Tooltip title={task.status === 'completed' ? 'Undo' : 'Mark Complete'}>
-                    <Box onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        size="small"
-                        checked={task.status === 'completed'}
-                        onChange={(e) => {
-                          e.stopPropagation();
-                          onQuickComplete(task.id);
-                        }}
-                        sx={{
-                          color: 'grey.400',
-                          '&:hover': {
-                            color: task.status === 'completed' ? 'warning.main' : 'success.main'
-                          },
-                          '&.Mui-checked': {
-                            color: 'success.main'
-                          }
-                        }}
-                      />
-                    </Box>
-                  </Tooltip>
-                  
-                  {/* Task Content - Compact Layout */}
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    {/* Title and Chips Row */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Typography
-                        noWrap
-                        sx={{
-                          fontWeight: 600,
-                          fontSize: '0.9rem',
-                          color: task.status === 'completed' ? 'text.disabled' : 'text.primary',
-                          textDecoration: task.status === 'completed' ? 'line-through' : 'none',
-                          flex: 1
-                        }}
-                      >
-                        {task.title}
-                      </Typography>
-                      
-                      {/* Status and Priority Chips - Inline with title */}
-                      <Stack direction="row" spacing={0.5}>
-                        <Chip
-                          label={getTaskStatusDisplay(task)}
-                          size="small"
-                          variant="filled"
-                          sx={{ 
-                            fontSize: '0.75rem', 
-                            height: '18px',
-                            bgcolor: getStatusChipBackground(task.status),
-                            color: task.status.toLowerCase() === 'overdue' ? 'white' : 'text.primary'
-                          }}
-                        />
-                        <Chip
-                          label={task.priority}
-                          size="small"
-                          variant="outlined"
-                          sx={{
-                            fontSize: '0.75rem',
-                            height: '18px',
-                            borderColor: getPriorityColor(task.priority),
-                            color: getPriorityColor(task.priority)
-                          }}
-                        />
-                      </Stack>
-                    </Box>
-                    
-                    {/* Description and metadata on hover - Only show if there's content */}
-                    <Collapse in={hoveredTask === task.id && (!!task.description || !!task.assignedToName || ((task.associations?.contacts && task.associations.contacts.length > 0) || (task.associations?.salespeople && task.associations.salespeople.length > 0)))} timeout={200}>
-                      <Box sx={{ mt: 0.5, pt: 0.5, borderTop: '1px solid', borderColor: 'divider' }}>
-                        {/* Description */}
-                        {task.description && (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{
-                              display: 'block',
-                              lineHeight: 1.4,
-                              mb: 0.5
-                            }}
-                          >
-                            {task.description}
-                          </Typography>
-                        )}
-                        
-                        {/* Assigned Person */}
-                        {task.assignedToName && (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-                            <PersonIcon sx={{ fontSize: '0.7rem', color: 'text.secondary' }} />
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontSize: '0.7rem' }}
-                            >
-                              {task.assignedToName}
-                            </Typography>
-                          </Box>
-                        )}
-
-                        {/* Associated People */}
-                        {((task.associations?.contacts && task.associations.contacts.length > 0) || 
-                          (task.associations?.salespeople && task.associations.salespeople.length > 0)) && (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <BusinessIcon sx={{ fontSize: '0.7rem', color: 'text.secondary' }} />
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontSize: '0.7rem' }}
-                            >
-                              {getAssociatedPeopleDisplay(task)}
-                            </Typography>
-                          </Box>
-                        )}
-                      </Box>
-                    </Collapse>
-                  </Box>
-                  
-                  {/* Kebab menu on hover */}
-                  <Fade in={hoveredTask === task.id}>
-                    <IconButton
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEditTask(task);
-                      }}
-                      sx={{ color: 'primary.main' }}
-                    >
-                      <MoreVertIcon fontSize="small" />
-                    </IconButton>
-                  </Fade>
-                </ListItemButton>
-              ))}
-            </List>
-          )}
-        </Box>
-
-        {/* Completed Tasks Accordion - Only show when not in completed filter */}
-        {activeFilter !== 'completed' && completedTasks.length > 0 && (
-          <Accordion
-            disableGutters
-            expanded={showCompleted}
-            onChange={() => setShowCompleted(!showCompleted)}
-            sx={{
-              boxShadow: 0,
-              bgcolor: 'transparent',
-              '&:before': { display: 'none' }
-            }}
-          >
-            <AccordionSummary
-              sx={{
-                minHeight: 'auto',
-                py: 1,
-                '& .MuiAccordionSummary-content': {
-                  margin: 0
-                }
-              }}
-            >
-              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                ✔ Completed ({completedTasks.length})
-              </Typography>
-            </AccordionSummary>
-            <AccordionDetails sx={{ p: 0 }}>
-              {(() => {
-                const groupedTasks = groupCompletedTasksByDate(completedTasks);
-                return (
-                  <Box sx={{ p: 0 }}>
-                    {groupedTasks.today.length > 0 && (
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, fontWeight: 500 }}>
-                          Today
-                        </Typography>
-                        <List sx={{ p: 0 }}>
-                          {groupedTasks.today.map((task) => (
-                            <ListItemButton
-                              key={task.id}
-                              dense
-                              disabled
-                              sx={{
-                                borderRadius: 1,
-                                mb: 0.5,
-                                opacity: 0.7,
-                                bgcolor: 'grey.50',
-                                '&:hover': {
-                                  bgcolor: 'grey.100'
-                                }
-                              }}
-                            >
-                              <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  textDecoration: 'line-through',
-                                  color: 'text.disabled',
-                                  fontSize: '0.85rem'
-                                }}
-                              >
-                                {task.title}
-                              </Typography>
-                            </ListItemButton>
-                          ))}
-                        </List>
-                      </Box>
-                    )}
-                    
-                    {groupedTasks.thisWeek.length > 0 && (
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, fontWeight: 500 }}>
-                          This Week
-                        </Typography>
-                        <List sx={{ p: 0 }}>
-                          {groupedTasks.thisWeek.map((task) => (
-                            <ListItemButton
-                              key={task.id}
-                              dense
-                              disabled
-                              sx={{
-                                borderRadius: 1,
-                                mb: 0.5,
-                                opacity: 0.6,
-                                bgcolor: 'grey.50',
-                                '&:hover': {
-                                  bgcolor: 'grey.100'
-                                }
-                              }}
-                            >
-                              <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  textDecoration: 'line-through',
-                                  color: 'text.disabled',
-                                  fontSize: '0.85rem'
-                                }}
-                              >
-                                {task.title}
-                              </Typography>
-                            </ListItemButton>
-                          ))}
-                        </List>
-                      </Box>
-                    )}
-                    
-                    {groupedTasks.earlier.length > 0 && (
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, fontWeight: 500 }}>
-                          Earlier
-                        </Typography>
-                        <List sx={{ p: 0 }}>
-                          {groupedTasks.earlier.slice(0, 5).map((task) => (
-                            <ListItemButton
-                              key={task.id}
-                              dense
-                              disabled
-                              sx={{
-                                borderRadius: 1,
-                                mb: 0.5,
-                                opacity: 0.5,
-                                bgcolor: 'grey.50',
-                                '&:hover': {
-                                  bgcolor: 'grey.100'
-                                }
-                              }}
-                            >
-                              <CheckCircleIcon fontSize="small" color="success" sx={{ mr: 1 }} />
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  textDecoration: 'line-through',
-                                  color: 'text.disabled',
-                                  fontSize: '0.85rem'
-                                }}
-                              >
-                                {task.title}
-                              </Typography>
-                            </ListItemButton>
-                          ))}
-                          {groupedTasks.earlier.length > 5 && (
-                            <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, fontStyle: 'italic' }}>
-                              +{groupedTasks.earlier.length - 5} more
-                            </Typography>
-                          )}
-                        </List>
-                      </Box>
-                    )}
-                  </Box>
-                );
-              })()}
-            </AccordionDetails>
-          </Accordion>
-        )}
-
-
-      </Box>
-
-      {/* Vertical Divider - Hidden on mobile */}
-      <Divider 
-        orientation="vertical" 
-        flexItem 
-        sx={{ display: { xs: 'none', md: 'block' } }}
-      />
-
-      {/* Right Column - Appointments (70%) */}
-      <Box sx={{
-        width: { xs: '100%', md: '70%' },
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        {/* Header */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-          <EventIcon sx={{ color: 'primary.main', fontSize: '1.2rem' }} />
-          <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-            Appointments
-          </Typography>
-          {appointmentTasks.length > 0 && (
-            <Chip
-              label={appointmentTasks.length}
-              size="small"
-              variant="outlined"
-              sx={{ fontSize: '0.75rem', height: '20px' }}
-            />
-          )}
-        </Box>
-
-        {/* Appointments List - Agenda Style */}
-        <Box sx={{
-          flex: 1,
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 1.5
-        }}>
-          {appointmentTasks.length === 0 ? (
-            <Card sx={{ p: 3, textAlign: 'center', borderRadius: 2 }}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                <Typography variant="h6" color="text.secondary" sx={{ fontSize: '2rem' }}>
-                  📅
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
-                  No appointments scheduled
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Schedule meetings and calls to see them here.
+                  No tasks pending.
                 </Typography>
                 <Button
                   variant="outlined"
@@ -809,319 +269,799 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                   onClick={onCreateTask}
                   sx={{ mt: 1 }}
                 >
-                  Add Appointment
+                  Add Task
                 </Button>
               </Box>
             </Card>
           ) : (
-            appointmentTasks.map((task) => (
-              <Grow key={task.id} in={true} timeout={300}>
-                <Card
+            <List sx={{ p: 0 }}>
+              {openTasks.map((task) => (
+                <Box
+                  key={task.id}
                   sx={{
-                    p: 1.5, // Reduced padding for better balance
+                    mb: 1,
                     borderRadius: 2,
-                    boxShadow: 1,
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease-in-out',
+                    border: '1px solid',
+                    borderColor: 'grey.200',
+                    bgcolor: 'white',
+                    overflow: 'hidden',
                     '&:hover': {
-                      transform: 'translateY(-1px)',
-                      boxShadow: 3,
-                      backgroundColor: 'action.hover'
+                      borderColor: 'grey.300',
+                      bgcolor: 'grey.50'
                     },
-                    ...(isTaskOverdue(task.startTime || '') && {
-                      bgcolor: 'rgba(244, 67, 54, 0.06)',
-                      borderColor: 'error.main'
-                    })
+                    transition: 'all 0.2s ease-in-out'
                   }}
-                  onClick={() => onTaskClick(task)}
                   onMouseEnter={() => setHoveredTask(task.id)}
                   onMouseLeave={() => setHoveredTask(null)}
                 >
-                  <Stack direction="row" alignItems="center" spacing={1.5}>
-                    {/* Left rail: Calendar icon + date */}
-                    <Box sx={{ minWidth: 'fit-content', textAlign: 'center' }}>
-                      <CalendarMonthIcon
-                        fontSize="small"
+                  {/* Main task row */}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      p: 2,
+                    }}
+                  >
+                    <Checkbox
+                      size="small"
+                      checked={task.status === 'completed'}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onQuickComplete(task.id);
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
+                      sx={{
+                        color: 'grey.400',
+                        '&:hover': {
+                          color: task.status === 'completed' ? 'warning.main' : 'success.main'
+                        },
+                        '&.Mui-checked': {
+                          color: 'success.main'
+                        }
+                      }}
+                    />
+                    
+                    <Typography
+                      sx={{
+                        flex: 1,
+                        ml: 1,
+                        fontWeight: 400,
+                        fontSize: '0.9rem',
+                        color: task.status === 'completed' ? 'text.disabled' : 'text.primary',
+                        textDecoration: task.status === 'completed' ? 'line-through' : 'none'
+                      }}
+                    >
+                      {task.title}
+                    </Typography>
+                    
+                    {/* Status indicator on the right */}
+                    {task.status === 'overdue' && (
+                      <Typography
+                        variant="caption"
                         sx={{
-                          color: isTaskOverdue(task.startTime || '') ? 'error.main' : 'text.secondary',
-                          mb: 0.5,
-                          opacity: 0.7
+                          color: 'error.main',
+                          fontWeight: 500,
+                          fontSize: '0.75rem'
                         }}
-                      />
-                      {task.startTime && (() => {
-                        const dateInfo = formatAppointmentDate(task.startTime);
-                        if (!dateInfo) return null;
-                        
-                        const { dayFormat, relativeText, isToday } = dateInfo;
-                        return (
-                          <>
-                            <Typography 
-                              fontWeight={600} 
-                              sx={{ 
-                                fontSize: '0.85rem',
-                                ...(isToday && {
-                                  bgcolor: 'alpha(primary.main, 0.06)',
-                                  px: 1,
-                                  py: 0.25,
-                                  borderRadius: 1
-                                })
-                              }}
-                            >
-                              {dayFormat}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                              {relativeText}
-                            </Typography>
-                          </>
-                        );
-                      })()}
-                    </Box>
-
-                    {/* Center: Task content */}
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography fontWeight={600} noWrap sx={{ fontSize: '0.95rem' }}>
-                        {task.title}
+                      >
+                        Required
                       </Typography>
-                      
-                      {/* Time and Duration */}
-                      {task.startTime && task.duration && (
-                        <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500, fontSize: '0.85rem' }}>
-                          {(() => {
-                            const startTime = new Date(task.startTime);
-                            const endTime = new Date(startTime.getTime() + task.duration * 60000);
-                            return `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-                          })()}
-                        </Typography>
-                      )}
-                      
+                    )}
+                    
+                    {/* Edit button on hover */}
+                    <Fade in={hoveredTask === task.id}>
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditTask(task);
+                        }}
+                        sx={{ 
+                          color: 'primary.main',
+                          ml: 1
+                        }}
+                      >
+                        <MoreVertIcon fontSize="small" />
+                      </IconButton>
+                    </Fade>
+                  </Box>
+
+                  {/* Expanded details on hover */}
+                  <Collapse in={hoveredTask === task.id}>
+                    <Box
+                      sx={{
+                        px: 2,
+                        pb: 2,
+                        borderTop: '1px solid',
+                        borderColor: 'grey.100',
+                        bgcolor: 'grey.25'
+                      }}
+                    >
+                      {/* Description */}
                       {task.description && (
-                        <Typography variant="body2" color="text.secondary" noWrap>
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ mb: 1, fontSize: '0.8rem' }}
+                        >
                           {task.description}
                         </Typography>
                       )}
-                      
-                      {/* Google Meet Button */}
-                      {task.googleMeetLink && (
-                        <Box sx={{ mt: 0.5 }}>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<VideoCallIcon />}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              window.open(task.googleMeetLink, '_blank');
-                            }}
-                            sx={{
-                              bgcolor: '#4285f4', // Google Meet blue
-                              color: 'white',
-                              fontSize: '0.75rem',
-                              py: 0.25,
-                              px: 1,
-                              minWidth: 'auto',
-                              '&:hover': {
-                                bgcolor: '#3367d6'
-                              }
-                            }}
-                          >
-                            Join Meeting
-                          </Button>
-                        </Box>
-                      )}
-                      
-                      {/* Associated People - Company Contacts and Salespeople */}
-                      {((task.associations?.contacts && task.associations.contacts.length > 0) || 
-                        (task.associations?.salespeople && task.associations.salespeople.length > 0)) && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                          <BusinessIcon sx={{ fontSize: '0.8rem', color: 'text.secondary' }} />
+
+                      {/* Due date */}
+                      {task.dueDate && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                           <Typography
                             variant="caption"
-                            color="text.secondary"
-                            sx={{ fontSize: '0.7rem' }}
+                            sx={{
+                              color: 'text.secondary',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
                           >
-                            {getAssociatedPeopleDisplay(task)}
+                            📅 Due: {new Date(task.dueDate).toLocaleDateString()}
                           </Typography>
                         </Box>
                       )}
-                      
-                      <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
+
+                      {/* Status and Priority chips */}
+                      <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
                         <Chip
                           label={getTaskStatusDisplay(task)}
                           size="small"
-                          variant={getStatusChipVariant(getTaskStatusDisplay(task))}
-                          color={getStatusChipColor(getTaskStatusDisplay(task))}
+                          sx={{
+                            fontSize: '0.7rem',
+                            height: '20px',
+                            bgcolor: getStatusChipBackground(task.status),
+                            color: 'white'
+                          }}
                         />
                         <Chip
                           label={task.priority}
                           size="small"
-                          variant="outlined"
-                        />
-                        {task.aiSuggested && (
-                          <Chip
-                            label="AI Suggested"
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                            icon={<PsychologyIcon />}
-                          />
-                        )}
-                      </Stack>
-                    </Box>
-
-                    {/* Right: CTA area */}
-                    <Stack direction="row" spacing={1}>
-                      {task.googleMeetLink ? (
-                        <Button 
-                          size="small" 
-                          variant="contained"
-                          startIcon={<VideoCallIcon />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            window.open(task.googleMeetLink, '_blank');
-                          }}
                           sx={{
-                            bgcolor: '#4285f4', // Google Meet blue
+                            fontSize: '0.7rem',
+                            height: '20px',
+                            bgcolor: getPriorityColor(task.priority),
                             color: 'white',
-                            '&:hover': {
-                              bgcolor: '#3367d6'
-                            }
+                            textTransform: 'capitalize'
                           }}
-                        >
-                          Join Meeting
-                        </Button>
-                      ) : (
-                        <Button size="small" variant="contained">
-                          Open
-                        </Button>
-                      )}
-                      <Fade in={hoveredTask === task.id}>
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEditTask(task);
-                          }}
-                          sx={{ color: 'primary.main' }}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      </Fade>
-                    </Stack>
-                  </Stack>
-                  
-                  {/* Expanded hover state for meeting details */}
-                  <Collapse in={hoveredTask === task.id} timeout={200}>
-                    <Box sx={{ 
-                      mt: 1, 
-                      pt: 1, 
-                      borderTop: '1px solid', 
-                      borderColor: 'divider',
-                      backgroundColor: 'background.paper'
-                    }}>
-                      {/* Meeting Details */}
-                      {(task.agenda || task.goals || task.meetingAttendees) && (
-                        <Box sx={{ mb: 1 }}>
-                          {task.agenda && (
-                            <Box sx={{ mb: 0.5 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                                Agenda:
-                              </Typography>
-                              <Typography variant="caption" color="text.primary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                                {task.agenda}
-                              </Typography>
-                            </Box>
-                          )}
-                          
-                          {task.goals && task.goals.length > 0 && (
-                            <Box sx={{ mb: 0.5 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                                Goals:
-                              </Typography>
-                              {task.goals.map((goal, index) => (
-                                <Typography key={index} variant="caption" color="text.primary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                                  • {goal}
-                                </Typography>
-                              ))}
-                            </Box>
-                          )}
-                          
-                          {task.meetingAttendees && task.meetingAttendees.length > 0 && (
-                            <Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                                Attendees ({task.meetingAttendees.length}):
-                              </Typography>
-                              {task.meetingAttendees.slice(0, 3).map((attendee, index) => (
-                                <Box key={index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <Typography variant="caption" color="text.primary" sx={{ fontSize: '0.7rem' }}>
-                                    {attendee.displayName || attendee.email}
-                                  </Typography>
-                                  {attendee.responseStatus && attendee.responseStatus !== 'needsAction' && (
-                                    <Chip
-                                      label={attendee.responseStatus}
-                                      size="small"
-                                      variant="outlined"
-                                      sx={{ 
-                                        fontSize: '0.6rem', 
-                                        height: '16px',
-                                        color: attendee.responseStatus === 'accepted' ? 'success.main' : 
-                                               attendee.responseStatus === 'declined' ? 'error.main' : 'warning.main'
-                                      }}
-                                    />
-                                  )}
-                                </Box>
-                              ))}
-                              {task.meetingAttendees.length > 3 && (
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                  +{task.meetingAttendees.length - 3} more
-                                </Typography>
-                              )}
-                            </Box>
-                          )}
-                        </Box>
-                      )}
-                      
-                      {/* Task Type Specific Info */}
-                      {task.type === 'research' && task.researchTopics && task.researchTopics.length > 0 && (
-                        <Box sx={{ mb: 1 }}>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                            Research Topics:
-                          </Typography>
-                          {task.researchTopics.map((topic, index) => (
-                            <Typography key={index} variant="caption" color="text.primary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                              • {topic}
-                            </Typography>
-                          ))}
-                        </Box>
-                      )}
-                      
-                      {task.type === 'phone_call' && task.callScript && (
-                        <Box sx={{ mb: 1 }}>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                            Call Script:
-                          </Typography>
-                          <Typography variant="caption" color="text.primary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                            {task.callScript}
+                        />
+                      </Box>
+
+                      {/* Assigned salespeople */}
+                      {task.assignedToName && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: 'text.secondary',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            👤 Assigned: {task.assignedToName}
                           </Typography>
                         </Box>
                       )}
-                      
-                      {task.type === 'email' && task.emailTemplate && (
-                        <Box sx={{ mb: 1 }}>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, fontSize: '0.7rem' }}>
-                            Email Template:
+
+                      {/* Associated contacts */}
+                      {task.associations?.contacts && task.associations.contacts.length > 0 && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: 'text.secondary',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
+                              // Find the contact name from associatedContacts prop
+                              const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
+                              const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                              const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                              const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                              
+                              return (
+                                <span key={index}>
+                                  {index > 0 ? ', ' : ''}{fullName}
+                                </span>
+                              );
+                            })}
                           </Typography>
-                          <Typography variant="caption" color="text.primary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                            {task.emailTemplate}
+                        </Box>
+                      )}
+
+                      {/* Associated companies */}
+                      {task.associations?.companies && task.associations.companies.length > 0 && (
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: 'text.secondary',
+                              fontSize: '0.75rem',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            🏢 Companies: {task.associations.companies.length} associated
                           </Typography>
                         </Box>
                       )}
                     </Box>
                   </Collapse>
-                </Card>
-              </Grow>
-            ))
+                </Box>
+              ))}
+              
+              {completedTasks.length > 0 && (
+                <>
+                  <Box sx={{ mt: 2, mb: 1 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, px: 1 }}>
+                      ✔ Completed ({completedTasks.length})
+                    </Typography>
+                  </Box>
+                  {completedTasks.map((task) => (
+                    <Box
+                      key={task.id}
+                      sx={{
+                        mb: 1,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'grey.200',
+                        bgcolor: 'grey.50',
+                        opacity: 0.7,
+                        overflow: 'hidden',
+                        '&:hover': {
+                          borderColor: 'grey.300',
+                          bgcolor: 'grey.100'
+                        },
+                        transition: 'all 0.2s ease-in-out'
+                      }}
+                      onMouseEnter={() => setHoveredTask(task.id)}
+                      onMouseLeave={() => setHoveredTask(null)}
+                    >
+                      {/* Main task row */}
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          p: 2,
+                        }}
+                      >
+                        <Checkbox
+                          size="small"
+                          checked={true}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            onQuickComplete(task.id);
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                          }}
+                          sx={{
+                            color: 'success.main',
+                            '&:hover': {
+                              color: 'warning.main'
+                            },
+                            '&.Mui-checked': {
+                              color: 'success.main'
+                            }
+                          }}
+                        />
+                        
+                        <Typography
+                          sx={{
+                            flex: 1,
+                            ml: 1,
+                            fontWeight: 400,
+                            fontSize: '0.9rem',
+                            color: 'text.disabled',
+                            textDecoration: 'line-through'
+                          }}
+                        >
+                          {task.title}
+                        </Typography>
+                        
+                        {task.completedAt && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ fontSize: '0.75rem' }}
+                          >
+                            {(() => {
+                              try {
+                                const completedAt = task.completedAt;
+                                
+                                if (!completedAt) return 'Recently';
+                                
+                                if (typeof completedAt === 'object' && completedAt !== null) {
+                                  const timestamp = completedAt as any;
+                                  if ('toDate' in timestamp && typeof timestamp.toDate === 'function') {
+                                    return timestamp.toDate().toLocaleDateString();
+                                  }
+                                }
+                                if (typeof completedAt === 'string') {
+                                  return new Date(completedAt).toLocaleDateString();
+                                }
+                                if (typeof completedAt === 'number') {
+                                  return new Date(completedAt).toLocaleDateString();
+                                }
+                                return 'Recently';
+                              } catch (error) {
+                                console.warn('Error formatting completion date:', error);
+                                return 'Recently';
+                              }
+                            })()}
+                          </Typography>
+                        )}
+                        
+                        <Fade in={hoveredTask === task.id}>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditTask(task);
+                            }}
+                            sx={{ 
+                              color: 'primary.main',
+                              ml: 1
+                            }}
+                          >
+                            <MoreVertIcon fontSize="small" />
+                          </IconButton>
+                        </Fade>
+                      </Box>
+
+                      {/* Expanded details on hover */}
+                      <Collapse in={hoveredTask === task.id}>
+                        <Box
+                          sx={{
+                            px: 2,
+                            pb: 2,
+                            borderTop: '1px solid',
+                            borderColor: 'grey.100',
+                            bgcolor: 'grey.75'
+                          }}
+                        >
+                          {/* Description */}
+                          {task.description && (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ mb: 1, fontSize: '0.8rem' }}
+                            >
+                              {task.description}
+                            </Typography>
+                          )}
+
+                          {/* Due date */}
+                          {task.dueDate && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                📅 Due: {new Date(task.dueDate).toLocaleDateString()}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Status and Priority chips */}
+                          <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                            <Chip
+                              label={getTaskStatusDisplay(task)}
+                              size="small"
+                              sx={{
+                                fontSize: '0.7rem',
+                                height: '20px',
+                                bgcolor: getStatusChipBackground(task.status),
+                                color: 'white'
+                              }}
+                            />
+                            <Chip
+                              label={task.priority}
+                              size="small"
+                              sx={{
+                                fontSize: '0.7rem',
+                                height: '20px',
+                                bgcolor: getPriorityColor(task.priority),
+                                color: 'white',
+                                textTransform: 'capitalize'
+                              }}
+                            />
+                          </Box>
+
+                          {/* Assigned salespeople */}
+                          {task.assignedToName && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                👤 Assigned: {task.assignedToName}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Associated contacts */}
+                          {task.associations?.contacts && task.associations.contacts.length > 0 && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
+                                  // Find the contact name from associatedContacts prop
+                                  const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
+                                  const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                                  const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                                  const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                                  
+                                  return (
+                                    <span key={index}>
+                                      {index > 0 ? ', ' : ''}{fullName}
+                                    </span>
+                                  );
+                                })}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Associated companies */}
+                          {task.associations?.companies && task.associations.companies.length > 0 && (
+                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                🏢 Companies: {task.associations.companies.length} associated
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
+                      </Collapse>
+                    </Box>
+                  ))}
+                </>
+              )}
+            </List>
           )}
         </Box>
       </Box>
+
+      {!showOnlyTodos && (
+        <>
+          <Divider 
+            orientation="vertical" 
+            flexItem 
+            sx={{ display: { xs: 'none', md: 'block' } }}
+          />
+
+          <Box sx={{
+            width: { xs: '100%', md: '70%' },
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <EventIcon sx={{ color: 'primary.main', fontSize: '1.2rem' }} />
+              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                Appointments
+              </Typography>
+              {appointmentTasks.length > 0 && (
+                <Chip
+                  label={appointmentTasks.length}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: '0.75rem', height: '20px' }}
+                />
+              )}
+            </Box>
+
+            <Box sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.5
+            }}>
+              {appointmentTasks.length === 0 ? (
+                <Card sx={{ p: 3, textAlign: 'center', borderRadius: 2 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="h6" color="text.secondary" sx={{ fontSize: '2rem' }}>
+                      📅
+                    </Typography>
+                    <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
+                      No appointments scheduled
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Schedule meetings and calls to see them here.
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<AddIcon />}
+                      onClick={onCreateTask}
+                      sx={{ mt: 1 }}
+                    >
+                      Add Appointment
+                    </Button>
+                  </Box>
+                </Card>
+              ) : (
+                appointmentTasks.map((task) => (
+                  <Grow key={task.id} in={true} timeout={300}>
+                    <Box
+                      sx={{
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'grey.200',
+                        bgcolor: 'white',
+                        overflow: 'hidden',
+                        '&:hover': {
+                          borderColor: 'grey.300',
+                          bgcolor: 'grey.50'
+                        },
+                        transition: 'all 0.2s ease-in-out',
+                        ...(isTaskOverdue(task.startTime || '') && {
+                          bgcolor: 'rgba(244, 67, 54, 0.06)',
+                          borderColor: 'error.main'
+                        })
+                      }}
+                      onMouseEnter={() => setHoveredTask(task.id)}
+                      onMouseLeave={() => setHoveredTask(null)}
+                    >
+                      {/* Main appointment row */}
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          p: 2,
+                        }}
+                      >
+                        <Box sx={{ minWidth: 'fit-content', textAlign: 'center', mr: 1.5 }}>
+                          <CalendarMonthIcon
+                            fontSize="small"
+                            sx={{
+                              color: isTaskOverdue(task.startTime || '') ? 'error.main' : 'text.secondary',
+                              mb: 0.5,
+                              opacity: 0.7
+                            }}
+                          />
+                          {task.startTime && (() => {
+                            const dateInfo = formatAppointmentDate(task.startTime);
+                            if (!dateInfo) return null;
+                            
+                            const { dayFormat, relativeText, isToday } = dateInfo;
+                            return (
+                              <>
+                                <Typography 
+                                  fontWeight={600} 
+                                  sx={{ 
+                                    fontSize: '0.85rem',
+                                    ...(isToday && {
+                                      bgcolor: 'alpha(primary.main, 0.06)',
+                                      px: 1,
+                                      py: 0.25,
+                                      borderRadius: 1
+                                    })
+                                  }}
+                                >
+                                  {dayFormat}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                                  {relativeText}
+                                </Typography>
+                              </>
+                            );
+                          })()}
+                        </Box>
+
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography fontWeight={600} sx={{ fontSize: '0.95rem' }}>
+                            {task.title}
+                          </Typography>
+                          
+                          {task.startTime && task.duration && (
+                            <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500, fontSize: '0.85rem' }}>
+                              {(() => {
+                                const startTime = new Date(task.startTime);
+                                const endTime = new Date(startTime.getTime() + task.duration * 60000);
+                                return `${startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                              })()}
+                            </Typography>
+                          )}
+                        </Box>
+
+                        {/* Edit button on hover */}
+                        <Fade in={hoveredTask === task.id}>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditTask(task);
+                            }}
+                            sx={{ 
+                              color: 'primary.main',
+                              ml: 1
+                            }}
+                          >
+                            <MoreVertIcon fontSize="small" />
+                          </IconButton>
+                        </Fade>
+                      </Box>
+
+                      {/* Expanded details on hover */}
+                      <Collapse in={hoveredTask === task.id}>
+                        <Box
+                          sx={{
+                            px: 2,
+                            pb: 2,
+                            borderTop: '1px solid',
+                            borderColor: 'grey.100',
+                            bgcolor: 'grey.25'
+                          }}
+                        >
+                          {/* Description */}
+                          {task.description && (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{ mb: 1, fontSize: '0.8rem' }}
+                            >
+                              {task.description}
+                            </Typography>
+                          )}
+
+                          {/* Status and Priority chips */}
+                          <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+                            <Chip
+                              label={getTaskStatusDisplay(task)}
+                              size="small"
+                              sx={{
+                                fontSize: '0.7rem',
+                                height: '20px',
+                                bgcolor: getStatusChipBackground(task.status),
+                                color: 'white'
+                              }}
+                            />
+                            <Chip
+                              label={task.priority}
+                              size="small"
+                              sx={{
+                                fontSize: '0.7rem',
+                                height: '20px',
+                                bgcolor: getPriorityColor(task.priority),
+                                color: 'white',
+                                textTransform: 'capitalize'
+                              }}
+                            />
+                          </Box>
+
+                          {/* Assigned salespeople */}
+                          {task.assignedToName && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                👤 Assigned: {task.assignedToName}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Associated contacts */}
+                          {task.associations?.contacts && task.associations.contacts.length > 0 && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
+                                  // Find the contact name from associatedContacts prop
+                                  const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
+                                  const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                                  const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                                  const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                                  
+                                  return (
+                                    <span key={index}>
+                                      {index > 0 ? ', ' : ''}{fullName}
+                                    </span>
+                                  );
+                                })}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Associated companies */}
+                          {task.associations?.companies && task.associations.companies.length > 0 && (
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                🏢 Companies: {task.associations.companies.length} associated
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {/* Google Meet Link */}
+                          {task.googleMeetLink && (
+                            <Box sx={{ mt: 1 }}>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                startIcon={<VideoCallIcon />}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.open(task.googleMeetLink, '_blank');
+                                }}
+                                sx={{
+                                  bgcolor: '#4285f4',
+                                  color: 'white',
+                                  fontSize: '0.75rem',
+                                  py: 0.25,
+                                  px: 1,
+                                  minWidth: 'auto',
+                                  '&:hover': {
+                                    bgcolor: '#3367d6'
+                                  }
+                                }}
+                              >
+                                Join Meeting
+                              </Button>
+                            </Box>
+                          )}
+                        </Box>
+                      </Collapse>
+                    </Box>
+                  </Grow>
+                ))
+              )}
+            </Box>
+          </Box>
+        </>
+      )}
     </Box>
   );
 };

@@ -177,7 +177,9 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
         date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
         outcome: ['positive', 'neutral', 'negative'][index % 3] as any,
         relatedDealId: dealsData[index % dealsData.length]?.id,
-        relatedCompanyId: contact.companyId,
+        relatedCompanyId: ((contact as any).associations?.companies || [])
+          .map((c: any) => (typeof c === 'string' ? c : c?.id))
+          .filter(Boolean)[0],
       }));
       setContactActivities(mockActivities);
 
@@ -197,7 +199,9 @@ const EnhancedContactManager: React.FC<EnhancedContactManagerProps> = ({ tenantI
   };
 
   const getContactCompany = (contact: CRMContact) => {
-    return companies.find(company => company.id === contact.companyId);
+    const assocCompanies = ((contact as any).associations?.companies || []) as any[];
+    const primaryCompanyId = assocCompanies.length > 0 ? (typeof assocCompanies[0] === 'string' ? assocCompanies[0] : assocCompanies[0]?.id) : undefined;
+    return companies.find(company => company.id === primaryCompanyId);
   };
 
   // const getContactDeals = (contact: CRMContact) => {

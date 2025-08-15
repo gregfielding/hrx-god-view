@@ -121,34 +121,43 @@ export async function getEnhancedDealContext(dealId: string, tenantId: string, u
           // 2. Get basic associations (enhanced associations not available)
       context.associations = { entities: { companies: [], contacts: [], salespeople: [] }, summary: { totalAssociations: 0 } };
 
-    // 3. Get enhanced company context
-    if (context.deal?.companyId) {
-      console.log(`🏢 Loading enhanced company context for: ${context.deal.companyId}`);
-      context.company = await getEnhancedCompanyContext(context.deal.companyId, tenantId);
+    // 3. Get enhanced company context using primary company id when available
+    const primaryCompanyId = (context.deal?.associations?.primaryCompanyId)
+      || (Array.isArray(context.deal?.associations?.companies) && context.deal.associations.companies.length > 0
+            ? (typeof context.deal.associations.companies[0] === 'string' ? context.deal.associations.companies[0] : context.deal.associations.companies[0]?.id)
+            : context.deal?.companyId);
+    if (primaryCompanyId) {
+      console.log(`🏢 Loading enhanced company context for: ${primaryCompanyId}`);
+      context.company = await getEnhancedCompanyContext(primaryCompanyId, tenantId);
     }
 
-    // 4. Get enhanced location context
-    if (context.deal?.locationId) {
-      console.log(`📍 Loading enhanced location context for: ${context.deal.locationId}`);
-      context.locations = [await getEnhancedLocationContext(context.deal.locationId, tenantId)];
+    // 4. Get enhanced location context from associations
+    const locationIds = Array.isArray(context.deal?.associations?.locations)
+      ? context.deal.associations.locations.map((l: any) => (typeof l === 'string' ? l : l?.id)).filter(Boolean)
+      : [];
+    if (locationIds.length > 0) {
+      console.log(`📍 Loading enhanced location contexts for: ${locationIds.join(',')}`);
+      context.locations = await Promise.all(locationIds.map((lid: string) => getEnhancedLocationContext(lid, tenantId)));
     }
 
-    // 5. Get enhanced contact contexts
-    if (context.deal?.contactIds?.length > 0) {
-      console.log(`👥 Loading enhanced contact contexts for ${context.deal.contactIds.length} contacts`);
-      const contactPromises = context.deal.contactIds.map(async (contactId: string) => {
-        return await getEnhancedContactContext(contactId, tenantId);
-      });
-      context.contacts = await Promise.all(contactPromises);
+    // 5. Get enhanced contact contexts (associations first, legacy fallback)
+    const associatedContactIds = Array.isArray(context.deal?.associations?.contacts)
+      ? context.deal.associations.contacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+      : [];
+    const legacyContactIds = Array.isArray(context.deal?.contactIds) ? context.deal.contactIds : [];
+    const contactIds = associatedContactIds.length > 0 ? associatedContactIds : legacyContactIds;
+    if (contactIds.length > 0) {
+      console.log(`👥 Loading enhanced contact contexts for ${contactIds.length} contacts`);
+      context.contacts = await Promise.all(contactIds.map((cid: string) => getEnhancedContactContext(cid, tenantId)));
     }
 
-    // 6. Get enhanced salesperson contexts
-    if (context.deal?.salespeopleIds?.length > 0) {
-      console.log(`👤 Loading enhanced salesperson contexts for ${context.deal.salespeopleIds.length} salespeople`);
-      const salespersonPromises = context.deal.salespeopleIds.map(async (salespersonId: string) => {
-        return await getEnhancedSalespersonContext(salespersonId, tenantId);
-      });
-      context.salespeople = await Promise.all(salespersonPromises);
+    // 6. Get enhanced salesperson contexts (associations-based)
+    const salespersonIds = Array.isArray(context.deal?.associations?.salespeople)
+      ? context.deal.associations.salespeople.map((s: any) => (typeof s === 'string' ? s : s?.id)).filter(Boolean)
+      : [];
+    if (salespersonIds.length > 0) {
+      console.log(`👤 Loading enhanced salesperson contexts for ${salespersonIds.length} salespeople`);
+      context.salespeople = await Promise.all(salespersonIds.map((sid: string) => getEnhancedSalespersonContext(sid, tenantId)));
     }
 
     // 7. Get deal-specific data
@@ -541,15 +550,25 @@ async function getDealNotes(dealId: string, tenantId: string): Promise<any[]> {
 
 async function getDealEmails(dealId: string, tenantId: string): Promise<any[]> {
   try {
-    const emailsQuery = db.collection('tenants').doc(tenantId).collection('emails')
+    const emailsQuery = db.collection('tenants').doc(tenantId).collection('email_logs')
       .where('dealId', '==', dealId)
-      .orderBy('sentAt', 'desc')
+      .orderBy('createdAt', 'desc')
       .limit(10);
     const emailsSnapshot = await emailsQuery.get();
     return emailsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   } catch (error) {
-    console.warn('Could not fetch deal emails:', error);
-    return [];
+    console.warn('Could not fetch deal emails from email_logs, falling back to emails:', error);
+    try {
+      const fallback = db.collection('tenants').doc(tenantId).collection('emails')
+        .where('dealId', '==', dealId)
+        .orderBy('sentAt', 'desc')
+        .limit(10);
+      const snap = await fallback.get();
+      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e2) {
+      console.warn('Fallback emails fetch also failed:', e2);
+      return [];
+    }
   }
 }
 

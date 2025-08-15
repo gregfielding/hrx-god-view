@@ -9,8 +9,6 @@ import {
   CircularProgress,
   Alert,
   Grid,
-  IconButton,
-  Tooltip,
   Avatar,
   Snackbar
 } from '@mui/material';
@@ -242,24 +240,22 @@ Generated on: ${new Date().toLocaleString()}`,
   };
 
   return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h6" component="h2">
-          Decision Makers
-        </Typography>
+    <Box sx={{ px: 0, py: 0 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 0 }}>
+        <Typography variant="h6" fontWeight={700}>Decision Makers</Typography>
         <Button
-          variant="outlined"
+          variant="contained"
           startIcon={<RefreshIcon />}
           onClick={handleRefresh}
           disabled={loading}
           size="small"
         >
-          {loading ? 'Searching...' : 'Refresh'}
+          {loading ? 'Refreshing…' : 'Refresh'}
         </Button>
       </Box>
 
       {lastUpdated && (
-        <Typography variant="caption" color="text.secondary" display="block" mb={2}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0, mb: '8px' }}>
           Last updated: {lastUpdated.toLocaleString()}
         </Typography>
       )}
@@ -355,41 +351,7 @@ Generated on: ${new Date().toLocaleString()}`,
                     );
                   })()}
 
-                  <Box display="flex" gap={1} flexWrap="wrap">
-                    <Tooltip title="View LinkedIn Profile">
-                      <IconButton
-                        size="small"
-                        onClick={() => window.open(decisionMaker.linkedinUrl, '_blank')}
-                        color="primary"
-                      >
-                        <LinkedInIcon />
-                      </IconButton>
-                    </Tooltip>
-                    
-                    <Tooltip title={(() => {
-                      const emailMatch = decisionMaker.snippet.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/);
-                      const phoneMatch = decisionMaker.snippet.match(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/);
-                      
-                      const savedInfo = ['LinkedIn URL'];
-                      if (emailMatch) savedInfo.push('Email');
-                      if (phoneMatch) savedInfo.push('Phone');
-                      
-                      return `Save to Contacts: ${decisionMaker.name}\nWill save: ${savedInfo.join(', ')}`;
-                    })()}>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleSaveContact(decisionMaker)}
-                        color="secondary"
-                        disabled={savingContact === decisionMaker.name}
-                      >
-                        {savingContact === decisionMaker.name ? (
-                          <CircularProgress size={16} />
-                        ) : (
-                          <SaveIcon />
-                        )}
-                      </IconButton>
-                    </Tooltip>
-
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
                     <Button
                       size="small"
                       variant="outlined"
@@ -397,6 +359,15 @@ Generated on: ${new Date().toLocaleString()}`,
                       onClick={() => window.open(decisionMaker.linkedinUrl, '_blank')}
                     >
                       View Profile
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      startIcon={savingContact === decisionMaker.name ? <CircularProgress size={16} /> : <SaveIcon />}
+                      onClick={() => handleSaveContact(decisionMaker)}
+                      disabled={savingContact === decisionMaker.name}
+                    >
+                      {savingContact === decisionMaker.name ? 'Adding…' : 'Add to CRM'}
                     </Button>
                   </Box>
                 </CardContent>

@@ -451,49 +451,25 @@ const JobOrdersTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required>
-                  <InputLabel id="job-titles-label">Job Titles</InputLabel>
-                  <Select
-                    labelId="job-titles-label"
-                    multiple
-                    value={form.jobTitleIds}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        jobTitleIds: Array.isArray(e.target.value)
-                          ? e.target.value
-                          : [e.target.value],
-                      }))
-                    }
-                    input={<OutlinedInput label="Job Titles" />}
-                    renderValue={(selected) => (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {(selected as string[]).map((id) => {
-                          const jt = jobTitles.find((j: any) => j.title === id);
-                          return (
-                            <Chip
-                              key={id}
-                              label={jt ? jt.title : id}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onDelete={() =>
-                                setForm((f) => ({
-                                  ...f,
-                                  jobTitleIds: f.jobTitleIds.filter((jid: string) => jid !== id),
-                                }))
-                              }
-                            />
-                          );
-                        })}
-                      </Box>
-                    )}
-                  >
-                    {jobTitles.map((jt: any) => (
-                      <MenuItem key={jt.title} value={jt.title}>
-                        {jt.title}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  multiple
+                  options={jobTitles as any[]}
+                  getOptionLabel={(jt: any) => jt?.title || ''}
+                  value={(jobTitles || []).filter((j: any) => form.jobTitleIds.includes(j.title)) as any[]}
+                  onChange={(_, newValue: any[]) => {
+                    setForm(f => ({ ...f, jobTitleIds: newValue.map((j: any) => j.title) }));
+                  }}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option: any, index: number) => (
+                      <Chip {...getTagProps({ index })} key={option.title} label={option.title} size="small" />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} label="Job Titles" fullWidth required />
+                  )}
+                  disablePortal
+                  fullWidth
+                />
               </Grid>
               <Grid item xs={12} display="flex" gap={2}>
                 <Button

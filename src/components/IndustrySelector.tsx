@@ -81,10 +81,17 @@ const IndustrySelector: React.FC<IndustrySelectorProps> = ({
   };
 
   const getFilteredIndustries = () => {
-    if (selectedCategory) {
-      return getIndustriesByCategory(selectedCategory);
+    const list = selectedCategory ? getIndustriesByCategory(selectedCategory) : INDUSTRIES;
+    // De-duplicate by code to avoid duplicate keys/options
+    const seen = new Set<string>();
+    const unique = [] as Industry[];
+    for (const item of list) {
+      if (!seen.has(item.code)) {
+        unique.push(item);
+        seen.add(item.code);
+      }
     }
-    return INDUSTRIES;
+    return unique;
   };
 
   if (variant === 'select') {
@@ -116,9 +123,9 @@ const IndustrySelector: React.FC<IndustrySelectorProps> = ({
           disabled={disabled}
         >
           <InputLabel>{label}</InputLabel>
-          <Select value={value} label={label} onChange={(e) => onChange(e.target.value)}>
+          <Select value={selectedIndustry?.code || ''} label={label} onChange={(e) => onChange(e.target.value)}>
             {getFilteredIndustries().map((industry) => (
-              <MenuItem key={industry.code} value={industry.code}>
+              <MenuItem key={`${industry.code}-${industry.category}`} value={industry.code}>
                 <Box>
                   <Typography variant="body2">{industry.name}</Typography>
                   <Typography variant="caption" color="text.secondary">

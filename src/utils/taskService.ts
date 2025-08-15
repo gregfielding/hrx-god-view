@@ -2,8 +2,9 @@
 // Handles all task-related operations and integrates with backend Firebase Functions
 
 import { httpsCallable } from 'firebase/functions';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
-import { functions } from '../firebase';
+import { functions, db } from '../firebase';
 import { CRMTask, TaskDashboard as TaskDashboardData } from '../types/Tasks';
 
 import { ActivityService } from './activityService';
@@ -458,22 +459,141 @@ export class TaskService {
 
   // 🔄 REAL-TIME UPDATES
   
-  // TODO: Implement real-time subscription for task updates
-  subscribeToTaskUpdates(userId: string, callback: (tasks: CRMTask[]) => void): () => void {
-    // TODO: Implement Firebase real-time listener
-    console.log('Real-time task subscription not yet implemented');
-    return () => {
-      console.log('Unsubscribing from task updates');
-    }; // Return unsubscribe function
+  subscribeToTaskUpdates(userId: string, tenantId: string, callback: (tasks: CRMTask[]) => void): () => void {
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    const q = query(tasksRef, where('assignedTo', '==', userId));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const tasks: CRMTask[] = [];
+      snapshot.forEach((doc) => {
+        tasks.push({ id: doc.id, ...doc.data() } as CRMTask);
+      });
+      callback(tasks);
+    }, (error) => {
+      console.error('Error listening to task updates:', error);
+    });
+    
+    return unsubscribe;
   }
 
-  // TODO: Implement real-time subscription for dashboard updates
-  subscribeToDashboardUpdates(userId: string, callback: (dashboard: TaskDashboardData) => void): () => void {
-    // TODO: Implement Firebase real-time listener
-    console.log('Real-time dashboard subscription not yet implemented');
-    return () => {
-      console.log('Unsubscribing from dashboard updates');
-    }; // Return unsubscribe function
+  subscribeToTasks(
+    userId: string, 
+    tenantId: string,
+    filters: { dealId?: string; companyId?: string; contactId?: string } = {},
+    callback: (tasks: any[]) => void
+  ): () => void {
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    
+    // Build query based on filters
+    let q;
+    
+    // If we have a dealId filter, we want to show ALL tasks for that deal (not just user-assigned ones)
+    if (filters.dealId) {
+      q = query(tasksRef, where('associations.deals', 'array-contains', filters.dealId));
+    } else {
+      // Default behavior: only show tasks assigned to the current user
+      q = query(tasksRef, where('assignedTo', '==', userId));
+    }
+    
+    if (filters.contactId) {
+      q = query(q, where('associations.contacts', 'array-contains', filters.contactId));
+    }
+    if (filters.companyId) {
+      q = query(q, where('associations.companies', 'array-contains', filters.companyId));
+    }
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const tasks: any[] = [];
+      snapshot.forEach((doc) => {
+        tasks.push({ id: doc.id, ...doc.data() });
+      });
+      
+      // Sort tasks: open tasks first (by due date), then completed tasks (by completion date)
+      const sortedTasks = tasks.sort((a, b) => {
+        // First, separate open and completed tasks
+        const aIsCompleted = a.status === 'completed';
+        const bIsCompleted = b.status === 'completed';
+        
+        if (aIsCompleted && !bIsCompleted) return 1; // completed tasks go last
+        if (!aIsCompleted && bIsCompleted) return -1; // open tasks go first
+        
+        if (aIsCompleted && bIsCompleted) {
+          // Both completed - sort by completion date (newest first)
+          const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+          const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+          return bDate - aDate;
+        } else {
+          // Both open - sort by due date (earliest first)
+          const aDate = a.dueDate ? new Date(a.dueDate + 'T00:00:00').getTime() : 0;
+          const bDate = b.dueDate ? new Date(b.dueDate + 'T00:00:00').getTime() : 0;
+          return aDate - bDate;
+        }
+      });
+      
+      callback(sortedTasks);
+    }, (error) => {
+      console.error('Error listening to task updates:', error);
+    });
+    
+    return unsubscribe;
+  }
+
+  private processTasksIntoDashboard(tasks: any[], date: string): any {
+    const today = new Date(date);
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    
+    const todayTasks = tasks.filter(task => {
+      const taskDate = task.dueDate || task.scheduledDate;
+      if (!taskDate) return false;
+      const taskDateObj = new Date(taskDate + 'T00:00:00');
+      return taskDateObj.toDateString() === today.toDateString();
+    });
+    
+    const thisWeekTasks = tasks.filter(task => {
+      const taskDate = task.dueDate || task.scheduledDate;
+      if (!taskDate) return false;
+      const taskDateObj = new Date(taskDate + 'T00:00:00');
+      return taskDateObj >= startOfWeek && taskDateObj <= today;
+    });
+    
+    const completedTasks = tasks.filter(task => task.status === 'completed');
+    
+    return {
+      today: {
+        totalTasks: todayTasks.length,
+        completedTasks: todayTasks.filter(t => t.status === 'completed').length,
+        pendingTasks: todayTasks.filter(t => t.status !== 'completed').length,
+        tasks: todayTasks
+      },
+      thisWeek: {
+        totalTasks: thisWeekTasks.length,
+        completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
+        pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
+        quotaProgress: {
+          percentage: 0,
+          completed: 0,
+          target: 0
+        },
+        tasks: thisWeekTasks
+      },
+      completed: {
+        totalTasks: completedTasks.length,
+        tasks: completedTasks
+      },
+      priorities: {
+        high: tasks.filter(t => t.priority === 'high').length,
+        medium: tasks.filter(t => t.priority === 'medium').length,
+        low: tasks.filter(t => t.priority === 'low').length
+      },
+      types: {
+        email: tasks.filter(t => t.type === 'email').length,
+        phone_call: tasks.filter(t => t.type === 'phone_call').length,
+        scheduled_meeting_virtual: tasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
+        research: tasks.filter(t => t.type === 'research').length,
+        custom: tasks.filter(t => t.type === 'custom').length
+      }
+    };
   }
 
   // 🎯 UTILITY METHODS

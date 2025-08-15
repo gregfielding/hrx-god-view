@@ -29,10 +29,17 @@ import {
   OpenInNew as OpenInNewIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, where, limit, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, doc, getDoc, orderBy, startAfter, QueryConstraint } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
-import { createSimpleAssociationService, SimpleAssociations } from '../utils/simpleAssociationService';
+type SimpleAssociations = {
+  companies?: string[];
+  deals?: string[];
+  contacts?: string[];
+  salespeople?: string[];
+  tasks?: string[];
+  locations?: string[];
+};
 import { createUnifiedAssociationService } from '../utils/unifiedAssociationService';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -167,7 +174,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
   });
 
   // Association service
-  const associationService = createSimpleAssociationService(tenantId, user?.uid || '');
+  const unifiedService = createUnifiedAssociationService(tenantId, user?.uid || '');
   
   // Simple cache to avoid redundant queries
   const [entityCache, setEntityCache] = useState<{[key: string]: any[]}>({});
@@ -223,7 +230,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
         console.log(`🔍 Loading associations for ${entityType}:${entityId}`);
 
-        // Try unified association service first, fallback to simple service
+        // Use unified association service
         let finalResult: any;
         
         // Check persistent cache first
@@ -234,10 +241,9 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
         } else {
           try {
             console.log(`🔍 Trying unified association service for ${entityType}:${entityId}`);
-            const unifiedService = createUnifiedAssociationService(tenantId, user?.uid || '');
-            
+            const unified = createUnifiedAssociationService(tenantId, user?.uid || '');
             // Add timeout for unified service
-            const unifiedPromise = unifiedService.getEntityAssociations(entityType, entityId);
+            const unifiedPromise = unified.getEntityAssociations(entityType, entityId);
             const unifiedResult = await Promise.race([unifiedPromise, timeoutPromise]) as any;
             
             console.log(`✅ Unified association service returned:`, unifiedResult);
@@ -255,11 +261,8 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
             }));
             
           } catch (unifiedError) {
-            console.log(`❌ Unified service failed, falling back to simple service:`, unifiedError);
-            
-            // Fallback to simple association service
-            finalResult = await associationService.getAssociations(entityType, entityId);
-            console.log(`✅ Simple association service returned:`, finalResult);
+            console.log(`❌ Unified service failed:`, unifiedError);
+            throw unifiedError;
           }
         }
         
@@ -327,11 +330,10 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       if (targetType === 'salespeople') {
         // Use Firebase Function for salespeople
         const functions = getFunctions();
-        const getSalespeople = httpsCallable(functions, 'getSalespeople');
+        const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
         
         const result = await getSalespeople({
-          tenantId: tenantId,
-          activeTenantId: tenantId
+          tenantId: tenantId
         });
         
         entities = (result.data as any).salespeople || [];
@@ -339,7 +341,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       } else {
         // Use direct Firestore query for other entity types
         let collectionPath: string;
-        let queryFilter: any = null;
+        const queryFilter: QueryConstraint | null = null;
 
         switch (targetType) {
           case 'companies': {
@@ -348,59 +350,59 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
           }
           case 'deals': {
             collectionPath = `tenants/${tenantId}/crm_deals`;
-            // If we're on a deal page, filter deals by the same company
             if (entityType === 'deal') {
-              try {
-                // Get the deal document to find its companyId
-                const dealRef = doc(db, `tenants/${tenantId}/crm_deals`, entityId);
-                const dealDoc = await getDoc(dealRef);
-                if (dealDoc.exists()) {
-                  const dealData = dealDoc.data();
-                  if (dealData.companyId) {
-                    console.log(`🔍 Filtering deals by company: ${dealData.companyId}`);
-                    queryFilter = where('companyId', '==', dealData.companyId);
-                  }
-                }
-              } catch (err) {
-                console.error('Error getting deal company for deal filtering:', err);
+              const companyIds: string[] = (associations.companies || []) as string[];
+              if (companyIds.length > 0) {
+                const batches = await Promise.all(
+                  companyIds.map(async (cid) => {
+                    const baseConstraints: QueryConstraint[] = [where('companyIds', 'array-contains', cid), orderBy('__name__')];
+                    const pageSize = 200;
+                    let results: any[] = [];
+                    let lastDoc: any = null;
+                    for (;;) {
+                      const constraints = lastDoc ? [...baseConstraints, startAfter(lastDoc), limit(pageSize)] : [...baseConstraints, limit(pageSize)];
+                      const snap = await getDocs(query(collection(db, collectionPath), ...constraints));
+                      if (snap.empty) break;
+                      results = results.concat(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                      if (snap.size < pageSize) break;
+                      lastDoc = snap.docs[snap.docs.length - 1];
+                    }
+                    return results;
+                  })
+                );
+                entities = batches.flat();
+                break;
               }
             }
             break;
           }
           case 'contacts': {
-            // For contacts, always load all contacts from the company
             if (entityType === 'deal') {
               try {
-                console.log(`🔍 Loading all contacts for deal's company`);
-                
-                // Get the deal document to find its companyId
-                const dealRef = doc(db, `tenants/${tenantId}/crm_deals`, entityId);
-                const dealDoc = await getDoc(dealRef);
-                if (dealDoc.exists()) {
-                  const dealData = dealDoc.data();
-                  if (dealData.companyId) {
-                    console.log(`🔍 Loading all contacts for company: ${dealData.companyId}`);
-                    
-                    // Load all contacts from the company directly
-                    const contactsRef = collection(db, `tenants/${tenantId}/crm_contacts`);
-                    const contactsQuery = query(contactsRef, where('companyId', '==', dealData.companyId));
-                    const contactsSnapshot = await getDocs(contactsQuery);
-                    
-                    entities = contactsSnapshot.docs.map(doc => ({
-                      id: doc.id,
-                      ...doc.data()
-                    }));
-                    
-                    console.log(`✅ Loaded ${entities.length} contacts from company ${dealData.companyId}`);
-                    break;
+                const assocContacts: any[] = (associations.contacts || []) as any[];
+                const contactIds: string[] = assocContacts.map((c) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+                if (contactIds.length > 0) {
+                  const contactsCol = collection(db, `tenants/${tenantId}/crm_contacts`);
+                  const chunkSize = 10; // Firestore 'in' supports up to 10
+                  const chunks: string[][] = [];
+                  for (let i = 0; i < contactIds.length; i += chunkSize) {
+                    chunks.push(contactIds.slice(i, i + chunkSize));
                   }
+                  const resultsArrays = await Promise.all(
+                    chunks.map(async (ids) => {
+                      const qContacts = query(contactsCol, where('__name__', 'in', ids));
+                      const snap = await getDocs(qContacts);
+                      return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                    })
+                  );
+                  entities = resultsArrays.flat();
+                  break;
                 }
               } catch (err) {
-                console.error('Error loading contacts for company:', err);
+                console.error('Error loading contacts for deal context via associations.contacts:', err);
               }
             }
-            
-            // Fallback to direct Firestore query for other entity types
+            // Default: load first page of contacts
             collectionPath = `tenants/${tenantId}/crm_contacts`;
             break;
           }
@@ -409,62 +411,49 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
             break;
           }
           case 'locations': {
-            // Locations are stored as subcollections under companies, not as a top-level collection
+            // Locations: prefer company context from associations
             if (entityType === 'deal') {
               try {
-                // Get the deal document to find its companyId
-                const dealRef = doc(db, `tenants/${tenantId}/crm_deals`, entityId);
-                const dealDoc = await getDoc(dealRef);
-                if (dealDoc.exists()) {
-                  const dealData = dealDoc.data();
-                  if (dealData.companyId) {
-                    console.log(`🔍 Loading locations for company: ${dealData.companyId}`);
-                    // Load locations from the company's subcollection
-                    const companyLocationsRef = collection(db, `tenants/${tenantId}/crm_companies`, dealData.companyId, 'locations');
-                    const locationsSnapshot = await getDocs(companyLocationsRef);
-                    entities = locationsSnapshot.docs.map(doc => ({
-                      id: doc.id,
-                      companyId: dealData.companyId, // Add companyId for reference
-                      ...doc.data()
-                    }));
-                    console.log(`✅ Loaded ${entities.length} locations for company ${dealData.companyId}`);
-                    console.log(`🔍 Locations entities before filtering:`, entities);
-                    // Continue to the filtering and state setting below
-                  } else {
-                    console.log('⚠️ Deal has no companyId, cannot load locations');
-                  }
+                const companyIds: string[] = (associations.companies || []) as string[];
+                if (companyIds.length > 0) {
+                  const lists = await Promise.all(
+                    companyIds.map(async (cid) => {
+                      const companyLocationsRef = collection(db, `tenants/${tenantId}/crm_companies/${cid}/locations`);
+                      const locationsSnapshot = await getDocs(companyLocationsRef);
+                      return locationsSnapshot.docs.map(doc => ({ id: doc.id, companyId: cid, ...doc.data() }));
+                    })
+                  );
+                  entities = lists.flat();
+                  break;
                 }
               } catch (err) {
-                console.error('Error loading locations for deal:', err);
+                console.error('Error loading locations for deal via associations:', err);
                 setError(`Failed to load locations: ${err.message}`);
               }
             } else if (entityType === 'contact') {
-              // For contacts, load locations from the contact's associated company
               try {
-                // Get the contact document to find its companyId
-                const contactRef = doc(db, `tenants/${tenantId}/crm_contacts`, entityId);
-                const contactDoc = await getDoc(contactRef);
-                if (contactDoc.exists()) {
-                  const contactData = contactDoc.data();
-                  if (contactData.companyId) {
-                    console.log(`🔍 Loading locations for contact's company: ${contactData.companyId}`);
-                    // Load locations from the company's subcollection
-                    const companyLocationsRef = collection(db, `tenants/${tenantId}/crm_companies`, contactData.companyId, 'locations');
-                    const locationsSnapshot = await getDocs(companyLocationsRef);
-                    entities = locationsSnapshot.docs.map(doc => ({
-                      id: doc.id,
-                      companyId: contactData.companyId, // Add companyId for reference
-                      ...doc.data()
-                    }));
-                    console.log(`✅ Loaded ${entities.length} locations for contact's company ${contactData.companyId}`);
-                    console.log(`🔍 Locations entities before filtering:`, entities);
-                    // Continue to the filtering and state setting below
-                  } else {
-                    console.log('⚠️ Contact has no companyId, cannot load locations');
-                  }
+                const companyIds: string[] = (associations.companies || []) as string[];
+                if (companyIds.length > 0) {
+                  const lists = await Promise.all(
+                    companyIds.map(async (cid) => {
+                    const pageSize = 200;
+                    let results: any[] = [];
+                    let lastDoc: any = null;
+                    for (;;) {
+                        const snap = await getDocs(query(collection(db, `tenants/${tenantId}/crm_companies/${cid}/locations`), orderBy('__name__'), ...(lastDoc ? [startAfter(lastDoc)] : []), limit(pageSize)));
+                      if (snap.empty) break;
+                        results = results.concat(snap.docs.map(doc => ({ id: doc.id, companyId: cid, ...doc.data() })));
+                      if (snap.size < pageSize) break;
+                        lastDoc = snap.docs[snap.docs.length - 1];
+                      }
+                      return results;
+                    })
+                  );
+                  entities = lists.flat();
+                  break;
                 }
               } catch (err) {
-                console.error('Error loading locations for contact:', err);
+                console.error('Error loading locations for contact via associations:', err);
                 setError(`Failed to load locations: ${err.message}`);
               }
             } else {
@@ -514,15 +503,21 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
                 break;
               }
 
-              const q = queryFilter 
-                ? query(collection(db, defaultCollectionPath), queryFilter, limit(50))
-                : query(collection(db, defaultCollectionPath), limit(50));
-
-              const snapshot = await getDocs(q);
-              entities = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-              }));
+              const pageSize = 200;
+              let results: any[] = [];
+              let lastDoc: any = null;
+              let hasMore = true;
+              while (hasMore) {
+                const base = queryFilter ? [queryFilter, orderBy('__name__')] : [orderBy('__name__')];
+                const q = lastDoc
+                  ? query(collection(db, defaultCollectionPath), ...base, startAfter(lastDoc), limit(pageSize))
+                  : query(collection(db, defaultCollectionPath), ...base, limit(pageSize));
+                const snapshot = await getDocs(q);
+                if (snapshot.empty) { hasMore = false; break; }
+                results = results.concat(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                if (snapshot.size < pageSize) { hasMore = false; } else { lastDoc = snapshot.docs[snapshot.docs.length - 1]; }
+              }
+              entities = results;
             }
             break;
         }
@@ -585,19 +580,49 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
   const handleAddAssociation = async (targetType: string, targetEntity: any) => {
     try {
+      if (!tenantId) {
+        setError('Missing tenant context; cannot update associations.');
+        console.warn('manageAssociations blocked: missing tenantId', { entityType, entityId, targetType, targetId: targetEntity?.id });
+        return;
+      }
       console.log(`🔗 Adding association: ${entityType} → ${targetType}`);
-      
-      await associationService.addAssociation(
-        entityType,
-        entityId,
-        getSingularType(targetType), // Convert plural to singular properly
-        targetEntity.id
-      );
+      const functions = getFunctions();
+      const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
+      try {
+        const payload = {
+          action: 'add',
+          sourceEntityType: entityType,
+          sourceEntityId: entityId,
+          targetEntityType: getSingularType(targetType),
+          targetEntityId: targetEntity.id,
+          tenantId: tenantId
+        } as any;
+        console.log('manageAssociations.add payload', payload);
+        await manageAssociationsCallable(payload);
+      } catch (fnErr) {
+        console.warn('manageAssociations failed:', fnErr);
+      }
 
       // Refresh associations
-      const result = await associationService.getAssociations(entityType, entityId);
-      setAssociations(result.associations);
-      setEntities(result.entities);
+      const result = await unifiedService.getEntityAssociations(entityType, entityId);
+      // Adapt unified result into the simple shape this component expects
+      const simple: SimpleAssociations = {
+        companies: (result.entities.companies || []).map((c: any) => c.id),
+        deals: (result.entities.deals || []).map((d: any) => d.id),
+        contacts: (result.entities.contacts || []).map((c: any) => c.id),
+        salespeople: (result.entities.salespeople || []).map((s: any) => s.id),
+        tasks: [],
+        locations: (result.entities.locations || []).map((l: any) => l.id)
+      };
+      setAssociations(simple);
+      setEntities({
+        companies: result.entities.companies || [],
+        deals: result.entities.deals || [],
+        contacts: result.entities.contacts || [],
+        salespeople: result.entities.salespeople || [],
+        tasks: [],
+        locations: result.entities.locations || []
+      });
 
       onAssociationChange?.(targetType, 'add', targetEntity.id);
 
@@ -610,19 +635,48 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
   const handleRemoveAssociation = async (targetType: string, targetEntityId: string) => {
     try {
+      if (!tenantId) {
+        setError('Missing tenant context; cannot update associations.');
+        console.warn('manageAssociations blocked: missing tenantId (remove)', { entityType, entityId, targetType, targetId: targetEntityId });
+        return;
+      }
       console.log(`🗑️ Removing association: ${entityType} → ${targetType}`);
-      
-      await associationService.removeAssociation(
-        entityType,
-        entityId,
-        getSingularType(targetType), // Convert plural to singular properly
-        targetEntityId
-      );
+      const functions = getFunctions();
+      const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
+      try {
+        const payload = {
+          action: 'remove',
+          sourceEntityType: entityType,
+          sourceEntityId: entityId,
+          targetEntityType: getSingularType(targetType),
+          targetEntityId: targetEntityId,
+          tenantId: tenantId
+        } as any;
+        console.log('manageAssociations.remove payload', payload);
+        await manageAssociationsCallable(payload);
+      } catch (fnErr) {
+        console.warn('manageAssociations failed:', fnErr);
+      }
 
       // Refresh associations
-      const result = await associationService.getAssociations(entityType, entityId);
-      setAssociations(result.associations);
-      setEntities(result.entities);
+      const res = await unifiedService.getEntityAssociations(entityType, entityId);
+      const simple: SimpleAssociations = {
+        companies: (res.entities.companies || []).map((c: any) => c.id),
+        deals: (res.entities.deals || []).map((d: any) => d.id),
+        contacts: (res.entities.contacts || []).map((c: any) => c.id),
+        salespeople: (res.entities.salespeople || []).map((s: any) => s.id),
+        tasks: [],
+        locations: (res.entities.locations || []).map((l: any) => l.id)
+      };
+      setAssociations(simple);
+      setEntities({
+        companies: res.entities.companies || [],
+        deals: res.entities.deals || [],
+        contacts: res.entities.contacts || [],
+        salespeople: res.entities.salespeople || [],
+        tasks: [],
+        locations: res.entities.locations || []
+      });
 
       onAssociationChange?.(targetType, 'remove', targetEntityId);
 

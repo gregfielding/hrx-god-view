@@ -1,6 +1,7 @@
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { logAIAction } from './feedbackEngine';
 import * as admin from 'firebase-admin';
+import * as functionsV1 from 'firebase-functions';
 
 // Firestore trigger: Log user creation
 export const firestoreLogUserCreated = onDocumentCreated('users/{userId}', async (event) => {
@@ -2753,4 +2754,203 @@ export const firestoreHandleFlexWorkerUpdate = onDocumentUpdated('users/{userId}
     console.error('firestoreHandleFlexWorkerUpdate error:', error);
     return { success: false, error: error.message };
   }
+});
+
+// -------------------------
+// Associations Snapshot Fan-out Triggers (Phase 1)
+// -------------------------
+
+function isDualWriteEnabled(): boolean {
+  try {
+    const cfg = (functionsV1 as any).config?.() || {};
+    const val = cfg?.flags?.enable_dual_write;
+    if (typeof val === 'string') return val.toLowerCase() === 'true';
+    if (typeof val === 'boolean') return val === true;
+  } catch {
+    // ignore
+  }
+  return true; // default on
+}
+
+function pickDefined<T extends Record<string, any>>(obj: T): Partial<T> {
+  const out: Partial<T> = {};
+  Object.keys(obj || {}).forEach((k) => {
+    const v = (obj as any)[k];
+    if (v !== undefined && v !== null && v !== '') {
+      (out as any)[k] = v;
+    }
+  });
+  return out;
+}
+
+async function updateDealsForEntity(
+  tenantId: string,
+  idArrayField: 'companyIds' | 'contactIds' | 'salespersonIds' | 'locationIds',
+  entityId: string,
+  associationArrayField: 'companies' | 'contacts' | 'salespeople' | 'locations',
+  snapshotData: Record<string, any>
+) {
+  const db = admin.firestore();
+  const dealsRef = db.collection('tenants').doc(tenantId).collection('crm_deals');
+  const snapshot = await dealsRef.where(idArrayField as any, 'array-contains' as any, entityId).get();
+
+  if (snapshot.empty) return;
+
+  const batch = db.batch();
+
+  snapshot.docs.forEach((dealDoc) => {
+    const dealData: any = dealDoc.data() || {};
+    const assocArr: any[] = (dealData.associations?.[associationArrayField] || []).slice();
+    if (!Array.isArray(assocArr) || assocArr.length === 0) return;
+
+    let changed = false;
+    const updatedArr = assocArr.map((entry) => {
+      if (typeof entry === 'string') {
+        // keep string form as-is
+        return entry;
+      }
+      if (entry && entry.id === entityId) {
+        const existingSnapshot = entry.snapshot || {};
+        const nextSnapshot = { ...existingSnapshot, ...snapshotData };
+        changed = true;
+        return { ...entry, snapshot: nextSnapshot };
+      }
+      return entry;
+    });
+
+    if (changed) {
+      const nextAssociations = {
+        ...(dealData.associations || {}),
+        [associationArrayField]: updatedArr,
+      };
+      batch.update(dealDoc.ref, {
+        associations: nextAssociations,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  });
+
+  await batch.commit();
+}
+
+// Company snapshot fan-out
+export const firestoreCompanySnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}', async (event) => {
+  if (!isDualWriteEnabled()) return;
+  const tenantId = event.params.tenantId as string;
+  const companyId = event.params.companyId as string;
+  const after = event.data?.after.data();
+  if (!after) return;
+
+  const snap = pickDefined({
+    name: after.companyName || after.name,
+    industry: after.industry,
+    city: after.city,
+    state: after.state,
+    phone: after.companyPhone || after.phone,
+    companyUrl: after.companyUrl || after.website,
+    logo: after.logo,
+  });
+
+  await updateDealsForEntity(tenantId, 'companyIds', companyId, 'companies', snap);
+});
+
+// Contact snapshot fan-out
+export const firestoreContactSnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_contacts/{contactId}', async (event) => {
+  if (!isDualWriteEnabled()) return;
+  const tenantId = event.params.tenantId as string;
+  const contactId = event.params.contactId as string;
+  const after = event.data?.after.data();
+  if (!after) return;
+
+  const fullName = after.fullName || [after.firstName, after.lastName].filter(Boolean).join(' ').trim();
+  const snap = pickDefined({
+    fullName,
+    firstName: after.firstName,
+    lastName: after.lastName,
+    email: after.email,
+    phone: after.phone,
+    title: after.title,
+    companyId: after.companyId,
+    companyName: after.companyName,
+  });
+
+  await updateDealsForEntity(tenantId, 'contactIds', contactId, 'contacts', snap);
+});
+
+// Location snapshot fan-out (company subcollection)
+export const firestoreLocationSnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
+  if (!isDualWriteEnabled()) return;
+  const tenantId = event.params.tenantId as string;
+  const locationId = event.params.locationId as string;
+  const after = event.data?.after.data();
+  if (!after) return;
+
+  const snap = pickDefined({
+    name: after.nickname || after.name,
+    addressLine1: after.address || after.addressLine1,
+    city: after.city,
+    state: after.state,
+    zipCode: after.zipCode,
+  });
+
+  await updateDealsForEntity(tenantId, 'locationIds', locationId, 'locations', snap);
+});
+
+// Salesperson snapshot fan-out (user)
+export const firestoreSalespersonSnapshotFanout = onDocumentUpdated('users/{userId}', async (event) => {
+  if (!isDualWriteEnabled()) return;
+  const userId = event.params.userId as string;
+  const after = event.data?.after.data();
+  const before = event.data?.before.data();
+  if (!after) return;
+
+  // Only process if crm_sales true or display fields changed
+  const isSales = after.crm_sales === true;
+  const changedDisplay = !before || ['displayName','firstName','lastName','email','phone'].some((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  if (!isSales && !changedDisplay) return;
+
+  // Iterate tenants where user is active
+  const tenantIds = Object.keys(after.tenantIds || {});
+  const db = admin.firestore();
+  const snapBase = pickDefined({
+    displayName: after.displayName || [after.firstName, after.lastName].filter(Boolean).join(' ').trim() || (after.email ? after.email.split('@')[0] : undefined),
+    firstName: after.firstName,
+    lastName: after.lastName,
+    email: after.email,
+    phone: after.phone,
+    department: after.department,
+    jobTitle: after.jobTitle,
+  });
+
+  await Promise.all(
+    tenantIds.map(async (tenantId) => {
+      const status = after.tenantIds?.[tenantId]?.status;
+      if (status !== 'active') return;
+      const dealsRef = db.collection('tenants').doc(tenantId).collection('crm_deals');
+      const dealsSnap = await dealsRef.where('salespersonIds', 'array-contains' as any, userId).get();
+      if (dealsSnap.empty) return;
+
+      const batch = db.batch();
+      dealsSnap.docs.forEach((dealDoc) => {
+        const dealData: any = dealDoc.data() || {};
+        const salesArr: any[] = (dealData.associations?.salespeople || []).slice();
+        if (!Array.isArray(salesArr) || salesArr.length === 0) return;
+        let changed = false;
+        const updatedArr = salesArr.map((entry) => {
+          if (typeof entry === 'string') return entry;
+          if (entry && entry.id === userId) {
+            const nextSnapshot = { ...(entry.snapshot || {}), ...snapBase };
+            changed = true;
+            return { ...entry, snapshot: nextSnapshot };
+          }
+          return entry;
+        });
+        if (changed) {
+          const nextAssociations = { ...(dealData.associations || {}), salespeople: updatedArr };
+          batch.update(dealDoc.ref, { associations: nextAssociations, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        }
+      });
+      await batch.commit();
+    })
+  );
 });

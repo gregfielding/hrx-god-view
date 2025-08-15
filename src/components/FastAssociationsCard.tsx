@@ -32,7 +32,9 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../contexts/AuthContext';
-import { createDenormalizedAssociationService, DenormalizedAssociations } from '../utils/denormalizedAssociationService';
+// Legacy denormalized service removed; using unified service + direct fields
+type DenormalizedAssociations = any;
+import { isNewAssociationsReadEnabled } from '../utils/associationsAdapter';
 
 interface FastAssociationsCardProps {
   entityType: 'deal' | 'company' | 'contact' | 'salesperson' | 'location' | 'division' | 'task';
@@ -50,6 +52,10 @@ interface FastAssociationsCardProps {
   };
   onAssociationChange?: () => void;
   maxHeight?: number;
+  // NEW: Pre-loaded associations to prevent duplicate calls
+  preloadedAssociations?: DenormalizedAssociations;
+  preloadedContacts?: any[];
+  preloadedSalespeople?: any[];
 }
 
 const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
@@ -67,7 +73,10 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
     tasks: true
   },
   onAssociationChange,
-  maxHeight = 400
+  maxHeight = 400,
+  preloadedAssociations,
+  preloadedContacts,
+  preloadedSalespeople
 }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -78,12 +87,151 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
   const [availableEntities, setAvailableEntities] = useState<{ [key: string]: any[] }>({});
   const [loadingEntities, setLoadingEntities] = useState<{ [key: string]: boolean }>({});
 
+  // Use pre-loaded associations when available
+  useEffect(() => {
+    if (preloadedAssociations) {
+      console.log(`🎯 FastAssociationsCard: Using pre-loaded associations for ${entityType}:${entityId}`);
+      
+      // If we have pre-loaded salespeople, use them instead of the denormalized data
+      if (preloadedSalespeople && preloadedSalespeople.length > 0) {
+        console.log(`🎯 FastAssociationsCard: Using pre-loaded salespeople:`, preloadedSalespeople);
+        const enhancedAssociations = {
+          ...preloadedAssociations,
+          salespeople: preloadedSalespeople
+        };
+        setAssociations(enhancedAssociations);
+      } else {
+        setAssociations(preloadedAssociations);
+      }
+      
+      setLoading(false);
+      setError(null);
+
+      // Enrich names/emails if missing (fetch once in background)
+      (async () => {
+        try {
+          if (!tenantId) return;
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('../firebase');
+          const current = preloadedAssociations;
+          const enriched = { ...current } as any;
+
+          // Companies
+          if (Array.isArray(current.companies)) {
+            const updated = await Promise.all(
+              current.companies.map(async (c: any) => {
+                if (c?.name || c?.snapshot?.name || c?.companyName) return c;
+                try {
+                  const ref = doc(db, `tenants/${tenantId}/crm_companies`, c.id);
+                  const snap = await getDoc(ref);
+                  if (snap.exists()) {
+                    const data: any = snap.data();
+                    return { ...c, name: data.name || data.companyName, snapshot: { ...(c.snapshot || {}), name: data.name || data.companyName } };
+                  }
+                } catch {}
+                return c;
+              })
+            );
+            enriched.companies = updated;
+          }
+
+          // Contacts
+          if (Array.isArray(current.contacts)) {
+            const updated = await Promise.all(
+              current.contacts.map(async (ct: any) => {
+                if (ct?.name || ct?.fullName || ct?.snapshot?.fullName) return ct;
+                try {
+                  const ref = doc(db, `tenants/${tenantId}/crm_contacts`, ct.id);
+                  const snap = await getDoc(ref);
+                  if (snap.exists()) {
+                    const data: any = snap.data();
+                    const fullName = data.fullName || (data.firstName && data.lastName ? `${data.firstName} ${data.lastName}` : undefined);
+                    return { ...ct, name: fullName || ct.name, snapshot: { ...(ct.snapshot || {}), fullName: fullName || ct.snapshot?.fullName, email: data.email || ct.snapshot?.email } };
+                  }
+                } catch {}
+                return ct;
+              })
+            );
+            enriched.contacts = updated;
+          }
+
+          // Salespeople (users)
+          if (Array.isArray(current.salespeople)) {
+            const updated = await Promise.all(
+              current.salespeople.map(async (sp: any) => {
+                if (sp?.displayName || sp?.firstName || sp?.snapshot?.displayName) return sp;
+                try {
+                  const ref = doc(db, `users`, sp.id);
+                  const snap = await getDoc(ref);
+                  if (snap.exists()) {
+                    const data: any = snap.data();
+                    const displayName = data.displayName || (data.firstName && data.lastName ? `${data.firstName} ${data.lastName}` : undefined);
+                    return { ...sp, displayName: displayName, snapshot: { ...(sp.snapshot || {}), displayName: displayName, email: data.email || sp.snapshot?.email } };
+                  }
+                } catch {}
+                return sp;
+              })
+            );
+            enriched.salespeople = updated;
+          }
+
+          // Locations (try company subcollection first, then top-level)
+          if (Array.isArray(current.locations)) {
+            const associatedCompanyIds = (current.companies || []).map((c: any) => c?.id).filter(Boolean);
+            const updated = await Promise.all(
+              current.locations.map(async (l: any) => {
+                if (l?.name || l?.snapshot?.nickname || l?.snapshot?.name) return l;
+                try {
+                  let data: any = null;
+                  // Try company subcollections
+                  for (const cid of associatedCompanyIds) {
+                    try {
+                      const refSub = doc(db, `tenants/${tenantId}/crm_companies/${cid}/locations`, l.id);
+                      const snapSub = await getDoc(refSub);
+                      if (snapSub.exists()) {
+                        data = snapSub.data();
+                        break;
+                      }
+                    } catch {}
+                  }
+                  // Fallback: top-level locations
+                  if (!data) {
+                    const refTop = doc(db, `tenants/${tenantId}/crm_locations`, l.id);
+                    const snapTop = await getDoc(refTop);
+                    if (snapTop.exists()) data = snapTop.data();
+                  }
+                  if (data) {
+                    return { ...l, name: data.nickname || data.name, snapshot: { ...(l.snapshot || {}), nickname: data.nickname, name: data.name, city: data.city } };
+                  }
+                } catch {}
+                return l;
+              })
+            );
+            enriched.locations = updated;
+          }
+
+          setAssociations(enriched);
+        } catch (e) {
+          console.warn('Background enrichment skipped:', e);
+        }
+      })();
+    }
+  }, [preloadedAssociations, preloadedSalespeople, entityType, entityId]);
+
   const loadAssociations = async () => {
     if (!user || !tenantId || !entityId) return;
 
     try {
       setLoading(true);
       setError(null);
+
+      // Prefer preloaded (from deal.associations) when flag is on
+      if (preloadedAssociations && isNewAssociationsReadEnabled()) {
+        console.log(`🎯 Using pre-loaded associations for ${entityType}:${entityId}`);
+        setAssociations(preloadedAssociations);
+        setLoading(false);
+        return;
+      }
 
       console.log(`🔍 Loading associations for ${entityType}:${entityId} in tenant ${tenantId}`);
       console.log(`👤 Current user:`, {
@@ -93,8 +241,27 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
         // Remove properties that don't exist on User type
       });
       
-      const associationService = createDenormalizedAssociationService(tenantId);
-      const result = await associationService.getAssociations(entityType, entityId);
+      // Unified approach: read from entity doc associations directly or via lightweight fetches
+      if (!tenantId) {
+        throw new Error('Missing tenantId');
+      }
+      const { doc, getDoc } = await import('firebase/firestore');
+      const { db } = await import('../firebase');
+      const collectionPath = (() => {
+        switch (entityType) {
+          case 'company': return `tenants/${tenantId}/crm_companies`;
+          case 'contact': return `tenants/${tenantId}/crm_contacts`;
+          case 'deal': return `tenants/${tenantId}/crm_deals`;
+          case 'location': return `tenants/${tenantId}/crm_locations`;
+          case 'task': return `tenants/${tenantId}/crm_tasks`;
+          case 'salesperson': return `users`;
+          default: return `tenants/${tenantId}/crm_${entityType}s`;
+        }
+      })();
+      const ref = doc(db, collectionPath, entityId);
+      const ds = await getDoc(ref);
+      const base = ds.exists() ? (ds.data() as any) : {};
+      const result: any = base.associations || { companies: [], contacts: [], salespeople: [], locations: [], deals: [], divisions: [], tasks: [] };
       
       console.log(`⚡ Fast associations loaded for ${entityType}:${entityId}:`, result);
       console.log(`📊 Association breakdown:`, {
@@ -263,7 +430,8 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
               console.log(`🔍 Processing location:`, location);
               
               // If the location object already has complete data from denormalized associations, use it
-              if (typeof location === 'object' && location.name) {
+              // Treat 'Unknown' as incomplete and fetch from Firestore
+              if (typeof location === 'object' && location.name && location.name !== 'Unknown') {
                 console.log(`✅ Using location data from denormalized associations:`, location);
                 return {
                   id: locationId,
@@ -488,12 +656,18 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
     
     switch (type) {
       case 'companies': {
-        const companyName = entity.name || entity.companyName || entity.title || 'Unknown Company';
+        const fromSnap = entity.snapshot?.name || entity.snapshot?.companyName;
+        let companyName = fromSnap || entity.companyName || entity.name || entity.title || 'Unknown Company';
+        if ((companyName === 'Unknown' || companyName === 'Unknown Company') && entity.companyName) {
+          companyName = entity.companyName;
+        }
         console.log(`🏢 Company name: ${companyName} (from fields: name=${entity.name}, companyName=${entity.companyName}, title=${entity.title})`);
         return companyName;
       }
       case 'contacts': {
-        const contactName = entity.name || entity.fullName || entity.title || 'Unknown Contact';
+        const fromSnap = entity.snapshot?.fullName || entity.snapshot?.name;
+        const fromFirstLast = entity.firstName && entity.lastName ? `${entity.firstName} ${entity.lastName}` : undefined;
+        const contactName = fromSnap || fromFirstLast || entity.name || entity.fullName || entity.displayName || entity.title || 'Unknown Contact';
         console.log(`👤 Contact name: ${contactName} (from fields: name=${entity.name}, fullName=${entity.fullName}, title=${entity.title})`);
         return contactName;
       }
@@ -504,13 +678,28 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
           console.log(`👥 Salesperson name: ${salespersonName} (from firstName=${entity.firstName}, lastName=${entity.lastName})`);
           return salespersonName;
         }
-        const salespersonName = entity.name || entity.fullName || entity.title || 'Unknown Salesperson';
-        console.log(`👥 Salesperson name: ${salespersonName} (from fields: name=${entity.name}, fullName=${entity.fullName}, title=${entity.title})`);
-        return salespersonName;
+        // Handle salespeople with displayName field (from user collection)
+        if (entity.displayName || entity.snapshot?.displayName) {
+          const name = entity.displayName || entity.snapshot?.displayName;
+          console.log(`👥 Salesperson name: ${name} (from displayName)`);
+          return name as string;
+        }
+        if (entity.snapshot?.name) {
+          const name = entity.snapshot.name;
+          console.log(`👥 Salesperson name: ${name} (from snapshot.name)`);
+          return name;
+        }
+        const name = entity.name || entity.fullName || entity.title || 'Unknown Salesperson';
+        console.log(`👥 Salesperson name: ${name} (from fields: name=${entity.name}, fullName=${entity.fullName}, title=${entity.title})`);
+        return name;
       }
       case 'locations': {
-        const locationName = entity.name || entity.address || entity.title || 'Unknown Location';
-        console.log(`📍 Location name: ${locationName} (from fields: name=${entity.name}, address=${entity.address}, title=${entity.title})`);
+        const fromSnap = entity.snapshot?.nickname || entity.snapshot?.name || entity.snapshot?.city || entity.snapshot?.addressLine1;
+        let locationName = fromSnap || entity.name || entity.address || entity.title || '';
+        if (!locationName || locationName === 'Unknown' || locationName === 'Unknown Location') {
+          locationName = entity.snapshot?.city || entity.id || 'Unknown Location';
+        }
+        console.log(`📍 Location name: ${locationName} (from fields: name=${entity.name}, snapshot=${JSON.stringify(entity.snapshot || {})})`);
         return locationName;
       }
       case 'deals': {
@@ -538,12 +727,28 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
 
   const getEntitySubtitle = (entity: any, type: string) => {
     switch (type) {
-      case 'companies': return entity.industry || entity.city;
-      case 'contacts': return entity.email || entity.phone;
+      case 'companies': {
+        const industry = entity.snapshot?.industry || entity.industry;
+        const city = entity.snapshot?.city || entity.city;
+        const state = entity.snapshot?.state || entity.state;
+        const isValid = (v: any) => typeof v === 'string' && /[A-Za-z]/.test(v) && v.trim().length >= 3;
+        if (isValid(industry)) return industry;
+        if (isValid(city)) return state ? `${city}, ${state}` : city;
+        return '';
+      }
+      case 'contacts': return entity.snapshot?.email || entity.email || entity.phone;
       case 'salespeople': 
         // For salespeople, show email as subtitle
-        return entity.email || entity.phone || '';
-      case 'locations': return entity.city || entity.address;
+        return entity.snapshot?.email || entity.email || entity.phone || '';
+      case 'locations': {
+        const city = entity.snapshot?.city || entity.city;
+        const state = entity.snapshot?.state || entity.state;
+        const addr = entity.snapshot?.addressLine1 || entity.addressLine1 || entity.address;
+        const isValid = (v: any) => typeof v === 'string' && /[A-Za-z]/.test(v) && v.trim().length >= 3;
+        if (isValid(city)) return state ? `${city}, ${state}` : city;
+        if (isValid(addr)) return addr;
+        return '';
+      }
       case 'deals': return entity.stage || `$${entity.value?.toLocaleString()}`;
       case 'divisions': return entity.description;
       case 'tasks': return entity.status || entity.priority;
@@ -569,49 +774,71 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
 
   const handleAddAssociation = async (targetType: string, targetEntity: any) => {
     try {
-      const associationService = createDenormalizedAssociationService(tenantId);
-      
-      // Add the association
-      await associationService.addAssociation(
-        entityType,
-        entityId,
-        targetType as keyof DenormalizedAssociations,
-        targetEntity
-      );
-      
-      // Reload associations
-      await loadAssociations();
-      
-      if (onAssociationChange) {
-        onAssociationChange();
+      if (!tenantId) {
+        console.warn('manageAssociations blocked: missing tenantId', { entityType, entityId, targetType, targetId: targetEntity?.id || targetEntity });
+        setError('Missing tenant context; cannot update associations.');
+        return;
       }
-    } catch (err) {
+      // Try dual-write callable first
+      try {
+        const { getFunctions, httpsCallable } = await import('firebase/functions');
+        const functions = getFunctions(undefined as any, 'us-central1');
+        const manageAssociations = httpsCallable(functions, 'manageAssociations');
+        const payload = {
+          action: 'add',
+          sourceEntityType: entityType,
+          sourceEntityId: entityId,
+          targetEntityType: targetType,
+          targetEntityId: targetEntity.id || targetEntity,
+          tenantId
+        } as any;
+        console.log('manageAssociations.add payload', payload);
+        await manageAssociations(payload);
+      } catch (callableErr) {
+        console.warn('Callable add failed:', callableErr);
+      }
+
+      await loadAssociations();
+      if (onAssociationChange) onAssociationChange();
+    } catch (err: any) {
       console.error('Error adding association:', err);
-      setError('Failed to add association');
+      const message = err?.message || err?.code || 'Failed to add association';
+      setError(message);
     }
   };
 
   const handleRemoveAssociation = async (targetType: string, targetEntityId: string) => {
     try {
-      const associationService = createDenormalizedAssociationService(tenantId);
-      
-      // Remove the association
-      await associationService.removeAssociation(
-        entityType,
-        entityId,
-        targetType as keyof DenormalizedAssociations,
-        targetEntityId
-      );
-      
-      // Reload associations
-      await loadAssociations();
-      
-      if (onAssociationChange) {
-        onAssociationChange();
+      if (!tenantId) {
+        console.warn('manageAssociations blocked: missing tenantId (remove)', { entityType, entityId, targetType, targetId: targetEntityId });
+        setError('Missing tenant context; cannot update associations.');
+        return;
       }
-    } catch (err) {
+      // Try dual-write callable first
+      try {
+        const { getFunctions, httpsCallable } = await import('firebase/functions');
+        const functions = getFunctions(undefined as any, 'us-central1');
+        const manageAssociations = httpsCallable(functions, 'manageAssociations');
+        const payload = {
+          action: 'remove',
+          sourceEntityType: entityType,
+          sourceEntityId: entityId,
+          targetEntityType: targetType,
+          targetEntityId,
+          tenantId
+        } as any;
+        console.log('manageAssociations.remove payload', payload);
+        await manageAssociations(payload);
+      } catch (callableErr) {
+        console.warn('Callable remove failed:', callableErr);
+      }
+
+      await loadAssociations();
+      if (onAssociationChange) onAssociationChange();
+    } catch (err: any) {
       console.error('Error removing association:', err);
-      setError('Failed to remove association');
+      const message = err?.message || err?.code || 'Failed to remove association';
+      setError(message);
     }
   };
 
@@ -643,14 +870,13 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
       let entities: any[] = [];
 
       if (entityType === 'salespeople' || entityType === 'salesperson') {
-        // Use Firebase Function for salespeople (same as SimpleAssociationsCard)
+        // Use Firebase Function for salespeople (same as UniversalAssociationsCard)
         console.log(`🔍 Using Firebase Function to load salespeople`);
         const functions = getFunctions();
-        const getSalespeople = httpsCallable(functions, 'getSalespeople');
+        const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
         
         const result = await getSalespeople({
-          tenantId: tenantId,
-          activeTenantId: tenantId
+          tenantId: tenantId
         });
         
         entities = (result.data as any).salespeople || [];
@@ -677,22 +903,37 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
           );
           entities = locationDocsArrays.flat();
         } else if (entityType === 'contacts' || entityType === 'contact') {
-          // Contacts collection at tenant level; filter by companyId in associated companyIds
+          // Prefer explicit associations.contacts from the deal when available
+          const assocContacts: any[] = (associations?.contacts || []).filter(Boolean);
+          const contactIds: string[] = assocContacts.map((c: any) => (typeof c === 'string' ? c : c.id)).filter(Boolean);
           const contactsCol = collection(db, `tenants/${tenantId}/crm_contacts`);
-          if (companyIds.length > 0 && companyIds.length <= 10) {
-            // Firestore supports up to 10 values in 'in' clause
-            const qContacts = query(contactsCol, where('companyId', 'in', companyIds));
-            const snap = await getDocs(qContacts);
-            entities = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-          } else if (companyIds.length === 0) {
-            console.log('No associated companies found; returning no contacts');
-            entities = [];
+          if (contactIds.length > 0) {
+            const chunkSize = 10;
+            const chunks: string[][] = [];
+            for (let i = 0; i < contactIds.length; i += chunkSize) chunks.push(contactIds.slice(i, i + chunkSize));
+            const resultsArrays = await Promise.all(
+              chunks.map(async (ids) => {
+                const qContacts = query(contactsCol, where('__name__', 'in', ids));
+                const snap = await getDocs(qContacts);
+                return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+              })
+            );
+            entities = resultsArrays.flat();
           } else {
-            // Fallback: load and client-filter if too many companies
-            const snap = await getDocs(contactsCol);
-            entities = snap.docs
-              .map((d) => ({ id: d.id, ...(d.data() as any) }))
-              .filter((c: any) => companyIds.includes(c.companyId));
+            // Fallback: load all contacts or filter by associated companyIds if provided
+            if (companyIds.length > 0 && companyIds.length <= 10) {
+              const qContacts = query(contactsCol, where('companyId', 'in', companyIds));
+              const snap = await getDocs(qContacts);
+              entities = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+            } else if (companyIds.length === 0) {
+              const snap = await getDocs(contactsCol);
+              entities = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+            } else {
+              const snap = await getDocs(contactsCol);
+              entities = snap.docs
+                .map((d) => ({ id: d.id, ...(d.data() as any) }))
+                .filter((c: any) => companyIds.includes(c.companyId));
+            }
           }
         } else if (entityType === 'companies' || entityType === 'company') {
           const companiesCol = collection(db, `tenants/${tenantId}/crm_companies`);
@@ -728,14 +969,16 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
     if (!tenantId || !entityId || !locationData) return;
     
     try {
-      console.log(`🔄 Updating denormalized associations with location data for ${entityType}:${entityId}`);
-      
-      // Get current associations
-      const associationService = createDenormalizedAssociationService(tenantId);
-      const currentAssociations = await associationService.getAssociations(entityType, entityId);
+      console.log(`🔄 Updating associations snapshot with location data for ${entityType}:${entityId}`);
+      const { doc, updateDoc, getDoc } = await import('firebase/firestore');
+      const { db } = await import('../firebase');
+      const ref = doc(db, `tenants/${tenantId}/crm_${entityType}s`, entityId);
+      const ds = await getDoc(ref);
+      const current = ds.exists() ? (ds.data() as any).associations || {} : {};
       
       // Update the location in associations with full data
-      const updatedLocations = currentAssociations.locations.map((loc: any) => {
+      const existingLocations = Array.isArray(current.locations) ? current.locations : [];
+      const updatedLocations = existingLocations.map((loc: any) => {
         if (loc.id === locationId || (typeof loc === 'string' && loc === locationId)) {
           return {
             id: locationId,
@@ -748,10 +991,7 @@ const FastAssociationsCard: React.FC<FastAssociationsCardProps> = ({
       });
       
       // Update the associations
-      await associationService.updateAssociations(entityType, entityId, {
-        ...currentAssociations,
-        locations: updatedLocations
-      });
+      await updateDoc(ref, { associations: { ...current, locations: updatedLocations } });
       
       console.log(`✅ Updated denormalized associations with location data`);
     } catch (error) {

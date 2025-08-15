@@ -70,13 +70,12 @@ export async function generateMenuItems(
 
   // Check if this is HRX based on specific tenant ID
   const isHRX =  activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
-  console.log('isHRX:',  isHRX);
-  console.log('Flex module enabled:', flexModuleEnabled);
+  // REMOVED: Excessive logging causing re-renders
+  // REMOVED: Excessive logging causing re-renders
 
-  console.log('Active tenant ID:', activeTenantId);
-  console.log('Active tenant data:', activeTenantData);
-  console.log('Active tenant Role:', activeTenantData?.role || 'No role found');
-  console.log('Active tenant Security Level:', activeTenantData?.securityLevel || 'No security level found');
+  // REMOVED: Excessive logging causing re-renders
+  // REMOVED: Excessive logging causing re-renders
+  // REMOVED: Excessive logging causing re-renders
 
   if (!isHRX) {
     // Add tenant-specific menu items

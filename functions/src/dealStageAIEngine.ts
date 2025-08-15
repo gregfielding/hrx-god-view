@@ -151,22 +151,28 @@ async function getDealContext(dealId: string, tenantId: string, userId: string):
       context.deal = { id: dealId, ...dealDoc.data() };
     }
 
-    // Get company data
-    if (context.deal?.companyId) {
-      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(context.deal.companyId).get();
+    // Get company data using primary company id when available
+    const primaryCompanyId = (context.deal?.associations?.primaryCompanyId)
+      || (Array.isArray(context.deal?.associations?.companies) && context.deal.associations.companies.length > 0
+            ? (typeof context.deal.associations.companies[0] === 'string' ? context.deal.associations.companies[0] : context.deal.associations.companies[0]?.id)
+            : context.deal?.companyId);
+    if (primaryCompanyId) {
+      const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(primaryCompanyId).get();
       if (companyDoc.exists) {
-        context.company = { id: context.deal.companyId, ...companyDoc.data() };
+        context.company = { id: primaryCompanyId, ...companyDoc.data() };
       }
     }
 
-    // Get contacts
-    if (context.deal?.contactIds && Array.isArray(context.deal.contactIds)) {
-      const contactPromises = context.deal.contactIds.map(async (contactId: string) => {
+    // Get contacts (associations-first)
+    const assocContactIds = Array.isArray(context.deal?.associations?.contacts)
+      ? context.deal.associations.contacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+      : [];
+    const legacyContactIds = Array.isArray(context.deal?.contactIds) ? context.deal.contactIds : [];
+    const contactIds = assocContactIds.length > 0 ? assocContactIds : legacyContactIds;
+    if (contactIds.length > 0) {
+      const contactPromises = contactIds.map(async (contactId: string) => {
         const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(contactId).get();
-        if (contactDoc.exists) {
-          return { id: contactId, ...contactDoc.data() };
-        }
-        return null;
+        return contactDoc.exists ? { id: contactId, ...contactDoc.data() } : null;
       });
       context.contacts = (await Promise.all(contactPromises)).filter(Boolean);
     }
@@ -428,10 +434,14 @@ async function generateStageRecommendations(dealContext: any, stageAnalysis: any
         priority: 'high',
         category: 'business_generating',
         estimatedDuration: 30,
-        associations: {
-          deals: [dealContext.deal.id],
-          companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
-        },
+              associations: {
+                deals: [dealContext.deal.id],
+                companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                  ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                      ? [dealContext.deal.associations.companies[0]]
+                      : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                  : (dealContext.deal.associations?.primaryCompanyId ? [dealContext.deal.associations.primaryCompanyId] : (dealContext.deal.companyId ? [dealContext.deal.companyId] : []))
+              },
         aiGenerated: true,
         aiPrompt: `Complete missing field: ${field}`,
         fieldName: field,
@@ -538,7 +548,11 @@ async function generateFieldCompletionTasks(dealContext: any, stageAnalysis: any
             estimatedDuration: 15,
             associations: {
               deals: [dealContext.deal.id],
-              companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
             },
             aiGenerated: true,
             aiPrompt: `Research current staff count for ${dealContext.company?.name || 'company'}`
@@ -555,7 +569,11 @@ async function generateFieldCompletionTasks(dealContext: any, stageAnalysis: any
             estimatedDuration: 45,
             associations: {
               deals: [dealContext.deal.id],
-              companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : [],
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : []),
               contacts: dealContext.contacts.map((c: any) => c.id)
             },
             aiGenerated: true,
@@ -573,7 +591,11 @@ async function generateFieldCompletionTasks(dealContext: any, stageAnalysis: any
             estimatedDuration: 30,
             associations: {
               deals: [dealContext.deal.id],
-              companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
             },
             aiGenerated: true,
             aiPrompt: `Confirm budget range for staffing services`
@@ -590,7 +612,11 @@ async function generateFieldCompletionTasks(dealContext: any, stageAnalysis: any
             estimatedDuration: 30,
             associations: {
               deals: [dealContext.deal.id],
-              companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
             },
             aiGenerated: true,
             aiPrompt: `Complete missing field: ${field}`
@@ -628,7 +654,11 @@ async function generateNextStagePreparation(dealContext: any, stageAnalysis: any
           estimatedDuration: 60,
           associations: {
             deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+            companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+              ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                  ? [dealContext.deal.associations.companies[0]]
+                  : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+              : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
           },
           aiGenerated: true,
           aiPrompt: `Prepare for qualification stage`
@@ -643,10 +673,14 @@ async function generateNextStagePreparation(dealContext: any, stageAnalysis: any
           priority: 'high',
           category: 'business_generating',
           estimatedDuration: 90,
-          associations: {
-            deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
-          },
+            associations: {
+              deals: [dealContext.deal.id],
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
+            },
           aiGenerated: true,
           aiPrompt: `Prepare for proposal stage`
         });
@@ -660,10 +694,14 @@ async function generateNextStagePreparation(dealContext: any, stageAnalysis: any
           priority: 'high',
           category: 'business_generating',
           estimatedDuration: 120,
-          associations: {
-            deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
-          },
+            associations: {
+              deals: [dealContext.deal.id],
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
+            },
           aiGenerated: true,
           aiPrompt: `Prepare for negotiation stage`
         });
@@ -677,10 +715,14 @@ async function generateNextStagePreparation(dealContext: any, stageAnalysis: any
           priority: 'high',
           category: 'business_generating',
           estimatedDuration: 60,
-          associations: {
-            deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
-          },
+            associations: {
+              deals: [dealContext.deal.id],
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])
+            },
           aiGenerated: true,
           aiPrompt: `Prepare for closing stage`
         });
@@ -719,7 +761,11 @@ async function generateEmailActivityTasks(dealContext: any): Promise<any[]> {
               estimatedDuration: 15,
               associations: {
                 deals: [dealContext.deal.id],
-                companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : []
+                companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                  ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                      ? [dealContext.deal.associations.companies[0]]
+                      : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                  : (dealContext.deal.associations?.primaryCompanyId ? [dealContext.deal.associations.primaryCompanyId] : (dealContext.deal.companyId ? [dealContext.deal.companyId] : []))
               },
               aiGenerated: true,
               aiPrompt: `Follow up on email activity`
@@ -743,11 +789,15 @@ async function generateEmailActivityTasks(dealContext: any): Promise<any[]> {
           priority: 'medium',
           category: 'business_generating',
           estimatedDuration: 20,
-          associations: {
-            deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : [],
-            contacts: [contact.id]
-          },
+              associations: {
+                deals: [dealContext.deal.id],
+                companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                  ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                      ? [dealContext.deal.associations.companies[0]]
+                      : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                  : (dealContext.deal.associations?.primaryCompanyId ? [dealContext.deal.associations.primaryCompanyId] : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])),
+                contacts: [contact.id]
+              },
           aiGenerated: true,
           aiPrompt: `Send introduction email to contact`
         });
@@ -785,11 +835,15 @@ async function generateContactEngagementTasks(dealContext: any): Promise<any[]> 
           priority: 'medium',
           category: 'business_generating',
           estimatedDuration: 30,
-          associations: {
-            deals: [dealContext.deal.id],
-            companies: dealContext.deal.companyId ? [dealContext.deal.companyId] : [],
-            contacts: [contact.id]
-          },
+            associations: {
+              deals: [dealContext.deal.id],
+              companies: (dealContext.deal.associations?.companies && dealContext.deal.associations.companies.length > 0)
+                ? (typeof dealContext.deal.associations.companies[0] === 'string'
+                    ? [dealContext.deal.associations.companies[0]]
+                    : [dealContext.deal.associations.companies[0]?.id].filter(Boolean))
+                : (dealContext.deal.associations?.primaryCompanyId ? [dealContext.deal.associations.primaryCompanyId] : (dealContext.deal.companyId ? [dealContext.deal.companyId] : [])),
+              contacts: [contact.id]
+            },
           aiGenerated: true,
           aiPrompt: `Engage with contact who hasn't been contacted recently`
         });

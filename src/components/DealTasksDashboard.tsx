@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -30,7 +31,7 @@ import {
   TrendingUp as TrendingUpIcon
 } from '@mui/icons-material';
 
-import { createAssociationService } from '../utils/associationService';
+import { getDealPrimaryCompanyId } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskClassification } from '../types/Tasks';
@@ -44,6 +45,10 @@ interface DealTasksDashboardProps {
   dealId: string;
   tenantId: string;
   deal: any; // Deal information
+  // NEW: Pre-loaded associations to prevent duplicate calls
+  preloadedContacts?: any[];
+  preloadedSalespeople?: any[];
+  preloadedCompany?: any;
 }
 
 interface TaskDashboardData {
@@ -82,11 +87,14 @@ interface TaskDashboardData {
   };
 }
 
-const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
+const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(function DealTasksDashboard({
   dealId,
   tenantId,
-  deal
-}) => {
+  deal,
+  preloadedContacts,
+  preloadedSalespeople,
+  preloadedCompany
+}) {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState<TaskDashboardData | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<any[]>([]);
@@ -103,32 +111,104 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   const [loadingAssociations, setLoadingAssociations] = useState(false);
   const [prefilledTaskData, setPrefilledTaskData] = useState<any>(null);
 
+  // Use pre-loaded associations when available (no duplicate calls!)
+  useEffect(() => {
+    if (preloadedContacts || preloadedSalespeople || preloadedCompany) {
+      console.log('🎯 DealTasksDashboard: Using pre-loaded associations');
+      if (preloadedContacts) setAssociatedContacts(preloadedContacts);
+      if (preloadedSalespeople) setAssociatedSalespeople(preloadedSalespeople);
+      if (preloadedCompany) setAssociatedCompany(preloadedCompany);
+      setLoadingAssociations(false);
+    }
+  }, [preloadedContacts, preloadedSalespeople, preloadedCompany]);
+
   const taskService = TaskService.getInstance();
 
   useEffect(() => {
     loadDashboardData();
-    loadAssociatedData();
-  }, [dealId, tenantId]);
+    // Only load associations if not already loaded
+    if (associatedContacts.length === 0 && associatedSalespeople.length === 0) {
+      loadAssociatedData();
+    }
+  }, [dealId, tenantId, associatedContacts.length, associatedSalespeople.length]);
+
+  // Set up real-time subscription for task updates
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = taskService.subscribeToTasks(
+      user.uid,
+      tenantId,
+      { dealId },
+      (tasks) => {
+        console.log('🔄 Real-time subscription received tasks:', tasks);
+        
+        // Simple processing - just separate open and completed tasks
+        const openTasks = tasks.filter(task => task.status !== 'completed');
+        const completedTasks = tasks.filter(task => task.status === 'completed');
+        
+        console.log('📊 Open tasks:', openTasks.length);
+        console.log('✅ Completed tasks:', completedTasks.length);
+        
+        setDashboardData({
+          today: { 
+            totalTasks: openTasks.length,
+            completedTasks: 0,
+            pendingTasks: openTasks.length,
+            tasks: openTasks
+          },
+          thisWeek: { 
+            totalTasks: openTasks.length,
+            completedTasks: 0,
+            pendingTasks: openTasks.length,
+            quotaProgress: {
+              percentage: 0,
+              completed: 0,
+              target: openTasks.length
+            },
+            tasks: openTasks
+          },
+          completed: { 
+            totalTasks: completedTasks.length,
+            tasks: completedTasks
+          },
+          priorities: {
+            high: openTasks.filter(t => t.priority === 'high').length,
+            medium: openTasks.filter(t => t.priority === 'medium').length,
+            low: openTasks.filter(t => t.priority === 'low').length
+          },
+          types: {
+            email: openTasks.filter(t => t.type === 'email').length,
+            phone_call: openTasks.filter(t => t.type === 'phone_call').length,
+            scheduled_meeting_virtual: openTasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
+            research: openTasks.filter(t => t.type === 'research').length,
+            custom: openTasks.filter(t => t.type === 'custom').length
+          }
+        });
+        setLoading(false);
+        setError(null);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user, tenantId, dealId]);
 
   const loadAssociatedData = async () => {
     if (!user || !tenantId || !dealId) return;
     
     setLoadingAssociations(true);
     try {
-      console.log('🔍 TESTING: Loading associations for deal:', dealId);
+      // REMOVED: Excessive logging causing re-renders
       
       // TEST: Use the new unified association service
       try {
         const { createUnifiedAssociationService } = await import('../utils/unifiedAssociationService');
         const associationService = createUnifiedAssociationService(tenantId, user.uid);
         
-        console.log('🔍 Loading unified associations for deal:', dealId);
+        // REMOVED: Excessive logging causing re-renders
         const result = await associationService.getEntityAssociations('deal', dealId);
         
-        console.log('📊 Unified association result:', result);
-        console.log('📊 Companies:', result.entities.companies);
-        console.log('📊 Contacts:', result.entities.contacts);
-        console.log('📊 Salespeople:', result.entities.salespeople);
+        // REMOVED: Excessive logging causing re-renders
         
         // Set company
         if (result.entities.companies && result.entities.companies.length > 0) {
@@ -137,60 +217,22 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         
         // Set contacts
         if (result.entities.contacts) {
-          console.log('📊 Setting associated contacts:', result.entities.contacts);
           setAssociatedContacts(result.entities.contacts);
         }
         
         // Set salespeople
         if (result.entities.salespeople) {
-          console.log('📊 Setting associated salespeople:', result.entities.salespeople);
           setAssociatedSalespeople(result.entities.salespeople);
         }
         
-        console.log('✅ Unified service test completed successfully');
+        // REMOVED: Excessive logging causing re-renders
         return;
         
       } catch (unifiedError) {
-        console.error('❌ Unified service failed, falling back to old method:', unifiedError);
+        console.error('❌ Unified service failed:', unifiedError);
       }
       
-      // FALLBACK: Use the old association service
-      const associationService = createAssociationService(tenantId, user.uid);
-      
-      // Load company associated with the deal
-      const companyResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['company']
-      });
-      
-      if (companyResult.entities.companies && companyResult.entities.companies.length > 0) {
-        setAssociatedCompany(companyResult.entities.companies[0]);
-      }
-      
-      // Load contacts associated with the deal
-      const contactResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['contact']
-      });
-      
-      if (contactResult.entities.contacts) {
-        console.log('📊 Setting associated contacts (fallback):', contactResult.entities.contacts);
-        setAssociatedContacts(contactResult.entities.contacts);
-      }
-      
-      // Load salespeople associated with the deal
-      const salespeopleResult = await associationService.queryAssociations({
-        entityType: 'deal',
-        entityId: dealId,
-        targetTypes: ['salesperson']
-      });
-      
-      if (salespeopleResult.entities.salespeople) {
-        console.log('📊 Setting associated salespeople (fallback):', salespeopleResult.entities.salespeople);
-        setAssociatedSalespeople(salespeopleResult.entities.salespeople);
-      }
+      // Unified path already handled; skip legacy fallback block
       
     } catch (err) {
       console.error('Error loading associated data:', err);
@@ -203,14 +245,54 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         // If we have contact IDs in the deal, try to fetch them directly
         if (deal.associations.contacts && deal.associations.contacts.length > 0) {
           console.log('📊 Deal has contact IDs:', deal.associations.contacts);
-          // For now, just set empty array to avoid showing IDs
-          setAssociatedContacts([]);
+          // Try to load contacts data from the IDs
+          try {
+            const { doc, getDoc } = await import('firebase/firestore');
+            const { db } = await import('../firebase');
+            
+            const contactPromises = deal.associations.contacts.map(async (contactId: string) => {
+              try {
+                const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+                return contactDoc.exists() ? { id: contactDoc.id, ...contactDoc.data() } : null;
+              } catch (err) {
+                console.error('Error loading contact:', contactId, err);
+                return null;
+              }
+            });
+            
+            const contacts = (await Promise.all(contactPromises)).filter(Boolean);
+            console.log('📊 Loaded contacts from deal associations:', contacts);
+            setAssociatedContacts(contacts);
+          } catch (err) {
+            console.error('Error loading contacts from deal associations:', err);
+            setAssociatedContacts([]);
+          }
         }
         
         if (deal.associations.salespeople && deal.associations.salespeople.length > 0) {
           console.log('📊 Deal has salespeople IDs:', deal.associations.salespeople);
-          // For now, just set empty array to avoid showing IDs
-          setAssociatedSalespeople([]);
+          // Try to load salespeople data from the IDs
+          try {
+            const { doc, getDoc } = await import('firebase/firestore');
+            const { db } = await import('../firebase');
+            
+            const salespeoplePromises = deal.associations.salespeople.map(async (salespersonId: string) => {
+              try {
+                const salespersonDoc = await getDoc(doc(db, 'tenants', tenantId, 'users', salespersonId));
+                return salespersonDoc.exists() ? { id: salespersonDoc.id, ...salespersonDoc.data() } : null;
+              } catch (err) {
+                console.error('Error loading salesperson:', salespersonId, err);
+                return null;
+              }
+            });
+            
+            const salespeople = (await Promise.all(salespeoplePromises)).filter(Boolean);
+            console.log('📊 Loaded salespeople from deal associations:', salespeople);
+            setAssociatedSalespeople(salespeople);
+          } catch (err) {
+            console.error('Error loading salespeople from deal associations:', err);
+            setAssociatedSalespeople([]);
+          }
         }
       }
     } finally {
@@ -237,7 +319,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         
         // If title matches, it's definitely a duplicate
         if (titleMatch) {
-          console.log('Debug: Filtering out duplicate suggestion by title:', suggestion.title);
+          // REMOVED: Excessive logging causing re-renders
           return true;
         }
         
@@ -262,7 +344,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
     try {
       // Debug: Directly query tasks from Firestore
-      console.log('Debug: Loading tasks for deal:', dealId);
+      // REMOVED: Excessive logging causing re-renders
       const { collection, query, where, getDocs } = await import('firebase/firestore');
       const { db } = await import('../firebase');
       
@@ -275,7 +357,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       
       const tasksSnapshot = await getDocs(tasksQuery);
       const allTasks = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log('Debug: Found tasks for deal:', allTasks);
+              // REMOVED: Excessive logging causing re-renders
 
       // Also check for tasks assigned to the current user
       const userTasksQuery = query(
@@ -285,7 +367,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       
       const userTasksSnapshot = await getDocs(userTasksQuery);
       const userTasks = userTasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      console.log('Debug: Found tasks for user:', userTasks);
+              // REMOVED: Excessive logging causing re-renders
 
       // Load deal-specific tasks
       const dashboardResult = await taskService.getTaskDashboard(
@@ -295,9 +377,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
         { dealId } // Filter by deal
       );
 
-      console.log('Debug: Dashboard result:', dashboardResult);
-      console.log('Debug: Today tasks count:', dashboardResult?.today?.tasks?.length || 0);
-      console.log('Debug: This week tasks count:', dashboardResult?.thisWeek?.tasks?.length || 0);
+      // REMOVED: Excessive logging causing re-renders
 
       // Load AI suggestions for this deal
       const suggestionsResult = await taskService.getAITaskSuggestions(
@@ -308,7 +388,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
       // If dashboard result is empty but we found tasks directly, create a fallback structure
       if ((!dashboardResult?.today?.tasks || dashboardResult.today.tasks.length === 0) && allTasks.length > 0) {
-        console.log('Debug: Creating fallback dashboard structure with', allTasks.length, 'tasks');
+        // REMOVED: Excessive logging causing re-renders
         
         // Create a simple dashboard structure with all tasks
         const fallbackDashboard = {
@@ -354,8 +434,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       
       // Filter out AI suggestions that match existing tasks
       const filteredSuggestions = filterDuplicateSuggestions(suggestionsResult || [], allTasks);
-      console.log('Debug: Original suggestions count:', suggestionsResult?.length || 0);
-      console.log('Debug: Filtered suggestions count:', filteredSuggestions.length);
+      // REMOVED: Excessive logging causing re-renders
       
       setAiSuggestions(filteredSuggestions);
     } catch (err) {
@@ -388,7 +467,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       // Pre-select the deal association and add required fields
       const taskWithDeal = {
         ...taskData,
-        assignedTo: taskData.assignedTo || user.uid,
+        assignedTo: Array.isArray(taskData.assignedTo) ? taskData.assignedTo : (taskData.assignedTo ? [taskData.assignedTo] : [user.uid]),
         createdBy: user.uid,
         tenantId: tenantId,
         associations: {
@@ -411,47 +490,94 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
   };
 
   const handleQuickComplete = async (taskId: string) => {
+    // Find the task to determine if it's completed or not
+    const task = dashboardData?.today?.tasks?.find(t => t.id === taskId) ||
+                 dashboardData?.thisWeek?.tasks?.find(t => t.id === taskId) ||
+                 dashboardData?.completed?.tasks?.find(t => t.id === taskId);
+    
+    if (!task) {
+      console.log('❌ Task not found:', taskId);
+      return;
+    }
+
+    const originalStatus = task.status;
+    
     try {
-      // Find the task to determine if it's completed or not
-      const task = dashboardData?.today?.tasks?.find(t => t.id === taskId) ||
-                   dashboardData?.thisWeek?.tasks?.find(t => t.id === taskId) ||
-                   dashboardData?.completed?.tasks?.find(t => t.id === taskId);
-      
-      if (!task) return;
+      console.log('🎯 Quick complete called for task:', taskId);
+      console.log('📋 Current task status:', originalStatus);
 
-      if (task.status === 'completed') {
-        // Task is completed, so uncomplete it by restoring the correct status
-        const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
-        const scheduledDate = new Date(dateToUse + 'T00:00:00');
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
+      // Optimistic update - immediately update the UI
+      setDashboardData(prevData => {
+        if (!prevData) return prevData;
         
-        let newStatus: TaskStatus;
-        if (scheduledDay < today) {
-          newStatus = 'overdue';
-        } else if (scheduledDay.getTime() === today.getTime()) {
-          newStatus = 'due';
-        } else {
-          newStatus = 'upcoming';
-        }
+        const newStatus = originalStatus === 'completed' ? 'upcoming' : 'completed';
+        console.log('🔄 Optimistically updating task status to:', newStatus);
+        
+        const updateTaskInArray = (taskArray: any[]) => 
+          taskArray.map(t => t.id === taskId ? { ...t, status: newStatus } : t);
+        
+        return {
+          ...prevData,
+          today: {
+            ...prevData.today,
+            tasks: updateTaskInArray(prevData.today.tasks)
+          },
+          thisWeek: {
+            ...prevData.thisWeek,
+            tasks: updateTaskInArray(prevData.thisWeek.tasks)
+          },
+          completed: {
+            ...prevData.completed,
+            tasks: updateTaskInArray(prevData.completed.tasks)
+          }
+        };
+      });
 
+      if (originalStatus === 'completed') {
+        // Task is completed, so uncomplete it
+        console.log('🔄 Uncompleting task');
         await taskService.updateTask(taskId, { 
-          status: newStatus,
+          status: 'upcoming',
           completedAt: null
         }, tenantId);
       } else {
         // Task is not completed, so complete it
+        console.log('🔄 Completing task');
         await taskService.completeTask(taskId, { 
           outcome: 'positive', 
           notes: 'Task completed'
         }, tenantId, user?.uid || '');
       }
       
-      await loadDashboardData(); // Refresh data
+      console.log('✅ Task update completed');
+      // Real-time subscription will handle the UI updates automatically
     } catch (err) {
-      console.error('Error updating task status:', err);
+      console.error('❌ Error updating task status:', err);
       setError('Failed to update task status');
+      
+      // Revert optimistic update on error - use the original task status
+      setDashboardData(prevData => {
+        if (!prevData) return prevData;
+        
+        const revertTaskInArray = (taskArray: any[]) => 
+          taskArray.map(t => t.id === taskId ? { ...t, status: originalStatus } : t);
+        
+        return {
+          ...prevData,
+          today: {
+            ...prevData.today,
+            tasks: revertTaskInArray(prevData.today.tasks)
+          },
+          thisWeek: {
+            ...prevData.thisWeek,
+            tasks: revertTaskInArray(prevData.thisWeek.tasks)
+          },
+          completed: {
+            ...prevData.completed,
+            tasks: revertTaskInArray(prevData.completed.tasks)
+          }
+        };
+      });
     }
   };
 
@@ -466,7 +592,8 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
     }
 
     // Pre-fill the task data with AI suggestion
-    const prefilledData = {
+      const primaryCompanyId = getDealPrimaryCompanyId(deal);
+      const prefilledData = {
       title: suggestion.title,
       description: suggestion.description,
       type: suggestion.type || 'custom',
@@ -483,7 +610,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       assignedTo: user?.uid || '',
       category: suggestion.category || 'follow_up',
       quotaCategory: suggestion.category || 'business_generating',
-      selectedCompany: associatedCompany?.id || deal?.companyId || '',
+      selectedCompany: associatedCompany?.id || primaryCompanyId || '',
       selectedContact: '',
       selectedDeal: dealId,
       selectedSalesperson: user?.uid || '',
@@ -493,7 +620,13 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
       notes: suggestion.aiReason || '',
       tags: [],
       aiSuggested: true,
-      aiPrompt: suggestion.aiPrompt || ''
+      aiPrompt: suggestion.aiPrompt || '',
+      associations: {
+        deals: [dealId],
+        companies: primaryCompanyId ? [primaryCompanyId] : [],
+        contacts: [],
+        salespeople: []
+      }
     };
     
     setPrefilledTaskData(prefilledData);
@@ -616,188 +749,50 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* Breadcrumb Style Navigation */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(0)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 0 ? 'bold' : 'normal',
-              textDecoration: activeTab === 0 ? 'underline' : 'none',
-              color: activeTab === 0 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <AssignmentIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Today&apos;s Tasks
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(1)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 1 ? 'bold' : 'normal',
-              textDecoration: activeTab === 1 ? 'underline' : 'none',
-              color: activeTab === 1 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <TrendingUpIcon fontSize="small" sx={{ mr: 0.5 }} />
-            This Week
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(2)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 2 ? 'bold' : 'normal',
-              textDecoration: activeTab === 2 ? 'underline' : 'none',
-              color: activeTab === 2 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <CheckCircleIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Completed
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(3)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 3 ? 'bold' : 'normal',
-              textDecoration: activeTab === 3 ? 'underline' : 'none',
-              color: activeTab === 3 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <PsychologyIcon fontSize="small" sx={{ mr: 0.5 }} />
-            AI Suggestions
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setShowCreateDialog(true)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: 'normal'
-            }}
-          >
-            <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Add Task
-          </Button>
-        </Box>
-      </Box>
 
-      {/* Tab Content with Enhanced Layout */}
-      {activeTab === 0 && (
-        <EnhancedTasksLayout
-          tasks={dashboardData?.today?.tasks || []}
-          onTaskClick={(task) => {
-            setSelectedTask(task);
-            setShowDetailsDialog(true);
-          }}
-          onQuickComplete={handleQuickComplete}
-          onEditTask={handleEditTask}
-          onDeleteTask={handleDeleteTask}
-          onCreateTask={() => setShowCreateDialog(true)}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
-          getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
-        />
-      )}
-
-      {activeTab === 1 && (
-        <EnhancedTasksLayout
-          tasks={dashboardData?.thisWeek?.tasks || []}
-          onTaskClick={(task) => {
-            setSelectedTask(task);
-            setShowDetailsDialog(true);
-          }}
-          onQuickComplete={handleQuickComplete}
-          onEditTask={handleEditTask}
-          onDeleteTask={handleDeleteTask}
-          onCreateTask={() => setShowCreateDialog(true)}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
-          getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
-        />
-      )}
-
-      {activeTab === 2 && (
-        <EnhancedTasksLayout
-          tasks={dashboardData?.completed?.tasks || []}
-          onTaskClick={(task) => {
-            setSelectedTask(task);
-            setShowDetailsDialog(true);
-          }}
-          onQuickComplete={handleQuickComplete}
-          onEditTask={handleEditTask}
-          onDeleteTask={handleDeleteTask}
-          onCreateTask={() => setShowCreateDialog(true)}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
-          getTaskStatusDisplay={getTaskStatusDisplay}
-          deal={deal}
-          associatedContacts={associatedContacts}
-          associatedSalespeople={associatedSalespeople}
-        />
-      )}
-
-      {activeTab === 3 && (
-        <Box>
-          <AISuggestionsList
-            suggestions={aiSuggestions}
-            onAccept={handleAcceptSuggestion}
-            getPriorityColor={getStatusColor}
-            getTaskIcon={getTaskTypeIcon}
-          />
-          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={loadDashboardData}
-              disabled={loading}
-            >
-              Refresh AI Suggestions
-            </Button>
-          </Box>
-        </Box>
-      )}
+      {/* Unified Task List - All tasks in one view */}
+      <EnhancedTasksLayout
+        tasks={(() => {
+          const todayTasks = dashboardData?.today?.tasks || [];
+          const weekTasks = dashboardData?.thisWeek?.tasks || [];
+          const completedTasks = dashboardData?.completed?.tasks || [];
+          
+          // Create a map to deduplicate by task ID, prioritizing completed tasks
+          const taskMap = new Map();
+          
+          // Add all tasks, with completed tasks overwriting any duplicates
+          // Only show tasks with classification: 'todo' in the To-Dos widget
+          const allTasks = [...todayTasks, ...weekTasks, ...completedTasks];
+          
+          const filteredTasks = allTasks.filter(task => {
+            const taskClassification = task.classification?.toLowerCase() || '';
+            const isTodo = taskClassification === 'todo';
+            return isTodo;
+          });
+          
+          filteredTasks.forEach(task => {
+            taskMap.set(task.id, task);
+          });
+          
+          return Array.from(taskMap.values());
+        })()}
+        onTaskClick={(task) => {
+          setSelectedTask(task);
+          setShowDetailsDialog(true);
+        }}
+        onQuickComplete={handleQuickComplete}
+        onEditTask={handleEditTask}
+        onDeleteTask={handleDeleteTask}
+        onCreateTask={() => setShowCreateDialog(true)}
+        getStatusColor={getStatusColor}
+        getTaskTypeIcon={getTaskTypeIcon}
+        calculateUrgency={calculateUrgency}
+        getTaskStatusDisplay={getTaskStatusDisplay}
+        deal={deal}
+        associatedContacts={associatedContacts}
+        associatedSalespeople={associatedSalespeople}
+        showOnlyTodos={true}
+      />
 
 
 
@@ -840,7 +835,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = ({
 
     </Box>
   );
-};
+});
 
 // Helper Components
 interface ClassificationBasedTasksLayoutProps {
@@ -1112,17 +1107,14 @@ const ClassificationBasedTasksLayout: React.FC<ClassificationBasedTasksLayoutPro
                         <Typography variant="caption" color="text.secondary">
                           Company:
                         </Typography>
-                        {task.associations.companies.slice(0, 1).map((companyId: string) => {
-                          const company = deal?.companyId === companyId ? deal : null;
-                          return (
-                            <Chip
-                              key={companyId}
-                              label={company?.companyName || companyId}
-                              size="small"
-                              variant="outlined"
-                            />
-                          );
-                        })}
+                        {task.associations.companies.slice(0, 1).map((companyId: string) => (
+                          <Chip
+                            key={companyId}
+                            label={companyId}
+                            size="small"
+                            variant="outlined"
+                          />
+                        ))}
                       </Box>
                     )}
                   </Box>
@@ -1340,4 +1332,4 @@ interface TasksAnalyticsProps {
 //   );
 // };
 
-export default DealTasksDashboard; 
+export default React.memo(DealTasksDashboard); 
