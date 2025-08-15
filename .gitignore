@@ -31,3 +31,5 @@ functions/firebase-debug.log
 functions/pglite-debug.log
 
 functions/.env*
+
+functions/.env*
