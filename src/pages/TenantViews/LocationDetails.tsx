@@ -360,6 +360,15 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
         onLoad={(marker) => {
           console.log('LocationMap: Marker loaded successfully:', marker);
         }}
+        options={{
+          zIndex: 1000,
+          clickable: true,
+          draggable: false,
+          icon: {
+            url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+            scaledSize: new google.maps.Size(40, 40)
+          }
+        }}
       />
     </GoogleMap>
   );
