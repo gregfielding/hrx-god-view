@@ -45,6 +45,7 @@ import {
   Dashboard as DashboardIcon,
   Notes as NotesIcon,
   Timeline as TimelineIcon,
+  Phone as PhoneIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
 
@@ -65,6 +66,7 @@ interface LocationData {
   country: string;
   type: string;
   division?: string;
+  phone?: string;
   coordinates?: any;
   contactCount?: number;
   dealCount?: number;
@@ -596,7 +598,42 @@ const LocationDetails: React.FC = () => {
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Location Details */}
               <Card>
-                <CardHeader title="Location Details" />
+                <CardHeader 
+                  title="Location Details" 
+                  action={
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      {editing ? (
+                        <>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            startIcon={<SaveIcon />}
+                            onClick={handleSaveEdit}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<CancelIcon />}
+                            onClick={handleCancelEdit}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<EditIcon />}
+                          onClick={handleEdit}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                    </Box>
+                  }
+                />
                 <CardContent>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                     <TextField
@@ -650,6 +687,16 @@ const LocationDetails: React.FC = () => {
                       </Grid>
                     </Grid>
                     
+                    <TextField
+                      label="Phone Number"
+                      value={editing ? editForm.phone || '' : location.phone || ''}
+                      onChange={(e) => handleFieldChange('phone', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    
                     <FormControl fullWidth size="small">
                       <InputLabel>Type</InputLabel>
                       <Select
@@ -667,16 +714,14 @@ const LocationDetails: React.FC = () => {
                       </Select>
                     </FormControl>
                     
-                    {location.division && (
-                      <TextField
-                        label="Division"
-                        value={editing ? editForm.division || '' : location.division}
-                        onChange={(e) => handleFieldChange('division', e.target.value)}
-                        disabled={!editing}
-                        fullWidth
-                        size="small"
-                      />
-                    )}
+                    <TextField
+                      label="Division"
+                      value={editing ? editForm.division || '' : location.division || ''}
+                      onChange={(e) => handleFieldChange('division', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                    />
                   </Box>
                 </CardContent>
               </Card>
