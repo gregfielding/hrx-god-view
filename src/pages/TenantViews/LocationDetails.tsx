@@ -277,8 +277,14 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     console.log('LocationMap: coordinates:', location.coordinates);
     
     // Use coordinates if available, otherwise try to geocode the address
-    if (location.coordinates?.latitude && location.coordinates?.longitude) {
-      console.log('LocationMap: Using existing coordinates');
+    if (location.coordinates?.lat && location.coordinates?.lng) {
+      console.log('LocationMap: Using existing coordinates (lat/lng)');
+      setCenter({
+        lat: location.coordinates.lat,
+        lng: location.coordinates.lng
+      });
+    } else if (location.coordinates?.latitude && location.coordinates?.longitude) {
+      console.log('LocationMap: Using existing coordinates (latitude/longitude)');
       setCenter({
         lat: location.coordinates.latitude,
         lng: location.coordinates.longitude
