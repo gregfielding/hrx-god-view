@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -16,7 +16,6 @@ import {
   CardHeader,
   TextField,
   IconButton,
-  Collapse,
   Skeleton,
   Checkbox,
   Dialog,
@@ -27,10 +26,11 @@ import {
   ListItem,
   ListItemText,
   Chip,
+  Breadcrumbs,
+  Link as MUILink,
 } from '@mui/material';
 
 import {
-  ArrowBack as ArrowBackIcon,
   AttachMoney as DealIcon,
   Info as InfoIcon,
   Timeline as TimelineIcon,
@@ -38,7 +38,7 @@ import {
   List as ListIcon,
   Task as TaskIcon,
   Delete as DeleteIcon,
-  Email as EmailIcon,
+
   Edit as EditIcon,
   KeyboardArrowDown as KeyboardArrowDownIcon,
   AttachMoney as AttachMoneyIcon,
@@ -50,9 +50,9 @@ import {
   Person as PersonIcon,
   Check as CheckIcon,
   CheckCircle as CheckCircleIcon,
-  Hub as HubIcon,
-  RocketLaunch as RocketLaunchIcon,
   CloudUpload as UploadIcon,
+  Dashboard as DashboardIcon,
+  Stairs as StairsIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
@@ -62,18 +62,22 @@ import { useAuth } from '../../contexts/AuthContext';
 import { createUnifiedAssociationService } from '../../utils/unifiedAssociationService';
 import StageChip from '../../components/StageChip';
 import CRMNotesTab from '../../components/CRMNotesTab';
-import FastAssociationsCard from '../../components/FastAssociationsCard';
 import DealStageForms from '../../components/DealStageForms';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
-import ActivityLogTab from '../../components/ActivityLogTab';
+import DealActivityTab from '../../components/DealActivityTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import DealAISummary from '../../components/DealAISummary';
-import EmailTab from '../../components/EmailTab';
+
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import AddNoteDialog from '../../components/AddNoteDialog';
+import ManageSalespeopleDialog from '../../components/ManageSalespeopleDialog';
+import ManageContactsDialog from '../../components/ManageContactsDialog';
+import ManageLocationDialog from '../../components/ManageLocationDialog';
+import NextStepsWidget from '../../components/NextStepsWidget';
 
 interface DealData {
   id: string;
@@ -94,8 +98,29 @@ interface DealData {
   associations?: {
     companies?: string[];
     locations?: string[];
-    contacts?: string[];
-    salespeople?: string[];
+    contacts?: Array<string | {
+      id: string;
+      snapshot: {
+        fullName?: string;
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+        title?: string;
+      };
+    }>;
+    salespeople?: Array<string | {
+      id: string;
+      snapshot: {
+        fullName?: string;
+        firstName?: string;
+        lastName?: string;
+        displayName?: string;
+        email?: string;
+        phone?: string;
+        title?: string;
+      };
+    }>;
     deals?: string[];
     tasks?: string[];
   };
@@ -172,8 +197,7 @@ const DealDetails: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [company, setCompany] = useState<any>(null);
   const [stageData, setStageData] = useState<any>({});
-  const [dealContextOpen, setDealContextOpen] = useState(false);
-  const [aiSummaryOpen, setAiSummaryOpen] = useState(false);
+
   const [aiLoading, setAiLoading] = useState(false);
   const [stageState, setStageState] = useState<StageState | null>(null);
   const [pinnedContent, setPinnedContent] = useState<PinnedContent>({ notes: [], widgets: [] });
@@ -191,7 +215,15 @@ const DealDetails: React.FC = () => {
   const [prefilledTaskData, setPrefilledTaskData] = useState<any>(null);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
+  const [showManageContactsDialog, setShowManageContactsDialog] = useState(false);
+  const [showManageLocationDialog, setShowManageLocationDialog] = useState(false);
   const [dealCoachKey, setDealCoachKey] = useState<string>(`${dealId}-${Date.now()}`);
+  const [loadingSalespeople, setLoadingSalespeople] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const foundationalDataLoadedRef = useRef(false);
+  const secondaryDataLoadedRef = useRef<string | null>(null);
   
   // Feature Flags
   const featureFlags = {
@@ -204,15 +236,15 @@ const DealDetails: React.FC = () => {
 
   // FOUNDATIONAL: Load deal and associations first - everything else waits for this
   useEffect(() => {
-    if (!dealId || !tenantId) return;
+    if (!dealId || !tenantId || foundationalDataLoadedRef.current) return;
+    
+    foundationalDataLoadedRef.current = true;
 
     const loadFoundationalData = async () => {
       try {
-        console.log('🚀 FOUNDATIONAL: Starting to load deal and associations...');
         setError('');
         
         // Step 1: Load deal data
-        console.log('📋 Step 1: Loading deal data...');
         const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId));
         
         if (!dealDoc.exists()) {
@@ -233,10 +265,8 @@ const DealDetails: React.FC = () => {
         }
         
         setDeal(dealData);
-        console.log('✅ Step 1: Deal data loaded:', dealData.name);
         
         // Step 2: Load associations from denormalized data (instant)
-        console.log('🔗 Step 2: Loading associations from denormalized data...');
         
         // Use associations directly from the deal document
         const associations = dealData.associations || {};
@@ -251,30 +281,66 @@ const DealDetails: React.FC = () => {
             title: typeof contact === 'string' ? '' : (contact.snapshot?.title || '')
           }));
           setAssociatedContacts(contacts);
-          console.log('✅ Contacts loaded from denormalized data:', contacts.length);
         } else {
           setAssociatedContacts([]);
-          console.log('✅ No contacts in denormalized data');
         }
         
-        // Load salespeople from denormalized data
+        // Load salespeople from denormalized data with better name resolution
         if (associations.salespeople && Array.isArray(associations.salespeople)) {
-          const salespeople = associations.salespeople.map((salesperson: any) => ({
-            id: typeof salesperson === 'string' ? salesperson : salesperson.id,
-            fullName: typeof salesperson === 'string' ? 'Unknown Salesperson' : (salesperson.snapshot?.fullName || salesperson.snapshot?.name || 'Unknown Salesperson'),
-            email: typeof salesperson === 'string' ? '' : (salesperson.snapshot?.email || ''),
-            title: typeof salesperson === 'string' ? '' : (salesperson.snapshot?.title || '')
-          }));
+          const salespeople = associations.salespeople.map((salesperson: any) => {
+            const salespersonData = typeof salesperson === 'string' ? { id: salesperson } : salesperson;
+            const snapshot = salespersonData.snapshot || {};
+            
+            // Better name resolution: try multiple name fields
+            const fullName = snapshot.fullName || 
+                           snapshot.name || 
+                           (snapshot.firstName && snapshot.lastName ? `${snapshot.firstName} ${snapshot.lastName}`.trim() : '') ||
+                           snapshot.displayName ||
+                           snapshot.email?.split('@')[0] ||
+                           'Unknown Salesperson';
+            
+            return {
+              id: salespersonData.id,
+              fullName: fullName,
+              firstName: snapshot.firstName || '',
+              lastName: snapshot.lastName || '',
+              displayName: snapshot.displayName || fullName,
+              email: snapshot.email || '',
+              phone: snapshot.phone || '',
+              title: snapshot.title || ''
+            };
+          });
           setAssociatedSalespeople(salespeople);
-          console.log('✅ Salespeople loaded from denormalized data:', salespeople.length);
         } else {
           setAssociatedSalespeople([]);
-          console.log('✅ No salespeople in denormalized data');
         }
         
-        console.log('✅ Associations loaded instantly from denormalized data');
         setAssociationsLoaded(true);
         setAssociationsLoading(false);
+        
+        // If salespeople don't have proper names, try to load them from users collection
+        if (associations.salespeople && Array.isArray(associations.salespeople)) {
+          const salespeopleFromAssociations = associations.salespeople.map((salesperson: any) => {
+            const salespersonData = typeof salesperson === 'string' ? { id: salesperson } : salesperson;
+            const snapshot = salespersonData.snapshot || {};
+            const fullName = snapshot.fullName || 
+                           snapshot.name || 
+                           (snapshot.firstName && snapshot.lastName ? `${snapshot.firstName} ${snapshot.lastName}`.trim() : '') ||
+                           snapshot.displayName ||
+                           snapshot.email?.split('@')[0] ||
+                           'Unknown Salesperson';
+            return { fullName };
+          });
+          
+          const hasUnknownSalespeople = salespeopleFromAssociations.some(sp => sp.fullName === 'Unknown Salesperson');
+          if (hasUnknownSalespeople) {
+            setLoadingSalespeople(true);
+            // Load salespeople from users collection as a fallback
+            loadAssociatedSalespeople(dealData).finally(() => {
+              setLoadingSalespeople(false);
+            });
+          }
+        }
         
       } catch (err: any) {
         console.error('❌ Error loading foundational data:', err);
@@ -292,7 +358,7 @@ const DealDetails: React.FC = () => {
     setTabValue(newValue);
   };
 
-  const handleDealUpdate = async (field: string, value: any) => {
+  const handleDealUpdate = useCallback(async (field: string, value: any) => {
     if (!deal || !tenantId) return;
     
     try {
@@ -308,30 +374,25 @@ const DealDetails: React.FC = () => {
       // Revert the local state if update fails
       setDeal(deal);
     }
-  };
+  }, [deal?.id, tenantId]);
 
-  const handleStageDataChange = async (newStageData: any) => {
-    console.log('handleStageDataChange called with:', newStageData);
+  const handleStageDataChange = useCallback(async (newStageData: any) => {
     setStageData(newStageData);
     
     // Save stage data to Firestore
     if (deal && tenantId) {
       try {
-        console.log('Saving to Firestore - dealId:', deal.id, 'tenantId:', tenantId);
         await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
           stageData: newStageData,
           updatedAt: new Date()
         });
-        console.log('✅ Stage data successfully saved to Firestore:', newStageData);
       } catch (error) {
         console.error('❌ Error saving stage data:', error);
       }
-    } else {
-      console.error('❌ Cannot save - missing deal or tenantId:', { deal: !!deal, tenantId });
     }
-  };
+  }, [deal?.id, tenantId]);
 
-  const handleStageAdvance = async (newStage: string) => {
+  const handleStageAdvance = useCallback(async (newStage: string) => {
     if (!deal || !tenantId) return;
     
     try {
@@ -347,7 +408,7 @@ const DealDetails: React.FC = () => {
       // Revert the local state if update fails
       setDeal(deal);
     }
-  };
+  }, [deal?.id, tenantId]);
 
   const handleMarkStageIncomplete = async (stageKey: string) => {
     if (!deal || !tenantId) return;
@@ -413,14 +474,9 @@ const DealDetails: React.FC = () => {
     if (!targetDeal || !tenantId || !user?.uid) return;
     
     try {
-      console.log('Loading associated contacts for deal:', targetDeal.id);
-      
       // Use the unified association service
       const associationService = createUnifiedAssociationService(tenantId, user.uid);
       const result = await associationService.getEntityAssociations('deal', targetDeal.id);
-      
-      console.log('Association service result:', result);
-      console.log('Found contacts:', result.entities?.contacts);
       
       // Map the contacts to the expected format (defensive against undefined)
       const contacts = (result?.entities?.contacts || []).map((contact: any) => ({
@@ -431,7 +487,6 @@ const DealDetails: React.FC = () => {
         title: '' // Title not available in denormalized format
       }));
       
-      console.log('Mapped contacts:', contacts);
       setAssociatedContacts(contacts);
       
     } catch (err) {
@@ -445,31 +500,8 @@ const DealDetails: React.FC = () => {
     if (!targetDeal || !tenantId || !user?.uid) return;
     
     try {
-      console.log('🔵 MASTER ASSOCIATIONS - Loading salespeople for deal:', targetDeal.id);
-      
-      // Use the PREFERRED method: users collection with crm_sales: true
-      console.log('🔵 Loading salespeople from users collection (crm_sales: true)');
-      
       // Query users collection for salespeople in this tenant
       const usersRef = collection(db, 'users');
-      
-      // First, let's see what users exist and their structure
-      console.log('🔵 Debugging: Checking all users first...');
-      const allUsersSnapshot = await getDocs(usersRef);
-      console.log('🔵 Total users in collection:', allUsersSnapshot.size);
-      
-      // Log a few users to see their structure
-      allUsersSnapshot.docs.slice(0, 3).forEach((doc, index) => {
-        const userData = doc.data();
-        console.log(`🔵 User ${index + 1}:`, {
-          id: doc.id,
-          email: userData.email,
-          crm_sales: userData.crm_sales,
-          tenantIds: userData.tenantIds,
-          firstName: userData.firstName,
-          lastName: userData.lastName
-        });
-      });
       
       // Now try the specific query - tenantIds is a nested map structure
       const usersQuery = query(
@@ -479,28 +511,11 @@ const DealDetails: React.FC = () => {
       );
       
       const usersSnapshot = await getDocs(usersQuery);
-      console.log('🔵 Found salespeople users:', usersSnapshot.size);
       
       // If no results, try just crm_sales: true to see if any users have that field
       if (usersSnapshot.empty) {
-        console.log('🔵 No results with tenant filter, trying just crm_sales: true...');
         const simpleQuery = query(usersRef, where('crm_sales', '==', true));
         const simpleSnapshot = await getDocs(simpleQuery);
-        console.log('🔵 Users with crm_sales: true:', simpleSnapshot.size);
-        
-        if (!simpleSnapshot.empty) {
-          simpleSnapshot.docs.slice(0, 3).forEach((doc, index) => {
-            const userData = doc.data();
-            console.log(`🔵 CRM Sales User ${index + 1}:`, {
-              id: doc.id,
-              email: userData.email,
-              crm_sales: userData.crm_sales,
-              tenantIds: userData.tenantIds,
-              firstName: userData.firstName,
-              lastName: userData.lastName
-            });
-          });
-        }
       }
       
       if (!usersSnapshot.empty) {
@@ -509,11 +524,8 @@ const DealDetails: React.FC = () => {
           ...doc.data()
         }));
         
-        console.log('🔵 Raw salespeople from users collection:', salespeopleUsers);
-        
         // Map to the expected dialog structure
         const mappedSalespeople = salespeopleUsers.map((user: any) => {
-          console.log('🔵 Mapping salesperson user:', user);
           
           // Use firstName + lastName, fallback to displayName, then email
           const displayName = user.firstName && user.lastName ? 
@@ -531,17 +543,31 @@ const DealDetails: React.FC = () => {
           };
         });
         
-        console.log('🔵 Mapped salespeople for dialogs:', mappedSalespeople);
-        console.log('🔵 Setting associatedSalespeople state:', mappedSalespeople);
-        console.log('🔵 Final salespeople structure:', mappedSalespeople.map(sp => ({
-          id: sp.id,
-          displayName: sp.displayName,
-          email: sp.email,
-          phone: sp.phone
-        })));
-        setAssociatedSalespeople(mappedSalespeople);
+
+        
+        // Merge with existing salespeople data, preferring the new data with better names
+        setAssociatedSalespeople(prevSalespeople => {
+          const existingIds = new Set(prevSalespeople.map(sp => sp.id));
+          const newSalespeople = mappedSalespeople.filter(sp => !existingIds.has(sp.id));
+          
+          // Update existing salespeople with better name data if available
+          const updatedExisting = prevSalespeople.map(existing => {
+            const betterData = mappedSalespeople.find(newSp => newSp.id === existing.id);
+            if (betterData && existing.fullName === 'Unknown Salesperson') {
+              return {
+                ...existing,
+                fullName: betterData.displayName,
+                displayName: betterData.displayName,
+                email: betterData.email || existing.email,
+                phone: betterData.phone || existing.phone
+              };
+            }
+            return existing;
+          });
+          
+          return [...updatedExisting, ...newSalespeople];
+        });
       } else {
-        console.log('🔵 No salespeople found in users collection');
         setAssociatedSalespeople([]);
       }
       
@@ -644,6 +670,146 @@ const DealDetails: React.FC = () => {
       console.error('Error logging activity:', error);
     } finally {
       setLogActivityLoading(false);
+    }
+  };
+
+  const handleSalespeopleChange = async (updatedSalespeople: any[]) => {
+    if (!deal || !tenantId) return;
+    
+    try {
+      // Update the local state immediately for responsive UI
+      setAssociatedSalespeople(updatedSalespeople);
+      
+      // Prepare the associations update
+      const currentAssociations = deal.associations || {};
+      const updatedAssociations = {
+        ...currentAssociations,
+        salespeople: updatedSalespeople.map(sp => ({
+          id: sp.id,
+          snapshot: {
+            fullName: sp.fullName,
+            firstName: sp.firstName,
+            lastName: sp.lastName,
+            displayName: sp.displayName,
+            email: sp.email,
+            phone: sp.phone,
+            title: sp.title
+          }
+        }))
+      };
+      
+      // Update the deal document with new associations
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        associations: updatedAssociations,
+        updatedAt: new Date()
+      });
+      
+      // Update local deal state
+      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
+      
+      console.log('Salespeople updated successfully');
+    } catch (error) {
+      console.error('Error updating salespeople:', error);
+      // Revert local state if update fails
+      setAssociatedSalespeople(deal?.associations?.salespeople || []);
+    }
+  };
+
+  const handleContactsChange = async (updatedContacts: any[]) => {
+    if (!deal || !tenantId) return;
+    
+    try {
+      // Update the local state immediately for responsive UI
+      setAssociatedContacts(updatedContacts);
+      
+      // Prepare the associations update
+      const currentAssociations = deal.associations || {};
+      const updatedAssociations = {
+        ...currentAssociations,
+        contacts: updatedContacts.map(contact => ({
+          id: contact.id,
+          snapshot: {
+            fullName: contact.fullName,
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            email: contact.email,
+            phone: contact.phone,
+            title: contact.title
+          }
+        }))
+      };
+      
+      // Update the deal document with new associations
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        associations: updatedAssociations,
+        updatedAt: new Date()
+      });
+      
+      // Update local deal state
+      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
+      
+      console.log('Contacts updated successfully');
+    } catch (error) {
+      console.error('Error updating contacts:', error);
+      // Revert local state if update fails
+      setAssociatedContacts(deal?.associations?.contacts || []);
+    }
+  };
+
+  const handleLocationChange = async (locationId: string | null) => {
+    if (!deal || !tenantId) return;
+    
+    try {
+      // Prepare the associations update
+      const currentAssociations = deal.associations || {};
+      const updatedAssociations = {
+        ...currentAssociations,
+        locations: locationId ? [locationId] : []
+      };
+      
+      // Update the deal document with new associations
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        associations: updatedAssociations,
+        updatedAt: new Date()
+      });
+      
+      // Update local deal state
+      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
+      
+      console.log('Location updated successfully');
+    } catch (error) {
+      console.error('Error updating location:', error);
+    }
+  };
+
+  const handleSkipQuestion = async (stage: string, field: string) => {
+    if (!deal || !tenantId) return;
+    
+    try {
+      // Mark the question as skipped by setting it to a special value
+      const currentStageData = stageData[stage] || {};
+      const updatedStageData = {
+        ...currentStageData,
+        [field]: '__SKIPPED__'
+      };
+      
+      // Update the stage data
+      const newStageData = {
+        ...stageData,
+        [stage]: updatedStageData
+      };
+      
+      setStageData(newStageData);
+      
+      // Save to Firestore
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        stageData: newStageData,
+        updatedAt: new Date()
+      });
+      
+      console.log(`Question ${field} in ${stage} stage marked as skipped`);
+    } catch (error) {
+      console.error('Error skipping question:', error);
     }
   };
 
@@ -876,7 +1042,7 @@ const DealDetails: React.FC = () => {
   }, [featureFlags.keyboardShortcuts]);
 
   // Enhanced Roadblock Detection
-  const detectRoadblocks = () => {
+  const detectRoadblocks = useCallback(() => {
     const roadblocks: Array<{id: string; type: string; severity: 'low' | 'medium' | 'high'; message: string; action?: string}> = [];
     
     if (deal) {
@@ -941,10 +1107,10 @@ const DealDetails: React.FC = () => {
     }
 
     setRoadblocks(roadblocks);
-  };
+  }, [deal?.id, deal?.stage, deal?.notes, deal?.closeDate, deal?.estimatedRevenue, stageState?.entered_at, associatedContacts.length]);
 
   // Enhanced Deal Coach Actions
-  const generateDealCoachActions = () => {
+  const generateDealCoachActions = useCallback(() => {
     const actions: Array<{action: string; label: string; priority: 'low' | 'medium' | 'high'; description?: string}> = [];
     
     if (deal) {
@@ -987,10 +1153,10 @@ const DealDetails: React.FC = () => {
     }
 
     setDealCoachActions(actions);
-  };
+  }, [deal?.stage]);
 
   // Activity Intelligence
-  const calculateActivityCount = () => {
+  const calculateActivityCount = useCallback(() => {
     // TODO: Implement real activity counting from Firestore
     // For now, simulate based on deal data
     let count = 0;
@@ -1002,10 +1168,10 @@ const DealDetails: React.FC = () => {
       if (stageState) count += Object.keys(stageState.checklist_status).length;
     }
     setActivityCount(count);
-  };
+  }, [deal?.notes, deal?.estimatedRevenue, deal?.closeDate, associatedContacts.length, stageState?.checklist_status]);
 
   // Pattern Detection and Alerts
-  const detectPatterns = () => {
+  const detectPatterns = useCallback(() => {
     const alerts: Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}> = [];
     
     if (deal && stageState) {
@@ -1042,7 +1208,7 @@ const DealDetails: React.FC = () => {
     }
 
     setPatternAlerts(alerts);
-  };
+  }, [deal?.stage, stageState?.entered_at, stageState?.checklist_status]);
 
   useEffect(() => {
     if (deal && stageState) {
@@ -1051,13 +1217,17 @@ const DealDetails: React.FC = () => {
       generateDealCoachActions();
       calculateActivityCount();
     }
-  }, [deal, stageState, associatedContacts]);
+  }, [deal?.id, stageState?.current, associatedContacts.length]); // Only depend on specific values that should trigger recalculation
 
   // SECONDARY: Load everything else after associations are ready
   useEffect(() => {
     if (!associationsLoaded || !deal || !tenantId) return;
     
-    console.log('🔄 SECONDARY: Loading secondary data after associations are ready...');
+    // Prevent multiple runs for the same deal
+    const dealKey = `${deal.id}-${tenantId}`;
+    if (secondaryDataLoadedRef.current === dealKey) return;
+    
+    secondaryDataLoadedRef.current = dealKey;
     setLoading(true);
     
     const loadSecondaryData = async () => {
@@ -1065,10 +1235,8 @@ const DealDetails: React.FC = () => {
         // Load stage data if it exists
         if (deal.stageData) {
           setStageData(deal.stageData);
-          console.log('✅ Stage data loaded from Firestore:', deal.stageData);
         } else {
           setStageData({});
-          console.log('✅ No stage data found, initializing empty state');
         }
 
         // Load associated company using primary company id from associations
@@ -1078,11 +1246,10 @@ const DealDetails: React.FC = () => {
           if (companyDoc.exists()) {
             const companyData = { id: companyDoc.id, ...companyDoc.data() } as any;
             setCompany(companyData);
-            console.log('✅ Company data loaded:', companyData);
           }
         }
         
-        console.log('✅ Secondary data loading complete');
+
         
       } catch (err: any) {
         console.error('❌ Error loading secondary data:', err);
@@ -1107,7 +1274,7 @@ const DealDetails: React.FC = () => {
       // Update Deal Coach key to persist across tabs but reset for different deals
       setDealCoachKey(`${deal.id}-${Date.now()}`);
     }
-  }, [deal, tenantId, stageState]);
+  }, [deal?.id, tenantId]); // Only depend on deal.id and tenantId, not the entire deal object
 
   // Debug logging
   // REMOVED: Excessive logging causing re-renders
@@ -1118,7 +1285,7 @@ const DealDetails: React.FC = () => {
       // If deal has no stage, set it to discovery
       handleDealUpdate('stage', 'discovery');
     }
-  }, [deal]);
+  }, [deal?.stage, handleDealUpdate]);
 
   // Lazy load AI components for performance
   useEffect(() => {
@@ -1176,14 +1343,7 @@ const DealDetails: React.FC = () => {
     );
   }
 
-  // Debug: Log when associations are ready and what data is available
-  if (associationsLoaded && !loading) {
-    console.log('🎯 ASSOCIATIONS READY - Data available for all components:');
-    console.log('  - Deal:', deal?.name);
-    console.log('  - Contacts:', associatedContacts.length, 'items');
-    console.log('  - Salespeople:', associatedSalespeople.length, 'items');
-    console.log('  - Salespeople data:', associatedSalespeople);
-  }
+
 
   return (
     <Box sx={{ p: 0 }}>
@@ -1194,154 +1354,123 @@ const DealDetails: React.FC = () => {
             50% { opacity: 0.5; }
             100% { opacity: 1; }
           }
+          
+          .css-1xte5ga-MuiCardContent-root:last-child {
+            padding-bottom: 16px;
+          }
         `}
       </style>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2 }}>
+        <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/opportunities" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=opportunities'); }}>
+            Opportunities
+          </MUILink>
+          <Typography color="text.primary">{deal?.name || 'Deal'}</Typography>
+        </Breadcrumbs>
+      </Box>
+
       {/* Enhanced Header - Persistent Deal Information */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Deal Avatar - Use company avatar if available, otherwise deal icon */}
+            {/* Deal Logo/Avatar */}
             <Box sx={{ position: 'relative' }}>
               <Avatar
+                src={company?.logo}
+                alt={company?.companyName || company?.name || 'Deal'}
                 sx={{ 
                   width: 128, 
                   height: 128,
-                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
-                  fontSize: '2.5rem',
+                  bgcolor: 'primary.main',
+                  fontSize: '2rem',
                   fontWeight: 'bold'
                 }}
-                src={company?.logo}
-                alt={company?.companyName || company?.name || 'Deal'}
               >
-                {!company?.logo && <DealIcon />}
+                {(company?.companyName || company?.name || 'D').charAt(0).toUpperCase()}
               </Avatar>
-              
-              {/* Avatar Upload/Delete Buttons */}
               <Box sx={{ 
                 position: 'absolute', 
                 bottom: -8, 
-                right: -8,
-                display: 'flex',
-                gap: 0.5
+                right: -8, 
+                display: 'flex', 
+                gap: 0.5 
               }}>
-                <input
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  id="deal-avatar-upload"
-                  type="file"
-                  onChange={(e) => {
+                <IconButton
+                  size="small"
+                  sx={{
+                    bgcolor: 'grey.300',
+                    '&:hover': { bgcolor: 'grey.400' },
+                    width: 24,
+                    height: 24
+                  }}
+                  onClick={() => {
                     // TODO: Implement logo upload for deals
                     console.log('Logo upload for deals not yet implemented');
                   }}
-                />
-                <label htmlFor="deal-avatar-upload">
-                  <IconButton
-                    component="span"
-                    size="small"
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
-                    }}
-                  >
-                    <UploadIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </label>
-                
+                >
+                  <UploadIcon sx={{ fontSize: 16, color: 'grey.600' }} />
+                </IconButton>
                 {company?.logo && (
                   <IconButton
                     size="small"
+                    sx={{
+                      bgcolor: 'grey.300',
+                      '&:hover': { bgcolor: 'grey.400' },
+                      width: 24,
+                      height: 24
+                    }}
                     onClick={() => {
                       // TODO: Implement logo delete for deals
                       console.log('Logo delete for deals not yet implemented');
                     }}
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
-                    }}
                   >
-                    <DeleteIcon sx={{ fontSize: 16 }} />
+                    <DeleteIcon sx={{ fontSize: 16, color: 'grey.600' }} />
                   </IconButton>
                 )}
               </Box>
             </Box>
 
-            {/* Enhanced Deal Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1 }}>
-              {/* Deal Name - Editable Inline */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {isEditingDealName ? (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <TextField
-                      value={editingDealName}
-                      onChange={(e) => setEditingDealName(e.target.value)}
-                      onKeyDown={handleDealNameKeyPress}
-                      onBlur={handleSaveDealName}
-                      variant="standard"
-                      sx={{
-                        '& .MuiInputBase-input': {
-                          fontSize: '2rem',
-                          fontWeight: 'bold',
-                          color: 'text.primary',
-                          padding: 0
-                        },
-                        '& .MuiInput-underline:before': { borderBottom: 'none' },
-                        '& .MuiInput-underline:after': { borderBottom: '2px solid', borderColor: 'primary.main' }
-                      }}
-                      autoFocus
-                    />
-                    <IconButton size="small" onClick={handleSaveDealName} sx={{ color: 'success.main' }}>
-                      <InfoIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton size="small" onClick={handleCancelEditDealName} sx={{ color: 'error.main' }}>
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                ) : (
-                  <>
-                    <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                      {deal.name}
-                    </Typography>
-                    <IconButton 
-                      size="small" 
-                      sx={{ color: 'text.secondary' }}
-                      onClick={handleStartEditDealName}
-                      title="Edit deal name"
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  </>
-                )}
+            {/* Deal Information */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+                  {deal.name}
+                </Typography>
               </Box>
               
-              {/* Stage Badge */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <StageChip stage={deal.stage} size="medium" useCustomColors={true} />
-              </Box>
+              {/* Deal Value Range */}
+              {(() => {
+                const revenueRange = calculateExpectedRevenueRange();
+                return revenueRange.hasData ? (
+                  <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
+                    </Typography>
+                  </Box>
+                ) : null;
+              })()}
 
-              {/* Key Deal Metrics */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                {/* Revenue Range */}
-                {(() => {
-                  const revenueRange = calculateExpectedRevenueRange();
-                  return revenueRange.hasData ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <AttachMoneyIcon fontSize="small" color="success" />
-                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 'bold' }}>
-                        ${revenueRange.min.toLocaleString()} - ${revenueRange.max.toLocaleString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
+              {/* Deal Stats */}
+              <Box 
+                className="deal-stats-box"
+                sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: 2, 
+                  mt: 0, 
+                  marginTop: 0,
+                  '&.deal-stats-box': {
+                    marginTop: '0 !important'
+                  }
+                }}
+              >
+                {/* Stage */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Stage:</Typography>
+                  <StageChip stage={deal.stage} size="small" useCustomColors={true} />
+                </Box>
 
                 {/* Close Date */}
                 {(() => {
@@ -1349,104 +1478,121 @@ const DealDetails: React.FC = () => {
                   const expectedCloseDate = qualData?.expectedCloseDate;
                   return expectedCloseDate ? (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <EventIcon fontSize="small" color="primary" />
-                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 'bold' }}>
-                        Close: {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Close:</Typography>
+                      <Typography variant="body2" color="text.primary">
+                        {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
                       </Typography>
                     </Box>
                   ) : null;
                 })()}
 
-                {/* Company and Location */}
-                {company && (
+                {/* Owner */}
+                {deal.owner && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <BusinessIcon fontSize="small" color="primary" />
-                    <Typography 
-                      variant="body2" 
-                      color="primary"
-                      sx={{ 
-                        cursor: 'pointer',
-                        textDecoration: 'underline',
-                        '&:hover': { color: 'primary.dark' }
-                      }}
-                      onClick={() => navigate(`/crm/companies/${company.id}`)}
-                    >
-                      {company.companyName || company.name}
-                    </Typography>
-                    {Array.isArray((deal as any)?.associations?.locations) && (deal as any).associations.locations.length > 0 && (() => {
-                      const locEntry: any = (deal as any).associations.locations.find((l: any) => typeof l === 'object') || (deal as any).associations.locations[0];
-                      const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;
-                      const locationName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
-                      if (!locationId || !locationName) return null;
-                      return (
-                      <>
-                        <Typography variant="body2" color="text.secondary">/</Typography>
-                        <Typography 
-                          variant="body2" 
-                          color="primary"
-                          sx={{ 
-                            cursor: 'pointer',
-                            textDecoration: 'underline',
-                            '&:hover': { color: 'primary.dark' }
-                          }}
-                          onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
-                        >
-                          {locationName}
-                        </Typography>
-                      </>
-                      );
-                    })()}
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Owner:</Typography>
+                    <Typography variant="body2" color="text.primary">{deal.owner}</Typography>
                   </Box>
                 )}
+              </Box>
+
+              {/* Company and Location */}
+              {company && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Company:</Typography>
+                  <Typography 
+                    variant="body2" 
+                    color="primary"
+                    sx={{ 
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      '&:hover': { color: 'primary.dark' }
+                    }}
+                    onClick={() => navigate(`/crm/companies/${company.id}`)}
+                  >
+                    {company.companyName || company.name}
+                  </Typography>
+                  {Array.isArray((deal as any)?.associations?.locations) && (deal as any).associations.locations.length > 0 && (() => {
+                    const locEntry: any = (deal as any).associations.locations.find((l: any) => typeof l === 'object') || (deal as any).associations.locations[0];
+                    const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;
+                    const locationName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
+                    if (!locationId || !locationName) return null;
+                    return (
+                    <>
+                      <Typography variant="body2" color="text.secondary">/</Typography>
+                      <Typography 
+                        variant="body2" 
+                        color="primary"
+                        sx={{ 
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          '&:hover': { color: 'primary.dark' }
+                        }}
+                        onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
+                      >
+                        {locationName}
+                      </Typography>
+                    </>
+                    );
+                  })()}
+                </Box>
+              )}
+
+              {/* Deal Health Indicators */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
+                {/* Deal Health */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Health:</Typography>
+                  <Chip
+                    label={deal.stage === 'closed_won' ? 'Won' : deal.stage === 'closed_lost' ? 'Lost' : 'Active'}
+                    size="small"
+                    sx={{
+                      bgcolor: deal.stage === 'closed_won' ? 'success.light' : deal.stage === 'closed_lost' ? 'error.light' : 'info.light',
+                      color: deal.stage === 'closed_won' ? 'success.dark' : deal.stage === 'closed_lost' ? 'error.dark' : 'info.dark',
+                      fontWeight: 500,
+                      fontSize: '0.75rem'
+                    }}
+                  />
+                </Box>
+                
+                {/* Deal Priority */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
+                  <Chip
+                    label={deal.estimatedRevenue > 100000 ? 'High' : deal.estimatedRevenue > 50000 ? 'Medium' : 'Low'}
+                    size="small"
+                    sx={{
+                      bgcolor: deal.estimatedRevenue > 100000 ? 'error.light' : deal.estimatedRevenue > 50000 ? 'warning.light' : 'success.light',
+                      color: deal.estimatedRevenue > 100000 ? 'error.dark' : deal.estimatedRevenue > 50000 ? 'warning.dark' : 'success.dark',
+                      fontWeight: 500,
+                      fontSize: '0.75rem'
+                    }}
+                  />
+                </Box>
               </Box>
             </Box>
           </Box>
 
-          {/* Quick Actions */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-end' }}>
+          {/* Action Buttons */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Button 
                 variant="outlined" 
-                startIcon={<ArrowBackIcon />}
-                onClick={() => navigate('/crm?tab=opportunities')}
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddNoteDialog(true)}
                 size="small"
               >
-                Back
+                Add Note
               </Button>
-              <Button 
-                variant="outlined" 
-                startIcon={<HubIcon />}
-                onClick={() => setDealContextOpen(!dealContextOpen)}
-                size="small"
-                color={dealContextOpen ? 'primary' : 'inherit'}
-              >
-                Deal Connections
-              </Button>
-              <Button 
-                variant="outlined" 
-                startIcon={<RocketLaunchIcon />}
-                onClick={() => setAiSummaryOpen(!aiSummaryOpen)}
-                size="small"
-                color={aiSummaryOpen ? 'primary' : 'inherit'}
-              >
-                AI Summary
-              </Button>
-            </Box>
-            
-            {/* Quick Action Buttons - Context-aware based on deal stage */}
-            <Box sx={{ display: 'flex', gap: 1 }}>
               <Button 
                 variant="contained" 
                 startIcon={<CheckCircleIcon />}
-                size="small"
                 onClick={() => setShowLogActivityDialog(true)}
                 sx={{ 
-                  minWidth: 'auto', 
-                  px: 2,
-                  bgcolor: deal.stage === 'discovery' ? 'info.main' : 
-                          deal.stage === 'qualification' ? 'warning.main' : 
-                          deal.stage === 'proposal' ? 'primary.main' : 
-                          deal.stage === 'negotiation' ? 'secondary.main' : 'success.main'
+                  bgcolor: 'primary.main',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  }
                 }}
               >
                 Log Activity
@@ -1454,6 +1600,18 @@ const DealDetails: React.FC = () => {
             </Box>
           </Box>
         </Box>
+        
+        {/* Hidden file input for logo upload */}
+        <input
+          ref={logoInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            // TODO: Implement logo upload for deals
+            console.log('Logo upload for deals not yet implemented');
+          }}
+        />
       </Box>
 
       {/* Pattern Alerts */}
@@ -1489,230 +1647,9 @@ const DealDetails: React.FC = () => {
         </Box>
       )}
 
-      {/* Collapsible Deal Context Drawer */}
-      <Collapse in={dealContextOpen} timeout="auto" unmountOnExit>
-        <Card sx={{ mb: 3, border: '1px solid', borderColor: 'primary.main' }}>
-          <CardHeader 
-            title="Deal Context" 
-            action={
-              <IconButton onClick={() => setDealContextOpen(false)}>
-                <CloseIcon />
-              </IconButton>
-            }
-            sx={{ p: 2, pb: 1 }}
-            titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-          />
-          <CardContent sx={{ p: 2, pt: 0 }}>
-            <FastAssociationsCard
-              entityType="deal"
-              entityId={deal.id}
-              tenantId={tenantId}
-              entityName={deal.name}
-              showAssociations={{
-                companies: true,
-                locations: true,
-                contacts: true,
-                salespeople: true,
-                deals: false,
-                tasks: false
-              }}
-            />
-          </CardContent>
-        </Card>
-      </Collapse>
 
-      {/* Collapsible AI Summary Drawer */}
-      <Collapse in={aiSummaryOpen} timeout="auto" unmountOnExit>
-        <Card sx={{ mb: 3, border: '1px solid', borderColor: 'primary.main' }}>
-          <CardHeader 
-            title="AI Summary" 
-            action={
-              <IconButton onClick={() => setAiSummaryOpen(false)}>
-                <CloseIcon />
-              </IconButton>
-            }
-            sx={{ p: 2, pb: 1 }}
-            titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-          />
-          <CardContent sx={{ p: 2, pt: 0 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Stage & Timeline */}
-              <Box>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  Stage & Timeline
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                  <StageChip stage={deal.stage} size="small" useCustomColors={true} />
-                  <Typography variant="caption" color="text.secondary">
-                    Day 3 in stage
-                  </Typography>
-                </Box>
-                <Typography variant="body2" color="text.secondary">
-                  Deal is progressing well through the {deal.stage} stage. Current momentum suggests positive trajectory.
-                </Typography>
-              </Box>
 
-              {/* Top Roadblocks */}
-              {roadblocks.length > 0 && (
-                <Box>
-                  <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                    Top Roadblocks
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {roadblocks.map((roadblock) => (
-                      <Box 
-                        key={roadblock.id}
-                        sx={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: 1,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: roadblock.severity === 'high' ? 'error.50' : 
-                                  roadblock.severity === 'medium' ? 'warning.50' : 'info.50'
-                        }}
-                      >
-                        <Box 
-                          sx={{ 
-                            width: 6, 
-                            height: 6, 
-                            borderRadius: '50%',
-                            bgcolor: roadblock.severity === 'high' ? 'error.main' : 
-                                    roadblock.severity === 'medium' ? 'warning.main' : 'info.main'
-                          }} 
-                        />
-                        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-                          {roadblock.message}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              )}
 
-              {/* Deal Health */}
-              <Box>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  Deal Health
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                  <Chip 
-                    label="Likelihood: 75%" 
-                    size="small" 
-                    color="success"
-                    variant="outlined"
-                  />
-                  <Chip 
-                    label="Responsive" 
-                    size="small" 
-                    color="info"
-                    variant="outlined"
-                  />
-                  <Chip 
-                    label="On Track" 
-                    size="small" 
-                    color="primary"
-                    variant="outlined"
-                  />
-                </Box>
-                <Typography variant="body2" color="text.secondary">
-                  Deal shows strong health indicators with high likelihood of success. Customer engagement is positive.
-                </Typography>
-              </Box>
-
-              {/* AI Insight */}
-              <Box>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  AI Insight
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Deal progressing well. Consider scheduling follow-up meeting to discuss proposal details. 
-                  The customer has shown consistent engagement and the timeline aligns with typical sales cycles.
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  <strong>Recommendations:</strong>
-                </Typography>
-                <Box component="ul" sx={{ pl: 2, mt: 1 }}>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Schedule a follow-up meeting within the next 3-5 days
-                  </Typography>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Prepare detailed proposal based on qualification data
-                  </Typography>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Engage with key stakeholders identified in discovery
-                  </Typography>
-                </Box>
-              </Box>
-
-              {/* Deal Coach Actions */}
-              {dealCoachActions.length > 0 && (
-                <Box>
-                  <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                    Recommended Actions
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {dealCoachActions.slice(0, 3).map((action) => (
-                      <Box 
-                        key={action.action}
-                        sx={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          gap: 1,
-                          p: 1,
-                          borderRadius: 1,
-                          bgcolor: 'background.paper',
-                          border: '1px solid',
-                          borderColor: 'divider'
-                        }}
-                      >
-                        <Box 
-                          sx={{ 
-                            width: 6, 
-                            height: 6, 
-                            borderRadius: '50%',
-                            bgcolor: action.priority === 'high' ? 'error.main' : 
-                                    action.priority === 'medium' ? 'warning.main' : 'info.main'
-                          }} 
-                        />
-                        <Typography variant="body2" sx={{ flex: 1 }}>
-                          {action.label}
-                        </Typography>
-                        {action.description && (
-                          <Typography variant="caption" color="text.secondary">
-                            {action.description}
-                          </Typography>
-                        )}
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              {/* Pattern Analysis */}
-              <Box>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  Pattern Analysis
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  Based on historical data and current engagement patterns:
-                </Typography>
-                <Box component="ul" sx={{ pl: 2 }}>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Similar deals in this stage typically close within 30-45 days
-                  </Typography>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Customer response time is above average (within 24 hours)
-                  </Typography>
-                  <Typography component="li" variant="body2" color="text.secondary">
-                    Deal size aligns with typical successful conversions
-                  </Typography>
-                </Box>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-      </Collapse>
 
       {/* Main Content Area */}
       <Box sx={{ display: 'flex', gap: 3 }}>
@@ -1732,7 +1669,7 @@ const DealDetails: React.FC = () => {
               <Tab 
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <InfoIcon fontSize="small" />
+                    <DashboardIcon fontSize="small" />
                     Dashboard
                   </Box>
                 } 
@@ -1741,7 +1678,7 @@ const DealDetails: React.FC = () => {
               <Tab 
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <TimelineIcon fontSize="small" />
+                    <StairsIcon fontSize="small" />
                     Stages
                   </Box>
                 } 
@@ -1757,16 +1694,8 @@ const DealDetails: React.FC = () => {
               <Tab 
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ListIcon fontSize="small" />
-                    Activity Log
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <EmailIcon fontSize="small" />
-                    Email
+                    <TimelineIcon fontSize="small" />
+                    Activity
                   </Box>
                 } 
               />
@@ -1775,15 +1704,26 @@ const DealDetails: React.FC = () => {
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
-        {/* Dashboard - New Balanced Layout */}
+        {/* Dashboard - Matching CompanyDetails Layout */}
         <Grid container spacing={3}>
-          {/* Left Column (35%): Action Focused - To-Dos Only */}
+          {/* Left Column - Action Focused */}
           <Grid item xs={12} md={4}>
-            <Card sx={{ minHeight: 600 }}>
-          <CardHeader 
-                title="To-Dos" 
-                subheader="Priority tasks for this deal"
-                action={
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Next Steps Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Next Steps">
+                  <NextStepsWidget
+                    stageData={stageData}
+                    currentStage={deal.stage}
+                    onNavigateToStages={() => setTabValue(1)}
+                    onSkipQuestion={handleSkipQuestion}
+                  />
+                </SectionCard>
+              </Box>
+
+              {/* To-Dos Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="To-Dos" action={
                   <IconButton 
                     size="small" 
                     title="Add new task"
@@ -1802,34 +1742,24 @@ const DealDetails: React.FC = () => {
                   >
                     <AddIcon />
                   </IconButton>
-                }
-                sx={{ p: 0, mb: 2 }} 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
-              />
-              <CardContent sx={{ p: 0 }}>
-                <TasksDashboard
-                  entityId={deal.id}
-                  entityType="deal"
-                  tenantId={tenantId}
-                  entity={deal}
-                  preloadedContacts={associatedContacts}
-                  preloadedSalespeople={associatedSalespeople}
-                  preloadedCompany={company}
-                />
-              </CardContent>
-            </Card>
-          </Grid>
+                }>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <TasksDashboard
+                      entityId={deal.id}
+                      entityType="deal"
+                      tenantId={tenantId}
+                      entity={deal}
+                      preloadedContacts={associatedContacts}
+                      preloadedSalespeople={associatedSalespeople}
+                      preloadedCompany={company}
+                    />
+                  </Box>
+                </SectionCard>
+              </Box>
 
-
-
-          {/* Center Column (40%): Appointments Widget */}
-          <Grid item xs={12} md={5}>
-            <Card sx={{ minHeight: 600 }}>
-              <CardHeader 
-                title="Appointments" 
-                subheader="Upcoming meetings & calls"
-                action={
+              {/* Appointments Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Appointments" action={
                   <IconButton 
                     size="small" 
                     title="Schedule meeting"
@@ -1851,80 +1781,395 @@ const DealDetails: React.FC = () => {
                   >
                     <AddIcon />
                   </IconButton>
-                }
-                sx={{ p: 0, mb: 2 }} 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
-              />
-              <CardContent sx={{ p: 0 }}>
-                <AppointmentsDashboard
-                  entityId={deal.id}
-                  entityType="deal"
-                  tenantId={tenantId}
-                  entity={deal}
-                  preloadedContacts={associatedContacts}
-                  preloadedSalespeople={associatedSalespeople}
-                  preloadedCompany={company}
-                />
-              </CardContent>
-            </Card>
+                }>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <AppointmentsDashboard
+                      entityId={deal.id}
+                      entityType="deal"
+                      tenantId={tenantId}
+                      entity={deal}
+                      preloadedContacts={associatedContacts}
+                      preloadedSalespeople={associatedSalespeople}
+                      preloadedCompany={company}
+                    />
+                  </Box>
+                </SectionCard>
+              </Box>
+            </Box>
           </Grid>
 
-          {/* Right Column (25%): Deal Coach Widget */}
+          {/* Center Column - Deal Intelligence */}
+          <Grid item xs={12} md={5}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Sales Coach */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Sales Coach">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {(() => {
+                      let enable = true;
+                      try { enable = localStorage.getItem('feature.dealCoach') !== 'false'; } catch {}
+                      return enable ? (
+                        <SalesCoach 
+                          key={dealCoachKey}
+                          entityType="deal"
+                          entityId={deal.id}
+                          entityName={deal.name}
+                          tenantId={tenantId}
+                          dealStage={deal.stage}
+                          associations={deal.associations}
+                        />
+                      ) : (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, px: 2 }}>
+                          <Typography variant="body2" color="text.secondary">
+                            AI Stage Suggestions
+                          </Typography>
+                          <DealStageAISuggestions
+                            dealId={deal.id}
+                            tenantId={tenantId}
+                            currentStage={deal.stage}
+                            onTaskCreated={(taskId) => { console.log('Task created from side panel:', taskId); }}
+                          />
+                        </Box>
+                      );
+                    })()}
+                  </Box>
+                </SectionCard>
+              </Box>
+
+              {/* Relationship Map */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Relationship Map">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {associatedContacts.length > 0 ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {associatedContacts.slice(0, 4).map((contact, index) => (
+                          <Box key={contact.id || index} sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 0.5, 
+                            p: 0.5, 
+                            bgcolor: 'grey.50', 
+                            borderRadius: 0.5,
+                            flex: 1
+                          }}>
+                            <Avatar sx={{ width: 16, height: 16, fontSize: '0.625rem' }}>
+                              <PersonIcon sx={{ fontSize: 12 }} />
+                            </Avatar>
+                            <Typography variant="caption" fontSize="0.625rem" sx={{ flex: 1 }}>
+                              {contact.fullName?.length > 15 ? contact.fullName.substring(0, 15) + '...' : contact.fullName}
+                            </Typography>
+                            <Chip 
+                              label="contact" 
+                              size="small" 
+                              color="primary"
+                              sx={{ height: 16, fontSize: '0.625rem' }}
+                            />
+                          </Box>
+                        ))}
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Skeleton variant="rectangular" height={32} />
+                        <Skeleton variant="rectangular" height={24} />
+                        <Skeleton variant="rectangular" height={24} />
+                        <Skeleton variant="rectangular" height={24} />
+                      </Box>
+                    )}
+                  </Box>
+                </SectionCard>
+              </Box>
+
+              {/* Suggested by AI */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Suggested by AI">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {dealCoachActions.length > 0 ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {dealCoachActions.slice(0, 3).map((action, index) => (
+                          <Box key={action.action} sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 0.5, 
+                            p: 0.5, 
+                            bgcolor: 'grey.50', 
+                            borderRadius: 0.5,
+                            flex: 1
+                          }}>
+                            <Avatar sx={{ width: 16, height: 16, fontSize: '0.625rem' }}>
+                              <AIIcon sx={{ fontSize: 12 }} />
+                            </Avatar>
+                            <Typography variant="caption" fontSize="0.625rem" sx={{ flex: 1 }}>
+                              {action.label?.length > 15 ? action.label.substring(0, 15) + '...' : action.label}
+                            </Typography>
+                            <Chip 
+                              label={action.priority} 
+                              size="small" 
+                              color={action.priority === 'high' ? 'error' : 'warning'}
+                              sx={{ height: 16, fontSize: '0.625rem' }}
+                            />
+                          </Box>
+                        ))}
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Skeleton variant="rectangular" height={32} />
+                        <Skeleton variant="rectangular" height={24} />
+                        <Skeleton variant="rectangular" height={24} />
+                      </Box>
+                    )}
+                  </Box>
+                </SectionCard>
+              </Box>
+            </Box>
+          </Grid>
+
+          {/* Right Column - Recent Activity, Active Salespeople & Contacts */}
           <Grid item xs={12} md={3}>
-            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-              <CardHeader 
-                title="Deal Coach" 
-                action={
-                  <IconButton 
-                    size="small" 
-                    title="Start new conversation"
-                    onClick={() => {
-                      // This will be handled by the DealCoachPanel
-                      // We'll pass a prop to trigger the new conversation
-                      setDealCoachKey(`${deal.id}-${Date.now()}`);
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Recent Activity */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Recent Activity">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {activityCount > 0 ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          {activityCount} activities recorded
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Last activity: {new Date().toLocaleDateString()}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No recent activity. Activities will appear here as they occur.
+                      </Typography>
+                    )}
+                  </Box>
+                </SectionCard>
+              </Box>
+
+              {/* Active Salespeople Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Active Salespeople" action={
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setShowManageSalespeopleDialog(true)}
+                    sx={{ 
+                      minWidth: 'auto',
+                      px: 1,
+                      py: 0.5,
+                      fontSize: '0.75rem',
+                      textTransform: 'none'
                     }}
                   >
-                    <AddIcon />
-                  </IconButton>
-                }
-                sx={{ p: 0, mb: 2 }}
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ p: 0, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                
-                {/* Deal Coach Panel - Persistent across tabs */}
-                <Box sx={{ flex: 1, minHeight: 0 }}>
+                    Edit
+                  </Button>
+                }>
+                  {loadingSalespeople ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={48} />
+                      <Skeleton variant="rectangular" height={48} />
+                    </Box>
+                  ) : associatedSalespeople.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {associatedSalespeople.map((salesperson) => (
+                        <Box
+                          key={salesperson.id}
+                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                        >
+                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                            {salesperson.fullName?.charAt(0) || salesperson.firstName?.charAt(0) || salesperson.displayName?.charAt(0) || 'S'}
+                          </Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight="medium">
+                              {salesperson.fullName || salesperson.displayName || `${salesperson.firstName || ''} ${salesperson.lastName || ''}`.trim() || 'Unknown Salesperson'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {salesperson.email || salesperson.title || 'No additional info'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 3 }}>
+                      <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                        No salespeople assigned
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Assign salespeople to this deal
+                      </Typography>
+                      <Button 
+                        variant="outlined" 
+                        size="small"
+                        onClick={() => {
+                          // TODO: Open assign salespeople dialog
+                          console.log('Assign salespeople to deal');
+                        }}
+                      >
+                        Assign Salespeople
+                      </Button>
+                    </Box>
+                  )}
+                </SectionCard>
+              </Box>
+
+              {/* Contacts Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Deal Contacts" action={
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setShowManageContactsDialog(true)}
+                    sx={{ 
+                      minWidth: 'auto',
+                      px: 1,
+                      py: 0.5,
+                      fontSize: '0.75rem',
+                      textTransform: 'none'
+                    }}
+                  >
+                    Edit
+                  </Button>
+                }>
+                  {associatedContacts.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {associatedContacts.map((contact) => (
+                        <Box
+                          key={contact.id}
+                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                          onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
+                        >
+                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                            {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
+                          </Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight="medium">
+                              {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || contact.name || 'Unknown Contact'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {contact.title || 'No title'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 3 }}>
+                      <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                        No contacts yet
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Add contacts to this deal to get started
+                      </Typography>
+                      <Button 
+                        variant="outlined" 
+                        size="small"
+                        onClick={() => {
+                          // TODO: Open add contact dialog or navigate to contacts tab
+                          console.log('Add contact to deal');
+                        }}
+                      >
+                        Add Contact
+                      </Button>
+                    </Box>
+                  )}
+                </SectionCard>
+              </Box>
+
+              {/* Location Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Location" action={
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setShowManageLocationDialog(true)}
+                    sx={{ 
+                      minWidth: 'auto',
+                      px: 1,
+                      py: 0.5,
+                      fontSize: '0.75rem',
+                      textTransform: 'none'
+                    }}
+                  >
+                    Edit
+                  </Button>
+                }>
                   {(() => {
-                    let enable = true;
-                    try { enable = localStorage.getItem('feature.dealCoach') !== 'false'; } catch {}
-                    return enable ? (
-                      <SalesCoach 
-                        key={dealCoachKey}
-                        entityType="deal"
-                        entityId={deal.id}
-                        entityName={deal.name}
-                        tenantId={tenantId}
-                        dealStage={deal.stage}
-                        associations={deal.associations}
-                      />
-                    ) : (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, px: 2 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          AI Stage Suggestions
-                        </Typography>
-                        <DealStageAISuggestions
-                          dealId={deal.id}
-                          tenantId={tenantId}
-                          currentStage={deal.stage}
-                          onTaskCreated={(taskId) => { console.log('Task created from side panel:', taskId); }}
-                        />
-                      </Box>
-                    );
+                    const locations = (deal as any)?.associations?.locations || [];
+                    const hasLocations = locations.length > 0;
+                    
+                    if (hasLocations) {
+                      // Get the first location (assuming primary location)
+                      const locationEntry = locations[0];
+                      const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+                      const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
+                      const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
+                      
+                      return (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box
+                            sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                            onClick={() => {
+                              if (company && locationId) {
+                                navigate(`/crm/companies/${company.id}/locations/${locationId}`);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => { 
+                              if (e.key === 'Enter' || e.key === ' ') { 
+                                e.preventDefault(); 
+                                if (company && locationId) {
+                                  navigate(`/crm/companies/${company.id}/locations/${locationId}`);
+                                }
+                              } 
+                            }}
+                          >
+                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                              <BusinessIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {locationName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {locationAddress || 'No address'}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Box>
+                      );
+                    } else {
+                      return (
+                        <Box sx={{ textAlign: 'center', py: 3 }}>
+                          <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                            No location assigned
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                            Add a location to this deal
+                          </Typography>
+                          <Button 
+                            variant="outlined" 
+                            size="small"
+                            onClick={() => {
+                              // TODO: Open add location dialog or navigate to company locations
+                              console.log('Add location to deal');
+                            }}
+                          >
+                            Add Location
+                          </Button>
+                        </Box>
+                      );
+                    }
                   })()}
-                </Box>
-              </CardContent>
-            </Card>
+                </SectionCard>
+              </Box>
+            </Box>
           </Grid>
         </Grid>
       </TabPanel>
@@ -1951,23 +2196,13 @@ const DealDetails: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <ActivityLogTab
-          entityId={deal.id}
-          entityType="deal"
-          entityName={deal.name || 'Deal'}
+        <DealActivityTab
+          deal={deal}
           tenantId={tenantId}
         />
       </TabPanel>
 
-      <TabPanel value={tabValue} index={4}>
-        <EmailTab
-          dealId={deal.id}
-          tenantId={tenantId}
-          contacts={associatedContacts}
-          companies={company ? [company] : []}
-          currentUser={user}
-        />
-      </TabPanel>
+
 
       <TabPanel value={tabValue} index={5}>
         <Card>
@@ -2103,11 +2338,7 @@ const DealDetails: React.FC = () => {
             contacts={associatedContacts}
             currentUserId={user?.uid || ''}
           />
-          {console.log('🎯 CreateTaskDialog props:', { 
-            salespeople: associatedSalespeople, 
-            contacts: associatedContacts, 
-            currentUserId: user?.uid 
-          })}
+
         </>
       )}
 
@@ -2125,14 +2356,79 @@ const DealDetails: React.FC = () => {
           dealId={deal?.id}
           dealName={deal?.name}
         />
-        {console.log('🎯 LogActivityDialog props:', { 
-          salespeople: associatedSalespeople, 
-          contacts: associatedContacts, 
-          currentUserId: user?.uid 
-        })}
       </>
+
+      {/* Add Note Dialog */}
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={deal?.id || ''}
+        entityType="deal"
+        entityName={deal?.name || ''}
+        tenantId={tenantId}
+        contacts={associatedContacts}
+        onNoteAdded={() => {
+          // Optionally refresh notes or trigger any updates
+          console.log('Note added successfully');
+        }}
+      />
+
+      {/* Manage Salespeople Dialog */}
+      <ManageSalespeopleDialog
+        open={showManageSalespeopleDialog}
+        onClose={() => setShowManageSalespeopleDialog(false)}
+        tenantId={tenantId}
+        currentSalespeople={associatedSalespeople}
+        onSalespeopleChange={handleSalespeopleChange}
+      />
+
+      {/* Manage Contacts Dialog */}
+      <ManageContactsDialog
+        open={showManageContactsDialog}
+        onClose={() => setShowManageContactsDialog(false)}
+        tenantId={tenantId}
+        currentContacts={associatedContacts}
+        onContactsChange={handleContactsChange}
+        dealCompanyId={getDealPrimaryCompanyId(deal)}
+      />
+
+      {/* Manage Location Dialog */}
+      <ManageLocationDialog
+        open={showManageLocationDialog}
+        onClose={() => setShowManageLocationDialog(false)}
+        tenantId={tenantId}
+        companyId={(() => {
+          const companyId = getDealPrimaryCompanyId(deal) || '';
+          console.log('ManageLocationDialog companyId:', companyId, 'deal:', deal?.id);
+          return companyId;
+        })()}
+        currentLocationId={(() => {
+          const locations = (deal as any)?.associations?.locations || [];
+          if (locations.length > 0) {
+            const locationEntry = locations[0];
+            return typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+          }
+          return undefined;
+        })()}
+        onLocationChange={handleLocationChange}
+      />
     </Box>
   );
 };
+
+// SectionCard component (matching CompanyDetails)
+const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, action, children }) => (
+  <Card>
+    <CardHeader 
+      title={title} 
+      action={action}
+      sx={{ p: 2, pb: 1 }}
+      titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+    />
+    <CardContent sx={{ p: 2, pt: 0 }}>
+      {children}
+    </CardContent>
+  </Card>
+);
 
 export default DealDetails; 

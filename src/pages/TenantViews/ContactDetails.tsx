@@ -49,7 +49,6 @@ import {
   Facebook as FacebookIcon,
   Instagram as InstagramIcon,
   Notes as NotesIcon,
-  List as ListIcon,
   Save as SaveIcon,
   Delete as DeleteIcon,
   Info as InfoIcon,
@@ -84,6 +83,7 @@ import SalesCoach from '../../components/SalesCoach';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { TaskService } from '../../utils/taskService';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import AddNoteDialog from '../../components/AddNoteDialog';
 
 interface ContactData {
   id: string;
@@ -281,6 +281,7 @@ const ContactDetails: React.FC = () => {
   // Recent Activity state
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
 
   // Lazy load AI components
   useEffect(() => {
@@ -1624,17 +1625,27 @@ const ContactDetails: React.FC = () => {
                 {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
               </Button>
             )}
+            <Button 
+              variant="outlined" 
+              startIcon={<AddIcon />}
+              onClick={() => setShowAddNoteDialog(true)}
+              size="small"
+            >
+              Add Note
+            </Button>
             <Button
-              variant="outlined"
+              variant="contained"
               startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
               onClick={handleAIEnhancement}
               disabled={aiEnhancing}
               sx={{ 
-                color: 'purple.600',
-                borderColor: 'purple.600',
+                bgcolor: 'primary.main',
+                color: 'white',
                 '&:hover': {
-                  borderColor: 'purple.700',
-                  backgroundColor: 'purple.50'
+                  bgcolor: 'primary.dark'
+                },
+                '&:disabled': {
+                  bgcolor: 'grey.400'
                 }
               }}
             >
@@ -1703,7 +1714,7 @@ const ContactDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <ListIcon fontSize="small" />
+                <TimelineIcon fontSize="small" />
                 Activity
               </Box>
             } 
@@ -2718,6 +2729,26 @@ const ContactDetails: React.FC = () => {
           <Button onClick={() => setShowEmailDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Add Note Dialog */}
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={contact?.id || ''}
+        entityType="contact"
+        entityName={contact?.fullName || contact?.firstName || contact?.lastName || ''}
+        tenantId={tenantId}
+        contacts={contact ? [{
+          id: contact.id,
+          fullName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unknown Contact',
+          email: contact.email || '',
+          title: contact.jobTitle || contact.title || ''
+        }] : []}
+        onNoteAdded={() => {
+          // Optionally refresh notes or trigger any updates
+          console.log('Note added successfully');
+        }}
+      />
 
       {/* Log Activity Dialog */}
       <LogActivityDialog

@@ -16,6 +16,18 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Avatar,
+  IconButton,
+  Chip,
+  Breadcrumbs,
+  Link as MUILink,
+  Paper,
+  Tabs,
+  Tab,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -23,12 +35,25 @@ import {
   Save as SaveIcon,
   Cancel as CancelIcon,
   Delete as DeleteIcon,
+  Add as AddIcon,
+  Business as BusinessIcon,
+  LocationOn as LocationIcon,
+  Language as LanguageIcon,
+  LinkedIn as LinkedInIcon,
+  Work as WorkIcon,
+  Facebook as FacebookIcon,
+  Dashboard as DashboardIcon,
+  Notes as NotesIcon,
+  Timeline as TimelineIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
 
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import AddNoteDialog from '../../components/AddNoteDialog';
+import CRMNotesTab from '../../components/CRMNotesTab';
+import ActivityLogTab from '../../components/ActivityLogTab';
 
 interface LocationData {
   id: string;
@@ -48,6 +73,28 @@ interface LocationData {
   updatedAt?: any;
 }
 
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function TabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`location-tabpanel-${index}`}
+      aria-labelledby={`location-tab-${index}`}
+      {...other}
+    >
+      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
+    </div>
+  );
+}
+
 const LocationDetails: React.FC = () => {
   const { companyId, locationId } = useParams<{ companyId: string; locationId: string }>();
   const navigate = useNavigate();
@@ -59,6 +106,12 @@ const LocationDetails: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<Partial<LocationData>>({});
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [locationContacts, setLocationContacts] = useState<any[]>([]);
+  const [locationDeals, setLocationDeals] = useState<any[]>([]);
+  const [tabValue, setTabValue] = useState(0);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     console.log('LocationDetails useEffect triggered with:', { companyId, locationId, tenantId });
@@ -95,6 +148,50 @@ const LocationDetails: React.FC = () => {
         const locationData = { id: locationDoc.id, ...locationDoc.data() } as LocationData;
         setLocation(locationData);
         setEditForm(locationData);
+
+        // Load location-scoped contacts
+        try {
+          const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+          let contactsList: any[] = [];
+          try {
+            const q1 = query(contactsRef, where('associations.locations', 'array-contains', locationId));
+            const snap1 = await getDocs(q1 as any);
+            contactsList = snap1.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+          } catch {}
+          if (contactsList.length === 0) {
+            try {
+              const q2 = query(contactsRef, where('locationId', '==', locationId));
+              const snap2 = await getDocs(q2 as any);
+              contactsList = snap2.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+            } catch {}
+          }
+          setLocationContacts(contactsList);
+        } catch (contactsErr) {
+          console.warn('Failed to load location contacts:', contactsErr);
+          setLocationContacts([]);
+        }
+
+        // Load location-scoped deals/opportunities
+        try {
+          const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
+          let dealsList: any[] = [];
+          try {
+            const q1 = query(dealsRef, where('associations.locations', 'array-contains', locationId));
+            const snap1 = await getDocs(q1 as any);
+            dealsList = snap1.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+          } catch {}
+          if (dealsList.length === 0) {
+            try {
+              const q2 = query(dealsRef, where('locationId', '==', locationId));
+              const snap2 = await getDocs(q2 as any);
+              dealsList = snap2.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+            } catch {}
+          }
+          setLocationDeals(dealsList);
+        } catch (dealsErr) {
+          console.warn('Failed to load location deals:', dealsErr);
+          setLocationDeals([]);
+        }
         
       } catch (err: any) {
         console.error('Error loading location data:', err);
@@ -144,15 +241,17 @@ const LocationDetails: React.FC = () => {
   const handleDelete = async () => {
     if (!location || !tenantId) return;
     
-    if (window.confirm('Are you sure you want to delete this location? This action cannot be undone.')) {
-      try {
-        const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
-        await deleteDoc(locationRef);
-        navigate(`/crm/companies/${companyId}?tab=1`);
-      } catch (err: any) {
-        console.error('Error deleting location:', err);
-        setError(err.message || 'Failed to delete location');
-      }
+    setDeleting(true);
+    try {
+      const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
+      await deleteDoc(locationRef);
+      navigate(`/crm/companies/${companyId}?tab=1`);
+    } catch (err: any) {
+      console.error('Error deleting location:', err);
+      setError(err.message || 'Failed to delete location');
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
     }
   };
 
@@ -187,6 +286,10 @@ const LocationDetails: React.FC = () => {
     
     // Default to locations tab (tab=1) since this is a location details page
     navigate(`/crm/companies/${companyId}?tab=1`);
+  };
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabValue(newValue);
   };
 
   if (loading) {
@@ -233,76 +336,276 @@ const LocationDetails: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* Header */}
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        mb: 3,
-        pb: 2,
-        borderBottom: '1px solid',
-        borderColor: 'divider'
-      }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Button
-            variant="outlined"
-            startIcon={<ArrowBackIcon />}
-            onClick={navigateBackToCompany}
-          >
-            Back to Company
-          </Button>
-          <Divider orientation="vertical" flexItem />
-          <Box>
-            <Typography variant="h4" fontWeight="bold">
-              {location.name}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {company?.name} • {location.type}
-            </Typography>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2 }}>
+        <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
+            Companies
+          </MUILink>
+          <MUILink underline="hover" color="inherit" href={`/crm/companies/${companyId}`} onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${companyId}`); }}>
+            {company?.companyName || company?.name || 'Company'}
+          </MUILink>
+          <Typography color="text.primary">{location.name}</Typography>
+        </Breadcrumbs>
+      </Box>
+
+      {/* Enhanced Header - Persistent Location Information */}
+      <Box sx={{ mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
+            {/* Company Logo/Avatar */}
+            <Box sx={{ position: 'relative' }}>
+              <Avatar
+                src={company?.logo}
+                alt={company?.companyName || company?.name}
+                sx={{ 
+                  width: 128, 
+                  height: 128,
+                  bgcolor: 'primary.main',
+                  fontSize: '2rem',
+                  fontWeight: 'bold'
+                }}
+              >
+                {(company?.companyName || company?.name || 'C').charAt(0).toUpperCase()}
+              </Avatar>
+            </Box>
+
+            {/* Location Information */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+                  {location.name}
+                </Typography>
+              </Box>
+              
+              {/* Company Name */}
+              <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <BusinessIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+                <MUILink
+                  underline="hover"
+                  color="primary"
+                  href={`/crm/companies/${companyId}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate(`/crm/companies/${companyId}`);
+                  }}
+                  sx={{ cursor: 'pointer', fontWeight: 'normal' }}
+                >
+                  {company?.companyName || company?.name}
+                </MUILink>
+              </Typography>
+
+              {/* Location Type */}
+              <Chip
+                label={location.type}
+                size="small"
+                sx={{
+                  bgcolor: 'primary.50',
+                  color: 'text.primary',
+                  fontWeight: 500,
+                  fontSize: '0.75rem',
+                  height: 20,
+                  maxWidth: 'fit-content',
+                  '& .MuiChip-label': {
+                    px: 0.5,
+                    py: 0.25
+                  }
+                }}
+              />
+
+              {/* Location Address */}
+              {(location.address || location.city || location.state) && (
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationIcon sx={{ fontSize: 16 }} />
+                  {[
+                    location.address,
+                    location.city,
+                    location.state,
+                    location.zipCode
+                  ].filter(Boolean).join(', ')}
+                </Typography>
+              )}
+
+              {/* Company Social Media Icons */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company?.website ? 'primary.main' : 'text.disabled',
+                    bgcolor: company?.website ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company?.website ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company?.website ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company?.website) {
+                      let url = company.website;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company?.website ? 'Visit Website' : 'Add Website URL'}
+                >
+                  <LanguageIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company?.linkedin ? 'primary.main' : 'text.disabled',
+                    bgcolor: company?.linkedin ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company?.linkedin ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company?.linkedin ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company?.linkedin) {
+                      let url = company.linkedin;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company?.linkedin ? 'Open LinkedIn' : 'Add LinkedIn URL'}
+                >
+                  <LinkedInIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company?.indeed ? 'primary.main' : 'text.disabled',
+                    bgcolor: company?.indeed ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company?.indeed ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company?.indeed ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company?.indeed) {
+                      let url = company.indeed;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company?.indeed ? 'View Jobs on Indeed' : 'Add Indeed URL'}
+                >
+                  <WorkIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company?.facebook ? 'primary.main' : 'text.disabled',
+                    bgcolor: company?.facebook ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company?.facebook ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company?.facebook ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company?.facebook) {
+                      let url = company.facebook;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company?.facebook ? 'View Facebook Page' : 'Add Facebook URL'}
+                >
+                  <FacebookIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </Box>
+
+              {/* Location Stats */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Contacts:</Typography>
+                  <Typography variant="body2" color="primary" sx={{ fontWeight: 500 }}>
+                    {locationContacts.length}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Opportunities:</Typography>
+                  <Typography variant="body2" color="primary" sx={{ fontWeight: 500 }}>
+                    {locationDeals.length}
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
           </Box>
-        </Box>
-        
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          {editing ? (
-            <>
-              <Button
-                variant="contained"
-                startIcon={<SaveIcon />}
-                onClick={handleSaveEdit}
-              >
-                Save
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<CancelIcon />}
-                onClick={handleCancelEdit}
-              >
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="outlined"
-                startIcon={<EditIcon />}
-                onClick={handleEdit}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="outlined"
-                color="error"
-                startIcon={<DeleteIcon />}
-                onClick={handleDelete}
-              >
-                Delete
-              </Button>
-            </>
-          )}
+
+          {/* Action Buttons */}
+          <Box sx={{ display: 'flex', alignItems: 'flex-end' }}>
+            <Button 
+              variant="outlined" 
+              startIcon={<AddIcon />}
+              onClick={() => setShowAddNoteDialog(true)}
+              size="small"
+            >
+              Add Note
+            </Button>
+          </Box>
         </Box>
       </Box>
 
-      <Grid container spacing={3}>
+      {/* Tabs Navigation */}
+      <Paper elevation={1} sx={{ mb: 3, borderRadius: 2 }}>
+        <Tabs
+          value={tabValue}
+          onChange={handleTabChange}
+          indicatorColor="primary"
+          textColor="primary"
+          variant="scrollable"
+          scrollButtons="auto"
+          aria-label="Location details tabs"
+        >
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <DashboardIcon fontSize="small" />
+                Dashboard
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <NotesIcon fontSize="small" />
+                Notes
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <TimelineIcon fontSize="small" />
+                Activity
+              </Box>
+            } 
+          />
+        </Tabs>
+      </Paper>
+
+      {/* Tab Panels */}
+      <TabPanel value={tabValue} index={0}>
+        <Grid container spacing={3}>
         {/* Location Information */}
         <Grid item xs={12} md={6}>
           <Card>
@@ -433,6 +736,62 @@ const LocationDetails: React.FC = () => {
           </Card>
         </Grid>
 
+        {/* Opportunities (location-scoped) */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardHeader title="Opportunities" />
+            <CardContent>
+              {locationDeals && locationDeals.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {locationDeals
+                    .slice()
+                    .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
+                    .slice(0, 8)
+                    .map((deal: any) => (
+                      <Box key={deal.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                        <Button size="small" variant="text" onClick={() => navigate(`/crm/deals/${deal.id}`)} startIcon={<BusinessIcon fontSize="small" />} sx={{ textTransform: 'none' }}>
+                          <Typography variant="body2" fontWeight="medium">{deal.name || deal.title || 'Unknown Deal'}</Typography>
+                        </Button>
+                        <Box sx={{ ml: 'auto' }}>
+                          <Typography variant="caption" color="text.secondary">
+                            {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Contacts at this Location */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardHeader title="Contacts at this Location" />
+            <CardContent>
+              {locationContacts && locationContacts.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {locationContacts.slice(0, 10).map((c: any) => (
+                    <Box key={c.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                      <Typography variant="body2" fontWeight="medium">
+                        {c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown Contact'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {c.jobTitle || c.title || ''}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No contacts associated to this location</Typography>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
         {/* Universal Associations */}
         <Grid item xs={12}>
           <SimpleAssociationsCard
@@ -462,7 +821,89 @@ const LocationDetails: React.FC = () => {
             }}
           />
         </Grid>
-      </Grid>
+        </Grid>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={1}>
+        <CRMNotesTab
+          entityId={location.id}
+          entityType="location"
+          entityName={`${company?.name || ''} - ${location.name}`.trim()}
+          tenantId={tenantId}
+        />
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={2}>
+        <ActivityLogTab
+          entityId={location.id}
+          entityType="location"
+          entityName={`${company?.name || ''} - ${location.name}`.trim()}
+          tenantId={tenantId}
+        />
+      </TabPanel>
+
+      {/* Add Note Dialog */}
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={location.id}
+        entityType="location"
+        entityName={`${company?.name || ''} - ${location.name}`.trim()}
+        tenantId={tenantId}
+        contacts={locationContacts.map((c: any) => ({
+          id: c.id,
+          fullName: c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown Contact',
+          email: c.email || '',
+          title: c.jobTitle || c.title || ''
+        }))}
+      />
+
+      {/* Delete Contact Button - Bottom of page */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        mt: 9,
+        pb: 3 
+      }}>
+        <Button 
+          variant="outlined" 
+          color="error"
+          sx={{ 
+            borderColor: 'error.main',
+            '&:hover': {
+              borderColor: 'error.dark',
+              backgroundColor: 'error.light'
+            }
+          }}
+          startIcon={<DeleteIcon />}
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          Delete Location
+        </Button>
+      </Box>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">Confirm Deletion</DialogTitle>
+        <DialogContent>
+          <Typography id="delete-dialog-description">
+            Are you sure you want to delete this location? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleDelete} color="error" variant="contained" disabled={deleting}>
+            {deleting ? <CircularProgress size={24} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

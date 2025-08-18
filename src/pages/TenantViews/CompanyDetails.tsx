@@ -57,7 +57,7 @@ import {
   Dashboard as DashboardIcon,
   Place as PlaceIcon,
   AttachMoney as OpportunitiesIcon,
-  Note as NoteIcon,
+  Notes as NotesIcon,
   LinkedIn as LinkedInIcon,
   SmartToy as AIIcon,
   CloudUpload as UploadIcon,
@@ -121,6 +121,7 @@ import DecisionMakersPanel from '../../components/DecisionMakersPanel';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import { getStageHexColor, getTextContrastColor } from '../../utils/crmStageColors';
 import AIAssistantChat from '../../components/AIAssistantChat';
+import AddNoteDialog from '../../components/AddNoteDialog';
 
 // AngelList and Crunchbase Icon Components
 const AngelListIcon = ({ hasUrl }: { hasUrl: boolean }) => (
@@ -584,6 +585,7 @@ const CompanyDetails: React.FC = () => {
   const [companyContextOpen, setCompanyContextOpen] = useState(false);
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
   const [patternAlerts, setPatternAlerts] = useState<Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}>>([]);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
 
   // Apollo data processing function
   const processApolloData = useCallback(async (apolloData: any) => {
@@ -1452,29 +1454,54 @@ const CompanyDetails: React.FC = () => {
             </Box>
           </Box>
 
-          {/* AI Enhance Button */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-            <Button
-              variant="contained"
-              startIcon={<RocketLaunchIcon />}
-              onClick={handleEnhanceWithAI}
-              disabled={aiLoading}
-              sx={{
-                bgcolor: 'primary.main',
-                color: 'white',
-                '&:hover': {
-                  bgcolor: 'primary.dark'
-                },
-                '&:disabled': {
-                  bgcolor: 'grey.400'
-                }
-              }}
-            >
-              {aiLoading ? 'Enhancing...' : 'AI Enhance'}
-            </Button>
+          {/* Action Buttons */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button 
+                variant="outlined" 
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddNoteDialog(true)}
+                size="small"
+              >
+                Add Note
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<RocketLaunchIcon />}
+                onClick={handleEnhanceWithAI}
+                disabled={aiLoading}
+                sx={{
+                  bgcolor: 'primary.main',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  },
+                  '&:disabled': {
+                    bgcolor: 'grey.400'
+                  }
+                }}
+              >
+                {aiLoading ? 'Enhancing...' : 'AI Enhance'}
+              </Button>
+            </Box>
             {company.lastEnrichedAt && (
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                Last updated: {new Date(company.lastEnrichedAt).toLocaleString()}
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', textAlign: 'right' }}>
+                Last updated: {(() => {
+                  try {
+                    // Handle Firestore timestamp
+                    if (company.lastEnrichedAt.toDate) {
+                      return company.lastEnrichedAt.toDate().toLocaleString();
+                    }
+                    // Handle string or number
+                    const date = new Date(company.lastEnrichedAt);
+                    if (isNaN(date.getTime())) {
+                      return 'Recently';
+                    }
+                    return date.toLocaleString();
+                  } catch (error) {
+                    return 'Recently';
+                  }
+                })()}
               </Typography>
             )}
           </Box>
@@ -1620,7 +1647,7 @@ const CompanyDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NoteIcon fontSize="small" />
+                <NotesIcon fontSize="small" />
                 Notes
               </Box>
             } 
@@ -1780,6 +1807,21 @@ const CompanyDetails: React.FC = () => {
         </Alert>
       </Snackbar>
 
+      {/* Add Note Dialog (scoped to CompanyDetails state) */}
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={company?.id || ''}
+        entityType="company"
+        entityName={company?.companyName || company?.name || ''}
+        tenantId={tenantId}
+        contacts={contacts}
+        onNoteAdded={() => {
+          // Optionally refresh notes or trigger any updates
+          console.log('Note added successfully');
+        }}
+      />
+
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={deleteDialogOpen}
@@ -1935,7 +1977,7 @@ const RecentActivityWidget: React.FC<{ company: any; tenantId: string }> = ({ co
         <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
           <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
             {item.type === 'task' && <EventIcon sx={{ fontSize: 16 }} />}
-            {item.type === 'note' && <NoteIcon sx={{ fontSize: 16 }} />}
+                            {item.type === 'note' && <NotesIcon sx={{ fontSize: 16 }} />}
             {item.type === 'deal_stage' && <DealIcon sx={{ fontSize: 16 }} />}
             {item.type === 'email' && <EmailIcon sx={{ fontSize: 16 }} />}
           </Avatar>
@@ -2111,43 +2153,46 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
 
   return (
     <Box>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <TimelineIcon /><Typography variant="h6">Company Activity</Typography>
+        </Box>
+        {/* Filters */}
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Type</InputLabel>
+            <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="task">Tasks</MenuItem>
+              <MenuItem value="note">Notes</MenuItem>
+              <MenuItem value="deal_stage">Deal Stages</MenuItem>
+              <MenuItem value="email">Emails</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            type="date"
+            size="small"
+            label="Start"
+            InputLabelProps={{ shrink: true }}
+            value={startDate}
+            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+          />
+          <TextField
+            type="date"
+            size="small"
+            label="End"
+            InputLabelProps={{ shrink: true }}
+            value={endDate}
+            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            {total} results
+          </Typography>
+        </Box>
+      </Box>
       <Card>
-        <CardHeader title={(<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><TimelineIcon /><Typography variant="h6">Company Activity</Typography></Box>)} />
         <CardContent>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          {/* Filters */}
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Type</InputLabel>
-              <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="task">Tasks</MenuItem>
-                <MenuItem value="note">Notes</MenuItem>
-                <MenuItem value="deal_stage">Deal Stages</MenuItem>
-                <MenuItem value="email">Emails</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              type="date"
-              size="small"
-              label="Start"
-              InputLabelProps={{ shrink: true }}
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-            />
-            <TextField
-              type="date"
-              size="small"
-              label="End"
-              InputLabelProps={{ shrink: true }}
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-            />
-            <Box sx={{ flex: 1 }} />
-            <Typography variant="body2" color="text.secondary" sx={{ alignSelf: 'center' }}>
-              {total} results
-            </Typography>
-          </Box>
           {loading ? (
             <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
           ) : filtered.length === 0 ? (

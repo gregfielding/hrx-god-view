@@ -135,45 +135,44 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
 
   return (
     <Box>
-      <Box sx={{ py: 0, px: 3}}>
-        <Box display="flex" justifyContent="flex-start" alignItems="center" sx={{ mt: 0, mb: 1, gap: 1 }}>
-          <TimelineIcon /><Typography variant="h6" fontWeight={700}>Contact Activity</Typography>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <TimelineIcon /><Typography variant="h6">Contact Activity</Typography>
+        </Box>
+        {/* Filters */}
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Type</InputLabel>
+            <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="task">Tasks</MenuItem>
+              <MenuItem value="email">Emails</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            type="date"
+            size="small"
+            label="Start"
+            InputLabelProps={{ shrink: true }}
+            value={startDate}
+            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+          />
+          <TextField
+            type="date"
+            size="small"
+            label="End"
+            InputLabelProps={{ shrink: true }}
+            value={endDate}
+            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            {total} results
+          </Typography>
         </Box>
       </Box>
       <Card>
         <CardContent>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          {/* Filters */}
-          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Type</InputLabel>
-              <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="task">Tasks</MenuItem>
-                <MenuItem value="email">Emails</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              type="date"
-              size="small"
-              label="Start"
-              InputLabelProps={{ shrink: true }}
-              value={startDate}
-              onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-            />
-            <TextField
-              type="date"
-              size="small"
-              label="End"
-              InputLabelProps={{ shrink: true }}
-              value={endDate}
-              onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-            />
-            <Box sx={{ flex: 1 }} />
-            <Typography variant="body2" color="text.secondary" sx={{ alignSelf: 'center' }}>
-              {total} results
-            </Typography>
-          </Box>
           {loading ? (
             <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
           ) : filtered.length === 0 ? (

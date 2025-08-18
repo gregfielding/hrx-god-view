@@ -32,12 +32,9 @@ import {
   Divider,
 } from '@mui/material';
 import {
-  Add as AddIcon,
-  AttachFile as AttachFileIcon,
   Visibility as ViewIcon,
   Delete as DeleteIcon,
   Note as NoteIcon,
-  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { doc, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -78,36 +75,12 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   const { currentUser } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
-  const [newNote, setNewNote] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [noteCategory, setNoteCategory] = useState<'general' | 'sales' | 'meeting' | 'follow_up' | 'proposal' | 'negotiation' | 'closing' | 'other'>('general');
-  const [notePriority, setNotePriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [viewNoteDialog, setViewNoteDialog] = useState<{ open: boolean; note: Note | null }>({ open: false, note: null });
   const [userRole, setUserRole] = useState<'hrx' | 'agency' | 'customer'>('customer');
-  const [aiProcessing, setAiProcessing] = useState(false);
 
-  // Predefined tags for CRM notes
-  const availableTags = [
-    'Lead', 'Prospect', 'Customer', 'Meeting', 'Call', 'Email', 'Proposal', 
-    'Negotiation', 'Closing', 'Follow-up', 'Objection', 'Competitor', 'Budget',
-    'Timeline', 'Decision Maker', 'Influencer', 'Technical', 'Business', 'Strategic',
-    // Location-specific tags
-    ...(entityType === 'location' ? [
-      'Facility', 'Equipment', 'Staffing', 'Operations', 'Maintenance', 'Safety',
-      'Quality Control', 'Production', 'Logistics', 'Inventory', 'Shipping',
-      'Receiving', 'Warehouse', 'Manufacturing', 'Assembly', 'Testing'
-    ] : []),
-    // Deal-specific tags
-    ...(entityType === 'deal' ? [
-      'Discovery', 'Qualification', 'Scoping', 'Proposal Drafted', 'Proposal Review',
-      'Verbal Agreement', 'Closed Won', 'Closed Lost', 'Onboarding', 'Live Account',
-      'Dormant', 'Revenue', 'Probability', 'Close Date', 'Owner', 'Stage Change',
-      'Competitive Analysis', 'Value Proposition', 'ROI', 'Contract Terms'
-    ] : [])
-  ];
+
 
   useEffect(() => {
     loadNotes();
@@ -194,86 +167,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
     }
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      setSelectedFiles(Array.from(event.target.files));
-    }
-  };
 
-  const handleTagToggle = (tag: string) => {
-    setSelectedTags(prev =>
-      prev.includes(tag)
-        ? prev.filter(t => t !== tag)
-        : [...prev, tag]
-    );
-  };
-
-  const handleAddNote = async () => {
-    if (!newNote.trim()) return;
-
-    try {
-      setAiProcessing(true);
-      
-      // Create note data
-      const noteData = {
-        content: newNote,
-        authorId: currentUser?.uid || '',
-        authorName: currentUser?.displayName || currentUser?.email || 'Unknown',
-        authorRole: userRole,
-        timestamp: serverTimestamp(),
-        category: noteCategory,
-        priority: notePriority,
-        tags: selectedTags,
-        entityId: entityId,
-        entityType: entityType,
-        entityName: entityName,
-        aiReviewed: false,
-        files: [], // TODO: Implement file upload
-      };
-
-      // Add note to Firestore
-      const notesRef = collection(db, 'tenants', tenantId, `${entityType}_notes`);
-      const docRef = await addDoc(notesRef, noteData);
-
-      // Trigger AI review
-      try {
-        const functions = getFunctions();
-        const triggerAIReview = httpsCallable(functions, 'triggerAINoteReview');
-        await triggerAIReview({
-          noteId: docRef.id,
-          entityType: entityType,
-          tenantId: tenantId,
-          content: newNote,
-          category: noteCategory,
-          priority: notePriority,
-          tags: selectedTags
-        });
-      } catch (aiError) {
-        console.warn('AI review failed:', aiError);
-        // Continue without AI review
-      }
-
-      // Reset form
-      setNewNote('');
-      setSelectedFiles([]);
-      setSelectedTags([]);
-      setNoteCategory('general');
-      setNotePriority('medium');
-
-      // Show success message
-      setSuccessMessage('Note added successfully and sent for AI review');
-      setShowSuccess(true);
-
-      // Reload notes
-      await loadNotes();
-    } catch (error) {
-      console.error('Error adding note:', error);
-      setSuccessMessage('Error adding note');
-      setShowSuccess(true);
-    } finally {
-      setAiProcessing(false);
-    }
-  };
 
   const handleDeleteNote = async (noteId: string) => {
     if (window.confirm('Are you sure you want to delete this note?')) {
@@ -334,14 +228,9 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px:3 }}>
         <Typography variant="h6" fontWeight={700}>
-          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : 'Company'} Notes
+          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : 'Company'} Notes History ({notes.length})
         </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => {
-          const el = document.getElementById('add-note-form');
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }}>
-          Add Note
-        </Button>
+
       </Box>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px:3 }}>
         {entityType === 'location' 
@@ -350,137 +239,22 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
       </Typography>
       <Divider sx={{ my: 0 }} />
 
-      {/* Add New Note Section */}
-      <Card sx={{ mb: 3 }} id="add-note-form">
-        <CardHeader 
-          title={
-            <Box display="flex" alignItems="center" gap={1}>
-              <NoteIcon color="primary" />
-              <Typography variant="h6">Add New Note</Typography>
-            </Box>
-          }
-        />
-        <CardContent>
-          <Grid container spacing={2}>
-            <Grid item xs={12}>
-              <TextField
-                label="Note Content"
-                multiline
-                rows={4}
-                fullWidth
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                placeholder={entityType === 'location' 
-                  ? `Enter your note about this location (facility, operations, staffing, etc.)...`
-                  : `Enter your note, observation, or feedback about this ${entityType}...`
-                }
-                variant="outlined"
-              />
-            </Grid>
-            
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
-                <Select
-                  value={noteCategory}
-                  onChange={(e) => setNoteCategory(e.target.value as any)}
-                  label="Category"
-                >
-                  <MenuItem value="general">General</MenuItem>
-                  <MenuItem value="sales">Sales</MenuItem>
-                  <MenuItem value="meeting">Meeting</MenuItem>
-                  <MenuItem value="follow_up">Follow-up</MenuItem>
-                  <MenuItem value="proposal">Proposal</MenuItem>
-                  <MenuItem value="negotiation">Negotiation</MenuItem>
-                  <MenuItem value="closing">Closing</MenuItem>
-                  <MenuItem value="other">Other</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Priority</InputLabel>
-                <Select
-                  value={notePriority}
-                  onChange={(e) => setNotePriority(e.target.value as any)}
-                  label="Priority"
-                >
-                  <MenuItem value="low">Low</MenuItem>
-                  <MenuItem value="medium">Medium</MenuItem>
-                  <MenuItem value="high">High</MenuItem>
-                  <MenuItem value="urgent">Urgent</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <Typography variant="subtitle2" gutterBottom>
-                Tags (optional)
-              </Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {availableTags.map((tag) => (
-                  <Chip
-                    key={tag}
-                    label={tag}
-                    size="small"
-                    variant={selectedTags.includes(tag) ? "filled" : "outlined"}
-                    color={selectedTags.includes(tag) ? "primary" : "default"}
-                    onClick={() => handleTagToggle(tag)}
-                    sx={{ cursor: 'pointer' }}
-                  />
-                ))}
-              </Box>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <Button
-                variant="outlined"
-                startIcon={<AttachFileIcon />}
-                component="label"
-                sx={{ mr: 2 }}
-              >
-                Attach Files
-                <input
-                  type="file"
-                  multiple
-                  hidden
-                  onChange={handleFileSelect}
-                />
-              </Button>
-              {selectedFiles.length > 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  {selectedFiles.length} file(s) selected
-                </Typography>
-              )}
-            </Grid>
-            
-            <Grid item xs={12}>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={aiProcessing ? <AutoAwesomeIcon /> : <AddIcon />}
-                onClick={handleAddNote}
-                disabled={!newNote.trim() || aiProcessing}
-                fullWidth
-                size="large"
-              >
-                {aiProcessing ? 'Processing with AI...' : '+ Add Note & Trigger AI Review'}
-              </Button>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+      {/* Add Note Button */}
+      {/* <Box sx={{ mb: 3, textAlign: 'center' }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Use the "Add Note" button in the header to add new notes to this {entityType}.
+        </Typography>
+      </Box> */}
 
       {/* Notes History */}
       <Card>
-        <CardHeader 
+        {/* <CardHeader 
           title={
             <Box display="flex" alignItems="center" gap={1}>
               <Typography variant="h6">Notes History ({notes.length})</Typography>
             </Box>
           }
-        />
+        /> */}
         <CardContent>
           {loading ? (
             <Box display="flex" justifyContent="center" p={3}>
@@ -498,8 +272,8 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                 <TableHead>
                   <TableRow>
                     <TableCell>Content</TableCell>
-                    <TableCell>Category</TableCell>
-                    <TableCell>Priority</TableCell>
+                    {/* <TableCell>Category</TableCell> */}
+                    {/* <TableCell>Priority</TableCell> */}
                     <TableCell>Author</TableCell>
                     <TableCell>Date</TableCell>
                     <TableCell>Actions</TableCell>
@@ -528,7 +302,6 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                         {note.files && note.files.length > 0 && (
                           <Box mt={1}>
                             <Chip
-                              icon={<AttachFileIcon />}
                               label={`${note.files.length} file(s)`}
                               size="small"
                               variant="outlined"
@@ -538,7 +311,6 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                         {note.aiInsights && (
                           <Box mt={1}>
                             <Chip
-                              icon={<AutoAwesomeIcon />}
                               label="AI Insights Available"
                               size="small"
                               color="primary"
@@ -557,20 +329,20 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                           </Box>
                         )}
                       </TableCell>
-                      <TableCell>
+                      {/* <TableCell>
                         <Chip
                           label={note.category}
                           color={getCategoryColor(note.category)}
                           size="small"
                         />
-                      </TableCell>
-                      <TableCell>
+                      </TableCell> */}
+                      {/* <TableCell>
                         <Chip
                           label={note.priority}
                           color={getPriorityColor(note.priority)}
                           size="small"
                         />
-                      </TableCell>
+                      </TableCell> */}
                       <TableCell>
                         <Box display="flex" alignItems="center" gap={1}>
                           <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
@@ -668,7 +440,6 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                   {viewNoteDialog.note.files.map((file, index) => (
                     <Chip
                       key={index}
-                      icon={<AttachFileIcon />}
                       label={file.name}
                       variant="outlined"
                       sx={{ mr: 1, mb: 1 }}

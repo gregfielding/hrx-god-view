@@ -51,3 +51,18 @@
 .btn-xsmall .MuiButton-startIcon > *:nth-of-type(1) {
   font-size: 16px;
 }
+
+/* Tabbed navigation border radius - target MUI Paper components */
+.MuiPaper-root.MuiPaper-elevation.MuiPaper-rounded.MuiPaper-elevation1 {
+  border-radius: 12px !important;
+}
+
+/* Alternative targeting for tabbed navigation */
+.MuiPaper-root[class*="MuiPaper-elevation"] {
+  border-radius: 12px !important;
+}
+
+/* Specific override for any inline styles */
+.MuiPaper-root[style*="border-radius"] {
+  border-radius: 12px !important;
+}

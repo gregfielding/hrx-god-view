@@ -12,333 +12,273 @@ import {
   TableHead,
   TableRow,
   Paper,
-  CircularProgress,
-  Alert,
-  TextField,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
+  TextField,
   Chip,
-  IconButton
+  Button,
+  CircularProgress,
+  Alert,
 } from '@mui/material';
 import {
-  Refresh as RefreshIcon,
-  Search as SearchIcon,
   Timeline as TimelineIcon,
-  Task as TaskIcon,
-  Note as NoteIcon,
-  Email as EmailIcon,
-  Phone as PhoneIcon,
-  Business as BusinessIcon,
-  Person as PersonIcon,
-  AttachMoney as MoneyIcon,
-  Psychology as PsychologyIcon
 } from '@mui/icons-material';
-import { collection, query, where, orderBy, getDocs, limit } from 'firebase/firestore';
-
+import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
-// import { useAuth } from '../contexts/AuthContext';
+
+type DealActivityItem = {
+  id: string;
+  type: 'task' | 'note' | 'deal_stage' | 'email';
+  timestamp: Date;
+  title: string;
+  description?: string;
+  metadata?: any;
+};
 
 interface DealActivityTabProps {
-  dealId: string;
+  deal: any;
   tenantId: string;
-  dealName: string;
 }
 
-interface ActivityLog {
-  id: string;
-  eventType: string;
-  actionType: string;
-  reason: string;
-  timestamp: any;
-  success: boolean;
-  entityType: string;
-  entityId: string;
-  userId?: string;
-  userName?: string;
-  metadata?: any;
-}
-
-const DealActivityTab: React.FC<DealActivityTabProps> = ({
-  dealId,
-  tenantId,
-  dealName
-}) => {
-  // const { user } = useAuth();
-  const [activities, setActivities] = useState<ActivityLog[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEventType, setSelectedEventType] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [sortField] = useState<'timestamp' | 'eventType' | 'actionType'>('timestamp');
-  const [sortOrder] = useState<'asc' | 'desc'>('desc');
-
-  const loadActivities = async () => {
-    if (!dealId || !tenantId) return;
-    
-    setLoading(true);
-    setError(null);
-    
-    try {
-      // Query ai_logs collection for activities related to this deal
-      const logsRef = collection(db, 'ai_logs');
-      const logsQuery = query(
-        logsRef,
-        where('entityType', '==', 'deal'),
-        where('entityId', '==', dealId),
-        orderBy('timestamp', 'desc'),
-        limit(100)
-      );
-      
-      const snapshot = await getDocs(logsQuery);
-      const logs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as ActivityLog[];
-      
-      setActivities(logs);
-    } catch (err) {
-      console.error('Error loading activities:', err);
-      setError('Failed to load activities');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Filter and sort activities
-  const filteredAndSortedActivities = React.useMemo(() => {
-    const filtered = activities.filter(activity => {
-      const matchesSearch = !searchTerm || 
-        activity.eventType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        activity.actionType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        activity.reason.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const matchesEventType = selectedEventType === 'all' || 
-        activity.eventType === selectedEventType;
-      
-      const matchesStatus = selectedStatus === 'all' || 
-        (selectedStatus === 'success' && activity.success) ||
-        (selectedStatus === 'error' && !activity.success);
-      
-      return matchesSearch && matchesEventType && matchesStatus;
-    });
-
-    // Sort activities
-    const sorted = [...filtered].sort((a, b) => {
-      let aValue: any, bValue: any;
-      
-      switch (sortField) {
-        case 'timestamp':
-          aValue = a.timestamp?.toDate?.() || a.timestamp;
-          bValue = b.timestamp?.toDate?.() || b.timestamp;
-          break;
-        case 'eventType':
-          aValue = a.eventType;
-          bValue = b.eventType;
-          break;
-        case 'actionType':
-          aValue = a.actionType;
-          bValue = b.actionType;
-          break;
-        default:
-          return 0;
-      }
-      
-      if (sortOrder === 'asc') {
-        return aValue > bValue ? 1 : -1;
-      } else {
-        return aValue < bValue ? 1 : -1;
-      }
-    });
-
-    return sorted;
-  }, [activities, searchTerm, selectedEventType, selectedStatus, sortField, sortOrder]);
-
-  const getEventTypeIcon = (eventType: string) => {
-    switch (eventType) {
-      case 'task':
-        return <TaskIcon fontSize="small" />;
-      case 'note':
-        return <NoteIcon fontSize="small" />;
-      case 'email':
-        return <EmailIcon fontSize="small" />;
-      case 'phone':
-        return <PhoneIcon fontSize="small" />;
-      case 'company':
-        return <BusinessIcon fontSize="small" />;
-      case 'contact':
-        return <PersonIcon fontSize="small" />;
-      case 'deal':
-        return <MoneyIcon fontSize="small" />;
-      case 'ai':
-        return <PsychologyIcon fontSize="small" />;
-      default:
-        return <TimelineIcon fontSize="small" />;
-    }
-  };
-
-  const getStatusColor = (success: boolean) => {
-    return success ? 'success' : 'error';
-  };
-
-  const formatTimestamp = (timestamp: any) => {
-    if (!timestamp) return 'Unknown';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString();
-  };
+const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => {
+  const [items, setItems] = useState<DealActivityItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  // Filters
+  const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'note' | 'deal_stage' | 'email'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  // Pagination
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState<number>(1);
 
   useEffect(() => {
-    loadActivities();
-  }, [dealId, tenantId]);
+    const load = async () => {
+      if (!deal?.id || !tenantId) return;
+      setLoading(true);
+      setError('');
+      try {
+        const dealId: string = deal.id;
+        const contactIds: string[] = Array.isArray(deal.associations?.contacts) ? deal.associations.contacts : [];
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    );
-  }
+        const aggregated: DealActivityItem[] = [];
+
+        // Tasks: completed tasks associated to this deal
+        try {
+          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+          const tq = query(
+            tasksRef,
+            where('associations.deals', 'array-contains', dealId),
+            where('status', '==', 'completed'),
+            orderBy('updatedAt', 'desc'),
+            limit(200)
+          );
+          const ts = await getDocs(tq);
+          ts.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `task_${docSnap.id}`,
+              type: 'task',
+              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+              title: d.title || 'Task completed',
+              description: d.description || '',
+              metadata: { priority: d.priority, taskType: d.type }
+            });
+          });
+        } catch {}
+
+        // Notes: deal notes
+        try {
+          const notesRef = collection(db, 'tenants', tenantId, 'notes');
+          const nq = query(
+            notesRef, 
+            where('entityId', '==', dealId), 
+            where('entityType', '==', 'deal'),
+            orderBy('timestamp', 'desc'), 
+            limit(200)
+          );
+          const ns = await getDocs(nq);
+          ns.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `note_${docSnap.id}`,
+              type: 'note',
+              timestamp: d.timestamp?.toDate?.() || new Date(),
+              title: d.category ? `Note (${d.category})` : 'Note',
+              description: d.content,
+              metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+            });
+          });
+        } catch {}
+
+        // Deal stage progression: subcollection stage_history under the deal
+        try {
+          const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+          const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+          const ss = await getDocs(sq);
+          ss.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `dealstage_${dealId}_${docSnap.id}`,
+              type: 'deal_stage',
+              timestamp: d.timestamp?.toDate?.() || new Date(),
+              title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+              description: d.reason || 'Stage updated',
+              metadata: { dealId }
+            });
+          });
+        } catch {}
+
+        // Emails: email_logs filtered by dealId and by each contactId
+        try {
+          const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+          // Deal-specific emails
+          const dq = query(emailsRef, where('dealId', '==', dealId), orderBy('timestamp', 'desc'), limit(200));
+          const ds = await getDocs(dq);
+          ds.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `email_deal_${docSnap.id}`,
+              type: 'email',
+              timestamp: d.timestamp?.toDate?.() || new Date(),
+              title: `Email: ${d.subject || '(no subject)'}`,
+              description: d.bodySnippet,
+              metadata: { from: d.from, to: d.to, direction: d.direction }
+            });
+          });
+          
+          // Contact-specific emails
+          for (const contactId of contactIds) {
+            try {
+              const cq = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+              const cs = await getDocs(cq);
+              cs.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `email_contact_${contactId}_${docSnap.id}`,
+                  type: 'email',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: `Email: ${d.subject || '(no subject)'}`,
+                  description: d.bodySnippet,
+                  metadata: { from: d.from, to: d.to, direction: d.direction }
+                });
+              });
+            } catch {}
+          }
+        } catch {}
+
+        // Sort newest first
+        aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+        setItems(aggregated);
+        setPage(1);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load activity');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [deal?.id, tenantId]);
+
+  // Derived list after filters
+  const filtered = items.filter((it) => {
+    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
+    if (startDate) {
+      const s = new Date(startDate + 'T00:00:00');
+      if (it.timestamp < s) return false;
+    }
+    if (endDate) {
+      const e = new Date(endDate + 'T23:59:59');
+      if (it.timestamp > e) return false;
+    }
+    return true;
+  });
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h5" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TimelineIcon />
-            Activity Log
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <TimelineIcon /><Typography variant="h6">Deal Activity</Typography>
+        </Box>
+        {/* Filters */}
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Type</InputLabel>
+            <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="task">Tasks</MenuItem>
+              <MenuItem value="note">Notes</MenuItem>
+              <MenuItem value="deal_stage">Deal Stages</MenuItem>
+              <MenuItem value="email">Emails</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            type="date"
+            size="small"
+            label="Start"
+            InputLabelProps={{ shrink: true }}
+            value={startDate}
+            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+          />
+          <TextField
+            type="date"
+            size="small"
+            label="End"
+            InputLabelProps={{ shrink: true }}
+            value={endDate}
+            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            {total} results
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <TextField
-              size="small"
-              placeholder="Search activities..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              }}
-              sx={{ width: 200 }}
-            />
-            <FormControl size="small" sx={{ minWidth: 120 }}>
-              <InputLabel>Event Type</InputLabel>
-              <Select
-                value={selectedEventType}
-                onChange={(e) => setSelectedEventType(e.target.value)}
-                label="Event Type"
-              >
-                <MenuItem value="all">All Types</MenuItem>
-                <MenuItem value="task">Task</MenuItem>
-                <MenuItem value="note">Note</MenuItem>
-                <MenuItem value="email">Email</MenuItem>
-                <MenuItem value="phone">Phone</MenuItem>
-                <MenuItem value="company">Company</MenuItem>
-                <MenuItem value="contact">Contact</MenuItem>
-                <MenuItem value="deal">Deal</MenuItem>
-                <MenuItem value="ai">AI</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 100 }}>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                label="Status"
-              >
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="success">Success</MenuItem>
-                <MenuItem value="error">Error</MenuItem>
-              </Select>
-            </FormControl>
-            <IconButton onClick={loadActivities} title="Refresh">
-              <RefreshIcon />
-            </IconButton>
-          </Box>
         </Box>
       </Box>
-
-      {/* Activity Table */}
       <Card>
-        <CardHeader
-          title={
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <TimelineIcon />
-              Deal Activities
-            </Box>
-          }
-        />
         <CardContent>
-          {error && (
-            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-              {error}
-            </Alert>
-          )}
-
-          {filteredAndSortedActivities.length === 0 ? (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <Typography color="text.secondary" gutterBottom>
-                No activities found.
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                AI logging is enabled. Deal activities will appear here automatically as you interact with the deal.
-              </Typography>
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {loading ? (
+            <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
+          ) : filtered.length === 0 ? (
+            <Box textAlign="center" py={4}>
+              <Typography color="text.secondary">No activity yet.</Typography>
+              <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
             </Box>
           ) : (
             <TableContainer component={Paper} variant="outlined">
-              <Table>
+              <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TimelineIcon fontSize="small" />
-                        Event Type
-                      </Box>
-                    </TableCell>
-                    <TableCell>Action</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Title</TableCell>
                     <TableCell>Description</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Timestamp</TableCell>
+                    <TableCell>When</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredAndSortedActivities.map((activity) => (
-                    <TableRow key={activity.id} hover>
-                      <TableCell>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          {getEventTypeIcon(activity.eventType)}
-                          <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                            {activity.eventType}
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                          {activity.actionType}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {activity.reason}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={activity.success ? 'Success' : 'Error'}
-                          color={getStatusColor(activity.success)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {formatTimestamp(activity.timestamp)}
-                        </Typography>
-                      </TableCell>
+                  {pageItems.map((it) => (
+                    <TableRow key={it.id}>
+                      <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
+                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
+                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
+          )}
+          {/* Pagination */}
+          {filtered.length > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+              <Button size="small" variant="outlined" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+              <Typography variant="caption">Page {page} of {totalPages}</Typography>
+              <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+            </Box>
           )}
         </CardContent>
       </Card>
