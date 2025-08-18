@@ -97,6 +97,13 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, action, children }) => (
+  <Card sx={{ mb: 3 }}>
+    <CardHeader title={title} action={action} titleTypographyProps={{ variant: 'h6' }} sx={{ pb: 0 }} />
+    <CardContent sx={{ pt: 2 }}>{children}</CardContent>
+  </Card>
+);
+
 const LocationDetails: React.FC = () => {
   const { companyId, locationId } = useParams<{ companyId: string; locationId: string }>();
   const navigate = useNavigate();
@@ -597,134 +604,123 @@ const LocationDetails: React.FC = () => {
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Location Details */}
-              <Card>
-                <CardHeader 
-                  title="Location Details" 
-                  action={
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      {editing ? (
-                        <>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<SaveIcon />}
-                            onClick={handleSaveEdit}
-                          >
-                            Save
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<CancelIcon />}
-                            onClick={handleCancelEdit}
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
+              <SectionCard 
+                title="Location Details" 
+                action={
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    {editing ? (
+                      <>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<SaveIcon />}
+                          onClick={handleSaveEdit}
+                        >
+                          Save
+                        </Button>
                         <Button
                           size="small"
                           variant="outlined"
-                          startIcon={<EditIcon />}
-                          onClick={handleEdit}
+                          startIcon={<CancelIcon />}
+                          onClick={handleCancelEdit}
                         >
-                          Edit
+                          Cancel
                         </Button>
-                      )}
-                    </Box>
-                  }
-                />
-                <CardContent>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <TextField
-                      label="Location Name"
-                      value={editing ? editForm.name || '' : location.name}
-                      onChange={(e) => handleFieldChange('name', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
-                    
-                    <TextField
-                      label="Address"
-                      value={editing ? editForm.address || '' : location.address}
-                      onChange={(e) => handleFieldChange('address', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
-                    
-                    <Grid container spacing={2}>
-                      <Grid item xs={6}>
-                        <TextField
-                          label="City"
-                          value={editing ? editForm.city || '' : location.city}
-                          onChange={(e) => handleFieldChange('city', e.target.value)}
-                          disabled={!editing}
-                          fullWidth
-                          size="small"
-                        />
-                      </Grid>
-                      <Grid item xs={3}>
-                        <TextField
-                          label="State"
-                          value={editing ? editForm.state || '' : location.state}
-                          onChange={(e) => handleFieldChange('state', e.target.value)}
-                          disabled={!editing}
-                          fullWidth
-                          size="small"
-                        />
-                      </Grid>
-                      <Grid item xs={3}>
-                        <TextField
-                          label="ZIP Code"
-                          value={editing ? editForm.zipCode || '' : location.zipCode}
-                          onChange={(e) => handleFieldChange('zipCode', e.target.value)}
-                          disabled={!editing}
-                          fullWidth
-                          size="small"
-                        />
-                      </Grid>
-                    </Grid>
-                    
-                    <TextField
-                      label="Phone Number"
-                      value={editing ? editForm.phone || '' : location.phone || ''}
-                      onChange={(e) => handleFieldChange('phone', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                      InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
-                    />
-                    
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Type</InputLabel>
-                      <Select
-                        value={editing ? editForm.type || '' : location.type}
-                        label="Type"
-                        onChange={(e) => handleFieldChange('type', e.target.value)}
-                        disabled={!editing}
+                      </>
+                    ) : (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<EditIcon />}
+                        onClick={handleEdit}
                       >
-                        <MenuItem value="Headquarters">Headquarters</MenuItem>
-                        <MenuItem value="Office">Office</MenuItem>
-                        <MenuItem value="Warehouse">Warehouse</MenuItem>
-                        <MenuItem value="Factory">Factory</MenuItem>
-                        <MenuItem value="Store">Store</MenuItem>
-                        <MenuItem value="Branch">Branch</MenuItem>
-                      </Select>
-                    </FormControl>
-                    
-                    <TextField
-                      label="Division"
-                      value={editing ? editForm.division || '' : location.division || ''}
-                      onChange={(e) => handleFieldChange('division', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
+                        Edit
+                      </Button>
+                    )}
                   </Box>
-                </CardContent>
-              </Card>
+                }
+              >
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <TextField
+                    label="Location Name"
+                    defaultValue={location.name}
+                    onBlur={(e) => handleFieldChange('name', e.target.value)}
+                    size="small"
+                    fullWidth
+                  />
+                  
+                  <TextField
+                    label="Address"
+                    defaultValue={location.address}
+                    onBlur={(e) => handleFieldChange('address', e.target.value)}
+                    size="small"
+                    fullWidth
+                  />
+                  
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <TextField
+                        label="City"
+                        defaultValue={location.city}
+                        onBlur={(e) => handleFieldChange('city', e.target.value)}
+                        size="small"
+                        fullWidth
+                      />
+                    </Grid>
+                    <Grid item xs={3}>
+                      <TextField
+                        label="State"
+                        defaultValue={location.state}
+                        onBlur={(e) => handleFieldChange('state', e.target.value)}
+                        size="small"
+                        fullWidth
+                      />
+                    </Grid>
+                    <Grid item xs={3}>
+                      <TextField
+                        label="ZIP Code"
+                        defaultValue={location.zipCode}
+                        onBlur={(e) => handleFieldChange('zipCode', e.target.value)}
+                        size="small"
+                        fullWidth
+                      />
+                    </Grid>
+                  </Grid>
+                  
+                  <TextField
+                    label="Phone Number"
+                    defaultValue={location.phone || ''}
+                    onBlur={(e) => handleFieldChange('phone', e.target.value)}
+                    size="small"
+                    fullWidth
+                    InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                  />
+                  
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Type</InputLabel>
+                    <Select
+                      value={location.type}
+                      label="Type"
+                      onChange={(e) => handleFieldChange('type', e.target.value)}
+                    >
+                      <MenuItem value="Headquarters">Headquarters</MenuItem>
+                      <MenuItem value="Office">Office</MenuItem>
+                      <MenuItem value="Warehouse">Warehouse</MenuItem>
+                      <MenuItem value="Factory">Factory</MenuItem>
+                      <MenuItem value="Store">Store</MenuItem>
+                      <MenuItem value="Branch">Branch</MenuItem>
+                    </Select>
+                  </FormControl>
+                  
+                  <TextField
+                    label="Division"
+                    defaultValue={location.division || ''}
+                    onBlur={(e) => handleFieldChange('division', e.target.value)}
+                    size="small"
+                    fullWidth
+                  />
+                </Box>
+              </SectionCard>
             </Box>
           </Grid>
 
