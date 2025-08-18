@@ -1676,7 +1676,7 @@ const ContactDetails: React.FC = () => {
       )}
 
       {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
+      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
         <Tabs
           value={tabValue}
           onChange={handleTabChange}

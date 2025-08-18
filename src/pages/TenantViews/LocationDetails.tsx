@@ -114,37 +114,29 @@ const LocationDetails: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    console.log('LocationDetails useEffect triggered with:', { companyId, locationId, tenantId });
-    
     if (!companyId || !locationId || !tenantId) {
-      console.log('Missing required parameters:', { companyId, locationId, tenantId });
       return;
     }
     
     const loadLocationData = async () => {
       try {
         setLoading(true);
-        console.log('Loading location data with tenantId:', tenantId, 'companyId:', companyId, 'locationId:', locationId);
         
         // Load company data
         const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
         if (!companyDoc.exists()) {
-          console.log('Company document does not exist');
           setError('Company not found');
           return;
         }
-        console.log('Company document found:', companyDoc.data());
         setCompany({ id: companyDoc.id, ...companyDoc.data() });
         
         // Load location data
         const locationDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId));
         if (!locationDoc.exists()) {
-          console.log('Location document does not exist');
           setError('Location not found');
           return;
         }
         
-        console.log('Location document found:', locationDoc.data());
         const locationData = { id: locationDoc.id, ...locationDoc.data() } as LocationData;
         setLocation(locationData);
         setEditForm(locationData);
@@ -195,13 +187,6 @@ const LocationDetails: React.FC = () => {
         
       } catch (err: any) {
         console.error('Error loading location data:', err);
-        console.error('Error details:', {
-          code: err.code,
-          message: err.message,
-          tenantId,
-          companyId,
-          locationId
-        });
         setError(err.message || 'Failed to load location data');
       } finally {
         setLoading(false);
@@ -280,7 +265,7 @@ const LocationDetails: React.FC = () => {
           return;
         }
       } catch (err) {
-        console.log('Could not parse referrer URL');
+        // Could not parse referrer URL
       }
     }
     
@@ -566,7 +551,7 @@ const LocationDetails: React.FC = () => {
       </Box>
 
       {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 2 }}>
+      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
         <Tabs
           value={tabValue}
           onChange={handleTabChange}
@@ -814,7 +799,7 @@ const LocationDetails: React.FC = () => {
               salespeople: "Account Managers"
             }}
             onAssociationChange={(type, action, entityId) => {
-              console.log(`${action} ${type} association: ${entityId}`);
+              // Association changed
             }}
             onError={(error) => {
               console.error('Association error:', error);

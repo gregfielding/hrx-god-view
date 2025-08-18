@@ -76,19 +76,14 @@ export class UnifiedAssociationService {
     }
 
     try {
-      console.log(`🔍 UnifiedAssociationService: Getting associations for ${entityType}:${entityId} (user ${this.userId})`);
-
       // 1. Get explicit associations from crm_associations collection
       const explicitAssociations = await this.getExplicitAssociations(entityType, entityId);
-      console.log(`📊 Found ${explicitAssociations.length} explicit associations`);
 
       // 2. Get implicit associations from entity document fields
       const implicitAssociations = await this.getImplicitAssociations(entityType, entityId);
-      console.log(`📊 Found ${implicitAssociations.length} implicit associations`);
 
       // 3. Merge and deduplicate associations
       const allAssociations = this.mergeAssociations([...explicitAssociations, ...implicitAssociations]);
-      console.log(`📊 Total unique associations: ${allAssociations.length}`);
 
       // 4. Load only essential entities (contacts and salespeople) with timeout
       const entities = await this.loadEssentialEntities(allAssociations);
@@ -150,12 +145,10 @@ export class UnifiedAssociationService {
       const entityDoc = await getDoc(entityRef);
 
       if (!entityDoc.exists()) {
-        console.log(`⚠️ Entity document not found: ${entityType}:${entityId}`);
         return associations;
       }
 
       const entityData = entityDoc.data();
-      console.log(`📊 Entity data for implicit associations:`, entityData);
 
       // Handle different entity types
       switch (entityType) {
@@ -306,7 +299,7 @@ export class UnifiedAssociationService {
           break;
 
         default:
-          console.log(`⚠️ No implicit association logic for entity type: ${entityType}`);
+          // No implicit association logic for this entity type
       }
 
     } catch (error) {

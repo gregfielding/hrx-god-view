@@ -135,10 +135,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
   const isCurrentlyLoading = externalLoading !== undefined ? externalLoading : loading;
   const currentError = externalError !== undefined ? externalError : error;
 
-  // Debug: Log loading state changes
-  useEffect(() => {
-    console.log(`🔄 Loading state changed to: ${loading}`);
-  }, [loading]);
+  // Removed excessive logging for performance
   const [associations, setAssociations] = useState<SimpleAssociations>({});
   const [entities, setEntities] = useState<{
     companies: any[];
@@ -209,7 +206,6 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
   useEffect(() => {
     // If cached data is provided, use it instead of loading
     if (cachedAssociations && cachedEntities) {
-      console.log(`✅ Using cached data for ${entityType}:${entityId}`);
       setAssociations(cachedAssociations);
       setEntities(cachedEntities);
       setLoading(false);
@@ -219,7 +215,6 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
     const loadData = async () => {
       try {
-        console.log(`🔄 Starting loadData for ${entityType}:${entityId}`);
         setLoading(true);
         setError(null);
         
@@ -228,25 +223,19 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
           setTimeout(() => reject(new Error('Loading timeout after 15 seconds')), 15000);
         });
 
-        console.log(`🔍 Loading associations for ${entityType}:${entityId}`);
-
         // Use unified association service
         let finalResult: any;
         
         // Check persistent cache first
         const cacheKey = `unified_${entityType}_${entityId}`;
         if (unifiedServiceCache[cacheKey]) {
-          console.log(`✅ Using cached unified service result for ${entityType}:${entityId}`);
           finalResult = unifiedServiceCache[cacheKey];
         } else {
           try {
-            console.log(`🔍 Trying unified association service for ${entityType}:${entityId}`);
             const unified = createUnifiedAssociationService(tenantId, user?.uid || '');
             // Add timeout for unified service
             const unifiedPromise = unified.getEntityAssociations(entityType, entityId);
             const unifiedResult = await Promise.race([unifiedPromise, timeoutPromise]) as any;
-            
-            console.log(`✅ Unified association service returned:`, unifiedResult);
             
             // Convert unified result to simple format
             finalResult = {
@@ -261,28 +250,21 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
             }));
             
           } catch (unifiedError) {
-            console.log(`❌ Unified service failed:`, unifiedError);
             throw unifiedError;
           }
         }
         
-        console.log(`🔍 Setting associations and entities:`, finalResult);
         setAssociations(finalResult.associations);
         setEntities(finalResult.entities);
-
-        console.log(`✅ Loaded associations:`, finalResult.associations);
-        console.log(`✅ Loaded entities:`, finalResult.entities);
-        console.log(`🔄 Setting loading to false`);
 
         // Note: Removed pre-loading to improve initial load performance
         // Entities will be loaded on-demand when dropdowns are opened
 
       } catch (err: any) {
-        console.error('❌ Error loading associations:', err);
+        console.error('Error loading associations:', err);
         setError(err.message || 'Failed to load associations');
         onError?.(err.message || 'Failed to load associations');
       } finally {
-        console.log(`🔄 Finally block - setting loading to false`);
         setLoading(false);
       }
     };
@@ -290,15 +272,11 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
     loadData();
   }, [entityType, entityId, tenantId, cachedAssociations, cachedEntities]);
 
-  // Debug: Log when available entities change
-  useEffect(() => {
-    console.log('🔄 Available entities updated:', availableEntities);
-  }, [availableEntities]);
+  // Removed excessive logging for performance
 
   // Load available entities for adding new associations
   const loadAvailableEntities = async (targetType: string) => {
     try {
-      console.log(`🔍 Loading available ${targetType} for association...`);
       setLoadingEntities(prev => ({ ...prev, [targetType]: true }));
 
       // Check cache first
@@ -308,7 +286,6 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       const cacheTime = cacheTimestamp[cacheKey];
       
       if (cachedData && cacheTime && (now - cacheTime) < CACHE_DURATION) {
-        console.log(`✅ Using cached data for ${targetType}`);
         setAvailableEntities(prev => ({ ...prev, [targetType]: cachedData }));
         setDataReady(prev => ({ ...prev, [targetType]: true }));
         setLoadingEntities(prev => ({ ...prev, [targetType]: false }));
@@ -318,7 +295,6 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       // Check persistent cache for available entities
       const checkCacheKey = `available_${targetType}_${entityType}_${entityId}`;
       if (unifiedServiceCache[checkCacheKey]) {
-        console.log(`✅ Using persistent cached data for ${targetType}`);
         setAvailableEntities(prev => ({ ...prev, [targetType]: unifiedServiceCache[checkCacheKey] }));
         setDataReady(prev => ({ ...prev, [targetType]: true }));
         setLoadingEntities(prev => ({ ...prev, [targetType]: false }));
@@ -337,7 +313,6 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
         });
         
         entities = (result.data as any).salespeople || [];
-        console.log(`✅ Loaded ${entities.length} salespeople via Firebase Function`);
       } else {
         // Use direct Firestore query for other entity types
         let collectionPath: string;
@@ -458,7 +433,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
               }
             } else {
               // For other entity types, load all locations from all companies in parallel
-              console.log('🔍 Loading all locations from all companies');
+              // Loading all locations from all companies
               try {
                 const companiesRef = collection(db, `tenants/${tenantId}/crm_companies`);
                 const companiesSnapshot = await getDocs(companiesRef);
@@ -480,7 +455,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
                 
                 const allLocationArrays = await Promise.all(locationPromises);
                 entities = allLocationArrays.flat();
-                console.log(`✅ Loaded ${entities.length} total locations from all companies`);
+                // Loaded locations from all companies
               } catch (err) {
                 console.error('Error loading all locations:', err);
                 setError(`Failed to load locations: ${err.message}`);
@@ -491,7 +466,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
           default:
             // For locations, we should never reach here since they're handled in the switch case
             if (targetType === 'locations') {
-              console.log('⚠️ Locations should be handled in switch case, not default');
+              // Locations should be handled in switch case, not default
               break;
             }
             
@@ -499,7 +474,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
             {
               const defaultCollectionPath = getCollectionPath(targetType);
               if (!defaultCollectionPath) {
-                console.error(`❌ No collection path found for ${targetType}`);
+                console.error(`No collection path found for ${targetType}`);
                 break;
               }
 
@@ -525,22 +500,17 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
       // Filter out entities that are already associated
       const currentAssociatedIds = associations[`${targetType}` as keyof SimpleAssociations] || [];
-      console.log(`🔍 Current associated IDs for ${targetType}:`, currentAssociatedIds);
       const availableEntities = entities.filter(entity => !currentAssociatedIds.includes(entity.id));
-      console.log(`🔍 Available entities after filtering:`, availableEntities);
 
       // Deduplicate entities by ID to prevent React key warnings
       const uniqueEntities = availableEntities.filter((entity, index, self) => 
         index === self.findIndex(e => e.id === entity.id)
       );
 
-      console.log(`🔍 Setting available entities for ${targetType}:`, uniqueEntities);
       setAvailableEntities(prev => ({
         ...prev,
         [targetType]: uniqueEntities
       }));
-
-      console.log(`✅ Loaded ${uniqueEntities.length} available ${targetType}:`, uniqueEntities);
       
       // Cache the results
       const cacheKeyForStorage = `${targetType}_${entityType}_${entityId}`;
@@ -558,7 +528,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       setDataReady(prev => ({ ...prev, [targetType]: true }));
 
     } catch (err: any) {
-      console.error(`❌ Error loading available ${targetType}:`, err);
+      console.error(`Error loading available ${targetType}:`, err);
       setError(err.message || `Failed to load available ${targetType}`);
     } finally {
       setLoadingEntities(prev => ({ ...prev, [targetType]: false }));
@@ -585,7 +555,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
         console.warn('manageAssociations blocked: missing tenantId', { entityType, entityId, targetType, targetId: targetEntity?.id });
         return;
       }
-      console.log(`🔗 Adding association: ${entityType} → ${targetType}`);
+      // Adding association
       const functions = getFunctions();
       const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
       try {
@@ -597,7 +567,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
           targetEntityId: targetEntity.id,
           tenantId: tenantId
         } as any;
-        console.log('manageAssociations.add payload', payload);
+        // manageAssociations.add payload
         await manageAssociationsCallable(payload);
       } catch (fnErr) {
         console.warn('manageAssociations failed:', fnErr);
@@ -627,7 +597,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       onAssociationChange?.(targetType, 'add', targetEntity.id);
 
     } catch (err: any) {
-      console.error('❌ Error adding association:', err);
+      console.error('Error adding association:', err);
       setError(err.message || 'Failed to add association');
       onError?.(err.message || 'Failed to add association');
     }
@@ -640,7 +610,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
         console.warn('manageAssociations blocked: missing tenantId (remove)', { entityType, entityId, targetType, targetId: targetEntityId });
         return;
       }
-      console.log(`🗑️ Removing association: ${entityType} → ${targetType}`);
+              // Removing association
       const functions = getFunctions();
       const manageAssociationsCallable = httpsCallable(functions, 'manageAssociations');
       try {
@@ -652,7 +622,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
           targetEntityId: targetEntityId,
           tenantId: tenantId
         } as any;
-        console.log('manageAssociations.remove payload', payload);
+        // manageAssociations.remove payload
         await manageAssociationsCallable(payload);
       } catch (fnErr) {
         console.warn('manageAssociations failed:', fnErr);
@@ -681,7 +651,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       onAssociationChange?.(targetType, 'remove', targetEntityId);
 
     } catch (err: any) {
-      console.error('❌ Error removing association:', err);
+      console.error('Error removing association:', err);
       setError(err.message || 'Failed to remove association');
       onError?.(err.message || 'Failed to remove association');
     }
@@ -860,8 +830,7 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
                         }
                       }}
                       onOpen={async () => {
-                        console.log(`🔍 Opening dropdown for ${type}, current available entities:`, availableEntityList);
-                        console.log(`🔍 Data ready for ${type}:`, dataReady[type]);
+                              // Opening dropdown for entity type
                         await loadAvailableEntities(type);
                       }}
                       noOptionsText={availableEntityList.length === 0 ? "No options" : "No matches"}

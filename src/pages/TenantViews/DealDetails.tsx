@@ -1656,7 +1656,7 @@ const DealDetails: React.FC = () => {
         {/* Main Content Area */}
         <Box sx={{ width: '100%' }}>
           {/* Tabs */}
-          <Paper sx={{ mb: 3 }}>
+          <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
             <Tabs
               value={tabValue}
               onChange={handleTabChange}
