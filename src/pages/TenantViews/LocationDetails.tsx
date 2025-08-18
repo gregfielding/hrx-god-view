@@ -591,7 +591,97 @@ const LocationDetails: React.FC = () => {
       {/* Tab Panels */}
             <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
-
+          {/* Left Column - Location Details */}
+          <Grid item xs={12} md={4}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Location Details */}
+              <Card>
+                <CardHeader title="Location Details" />
+                <CardContent>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <TextField
+                      label="Location Name"
+                      value={editing ? editForm.name || '' : location.name}
+                      onChange={(e) => handleFieldChange('name', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                    />
+                    
+                    <TextField
+                      label="Address"
+                      value={editing ? editForm.address || '' : location.address}
+                      onChange={(e) => handleFieldChange('address', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                    />
+                    
+                    <Grid container spacing={2}>
+                      <Grid item xs={6}>
+                        <TextField
+                          label="City"
+                          value={editing ? editForm.city || '' : location.city}
+                          onChange={(e) => handleFieldChange('city', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid item xs={3}>
+                        <TextField
+                          label="State"
+                          value={editing ? editForm.state || '' : location.state}
+                          onChange={(e) => handleFieldChange('state', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid item xs={3}>
+                        <TextField
+                          label="ZIP Code"
+                          value={editing ? editForm.zipCode || '' : location.zipCode}
+                          onChange={(e) => handleFieldChange('zipCode', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                    </Grid>
+                    
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Type</InputLabel>
+                      <Select
+                        value={editing ? editForm.type || '' : location.type}
+                        label="Type"
+                        onChange={(e) => handleFieldChange('type', e.target.value)}
+                        disabled={!editing}
+                      >
+                        <MenuItem value="Headquarters">Headquarters</MenuItem>
+                        <MenuItem value="Office">Office</MenuItem>
+                        <MenuItem value="Warehouse">Warehouse</MenuItem>
+                        <MenuItem value="Factory">Factory</MenuItem>
+                        <MenuItem value="Store">Store</MenuItem>
+                        <MenuItem value="Branch">Branch</MenuItem>
+                      </Select>
+                    </FormControl>
+                    
+                    {location.division && (
+                      <TextField
+                        label="Division"
+                        value={editing ? editForm.division || '' : location.division}
+                        onChange={(e) => handleFieldChange('division', e.target.value)}
+                        disabled={!editing}
+                        fullWidth
+                        size="small"
+                      />
+                    )}
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
 
           {/* Center Column - Location Intelligence */}
           <Grid item xs={12} md={5}>
