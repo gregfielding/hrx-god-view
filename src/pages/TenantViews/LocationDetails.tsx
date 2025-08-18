@@ -357,7 +357,9 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       <Marker 
         position={center}
         label={location.name}
-        title={location.name}
+        onLoad={(marker) => {
+          console.log('LocationMap: Marker loaded successfully:', marker);
+        }}
       />
     </GoogleMap>
   );
