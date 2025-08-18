@@ -821,7 +821,7 @@ const LocationDetails: React.FC = () => {
                   <FormControl fullWidth size="small">
                     <InputLabel>Type</InputLabel>
                     <Select
-                      value={location.type}
+                      value={location.type || ''}
                       label="Type"
                       onChange={(e) => handleFieldChange('type', e.target.value)}
                     >
@@ -831,6 +831,7 @@ const LocationDetails: React.FC = () => {
                       <MenuItem value="Factory">Factory</MenuItem>
                       <MenuItem value="Store">Store</MenuItem>
                       <MenuItem value="Branch">Branch</MenuItem>
+                      <MenuItem value="Manufacturing">Manufacturing</MenuItem>
                     </Select>
                   </FormControl>
                   
@@ -940,26 +941,44 @@ const LocationDetails: React.FC = () => {
               {/* Active Salespeople */}
               <Card>
                 <CardHeader 
-                  title="Active Salespeople" 
+                  title="Company Active Salespeople" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
                   action={
                     <Button size="small" disabled={rebuildingActive} onClick={async () => {
                       try {
                         setRebuildingActive(true);
                         const functions = getFunctions();
-                        const fn = httpsCallable(functions, 'rebuildLocationActiveSalespeople');
-                        const resp: any = await fn({ tenantId, locationId });
-                        const data = resp?.data || {};
-                        if (data.ok) {
-                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
-                        } else if (data.error) {
-                          setLocalError(`Rebuild failed: ${data.error}`);
-                        } else {
-                          setLocalSuccess('Rebuild requested');
+                        // Try the location-specific function first, fallback to company function
+                        let fn;
+                        try {
+                          fn = httpsCallable(functions, 'rebuildLocationActiveSalespeople');
+                          const resp: any = await fn({ tenantId, locationId });
+                          const data = resp?.data || {};
+                          if (data.ok) {
+                            setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                          } else if (data.error) {
+                            setLocalError(`Rebuild failed: ${data.error}`);
+                          } else {
+                            setLocalSuccess('Rebuild requested');
+                          }
+                        } catch (locationError) {
+                          // Fallback to company-level rebuild
+                          console.log('Location-specific rebuild failed, trying company-level:', locationError);
+                          fn = httpsCallable(functions, 'rebuildCompanyActiveSalespeople');
+                          const resp: any = await fn({ tenantId, companyId });
+                          const data = resp?.data || {};
+                          if (data.ok) {
+                            setLocalSuccess(`Company active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                          } else if (data.error) {
+                            setLocalError(`Rebuild failed: ${data.error}`);
+                          } else {
+                            setLocalSuccess('Company rebuild requested');
+                          }
                         }
-                        // Light refresh
+                        // Light refresh - refresh both location and company data
                         try {
                           await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!));
+                          await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId!));
                         } catch {}
                       } catch (e) {
                         console.error('Rebuild active salespeople – error', e);
@@ -971,9 +990,9 @@ const LocationDetails: React.FC = () => {
                   }
                 />
                 <CardContent sx={{ p: 2 }}>
-                  {location?.activeSalespeople && Object.keys(location.activeSalespeople).length > 0 ? (
+                  {company?.activeSalespeople && Object.keys(company.activeSalespeople).length > 0 ? (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {Object.values(location.activeSalespeople as any)
+                      {Object.values(company.activeSalespeople as any)
                         .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
                         .slice(0, 5)
                         .map((sp: any) => (
