@@ -113,11 +113,10 @@ const LocationDetails: React.FC = () => {
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState<Partial<LocationData>>({});
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [locationContacts, setLocationContacts] = useState<any[]>([]);
   const [locationDeals, setLocationDeals] = useState<any[]>([]);
+  const [companyDivisions, setCompanyDivisions] = useState<string[]>([]);
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -148,7 +147,6 @@ const LocationDetails: React.FC = () => {
         
         const locationData = { id: locationDoc.id, ...locationDoc.data() } as LocationData;
         setLocation(locationData);
-        setEditForm(locationData);
 
         // Load location-scoped contacts
         try {
@@ -193,6 +191,17 @@ const LocationDetails: React.FC = () => {
           console.warn('Failed to load location deals:', dealsErr);
           setLocationDeals([]);
         }
+
+        // Load company divisions
+        try {
+          const divisionsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'divisions');
+          const divisionsSnapshot = await getDocs(divisionsRef);
+          const divisions = divisionsSnapshot.docs.map(doc => doc.data().name || doc.id).filter(Boolean);
+          setCompanyDivisions(divisions);
+        } catch (divisionsErr) {
+          console.warn('Failed to load company divisions:', divisionsErr);
+          setCompanyDivisions([]);
+        }
         
       } catch (err: any) {
         console.error('Error loading location data:', err);
@@ -205,32 +214,7 @@ const LocationDetails: React.FC = () => {
     loadLocationData();
   }, [companyId, locationId, tenantId]);
 
-  const handleEdit = () => {
-    setEditing(true);
-  };
 
-  const handleCancelEdit = () => {
-    setEditing(false);
-    setEditForm(location || {});
-  };
-
-  const handleSaveEdit = async () => {
-    if (!location || !tenantId) return;
-    
-    try {
-      const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
-      await updateDoc(locationRef, {
-        ...editForm,
-        updatedAt: new Date()
-      });
-      
-      setLocation({ ...location, ...editForm });
-      setEditing(false);
-    } catch (err: any) {
-      console.error('Error updating location:', err);
-      setError(err.message || 'Failed to update location');
-    }
-  };
 
   const handleDelete = async () => {
     if (!location || !tenantId) return;
@@ -249,8 +233,21 @@ const LocationDetails: React.FC = () => {
     }
   };
 
-  const handleFieldChange = (field: string, value: any) => {
-    setEditForm(prev => ({ ...prev, [field]: value }));
+  const handleFieldChange = async (field: string, value: any) => {
+    if (!location || !tenantId) return;
+    
+    try {
+      const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
+      await updateDoc(locationRef, {
+        [field]: value,
+        updatedAt: new Date()
+      });
+      
+      setLocation({ ...location, [field]: value });
+    } catch (err: any) {
+      console.error('Error updating location field:', err);
+      setError(err.message || 'Failed to update location');
+    }
   };
 
   const navigateBackToCompany = () => {
@@ -604,42 +601,7 @@ const LocationDetails: React.FC = () => {
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Location Details */}
-              <SectionCard 
-                title="Location Details" 
-                action={
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    {editing ? (
-                      <>
-                        <Button
-                          size="small"
-                          variant="contained"
-                          startIcon={<SaveIcon />}
-                          onClick={handleSaveEdit}
-                        >
-                          Save
-                        </Button>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<CancelIcon />}
-                          onClick={handleCancelEdit}
-                        >
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<EditIcon />}
-                        onClick={handleEdit}
-                      >
-                        Edit
-                      </Button>
-                    )}
-                  </Box>
-                }
-              >
+              <SectionCard title="Location Details">
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <TextField
                     label="Location Name"
@@ -712,13 +674,25 @@ const LocationDetails: React.FC = () => {
                     </Select>
                   </FormControl>
                   
-                  <TextField
-                    label="Division"
-                    defaultValue={location.division || ''}
-                    onBlur={(e) => handleFieldChange('division', e.target.value)}
-                    size="small"
-                    fullWidth
-                  />
+                  {companyDivisions.length > 0 && (
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Division</InputLabel>
+                      <Select
+                        value={location.division || ''}
+                        label="Division"
+                        onChange={(e) => handleFieldChange('division', e.target.value)}
+                      >
+                        <MenuItem value="">
+                          <em>Select a division</em>
+                        </MenuItem>
+                        {companyDivisions.map((division) => (
+                          <MenuItem key={division} value={division}>
+                            {division}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
                 </Box>
               </SectionCard>
             </Box>
