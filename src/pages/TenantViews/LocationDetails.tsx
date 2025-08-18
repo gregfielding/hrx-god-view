@@ -334,11 +334,15 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     <GoogleMap
       mapContainerStyle={{ width: '100%', height: '200px' }}
       center={center}
-      zoom={15}
+      zoom={12}
     >
       <Marker 
         position={center}
         label={location.name}
+        icon={{
+          url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+          scaledSize: new google.maps.Size(32, 32)
+        }}
       />
     </GoogleMap>
   );
