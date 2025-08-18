@@ -54,7 +54,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-
+import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -258,6 +258,89 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
         </Box>
       ))}
     </Box>
+  );
+};
+
+const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
+  const { isLoaded } = useJsApiLoader({
+    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
+    libraries: ['places'],
+  });
+
+  const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    // Use coordinates if available, otherwise try to geocode the address
+    if (location.coordinates?.latitude && location.coordinates?.longitude) {
+      setCenter({
+        lat: location.coordinates.latitude,
+        lng: location.coordinates.longitude
+      });
+    } else if (location.address || location.city || location.state) {
+      // Try to geocode the address
+      const address = [
+        location.address,
+        location.city,
+        location.state,
+        location.zipCode
+      ].filter(Boolean).join(', ');
+      
+      if (address) {
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ address }, (results, status) => {
+          if (status === 'OK' && results && results[0]) {
+            const lat = results[0].geometry.location.lat();
+            const lng = results[0].geometry.location.lng();
+            setCenter({ lat, lng });
+          }
+        });
+      }
+    }
+  }, [location]);
+
+  if (!isLoaded) {
+    return (
+      <Box sx={{ 
+        height: 200, 
+        bgcolor: 'grey.100', 
+        borderRadius: 1, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+      }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (!center) {
+    return (
+      <Box sx={{ 
+        height: 200, 
+        bgcolor: 'grey.100', 
+        borderRadius: 1, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center' 
+      }}>
+        <Typography variant="body2" color="text.secondary">
+          No location coordinates available
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <GoogleMap
+      mapContainerStyle={{ width: '100%', height: '200px' }}
+      center={center}
+      zoom={15}
+    >
+      <Marker 
+        position={center}
+        label={location.name}
+      />
+    </GoogleMap>
   );
 };
 
@@ -877,18 +960,7 @@ const LocationDetails: React.FC = () => {
               <Card>
                 <CardHeader title="Location Map" />
                 <CardContent>
-                  <Box sx={{ 
-                    height: 200, 
-                    bgcolor: 'grey.100', 
-                    borderRadius: 1, 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center' 
-                  }}>
-                    <Typography variant="body2" color="text.secondary">
-                      Map view coming soon
-                    </Typography>
-                  </Box>
+                  <LocationMap location={location} />
                 </CardContent>
               </Card>
 
