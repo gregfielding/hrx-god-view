@@ -332,7 +332,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   return (
     <Box sx={{ px: 0, py: 0 }}>
       {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0 }}>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px:3 }}>
         <Typography variant="h6" fontWeight={700}>
           {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : 'Company'} Notes
         </Typography>
@@ -343,7 +343,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
           Add Note
         </Button>
       </Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px:3 }}>
         {entityType === 'location' 
           ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
           : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}

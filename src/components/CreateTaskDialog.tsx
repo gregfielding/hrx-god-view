@@ -62,10 +62,10 @@ interface CreateTaskDialogProps {
     startTime: '', // NEW: For appointments
     duration: undefined as number | undefined,
     scheduledDate: new Date().toISOString().split('T')[0],
-    dueDate: '',
+    dueDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 0,
-    category: 'general',
+    category: 'business_generating',
     quotaCategory: 'business_generating',
     notes: '',
     tags: [] as string[],
@@ -88,7 +88,10 @@ interface CreateTaskDialogProps {
       email: string;
       displayName?: string;
       responseStatus?: 'needsAction' | 'declined' | 'tentative' | 'accepted';
-    }>
+    }>,
+    // Repeating task fields
+    isRepeating: false,
+    repeatInterval: 30
   });
 
   const [errors, setErrors] = useState<{[key: string]: string}>({});
@@ -111,6 +114,13 @@ interface CreateTaskDialogProps {
       });
     }
   }, [prefilledData]);
+
+  // Auto-populate meeting attendees when type is Google Meet and we have contacts
+  useEffect(() => {
+    if (formData.type === 'scheduled_meeting_virtual' && formData.associations?.contacts?.length > 0) {
+      updateMeetingAttendees(formData);
+    }
+  }, [formData.type, formData.associations?.contacts]);
 
   const handleInputChange = (field: string, value: any) => {
     setFormData(prev => {
@@ -181,6 +191,7 @@ interface CreateTaskDialogProps {
       });
     }
     
+    // Update the form data with the new attendees
     setFormData(prev => ({
       ...prev,
       meetingAttendees: attendees
@@ -222,7 +233,10 @@ interface CreateTaskDialogProps {
       ...formData,
       scheduledDate: scheduledDate,
       duration: formData.classification === 'appointment' && formData.duration ? Number(formData.duration) : undefined,
-      estimatedDuration: Number(formData.estimatedDuration || 0)
+      estimatedDuration: Number(formData.estimatedDuration || 0),
+      // Include repeating task data
+      isRepeating: formData.isRepeating,
+      repeatInterval: formData.isRepeating ? Number(formData.repeatInterval) : undefined
     };
 
     onSubmit(taskData);
@@ -239,10 +253,10 @@ interface CreateTaskDialogProps {
       startTime: '',
       duration: undefined,
       scheduledDate: new Date().toISOString().split('T')[0],
-      dueDate: '',
+      dueDate: new Date().toISOString().split('T')[0],
       assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 0,
-      category: 'general',
+      category: 'business_generating',
       quotaCategory: 'business_generating',
       notes: '',
       tags: [],
@@ -261,7 +275,10 @@ interface CreateTaskDialogProps {
       callScript: '',
       emailTemplate: '',
       followUpNotes: '',
-      meetingAttendees: []
+      meetingAttendees: [],
+      // Repeating task fields
+      isRepeating: false,
+      repeatInterval: 30
     });
     setErrors({});
     onClose();
@@ -389,16 +406,52 @@ interface CreateTaskDialogProps {
 
           {/* Date for Todos */}
           {formData.classification === 'todo' && (
-            <Grid item xs={6}>
-              <TextField
-                fullWidth
-                label="Due Date"
-                type="date"
-                value={formData.dueDate}
-                onChange={(e) => handleInputChange('dueDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
+            <>
+              <Grid item xs={6}>
+                <TextField
+                  fullWidth
+                  label="Due Date"
+                  type="date"
+                  value={formData.dueDate}
+                  onChange={(e) => handleInputChange('dueDate', e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              
+              {/* Repeating Task Section */}
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.isRepeating}
+                      onChange={(e) => handleInputChange('isRepeating', e.target.checked)}
+                      color="primary"
+                    />
+                  }
+                  label="Scheduled Repeating Activity"
+                />
+              </Grid>
+              
+              {formData.isRepeating && (
+                <Grid item xs={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Repeat Every</InputLabel>
+                    <Select
+                      value={formData.repeatInterval}
+                      onChange={(e) => handleInputChange('repeatInterval', e.target.value)}
+                      label="Repeat Every"
+                    >
+                      <MenuItem value={14}>14 days</MenuItem>
+                      <MenuItem value={30}>30 days</MenuItem>
+                      <MenuItem value={45}>45 days</MenuItem>
+                      <MenuItem value={60}>60 days</MenuItem>
+                      <MenuItem value={75}>75 days</MenuItem>
+                      <MenuItem value={90}>90 days</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              )}
+            </>
           )}
 
           <Grid item xs={6}>

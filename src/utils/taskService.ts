@@ -180,8 +180,13 @@ export class TaskService {
   
   async quickCompleteTask(taskId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
-      const quickCompleteFunction = httpsCallable(functions, 'quickCompleteTask');
-      const result = await quickCompleteFunction({ taskId });
+      // Use the more reliable completeTask function instead of quickCompleteTask
+      const completeFunction = httpsCallable(functions, 'completeTask');
+      const result = await completeFunction({ 
+        taskId, 
+        tenantId,
+        actionResult: 'Quickly completed via UI'
+      });
       const response = result.data as { success: boolean };
       
       // Log activity

@@ -140,6 +140,14 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
       }
+
+      // --- COMPANY LOCATIONS MIRROR (for fast state queries) ---
+      match /company_locations/{docId} {
+        // Read access for users in this tenant (CRM UI)
+        allow read: if isAssignedToTenant(tenantId);
+        // Writes come from Cloud Functions using Admin SDK
+        allow write: if false;
+      }
       
       // --- DEPARTMENTS (Tenants) ---
       match /departments/{departmentId} {

@@ -104,9 +104,9 @@ export const submitFeedbackResponse = onCall(async (request) => {
       if (campaign && campaign.scoring && resp.type === 'text') {
         // Run sentiment analysis
         const aiRes = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
+          model: 'gpt-5',
           messages: [{ role: 'system', content: 'Analyze sentiment (scale -1 to 1): ' + resp.answer }],
-          max_tokens: 10,
+          max_completion_tokens: 10,
         });
         const content = aiRes.choices?.[0]?.message?.content || '';
         const match = content.match(/-?\d+(\.\d+)?/);
@@ -178,9 +178,9 @@ export const generateFeedbackPrompts = onCall(async (request) => {
   try {
     // TODO: Use OpenAI to generate prompt suggestions based on topic
     const aiRes = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'system', content: `Suggest 3 feedback prompts for: ${topic}` }],
-      max_tokens: 200,
+      max_completion_tokens: 200,
     });
     
     aiResponse = aiRes.choices[0].message.content || '';
@@ -281,9 +281,9 @@ export const getFeedbackAISummary = onCall(async (request) => {
     Focus on overall sentiment, common themes, and key insights.`;
     
     const summaryRes = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: summaryPrompt }],
-      max_tokens: 150,
+      max_completion_tokens: 150,
     });
     
     summaryResponse = summaryRes.choices[0].message.content || '';
@@ -294,9 +294,9 @@ export const getFeedbackAISummary = onCall(async (request) => {
     Responses: ${textResponses.slice(0, 15).join('\n\n')}`;
     
     const themesRes = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: themesPrompt }],
-      max_tokens: 200,
+      max_completion_tokens: 200,
     });
     
     themesResponse = themesRes.choices[0].message.content || '';
@@ -322,9 +322,9 @@ export const getFeedbackAISummary = onCall(async (request) => {
     Responses: ${textResponses.slice(0, 15).join('\n\n')}`;
     
     const insightsRes = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: insightsPrompt }],
-      max_tokens: 200,
+      max_completion_tokens: 200,
     });
     
     insightsResponse = insightsRes.choices[0].message.content || '';

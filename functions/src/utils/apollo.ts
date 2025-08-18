@@ -7,7 +7,24 @@ export interface ApolloCompany {
   industry?: string;
   employeeCount?: number;
   revenueRange?: string;
-  headquarters?: { city?: string; state?: string; country?: string };
+  foundedYear?: number;
+  shortDescription?: string;
+  websiteUrl?: string;
+  linkedinUrl?: string;
+  twitterUrl?: string;
+  facebookUrl?: string;
+  angellistUrl?: string;
+  crunchbaseUrl?: string;
+  logoUrl?: string;
+  phone?: string;
+  keywords?: string[];
+  headquarters?: { 
+    city?: string; 
+    state?: string; 
+    country?: string;
+    street_address?: string;
+    postal_code?: string;
+  };
   techTags?: string[];
 }
 
@@ -24,12 +41,12 @@ export interface ApolloPerson {
 }
 
 function authHeader(apiKey: string) {
-  // Apollo REST API (current docs) accepts X-Api-Key or Authorization: Bearer
+  // Apollo REST API - match their documentation exactly
   return {
-    'X-Api-Key': apiKey,
-    Authorization: `Bearer ${apiKey}`,
+    'x-api-key': apiKey,
+    'Cache-Control': 'no-cache',
     'Content-Type': 'application/json',
-    Accept: 'application/json',
+    'accept': 'application/json',
   } as Record<string, string>;
 }
 
@@ -65,7 +82,24 @@ export async function apolloCompanyByDomain(domain: string, apiKey: string): Pro
       industry: c.industry,
       employeeCount,
       revenueRange: revenuePrinted || revenueAmount,
-      headquarters: { city: c.city, state: c.state, country: c.country },
+      foundedYear: c.founded_year,
+      shortDescription: c.short_description,
+      websiteUrl: c.website_url,
+      linkedinUrl: c.linkedin_url,
+      twitterUrl: c.twitter_url,
+      facebookUrl: c.facebook_url,
+      angellistUrl: c.angellist_url,
+      crunchbaseUrl: c.crunchbase_url,
+      logoUrl: c.logo_url,
+      phone: c.phone,
+      keywords: c.keywords || [],
+      headquarters: { 
+        city: c.city, 
+        state: c.state, 
+        country: c.country,
+        street_address: c.street_address || c.address || c.street,
+        postal_code: c.postal_code || c.zip || c.zip_code
+      },
       techTags,
     };
   } catch {

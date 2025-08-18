@@ -156,13 +156,10 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
   };
 
   return (
-    <Box sx={{ px: 3, py: 4 }}>
+    <Box sx={{ px: 0, py: 0 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 0, px: 3 }}>
       <Typography variant="h6" fontWeight={700}>In the News</Typography>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2, mb: 3 }}>
-        <Typography variant="subtitle2" color="text.secondary">
-          {lastUpdated ? `Last updated: ${formatDate(lastUpdated.toISOString())}` : 'Latest articles and signals' }
-        </Typography>
-        <Button
+      <Button
           variant="contained"
           size="small"
           startIcon={<RefreshIcon />}
@@ -171,8 +168,23 @@ const NewsEnrichmentPanel: React.FC<NewsEnrichmentPanelProps> = ({
         >
           {loading ? 'Loading...' : 'Refresh'}
         </Button>
+      </Box>
+
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 0, mb:1, px:3 }}>
+        <Typography variant="subtitle2" color="text.secondary">
+          {lastUpdated ? `Last updated: ${formatDate(lastUpdated.toISOString())}` : 'Latest articles and signals' }
+        </Typography>
+        {/* <Button
+          variant="contained"
+          size="small"
+          startIcon={<RefreshIcon />}
+          onClick={handleRefresh}
+          disabled={loading}
+        >
+          {loading ? 'Loading...' : 'Refresh'}
+        </Button> */}
       </Stack>
-      <Divider sx={{ my: 2 }} />
+      {/* <Divider sx={{ my: 2 }} /> */}
 
       {loading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>

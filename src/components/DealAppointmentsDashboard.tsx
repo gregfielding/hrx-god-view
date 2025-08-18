@@ -38,6 +38,7 @@ import { TaskClassification } from '../types/Tasks';
 
 import CreateTaskDialog from './CreateTaskDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
+import AppointmentCard from './AppointmentCard';
 
 interface DealAppointmentsDashboardProps {
   dealId: string;
@@ -330,79 +331,16 @@ const DealAppointmentsDashboard: React.FC<DealAppointmentsDashboardProps> = Reac
           </Box>
         ) : (
           appointments.map((appointment) => (
-            <Card key={appointment.id} variant="outlined" sx={{ mb: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1, p: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <EventIcon sx={{ fontSize: '1.2rem', color: 'text.secondary' }} />
-                  <Typography variant="subtitle1" fontWeight="bold">
-                    {appointment.title}
-                  </Typography>
-                </Box>
-                <Chip 
-                  label={appointment.status} 
-                  size="small" 
-                  variant="outlined"
-                  color={getStatusColor(appointment.status) as any}
-                />
-              </Box>
-              
-              {appointment.startTime && appointment.endTime && (
-                <Typography variant="body2" fontWeight="medium" sx={{ mb: 1, px: 1 }}>
-                  {formatTime(appointment.startTime)} - {formatTime(appointment.endTime)}
-                </Typography>
-              )}
-              
-              {appointment.date && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, px: 1 }}>
-                  <Typography variant="body2" color="text.primary">
-                    {formatDate(appointment.date)}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {getRelativeDate(appointment.date)}
-                  </Typography>
-                </Box>
-              )}
-              
-              {appointment.description && (
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2, px: 1 }}>
-                  {appointment.description}
-                </Typography>
-              )}
-              
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', px: 1, pb: 1 }}>
-                <Box sx={{ display: 'flex', gap: 0.5 }}>
-                  {appointment.priority && (
-                    <Chip 
-                      label={appointment.priority} 
-                      size="small" 
-                      variant="outlined"
-                      color={getPriorityColor(appointment.priority) as any}
-                      sx={{ fontSize: '0.7rem', height: '20px' }}
-                    />
-                  )}
-                  {appointment.type === 'scheduled_meeting_virtual' && (
-                    <Chip 
-                      label="Virtual" 
-                      size="small" 
-                      variant="outlined"
-                      sx={{ 
-                        fontSize: '0.7rem', 
-                        height: '20px',
-                        borderColor: 'primary.main',
-                        color: 'primary.main'
-                      }}
-                    />
-                  )}
-                </Box>
-                <Button 
-                  size="small" 
-                  variant="contained"
-                  onClick={() => handleAppointmentClick(appointment)}
-                >
-                  Open
-                </Button>
-              </Box>
-            </Card>
+            <AppointmentCard
+              key={appointment.id}
+              appointment={appointment}
+              onAppointmentClick={handleAppointmentClick}
+              showCompany={false}
+              showDeal={false}
+              showContacts={true}
+              contacts={associatedContacts}
+              variant="default"
+            />
           ))
         )}
       </List>

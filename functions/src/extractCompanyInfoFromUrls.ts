@@ -339,9 +339,9 @@ async function enhanceWithAI(url: string, existingData: any) {
     `;
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1000,
+      max_completion_tokens: 1000,
       temperature: 0.3,
     });
 

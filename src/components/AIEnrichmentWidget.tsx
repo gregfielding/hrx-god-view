@@ -72,7 +72,6 @@ const Fallback: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
 
 const AIEnrichmentWidget: React.FC<Props> = ({ company, tenantId }) => {
   const [enrichingFull, setEnrichingFull] = useState(false);
-  const [enrichingMeta, setEnrichingMeta] = useState(false);
   const [toast, setToast] = useState<{ open: boolean; msg: string; error?: boolean }>({ open: false, msg: '' });
   const enrichment: AIEnrichment = useMemo(() => (company?.aiEnrichment || {}), [company?.aiEnrichment]);
 
@@ -90,20 +89,19 @@ const AIEnrichmentWidget: React.FC<Props> = ({ company, tenantId }) => {
     }
   };
 
-  const handleEnrich = async (mode: 'full'|'metadata') => {
+  const handleEnrich = async () => {
     try {
-      mode === 'full' ? setEnrichingFull(true) : setEnrichingMeta(true);
+      setEnrichingFull(true);
       const fn = httpsCallable(functions, 'enrichCompanyOnDemand');
-      const resp: any = await fn({ tenantId, companyId: company.id, mode });
+      const resp: any = await fn({ tenantId, companyId: company.id, mode: 'full' });
       const r = resp?.data || {};
-      setToast({ open: true, msg: r.status === 'degraded' ? 'Metadata refresh started (degraded)' : 'Enrichment started' });
+      setToast({ open: true, msg: 'Enrichment started' });
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('enrichCompanyOnDemand failed', e);
       setToast({ open: true, msg: 'Failed to start enrichment', error: true });
     } finally {
       setEnrichingFull(false);
-      setEnrichingMeta(false);
     }
   };
 
@@ -164,25 +162,15 @@ const AIEnrichmentWidget: React.FC<Props> = ({ company, tenantId }) => {
         title="AI Enrichment"
         titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
         action={(
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              disabled={enrichingFull || enrichingMeta}
-              onClick={() => handleEnrich('full')}
-            >
-              {enrichingFull ? 'Running…' : 'Re-Enrich'}
-            </Button>
-            <Button
-              size="small"
-              variant="text"
-              disabled={enrichingFull || enrichingMeta}
-              onClick={() => handleEnrich('metadata')}
-            >
-              {enrichingMeta ? 'Refreshing…' : 'Metadata Only'}
-            </Button>
-          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+                          disabled={enrichingFull}
+              onClick={handleEnrich}
+          >
+            {enrichingFull ? 'Running…' : 'Re-Enrich'}
+          </Button>
         )}
       />
       <CardContent sx={{ p: 2 }}>

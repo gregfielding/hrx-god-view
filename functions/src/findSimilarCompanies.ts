@@ -63,7 +63,7 @@ Return ONLY a valid JSON array with this exact structure for each company:
 Do not include any additional fields. Keep descriptions brief. Use only fictional company names.`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [
         {
           role: 'system',
@@ -75,7 +75,7 @@ Do not include any additional fields. Keep descriptions brief. Use only fictiona
         }
       ],
       temperature: 0.7,
-      max_tokens: 800, // Reduced to prevent truncation
+      max_completion_tokens: 800, // Reduced to prevent truncation
     });
 
     console.log('OpenAI API call completed');

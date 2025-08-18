@@ -26,8 +26,11 @@ function removeUndefined<T extends Record<string, any>>(obj: T): T {
   return cleaned as T;
 }
 
-async function getUserSnapshot(userId: string): Promise<ActiveSalespersonSnapshot | null> {
+async function getUserSnapshot(tenantId: string, userId: string): Promise<ActiveSalespersonSnapshot | null> {
   try {
+    if (Array.isArray(userId)) {
+      return null;
+    }
     const userSnap = await db.collection('users').doc(userId).get();
     if (!userSnap.exists) return null;
     const u = userSnap.data() as any;
@@ -43,7 +46,7 @@ async function getUserSnapshot(userId: string): Promise<ActiveSalespersonSnapsho
       department: u.department,
     });
   } catch (e) {
-    console.warn('Failed to get user snapshot', userId, (e as Error).message);
+    console.warn('Failed to get user snapshot', [tenantId, userId], (e as Error).message);
     return null;
   }
 }
@@ -158,7 +161,160 @@ async function computeActiveSalespeople(tenantId: string, companyId: string): Pr
   const snapshots: Record<string, ActiveSalespersonSnapshot> = {};
   await Promise.all(
     Array.from(activeIds).map(async (sid) => {
-      const snap = await getUserSnapshot(sid);
+      const snap = await getUserSnapshot(tenantId, sid);
+      if (snap) {
+        snapshots[sid] = removeUndefined({ ...snap, lastActiveAt: lastActiveMap[sid] || Date.now() });
+      }
+    })
+  );
+
+  return snapshots;
+}
+
+async function computeContactActiveSalespeople(tenantId: string, contactId: string, dealIds?: string[]): Promise<Record<string, ActiveSalespersonSnapshot>> {
+  const activeIds = new Set<string>();
+  const lastActiveMap: Record<string, number> = {};
+
+  // Deals: salespeople connected to any deal for this contact
+  try {
+    const dealsRef = db.collection('tenants').doc(tenantId).collection('crm_deals');
+    
+    let allDeals: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    
+    if (dealIds && dealIds.length > 0) {
+      // Use the deal IDs provided from the frontend
+      const dealDocs = await Promise.all(
+        dealIds.map(async (dealId) => {
+          try {
+            const doc = await dealsRef.doc(dealId).get();
+            return doc.exists ? doc : null;
+          } catch (e) {
+            console.warn('Failed to fetch deal:', dealId, e);
+            return null;
+          }
+        })
+      );
+      allDeals = dealDocs.filter(doc => doc !== null) as FirebaseFirestore.QueryDocumentSnapshot[];
+    } else {
+      // Fallback to querying (original logic)
+      const [assocSnap, contactIdsSnap] = await Promise.all([
+        dealsRef.where('associations.contacts', 'array-contains' as any, contactId).get(),
+        dealsRef.where('contactIds', 'array-contains' as any, contactId).get()
+      ]);
+      allDeals = [...assocSnap.docs, ...contactIdsSnap.docs];
+    }
+    
+    allDeals.forEach((d) => {
+      const data: any = d.data() || {};
+      
+      const idSet = new Set<string>();
+      // Legacy array of IDs
+      (Array.isArray(data.salespersonIds) ? data.salespersonIds : []).forEach((sid: string) => {
+        if (typeof sid === 'string' && sid.trim()) {
+          idSet.add(sid.trim());
+        }
+      });
+      // Alternative salespeople IDs field
+      (Array.isArray(data.salespeopleIds) ? data.salespeopleIds : []).forEach((sid: string) => {
+        if (typeof sid === 'string' && sid.trim()) {
+          idSet.add(sid.trim());
+        }
+      });
+      // New associations array (objects or strings)
+      (Array.isArray(data.associations?.salespeople) ? data.associations.salespeople : []).forEach((s: any) => {
+        const id = typeof s === 'string' ? s : s?.id;
+        if (typeof id === 'string' && id.trim()) {
+          idSet.add(id.trim());
+        }
+      });
+      // Single owner field
+      if (data.salesOwnerId && typeof data.salesOwnerId === 'string') {
+        idSet.add(data.salesOwnerId.trim());
+      }
+      
+      // Additional fields that might contain salespeople
+      if (data.salespeople && Array.isArray(data.salespeople)) {
+        data.salespeople.forEach((s: any) => {
+          const id = typeof s === 'string' ? s : s?.id;
+          if (typeof id === 'string' && id.trim()) {
+            idSet.add(id.trim());
+          }
+        });
+      }
+      if (data.assignedTo && typeof data.assignedTo === 'string') {
+        idSet.add(data.assignedTo.trim());
+      }
+      if (data.owner && typeof data.owner === 'string') {
+        idSet.add(data.owner.trim());
+      }
+      
+      Array.from(idSet).filter(Boolean).forEach((sid) => {
+        if (typeof sid === 'string' && !Array.isArray(sid)) {
+          activeIds.add(sid);
+          const ts = (data.updatedAt?.toMillis?.() ? data.updatedAt.toMillis() : Date.now());
+          lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
+        }
+      });
+    });
+  } catch (e) {
+    console.warn('Deals scan failed for contact active salespeople', (e as Error).message);
+  }
+
+  // Tasks: any tasks tied to this contact
+  try {
+    const tasksRef = db.collection('tenants').doc(tenantId).collection('tasks');
+    const taskSnap = await tasksRef.where('associations.contacts', 'array-contains' as any, contactId).get();
+    
+    taskSnap.docs.forEach((t) => {
+      const data: any = t.data() || {};
+      const sid = data.assignedTo || data.createdBy;
+      if (sid) {
+        if (typeof sid === 'string' && !Array.isArray(sid)) {
+          // Single string ID
+          activeIds.add(sid);
+          const ts = data.completedAt?.toMillis?.() || data.updatedAt?.toMillis?.() || Date.now();
+          lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
+        } else if (Array.isArray(sid)) {
+          // Array of IDs - extract each one
+          sid.forEach((id: any) => {
+            if (typeof id === 'string' && id.trim()) {
+              activeIds.add(id.trim());
+              const ts = data.completedAt?.toMillis?.() || data.updatedAt?.toMillis?.() || Date.now();
+              lastActiveMap[id.trim()] = Math.max(lastActiveMap[id.trim()] || 0, ts);
+            }
+          });
+        }
+      }
+    });
+  } catch (e) {
+    console.warn('Tasks scan failed for contact active salespeople', (e as Error).message);
+  }
+
+  // Emails: look for email_logs referencing this contact
+  try {
+    const emailsRef = db.collection('tenants').doc(tenantId).collection('email_logs');
+    const emailSnap = await emailsRef.where('contactId', '==', contactId).limit(100).get();
+    
+    emailSnap.docs.forEach((d) => {
+      const data: any = d.data() || {};
+      const sid = data.userId || data.salespersonId || data.senderId;
+      if (sid) {
+        if (typeof sid === 'string' && !Array.isArray(sid)) {
+          activeIds.add(sid);
+          const ts = data.timestamp?.toMillis?.() || data.sentAt?.toMillis?.() || Date.now();
+          lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
+        }
+      }
+    });
+  } catch (e) {
+    // email_logs may not exist; ignore
+  }
+
+  // Build snapshot map
+  const snapshots: Record<string, ActiveSalespersonSnapshot> = {};
+  await Promise.all(
+    Array.from(activeIds).map(async (sid) => {
+      const snap = await getUserSnapshot(tenantId, sid);
       if (snap) {
         snapshots[sid] = removeUndefined({ ...snap, lastActiveAt: lastActiveMap[sid] || Date.now() });
       }
@@ -181,6 +337,23 @@ export const rebuildCompanyActiveSalespeople = onCall({ cors: true }, async (req
     return { ok: true, count: Object.keys(map).length };
   } catch (e) {
     console.error('rebuildCompanyActiveSalespeople error', e);
+    return { ok: false, error: (e as Error).message || 'unknown_error' };
+  }
+});
+
+export const rebuildContactActiveSalespeople = onCall({ cors: true }, async (request) => {
+  try {
+    const { tenantId, contactId, dealIds } = request.data || {};
+    if (!tenantId || !contactId) {
+      return { ok: false, error: 'tenantId and contactId are required' };
+    }
+    const map = await computeContactActiveSalespeople(tenantId, contactId, dealIds);
+    // Ensure no undefined values are written
+    Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
+    await db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return { ok: true, count: Object.keys(map).length };
+  } catch (e) {
+    console.error('rebuildContactActiveSalespeople error', e);
     return { ok: false, error: (e as Error).message || 'unknown_error' };
   }
 });
@@ -242,6 +415,17 @@ export const updateActiveSalespeopleOnDeal = onDocumentUpdated('tenants/{tenantI
     Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
     await db.doc(`tenants/${tenantId}/crm_companies/${cid}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }));
+  
+  // Also update contacts' active salespeople
+  const contactIds: string[] = [];
+  if (Array.isArray(after.contactIds)) after.contactIds.forEach((id: string) => contactIds.push(id));
+  if (Array.isArray(after.associations?.contacts)) after.associations.contacts.forEach((c: any) => contactIds.push(typeof c === 'string' ? c : c?.id));
+  const uniqueContactIds = Array.from(new Set(contactIds.filter(Boolean)));
+  await Promise.all(uniqueContactIds.map(async (contactId) => {
+    const map = await computeContactActiveSalespeople(tenantId, contactId);
+    Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
+    await db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+  }));
 });
 
 // Trigger updates when tasks change
@@ -275,6 +459,15 @@ export const updateActiveSalespeopleOnTask = onDocumentUpdated('tenants/{tenantI
     Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
     await db.doc(`tenants/${tenantId}/crm_companies/${cid}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
   }));
+  
+  // Also update contacts' active salespeople
+  contactIds.forEach(async (contactId: any) => {
+    if (typeof contactId === 'string') {
+      const map = await computeContactActiveSalespeople(tenantId, contactId);
+      Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
+      await db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    }
+  });
 });
 
 // Data cleanup callable: normalize size field values across companies

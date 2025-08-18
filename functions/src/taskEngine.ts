@@ -28,7 +28,9 @@ export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSec
     classification = 'todo', // Default to todo if not specified
     startTime = null,
     duration = null,
-    dueDate = null
+    dueDate = null,
+    isRepeating = false,
+    repeatInterval = 30
   } = request.data;
 
   try {
@@ -138,7 +140,13 @@ export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSec
       callScript: request.data.callScript || '',
       emailTemplate: request.data.emailTemplate || '',
       followUpNotes: request.data.followUpNotes || '',
-      meetingAttendees: request.data.meetingAttendees || []
+      meetingAttendees: request.data.meetingAttendees || [],
+      // Repeating task fields
+      isRepeating: isRepeating || false,
+      repeatInterval: isRepeating ? repeatInterval : null,
+      nextRepeatDate: isRepeating && dueDate ? 
+        new Date(new Date(dueDate).getTime() + repeatInterval * 24 * 60 * 60 * 1000).toISOString().split('T')[0] : null,
+      originalTaskId: null // This will be set for repeating tasks
     };
 
     // batch single write for symmetry if we expand later
@@ -433,6 +441,23 @@ export const completeTask = onCall({
         console.log(`✅ Follow-up task created: ${followUpRef.id}`);
       } catch (followUpError) {
         console.error('❌ Error creating follow-up task:', followUpError);
+      }
+    }
+
+    // Handle repeating tasks - create next occurrence if this is a repeating task
+    if (taskData?.isRepeating && taskData?.repeatInterval) {
+      try {
+        // Create next repeating task directly
+        const repeatingResult = await createNextRepeatingTaskInternal(taskId, tenantId, taskData?.assignedTo);
+        
+        if (repeatingResult.success) {
+          console.log(`✅ Next repeating task created: ${repeatingResult.taskId}`);
+        } else {
+          console.log(`ℹ️ Repeating task stopped: ${repeatingResult.message}`);
+        }
+      } catch (repeatingError) {
+        console.warn('⚠️ Failed to create next repeating task:', repeatingError);
+        // Don't fail the task completion if repeating task creation fails
       }
     }
 
@@ -2291,4 +2316,129 @@ function generateContentInsights(taskData: any, companyData: any, contactData: a
   }
   
   return insights;
-} 
+}
+
+// 🎯 REPEATING TASK FUNCTIONALITY
+// Handles creation of next repeating task when a task is completed
+
+// Internal function for creating next repeating task (called from completeTask)
+async function createNextRepeatingTaskInternal(taskId: string, tenantId: string, userId: string) {
+  try {
+    if (!taskId || !tenantId || !userId) {
+      throw new Error('Missing required fields: taskId, tenantId, userId');
+    }
+
+    // Get the completed task
+    const taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId);
+    const taskDoc = await taskRef.get();
+
+    if (!taskDoc.exists) {
+      throw new Error('Task not found');
+    }
+
+    const taskData = taskDoc.data();
+    
+    // Check if this is a repeating task
+    if (!taskData?.isRepeating || !taskData?.repeatInterval) {
+      throw new Error('Task is not a repeating task');
+    }
+
+    // Check if we should continue repeating (1 year limit)
+    const taskCreatedAt = taskData.createdAt?.toDate?.() || new Date(taskData.createdAt);
+    const oneYearFromCreation = new Date(taskCreatedAt.getTime() + 365 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+
+    if (now > oneYearFromCreation) {
+      // Stop repeating after 1 year
+      await taskRef.update({
+        isRepeating: false,
+        nextRepeatDate: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      return { 
+        success: true, 
+        message: 'Repeating task stopped after 1 year',
+        shouldContinue: false 
+      };
+    }
+
+    // Calculate next due date
+    const currentDueDate = taskData.dueDate ? new Date(taskData.dueDate) : new Date();
+    const nextDueDate = new Date(currentDueDate.getTime() + taskData.repeatInterval * 24 * 60 * 60 * 1000);
+
+    // Create the next repeating task
+    const nextTaskData: any = {
+      ...taskData,
+      id: undefined, // Remove the ID so a new one is generated
+      status: 'scheduled',
+      scheduledDate: nextDueDate.toISOString().split('T')[0],
+      dueDate: nextDueDate.toISOString().split('T')[0],
+      nextRepeatDate: new Date(nextDueDate.getTime() + taskData.repeatInterval * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      originalTaskId: taskData.originalTaskId || taskId, // Reference to the original task
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      completedAt: null
+    };
+
+    // Remove fields that shouldn't be copied
+    delete nextTaskData.id;
+    delete nextTaskData.googleCalendarEventId;
+    delete nextTaskData.googleTaskId;
+    delete nextTaskData.lastGoogleSync;
+    delete nextTaskData.syncStatus;
+
+    // Create the new task
+    const newTaskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc();
+    await newTaskRef.set(nextTaskData);
+
+    // Log the creation of the next repeating task
+    await logAIAction({
+      eventType: 'repeating_task.next_created',
+      targetType: 'task',
+      targetId: newTaskRef.id,
+      reason: `Next repeating task created: ${taskData.title}`,
+      contextType: 'repeating_task',
+      aiTags: ['repeating_task', 'task_creation'],
+      urgencyScore: 3,
+      tenantId,
+      userId,
+      aiResponse: JSON.stringify({
+        originalTaskId: taskId,
+        repeatInterval: taskData.repeatInterval,
+        nextDueDate: nextDueDate.toISOString().split('T')[0]
+      })
+    });
+
+    return { 
+      taskId: newTaskRef.id, 
+      success: true, 
+      message: 'Next repeating task created successfully',
+      shouldContinue: true,
+      nextDueDate: nextDueDate.toISOString().split('T')[0]
+    };
+
+  } catch (error) {
+    console.error('❌ Error creating next repeating task:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to create next repeating task: ${errorMessage}`);
+  }
+}
+
+export const createNextRepeatingTask = onCall({ cors: true, region: 'us-central1', timeoutSeconds: 60, memory: '512MiB', minInstances: 0 }, async (request) => {
+  const { taskId, tenantId, userId } = request.data;
+
+  try {
+    if (!taskId || !tenantId || !userId) {
+      throw new Error('Missing required fields: taskId, tenantId, userId');
+    }
+
+    const result = await createNextRepeatingTaskInternal(taskId, tenantId, userId);
+    return result;
+
+  } catch (error) {
+    console.error('❌ Error creating next repeating task:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to create next repeating task: ${errorMessage}`);
+  }
+});

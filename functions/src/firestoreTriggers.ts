@@ -2833,13 +2833,29 @@ async function updateDealsForEntity(
   await batch.commit();
 }
 
-// Company snapshot fan-out
+// Company snapshot fan-out - FIXED WITH PROPER SAFEGUARDS
 export const firestoreCompanySnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}', async (event) => {
   if (!isDualWriteEnabled()) return;
+  
   const tenantId = event.params.tenantId as string;
   const companyId = event.params.companyId as string;
+  const before = event.data?.before.data();
   const after = event.data?.after.data();
+  
   if (!after) return;
+
+  // Check if relevant fields actually changed to prevent unnecessary updates
+  const relevantFields = ['companyName', 'name', 'industry', 'city', 'state', 'companyPhone', 'phone', 'companyUrl', 'website', 'logo'];
+  const hasRelevantChanges = !before || relevantFields.some(field => {
+    const beforeValue = before[field];
+    const afterValue = after[field];
+    return JSON.stringify(beforeValue) !== JSON.stringify(afterValue);
+  });
+
+  if (!hasRelevantChanges) {
+    console.log('No relevant company fields changed, skipping deal association update');
+    return;
+  }
 
   const snap = pickDefined({
     name: after.companyName || after.name,

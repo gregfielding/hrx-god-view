@@ -6,7 +6,7 @@ import SendIcon from '@mui/icons-material/Send';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import PersonIcon from '@mui/icons-material/Person';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { collection, onSnapshot, orderBy, query, doc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, doc, setDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 
 import { db } from '../firebase';
 
@@ -26,9 +26,15 @@ interface AIAssistantChatProps {
   title?: string;
   onOpenRequested?: () => void;
   showThreadListPanel?: boolean; // when false, hide internal history panel (dash provides its own)
+  // Optional: auto-seed chat with a prompt (used by dashboard chips)
+  initialPrompt?: string;
+  onInitialPromptConsumed?: () => void;
+  // When true and no threadId is supplied, do not create a Firestore thread
+  // until the user clicks New. Messages are kept locally (ephemeral).
+  ephemeralUntilSaved?: boolean;
 }
 
-const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, threadId, onThreadCreated, suggestedPrompts, title = 'AI Assistant', onOpenRequested, showThreadListPanel = true }) => {
+const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, threadId, onThreadCreated, suggestedPrompts, title = 'AI Assistant', onOpenRequested, showThreadListPanel = true, initialPrompt, onInitialPromptConsumed, ephemeralUntilSaved = undefined }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -37,14 +43,17 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
 
   const functions = useMemo(() => getFunctions(), []);
 
+  const isEphemeral = (ephemeralUntilSaved ?? (title === 'Sales Coach')) === true;
+
   const ensureThread = useCallback(async () => {
     if (threadId) return threadId;
+    if (isEphemeral) return undefined as unknown as string;
     const startAIThread = httpsCallable(functions, 'startAIThread');
     const res = await startAIThread({ tenantId, context: 'assistant' });
     const id = (res.data as any)?.threadId as string;
     onThreadCreated?.(id);
     return id;
-  }, [functions, onThreadCreated, tenantId, threadId]);
+  }, [functions, onThreadCreated, tenantId, threadId, isEphemeral]);
 
   // Live subscription to messages when thread is ready
   useEffect(() => {
@@ -79,18 +88,20 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
     try {
       const currentThreadId = await ensureThread();
 
-      // Update conversation title to the first user message
-      try {
-        await setDoc(doc(db, 'tenants', tenantId, 'ai_chats', currentThreadId), { title: userMsg.content.slice(0, 80) }, { merge: true });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('Failed to set chat title:', e);
+      // Update conversation title only when we have a real thread
+      if (currentThreadId) {
+        try {
+          await setDoc(doc(db, 'tenants', tenantId, 'ai_chats', currentThreadId), { title: userMsg.content.slice(0, 80) }, { merge: true });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('Failed to set chat title:', e);
+        }
       }
 
       const response = await fetch(`https://us-central1-hrx1-d3beb.cloudfunctions.net/enhancedChatWithGPT`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, userId, threadId: currentThreadId, messages: [...messages, userMsg].slice(-10) })
+        body: JSON.stringify({ tenantId, userId, threadId: currentThreadId || 'ephemeral', messages: [...messages, userMsg].slice(-10) })
       });
       const data = await response.json();
       const assistantMsg: ChatMessage = {
@@ -117,23 +128,24 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
   const handleSuggestionClick = useCallback(async (prompt: string) => {
     try {
       onOpenRequested?.();
-      const startAIThread = httpsCallable(functions, 'startAIThread');
-      const res = await startAIThread({ tenantId, context: 'assistant' });
-      const newId = (res.data as any)?.threadId as string;
-      onThreadCreated?.(newId);
-
       const userMsg: ChatMessage = { id: `${Date.now()}`, role: 'user', content: prompt };
       setMessages([userMsg]);
       setLoading(true);
-      try {
-        await setDoc(doc(db, 'tenants', tenantId, 'ai_chats', newId), { title: prompt.slice(0, 80) }, { merge: true });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('Failed to set chat title from suggestion:', e);
+      let newId: string | undefined;
+      if (!isEphemeral) {
+        const startAIThread = httpsCallable(functions, 'startAIThread');
+        const res = await startAIThread({ tenantId, context: 'assistant' });
+        newId = (res.data as any)?.threadId as string;
+        onThreadCreated?.(newId);
+        try {
+          await setDoc(doc(db, 'tenants', tenantId, 'ai_chats', newId), { title: prompt.slice(0, 80) }, { merge: true });
+        } catch (e) {
+          console.warn('Failed to set chat title from suggestion:', e);
+        }
       }
       const response = await fetch(`https://us-central1-hrx1-d3beb.cloudfunctions.net/enhancedChatWithGPT`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, userId, threadId: newId, messages: [userMsg] })
+        body: JSON.stringify({ tenantId, userId, threadId: newId || 'ephemeral', messages: [userMsg] })
       });
       const data = await response.json();
       const assistantMsg: ChatMessage = { id: `${Date.now()}_assistant`, role: 'assistant', content: data?.reply || 'No response' };
@@ -152,6 +164,54 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
   useEffect(() => {
     setTimeout(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }), 50);
   }, [messages.length]);
+
+  // Auto-start with initialPrompt (ephemeral-friendly)
+  const [seeded, setSeeded] = useState<string>('');
+  useEffect(() => {
+    const p = (initialPrompt || '').trim();
+    if (!p || p === seeded) return;
+    (async () => {
+      try {
+        await handleSuggestionClick(p);
+        setSeeded(p);
+        onInitialPromptConsumed?.();
+      } catch (e) {
+        console.error('initialPrompt error', e);
+      }
+    })();
+  }, [initialPrompt, seeded, handleSuggestionClick, onInitialPromptConsumed]);
+
+  // Persist current ephemeral conversation and start a fresh one
+  const persistAndReset = useCallback(async () => {
+    if (!isEphemeral || threadId || messages.length === 0) {
+      setMessages([]);
+      setInput('');
+      return;
+    }
+    try {
+      const startAIThread = httpsCallable(functions, 'startAIThread');
+      const res = await startAIThread({ tenantId, context: 'assistant' });
+      const newId = (res.data as any)?.threadId as string;
+      onThreadCreated?.(newId);
+      const firstUser = messages.find(m => m.role === 'user');
+      if (firstUser?.content) {
+        await setDoc(doc(db, 'tenants', tenantId, 'ai_chats', newId), { title: firstUser.content.slice(0, 80) }, { merge: true });
+      }
+      for (const m of messages) {
+        await addDoc(collection(db, 'tenants', tenantId, 'ai_chats', newId, 'messages'), {
+          role: m.role,
+          content: m.content,
+          createdAt: serverTimestamp(),
+          userId,
+        });
+      }
+    } catch (e) {
+      console.error('Failed to persist conversation', e);
+    } finally {
+      setMessages([]);
+      setInput('');
+    }
+  }, [isEphemeral, threadId, messages, functions, onThreadCreated, tenantId, userId]);
 
   return (
     <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'row', height: '100%', borderRadius: 0, gap: showThreadListPanel ? 3 : 0 }}>

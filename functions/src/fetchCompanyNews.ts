@@ -281,9 +281,9 @@ Return a JSON object with:
 }`;
 
           const summaryResponse = await openai.chat.completions.create({
-            model: 'gpt-4',
+            model: 'gpt-5',
             messages: [{ role: 'user', content: summaryPrompt }],
-            max_tokens: 300,
+            max_completion_tokens: 300,
             temperature: 0.3,
           });
 

@@ -31,6 +31,15 @@ import {
   CardContent,
   CardHeader,
   Snackbar,
+  Breadcrumbs,
+  Link as MUILink,
+  Skeleton,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -48,8 +57,15 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Task as TaskIcon,
   CloudUpload as UploadIcon,
+  Business as BusinessIcon,
+  SmartToy as AIIcon,
+  Timeline as TimelineIcon,
+  Dashboard as DashboardIcon,
+  Add as AddIcon,
+  CheckCircle as CheckCircleIcon,
+  RocketLaunch as RocketLaunchIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, query, getDocs, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -58,8 +74,16 @@ import { useAuth } from '../../contexts/AuthContext';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import ActivityLogTab from '../../components/ActivityLogTab';
-import ContactTasksDashboard from '../../components/ContactTasksDashboard';
+import TasksDashboard from '../../components/TasksDashboard';
+import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../components/LoggableField';
+import ContactOpportunitiesTab from '../../components/ContactOpportunitiesTab';
+import AIAssistantChat from '../../components/AIAssistantChat';
+import ContactActivityTab from '../../components/ContactActivityTab';
+import SalesCoach from '../../components/SalesCoach';
+import CreateTaskDialog from '../../components/CreateTaskDialog';
+import { TaskService } from '../../utils/taskService';
+import LogActivityDialog from '../../components/LogActivityDialog';
 
 interface ContactData {
   id: string;
@@ -145,6 +169,16 @@ interface ContactData {
     tasks?: string[];
     locations?: string[];
   };
+  activeSalespeople?: {
+    id: string;
+    displayName?: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    jobTitle?: string;
+    department?: string;
+    lastActiveAt?: number;
+  }[];
 }
 
 interface TabPanelProps {
@@ -173,6 +207,7 @@ const ContactDetails: React.FC = () => {
   const { contactId } = useParams<{ contactId: string }>();
   const navigate = useNavigate();
   const { tenantId, user } = useAuth();
+  const taskService = TaskService.getInstance();
   
   const [contact, setContact] = useState<ContactData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -207,12 +242,8 @@ const ContactDetails: React.FC = () => {
   });
   
   // Company linking state
-  const [companies, setCompanies] = useState<any[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<any>(null);
-  const [selectedDivision, setSelectedDivision] = useState<string>('');
-  const [selectedLocation, setSelectedLocation] = useState<string>('');
+  // Company and location are managed via associations; no local pickers
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
-  const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
@@ -221,6 +252,13 @@ const ContactDetails: React.FC = () => {
   const [findingContactInfo, setFindingContactInfo] = useState(false);
   const [emailOptions, setEmailOptions] = useState<any[]>([]);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [showTaskDialog, setShowTaskDialog] = useState(false);
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
+  const [logActivityLoading, setLogActivityLoading] = useState(false);
+  
+  // Salespeople state
+  const [salespeople, setSalespeople] = useState<any[]>([]);
   
   // Avatar upload state
   const [avatarLoading, setAvatarLoading] = useState(false);
@@ -234,12 +272,92 @@ const ContactDetails: React.FC = () => {
     empathetic: 0.7,
   });
 
+  // Dashboard state
+  const [rebuildingActive, setRebuildingActive] = useState(false);
+  const [localSuccess, setLocalSuccess] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
+  
+  // Recent Activity state
+  const [recentActivities, setRecentActivities] = useState<any[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
+
+  // Lazy load AI components
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAiComponentsLoaded(true);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Helper function to show toast notifications
   const showToast = (message: string, severity: 'success' | 'error' | 'info' | 'warning' = 'info') => {
     setSnackbarMessage(message);
     setSnackbarSeverity(severity);
     setSnackbarOpen(true);
   };
+
+  // Calculate contact metrics
+  const calculateContactMetrics = () => {
+    const associatedDeals = associationsData.entities.deals || [];
+    const associatedTasks = associationsData.entities.tasks || [];
+    
+    const totalDealValue = associatedDeals.reduce((sum: number, deal: any) => {
+      return sum + (deal.expectedRevenue || 0);
+    }, 0);
+    
+    const activeDeals = associatedDeals.filter((deal: any) => 
+      deal.stage !== 'closed_won' && deal.stage !== 'closed_lost'
+    ).length;
+    
+    const completedTasks = associatedTasks.filter((task: any) => 
+      task.status === 'completed'
+    ).length;
+    
+    return {
+      totalDealValue: totalDealValue.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
+      activeDeals,
+      completedTasks,
+      totalTasks: associatedTasks.length
+    };
+  };
+
+  // Generate contact insights
+  const generateContactInsights = () => {
+    const insights = [];
+    const associatedDeals = associationsData.entities.deals || [];
+    const associatedTasks = associationsData.entities.tasks || [];
+    
+    // Deal value analysis
+    const totalDealValue = associatedDeals.reduce((sum: number, deal: any) => sum + (deal.expectedRevenue || 0), 0);
+    if (totalDealValue > 100000) {
+      insights.push({ type: 'success', message: 'High-value contact with significant deal potential' });
+    } else if (totalDealValue > 50000) {
+      insights.push({ type: 'info', message: 'Medium-value contact with good growth potential' });
+    } else if (totalDealValue === 0) {
+      insights.push({ type: 'warning', message: 'No associated deals - consider engagement opportunities' });
+    }
+    
+    // Task completion analysis
+    const completedTasks = associatedTasks.filter((task: any) => task.status === 'completed').length;
+    if (completedTasks > 5) {
+      insights.push({ type: 'success', message: 'High engagement - active task completion' });
+    } else if (completedTasks === 0 && associatedTasks.length > 0) {
+      insights.push({ type: 'warning', message: 'Low task completion - follow-up needed' });
+    }
+    
+    // Contact type analysis
+    if (contact?.contactType === 'Decision Maker') {
+      insights.push({ type: 'success', message: 'Decision maker identified - high priority contact' });
+    } else if (contact?.contactType === 'Unknown') {
+      insights.push({ type: 'info', message: 'Contact type not determined - consider classification' });
+    }
+    
+    return insights;
+  };
+
+  const metrics = calculateContactMetrics();
+  const insights = generateContactInsights();
 
   // Avatar upload function
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -303,18 +421,40 @@ const ContactDetails: React.FC = () => {
     if (!contactId || !tenantId) return;
     
     try {
-      // This would typically involve fetching the profile image from the social platform
-      // For now, we'll simulate this by using a placeholder
-      // In a real implementation, you'd need to:
-      // 1. Fetch the profile image from LinkedIn/Twitter/etc.
-      // 2. Upload it to Firebase Storage
-      // 3. Update the contact record
+      setAvatarLoading(true);
       
-      console.log('Would update avatar from social profile:', profileUrl);
-      showToast('Avatar update from social profile not yet implemented', 'info');
+      // For LinkedIn profiles, we need to use a backend service to fetch the profile image
+      // due to CORS restrictions and authentication requirements
+      if (profileUrl.includes('linkedin.com/in/')) {
+        const { httpsCallable } = await import('firebase/functions');
+        const { functions } = await import('../../firebase');
+        
+        const generateProfessionalAvatar = httpsCallable(functions, 'fetchLinkedInAvatar');
+        
+        const result = await generateProfessionalAvatar({
+          profileUrl: profileUrl,
+          contactId: contactId,
+          tenantId: tenantId
+        });
+        
+        const resultData = result.data as any;
+        
+        if (resultData.success && resultData.avatarUrl) {
+          // Update the contact's avatar in Firestore
+          await handleContactUpdate('avatar', resultData.avatarUrl);
+          showToast('Avatar updated from LinkedIn profile!', 'success');
+        } else {
+          showToast('Could not fetch LinkedIn avatar', 'warning');
+        }
+      } else {
+        // For other social platforms, we could implement similar logic
+        showToast('Avatar update for this platform not yet implemented', 'info');
+      }
     } catch (err) {
       console.error('Error updating avatar from social profile:', err);
       showToast('Failed to update avatar from social profile', 'error');
+    } finally {
+      setAvatarLoading(false);
     }
   };
 
@@ -369,12 +509,37 @@ const ContactDetails: React.FC = () => {
       
       const result = await associationService.getEntityAssociations('contact', contactId);
       
+      // Fallback: Query deals that reference this contact
+      let fallbackDeals: any[] = [];
+      try {
+        const dealsQuery = query(
+          collection(db, 'tenants', tenantId, 'crm_deals'),
+          where('contactIds', 'array-contains', contactId)
+        );
+        const dealsSnapshot = await getDocs(dealsQuery);
+        fallbackDeals = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        console.log('Fallback deals found:', fallbackDeals.length);
+      } catch (fallbackErr) {
+        console.warn('Fallback deals query failed:', fallbackErr);
+      }
+      
+      // Merge fallback deals with existing deals
+      const allDeals = [...(result.entities.deals || []), ...fallbackDeals];
+      const uniqueDeals = allDeals.filter((deal, index, self) => 
+        index === self.findIndex(d => d.id === deal.id)
+      );
+      
       setAssociationsData({
         associations: {},
-        entities: result.entities,
+        entities: {
+          ...result.entities,
+          deals: uniqueDeals
+        },
         loading: false,
         error: null
       });
+      
+
       
     } catch (err: any) {
       console.error('Error loading associations:', err);
@@ -383,6 +548,221 @@ const ContactDetails: React.FC = () => {
         loading: false,
         error: err.message || 'Failed to load associations'
       }));
+    }
+  };
+
+  // Load salespeople (users with crm_sales: true)
+  const loadSalespeople = async () => {
+    try {
+      const qUsers = query(collection(db, 'users'), where('crm_sales', '==', true));
+      const snap = await getDocs(qUsers as any);
+      const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      setSalespeople(list);
+    } catch (e) {
+      console.warn('Failed to load salespeople:', e);
+      setSalespeople([]);
+    }
+  };
+
+  // Load recent activities for the contact
+  const loadRecentActivities = async () => {
+    if (!contactId || !tenantId) return;
+    
+    setLoadingActivities(true);
+    try {
+      const activities: any[] = [];
+      
+      // Load completed tasks
+      try {
+        const tasksQuery = query(
+          collection(db, 'tenants', tenantId, 'tasks'),
+          where('associations.contacts', 'array-contains', contactId),
+          where('status', '==', 'completed'),
+          orderBy('completedAt', 'desc'),
+          limit(5)
+        );
+        const tasksSnapshot = await getDocs(tasksQuery);
+        tasksSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          activities.push({
+            id: doc.id,
+            type: 'task',
+            title: data.title || 'Task completed',
+            description: data.description || '',
+            timestamp: data.completedAt?.toDate?.() || data.updatedAt?.toDate?.() || new Date(),
+            salespersonId: data.assignedTo || data.createdBy,
+            icon: 'task',
+            status: 'completed'
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to load tasks:', e);
+      }
+      
+      // Load email logs
+      try {
+        const emailsQuery = query(
+          collection(db, 'tenants', tenantId, 'email_logs'),
+          where('contactId', '==', contactId),
+          orderBy('timestamp', 'desc'),
+          limit(5)
+        );
+        const emailsSnapshot = await getDocs(emailsQuery);
+        emailsSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          activities.push({
+            id: doc.id,
+            type: 'email',
+            title: data.subject || 'Email sent',
+            description: data.snippet || '',
+            timestamp: data.timestamp?.toDate?.() || data.sentAt?.toDate?.() || new Date(),
+            salespersonId: data.userId || data.salespersonId,
+            icon: 'email',
+            direction: data.direction || 'sent'
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to load emails:', e);
+      }
+      
+      // Load notes
+      try {
+        const notesQuery = query(
+          collection(db, 'tenants', tenantId, 'contact_notes'),
+          where('contactId', '==', contactId),
+          orderBy('createdAt', 'desc'),
+          limit(5)
+        );
+        const notesSnapshot = await getDocs(notesQuery);
+        notesSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          activities.push({
+            id: doc.id,
+            type: 'note',
+            title: 'Note added',
+            description: data.content || '',
+            timestamp: data.createdAt?.toDate?.() || data.updatedAt?.toDate?.() || new Date(),
+            salespersonId: data.createdBy || data.userId,
+            icon: 'note'
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to load notes:', e);
+      }
+      
+      // Load AI activities - Commented out due to permissions issues
+      // AI logs are typically accessed through Cloud Functions, not direct queries
+      /*
+      try {
+        const aiQuery = query(
+          collection(db, 'tenants', tenantId, 'ai_logs'),
+          where('entityId', '==', contactId),
+          where('entityType', '==', 'contact'),
+          orderBy('timestamp', 'desc'),
+          limit(5)
+        );
+        const aiSnapshot = await getDocs(aiQuery);
+        aiSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          activities.push({
+            id: doc.id,
+            type: 'ai',
+            title: data.action || 'AI Activity',
+            description: data.reason || '',
+            timestamp: data.timestamp?.toDate?.() || new Date(),
+            salespersonId: data.userId,
+            icon: 'ai'
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to load AI activities:', e);
+      }
+      */
+      
+      // Sort all activities by timestamp (most recent first) and take top 8
+      const sortedActivities = activities
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        .slice(0, 8);
+      
+      setRecentActivities(sortedActivities);
+    } catch (err) {
+      console.error('Error loading recent activities:', err);
+      setRecentActivities([]);
+    } finally {
+      setLoadingActivities(false);
+    }
+  };
+
+  // Handle location association update
+  const handleLocationAssociationUpdate = async (locationId: string) => {
+    if (!contactId || !tenantId || !contact || !user?.uid) return;
+
+    try {
+      // Get the location data
+      const assocCompanies = (contact.associations?.companies || []) as any[];
+      let primaryCompanyId = assocCompanies.length > 0 ? (typeof assocCompanies[0] === 'string' ? assocCompanies[0] : assocCompanies[0]?.id) : undefined;
+      
+      // Fallback to legacy companyId if no associations found
+      if (!primaryCompanyId && contact.companyId) {
+        primaryCompanyId = contact.companyId;
+      }
+      
+      if (!primaryCompanyId) {
+        showToast('No associated company found', 'error');
+        return;
+      }
+
+      // Find the location in companyLocations
+      const selectedLocation = companyLocations.find(loc => loc.id === locationId);
+      if (!selectedLocation) {
+        showToast('Location not found', 'error');
+        return;
+      }
+
+      // Update associations with the new location
+      const currentAssociations = contact.associations || {};
+      const updatedAssociations = {
+        ...currentAssociations,
+        locations: [selectedLocation.id]
+      };
+
+      // Update the contact document with both new and legacy formats
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+        associations: updatedAssociations,
+        locationId: selectedLocation.id, // Legacy format
+        locationName: selectedLocation.name || selectedLocation.nickname || 'Unknown Location', // Legacy format
+        updatedAt: new Date()
+      });
+
+      // Update local state with both new and legacy formats
+      setContact(prev => prev ? { 
+        ...prev, 
+        associations: updatedAssociations,
+        locationId: selectedLocation.id, // Legacy format
+        locationName: selectedLocation.name || selectedLocation.nickname || 'Unknown Location' // Legacy format
+      } : null);
+      
+      // Log the activity
+      try {
+        const functions = getFunctions();
+        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
+        await logAIActionCallable({
+          action: 'contact_location_updated',
+          entityId: contactId,
+          entityType: 'contact',
+          reason: `Updated work location to: ${selectedLocation.name || selectedLocation.nickname}`,
+          tenantId,
+          userId: user.uid,
+          metadata: { locationId, locationName: selectedLocation.name || selectedLocation.nickname }
+        });
+      } catch (logError) {
+        console.warn('Failed to log activity:', logError);
+      }
+
+      showToast(`Work location updated to: ${selectedLocation.name || selectedLocation.nickname}`, 'success');
+    } catch (err) {
+      console.error('Error updating location association:', err);
+      showToast('Failed to update work location', 'error');
     }
   };
 
@@ -402,15 +782,20 @@ const ContactDetails: React.FC = () => {
       const contactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
       setContact(contactData);
 
-      // Load associated company via associations.companies if present
+      // Load associated company via associations.companies if present, or fallback to legacy companyId
       const assocCompanies = (contactData.associations?.companies || []) as any[];
-      const primaryCompanyId = assocCompanies.length > 0 ? (typeof assocCompanies[0] === 'string' ? assocCompanies[0] : assocCompanies[0]?.id) : undefined;
+      let primaryCompanyId = assocCompanies.length > 0 ? (typeof assocCompanies[0] === 'string' ? assocCompanies[0] : assocCompanies[0]?.id) : undefined;
+      
+      // Fallback to legacy companyId if no associations found
+      if (!primaryCompanyId && contactData.companyId) {
+        primaryCompanyId = contactData.companyId;
+      }
+      
       if (primaryCompanyId) {
         const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primaryCompanyId));
         if (companyDoc.exists()) {
           const companyData = { id: companyDoc.id, ...companyDoc.data() };
           setCompany(companyData);
-          setSelectedCompany(companyData);
           await loadCompanyLocations(primaryCompanyId);
         }
       }
@@ -418,8 +803,7 @@ const ContactDetails: React.FC = () => {
       // Load activities (you can implement this based on your activity tracking system)
       setActivities([]);
 
-      // Load companies for autocomplete
-      await loadCompanies();
+      // Removed legacy company picker load (associations are the source of truth)
       
       // Load associations
       await loadAssociations();
@@ -434,32 +818,15 @@ const ContactDetails: React.FC = () => {
 
   useEffect(() => {
     loadContact();
+    loadSalespeople();
+    loadRecentActivities();
   }, [contactId, tenantId]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
 
-  // Load companies for autocomplete
-  const loadCompanies = async () => {
-    if (!tenantId) return;
-    
-    try {
-      setLoadingCompanies(true);
-      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-      const companiesQuery = query(companiesRef, orderBy('companyName', 'asc'));
-      const companiesSnapshot = await getDocs(companiesQuery);
-      const companiesData = companiesSnapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      }));
-      setCompanies(companiesData);
-    } catch (err) {
-      console.error('Error loading companies:', err);
-    } finally {
-      setLoadingCompanies(false);
-    }
-  };
+  // Removed legacy company picker load; company should be managed via associations only
 
   // Load company locations
   const loadCompanyLocations = async (companyId: string) => {
@@ -479,67 +846,7 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Handle company selection
-  const handleCompanySelect = async (company: any) => {
-    setSelectedCompany(company);
-    setSelectedDivision('');
-    setSelectedLocation('');
-    
-    if (company) {
-      await loadCompanyLocations(company.id);
-      // Update associations only; do not write legacy company fields
-      const updatedAssociations = { ...(contact?.associations || {}) } as any;
-      const current = Array.isArray(updatedAssociations.companies) ? updatedAssociations.companies : [];
-      const next = [...current.filter((c: any) => (typeof c === 'string' ? c : c?.id) !== company.id), company.id];
-      await handleContactUpdate('associations', { ...updatedAssociations, companies: next });
-    } else {
-      setCompanyLocations([]);
-      const updatedAssociations = { ...(contact?.associations || {}) } as any;
-      await handleContactUpdate('associations', { ...updatedAssociations, companies: [] });
-    }
-  };
-
-  // Handle division selection
-  const handleDivisionSelect = (division: string) => {
-    setSelectedDivision(division);
-    setSelectedLocation('');
-  };
-
-  // Handle location selection (standardize on callable function)
-  const handleLocationSelect = async (locationId: string) => {
-    setSelectedLocation(locationId);
-    const location = companyLocations.find(loc => loc.id === locationId);
-    try {
-      const updateLocationAssociation = httpsCallable(functions, 'updateLocationAssociation');
-      await updateLocationAssociation({
-        tenantId,
-        entityType: 'contact',
-        entityId: contactId,
-        locationId,
-        companyId: selectedCompany?.id || '',
-        locationName: location?.name || null
-      });
-      // Optimistically update associations.locations in local state
-      setContact(prev => {
-        if (!prev) return prev;
-        const assoc = { ...(prev.associations || {}) } as any;
-        const current = Array.isArray(assoc.locations) ? assoc.locations : [];
-        const next = [...current.filter((l: any) => (typeof l === 'string' ? l : l?.id) !== locationId), { id: locationId, name: location?.name || '' }];
-        return { ...prev, associations: { ...assoc, locations: next } } as any;
-      });
-    } catch (err) {
-      console.error('Error updating location association via function:', err);
-      setError('Failed to update work location');
-    }
-  };
-
-  // Filter locations by division
-  const getFilteredLocations = () => {
-    if (!selectedDivision) {
-      return companyLocations;
-    }
-    return companyLocations.filter(location => location.division === selectedDivision);
-  };
+  // No local division/location pickers; associations are the single source of truth
 
   const handleContactUpdate = async (field: string, value: any) => {
     if (!contactId || !tenantId || !contact || !user?.uid) return;
@@ -620,11 +927,19 @@ const ContactDetails: React.FC = () => {
     setFixingAssociations(true);
     try {
       const associations = { ...(contact.associations || {}) };
-      const fixedCount = 0;
+      let fixedCount = 0;
       
-      // Migration helper removed: do not mirror legacy contact.companyId into associations
+      // Migrate legacy companyId to associations.companies if not already present
+      if (contact.companyId && (!associations.companies || associations.companies.length === 0)) {
+        associations.companies = [contact.companyId];
+        fixedCount++;
+      }
       
-      // Migration-era mirroring from locationId to associations.locations removed
+      // Migrate legacy locationId to associations.locations if not already present
+      if (contact.locationId && (!associations.locations || associations.locations.length === 0)) {
+        associations.locations = [contact.locationId];
+        fixedCount++;
+      }
       
       if (fixedCount > 0) {
         // Update the contact document
@@ -636,6 +951,9 @@ const ContactDetails: React.FC = () => {
         // Update local state
         setContact(prev => prev ? { ...prev, associations } : null);
         setAiSuccess(`Fixed ${fixedCount} association(s) successfully!`);
+        
+        // Reload associations to reflect changes
+        await loadAssociations();
       } else {
         setAiSuccess('No associations to fix for this contact.');
       }
@@ -693,15 +1011,23 @@ const ContactDetails: React.FC = () => {
           console.warn('Failed to log AI enhancement activity:', logError);
         }
         
-        // Update avatar if social profiles are found and no avatar exists
-        if (enhancedContactData?.socialProfiles && enhancedContactData.socialProfiles.length > 0 && !contact.avatar) {
+        // Update LinkedIn URL and avatar if social profiles are found
+        if (enhancedContactData?.socialProfiles && enhancedContactData.socialProfiles.length > 0) {
           const linkedInProfile = enhancedContactData.socialProfiles.find((profile: any) => profile.platform === 'LinkedIn');
           if (linkedInProfile) {
-            await updateAvatarFromSocialProfile(linkedInProfile.url);
+            // Update LinkedIn URL if not already set
+            if (!contact.linkedInUrl && linkedInProfile.url) {
+              await handleContactUpdate('linkedInUrl', linkedInProfile.url);
+            }
+            
+            // Update avatar if no avatar exists
+            if (!contact.avatar) {
+              await updateAvatarFromSocialProfile(linkedInProfile.url);
+            }
           }
         }
         
-        setAiSuccess('Contact enhanced successfully with AI! Found social profiles, company information, and professional insights.');
+        setAiSuccess('Contact enhanced successfully with AI! Found social profiles, company information, and professional insights. LinkedIn URL and avatar updated.');
       } else {
         setError(resultData.message || 'Failed to enhance contact');
       }
@@ -736,6 +1062,37 @@ const ContactDetails: React.FC = () => {
       .join('')
       .toUpperCase()
       .slice(0, 2);
+  };
+
+  // Get activity icon based on type
+  const getActivityIcon = (iconType: string) => {
+    switch (iconType) {
+      case 'task':
+        return <TaskIcon sx={{ fontSize: 16 }} />;
+      case 'email':
+        return <EmailIcon sx={{ fontSize: 16 }} />;
+      case 'note':
+        return <NotesIcon sx={{ fontSize: 16 }} />;
+      case 'ai':
+        return <AIIcon sx={{ fontSize: 16 }} />;
+      default:
+        return <InfoIcon sx={{ fontSize: 16 }} />;
+    }
+  };
+
+  // Format timestamp for display
+  const formatActivityTime = (timestamp: Date) => {
+    const now = new Date();
+    const diffMs = now.getTime() - timestamp.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return timestamp.toLocaleDateString();
   };
 
   // Check if Fix Associations button should be shown
@@ -827,10 +1184,47 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-
+  // Log Activity Handler
+  const handleLogActivity = async (taskData: any) => {
+    setLogActivityLoading(true);
+    try {
+      // Import TaskService dynamically to avoid circular dependencies
+      const { TaskService } = await import('../../utils/taskService');
+      const taskService = TaskService.getInstance();
+      
+      // Create the task as completed
+      await taskService.createTask({
+        ...taskData,
+        tenantId,
+        status: 'completed',
+        completedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      
+      setShowLogActivityDialog(false);
+      // Optionally refresh any task-related data
+      console.log('Activity logged successfully:', taskData);
+      showToast('Activity logged successfully', 'success');
+    } catch (error) {
+      console.error('Error logging activity:', error);
+      showToast('Failed to log activity', 'error');
+    } finally {
+      setLogActivityLoading(false);
+    }
+  };
 
   return (
     <Box sx={{ p: 0 }}>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2 }}>
+        <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/contacts" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=contacts'); }}>
+            Contacts
+          </MUILink>
+          <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>
+        </Breadcrumbs>
+      </Box>
       {/* Header */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -840,10 +1234,10 @@ const ContactDetails: React.FC = () => {
               <Avatar
                 src={contact.avatar}
                 sx={{ 
-                  width: 80, 
-                  height: 80,
+                  width: 128, 
+                  height: 128,
                   bgcolor: contact.avatar ? 'transparent' : 'primary.main',
-                  fontSize: '1.5rem',
+                  fontSize: '2.5rem',
                   fontWeight: 'bold'
                 }}
               >
@@ -871,10 +1265,10 @@ const ContactDetails: React.FC = () => {
                     component="span"
                     size="small"
                     sx={{
-                      bgcolor: 'primary.main',
-                      color: 'white',
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
                       '&:hover': {
-                        bgcolor: 'primary.dark'
+                        bgcolor: 'grey.400'
                       },
                       width: 28,
                       height: 28
@@ -895,10 +1289,10 @@ const ContactDetails: React.FC = () => {
                     onClick={handleAvatarDelete}
                     disabled={avatarLoading}
                     sx={{
-                      bgcolor: 'error.main',
-                      color: 'white',
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
                       '&:hover': {
-                        bgcolor: 'error.dark'
+                        bgcolor: 'grey.400'
                       },
                       width: 28,
                       height: 28
@@ -924,23 +1318,81 @@ const ContactDetails: React.FC = () => {
               <Typography variant="body2" color="text.secondary">
                 {contact.jobTitle || contact.title || 'No title'}
               </Typography>
-              
-              {/* Company */}
+
+              {/* Company and Location Links (associations are source of truth) */}
               {company && (
-                <Typography 
-                  variant="body2" 
-                  color="primary"
-                  sx={{ 
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
-                    '&:hover': {
-                      color: 'primary.dark'
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
+                  <BusinessIcon fontSize="small" color="primary" />
+                  <Typography 
+                    variant="body2" 
+                    color="primary"
+                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                    onClick={() => navigate(`/crm/companies/${company.id}`)}
+                  >
+                    {company.companyName || company.name}
+                  </Typography>
+                  {(() => {
+                    // Check new associations format first
+                    if (Array.isArray(contact.associations?.locations) && contact.associations.locations.length > 0) {
+                      const locationId = contact.associations.locations[0];
+                      const locationName = companyLocations.find((l: any) => l.id === locationId)?.name || '';
+                      if (locationId && locationName) {
+                        return (
+                          <>
+                            <Typography variant="body2" color="text.secondary">/</Typography>
+                            <Typography 
+                              variant="body2" 
+                              color="primary"
+                              sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                              onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
+                            >
+                              {locationName}
+                            </Typography>
+                          </>
+                        );
+                      }
                     }
-                  }}
-                  onClick={() => navigate(`/crm/companies/${company.id}`)}
-                >
-                  {company.companyName || company.name}
-                </Typography>
+                    
+                    // Fallback to legacy locationId format
+                    if (contact.locationId && contact.locationName) {
+                      return (
+                        <>
+                          <Typography variant="body2" color="text.secondary">/</Typography>
+                          <Typography 
+                            variant="body2" 
+                            color="primary"
+                            sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                            onClick={() => navigate(`/crm/companies/${company.id}/locations/${contact.locationId}`)}
+                          >
+                            {contact.locationName}
+                          </Typography>
+                        </>
+                      );
+                    }
+                    
+                    // Fallback to locationId with name from loaded locations
+                    if (contact.locationId) {
+                      const locationName = companyLocations.find((l: any) => l.id === contact.locationId)?.name || '';
+                      if (locationName) {
+                        return (
+                          <>
+                            <Typography variant="body2" color="text.secondary">/</Typography>
+                            <Typography 
+                              variant="body2" 
+                              color="primary"
+                              sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                              onClick={() => navigate(`/crm/companies/${company.id}/locations/${contact.locationId}`)}
+                            >
+                              {locationName}
+                            </Typography>
+                          </>
+                        );
+                      }
+                    }
+                    
+                    return null;
+                  })()}
+                </Box>
               )}
               
               {/* Contact Icons */}
@@ -1119,17 +1571,48 @@ const ContactDetails: React.FC = () => {
                   <LanguageIcon sx={{ fontSize: 20 }} />
                 </IconButton>
               </Box>
+
+              {/* Contact Type and Engagement Level */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Type:</Typography>
+                  <Chip 
+                    label={contact?.contactType || 'Unknown'} 
+                    color={contact?.contactType === 'Decision Maker' ? 'success' : 
+                           contact?.contactType === 'Unknown' ? 'warning' : 'primary'} 
+                    size="small" 
+                    sx={{ fontWeight: 500 }}
+                  />
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Engagement:</Typography>
+                  <Chip 
+                    label={metrics.completedTasks > 5 ? 'High' : metrics.completedTasks > 2 ? 'Medium' : 'Low'} 
+                    color={metrics.completedTasks > 5 ? 'success' : metrics.completedTasks > 2 ? 'warning' : 'error'} 
+                    size="small" 
+                    sx={{ fontWeight: 500 }}
+                  />
+                </Box>
+                {contact?.inferredSeniority && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Seniority:</Typography>
+                    <Chip 
+                      label={contact.inferredSeniority} 
+                      color={contact.inferredSeniority === 'C-Level' || contact.inferredSeniority === 'Executive' ? 'success' : 
+                             contact.inferredSeniority === 'Senior' ? 'primary' : 
+                             contact.inferredSeniority === 'Mid-Level' ? 'warning' : 'default'} 
+                      size="small" 
+                      sx={{ fontWeight: 500 }}
+                    />
+                  </Box>
+                )}
+
+              </Box>
             </Box>
           </Box>
 
           {/* Action Buttons */}
           <Box sx={{ display: 'flex', gap: 2 }}>
-            <Button
-              variant="outlined"
-              onClick={() => navigate('/crm')}
-            >
-              Back to Contacts
-            </Button>
             {shouldShowFindContactInfoButton() && (
               <Button
                 variant="outlined"
@@ -1142,21 +1625,33 @@ const ContactDetails: React.FC = () => {
               </Button>
             )}
             <Button
-              variant="contained"
-              color="secondary"
-              startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <AutoAwesomeIcon />}
+              variant="outlined"
+              startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
               onClick={handleAIEnhancement}
               disabled={aiEnhancing}
+              sx={{ 
+                color: 'purple.600',
+                borderColor: 'purple.600',
+                '&:hover': {
+                  borderColor: 'purple.700',
+                  backgroundColor: 'purple.50'
+                }
+              }}
             >
               {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
             </Button>
             <Button
-              variant="outlined"
-              color="error"
-              startIcon={<DeleteIcon />}
-              onClick={() => setDeleteDialogOpen(true)}
+              variant="contained"
+              startIcon={<CheckCircleIcon />}
+              onClick={() => setShowLogActivityDialog(true)}
+              sx={{ 
+                bgcolor: 'primary.main',
+                '&:hover': {
+                  bgcolor: 'primary.dark'
+                }
+              }}
             >
-              Delete
+              Log Activity
             </Button>
           </Box>
         </Box>
@@ -1183,8 +1678,8 @@ const ContactDetails: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <InfoIcon fontSize="small" />
-                Overview
+                <DashboardIcon fontSize="small" />
+                Dashboard
               </Box>
             } 
           />
@@ -1196,6 +1691,7 @@ const ContactDetails: React.FC = () => {
               </Box>
             } 
           />
+
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1208,7 +1704,7 @@ const ContactDetails: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <ListIcon fontSize="small" />
-                Activity Log
+                Activity
               </Box>
             } 
           />
@@ -1218,722 +1714,805 @@ const ContactDetails: React.FC = () => {
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
-          {/* Contact Details */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardHeader title="Contact Details" />
-              <CardContent>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.fullName`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.fullName || ''}
-                    onChange={(value) => handleContactUpdate('fullName', value)}
-                    label="Full Name"
-                    contextType="contact"
-                    urgencyScore={5}
-                    description="Contact full name"
-                  />
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.email`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.email || ''}
-                    onChange={(value) => handleContactUpdate('email', value)}
-                    label="Email"
-                    contextType="contact"
-                    urgencyScore={5}
-                    description="Contact email address"
-                  />
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.phone`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.phone || contact.workPhone || ''}
-                    onChange={(value) => handleContactUpdate('phone', value)}
-                    label="Phone"
-                    contextType="contact"
-                    urgencyScore={4}
-                    description="Contact phone number"
-                  />
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.mobilePhone`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.mobilePhone || ''}
-                    onChange={(value) => handleContactUpdate('mobilePhone', value)}
-                    label="Mobile"
-                    contextType="contact"
-                    urgencyScore={4}
-                    description="Contact mobile phone"
-                  />
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.jobTitle`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.jobTitle || contact.title || ''}
-                    onChange={(value) => {
-                      handleContactUpdate('jobTitle', value);
-                      handleContactUpdate('title', value);
-                    }}
-                    label="Job Title"
-                    contextType="contact"
-                    urgencyScore={4}
-                    description="Contact job title"
-                  />
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.linkedInUrl`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.linkedInUrl || ''}
-                    onChange={(value) => handleContactUpdate('linkedInUrl', value)}
-                    label="LinkedIn URL"
-                    contextType="contact"
-                    urgencyScore={3}
-                    description="Contact LinkedIn profile"
-                  />
-                  
-                  {/* Company Autocomplete */}
-                  <Autocomplete
-                    options={companies}
-                    getOptionLabel={(option) => option.companyName || option.name || ''}
-                    value={selectedCompany}
-                    onChange={(event, newValue) => handleCompanySelect(newValue)}
-                    loading={loadingCompanies}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Company"
-                        size="small"
-                        InputProps={{
-                          ...params.InputProps,
-                          endAdornment: (
-                            <>
-                              {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
-                              {params.InputProps.endAdornment}
-                            </>
-                          ),
-                        }}
-                      />
-                    )}
-                    renderOption={(props, option) => (
-                      <Box component="li" {...props}>
-                        <Box>
-                          <Typography variant="body2">
-                            {option.companyName || option.name}
-                          </Typography>
-                          {option.industry && (
-                            <Typography variant="caption" color="text.secondary">
-                              {option.industry}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Box>
-                    )}
-                  />
-                  
-                  <LoggableTextField
-                    fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.leadSource`}
-                    trigger="update"
-                    destinationModules={['ContactEngine', 'ToneEngine']}
-                    value={contact.leadSource || ''}
-                    onChange={(value) => handleContactUpdate('leadSource', value)}
-                    label="Lead Source"
-                    contextType="contact"
-                    urgencyScore={3}
-                    description="Contact lead source"
-                  />
+          {/* Left Column - Contact Details & Core Info */}
+          <Grid item xs={12} md={4}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* AI Summary */}
+              <Card>
+                <CardHeader 
+                  title="AI Summary" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.notes ? (
+                    <Typography variant="body2" color="text.secondary">
+                      {contact.notes.replace(/<[^>]*>/g, '')}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No AI summary available. Use AI Enhance to generate one.
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
 
-                  {/* Contact Type Dropdown */}
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Contact Type</InputLabel>
-                    <Select
-                      value={contact.contactType || 'Unknown'}
-                      label="Contact Type"
-                      onChange={(e) => handleContactUpdate('contactType', e.target.value)}
-                    >
-                      <MenuItem value="Decision Maker">Decision Maker</MenuItem>
-                      <MenuItem value="Influencer">Influencer</MenuItem>
-                      <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
-                      <MenuItem value="Referrer">Referrer</MenuItem>
-                      <MenuItem value="Evaluator">Evaluator</MenuItem>
-                      <MenuItem value="Unknown">Unknown</MenuItem>
-                    </Select>
-                  </FormControl>
-
-                  {/* Tags Field */}
-                  <Autocomplete
-                    multiple
-                    freeSolo
-                    options={[]}
-                    value={contact.tags || []}
-                    onChange={(event, newValue) => {
-                      // Handle both string and array values
-                      const tags = newValue.map(item => typeof item === 'string' ? item : (item as any).inputValue || '');
-                      handleContactUpdate('tags', tags);
-                    }}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => {
-                        const { key, ...chipProps } = getTagProps({ index });
-                        return (
-                          <Chip
-                            key={key}
-                            variant="outlined"
-                            label={option}
-                            {...chipProps}
-                            size="small"
-                          />
-                        );
-                      })
-                    }
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Tags"
-                        size="small"
-                        placeholder="Add tags..."
-                        helperText="Press Enter to add a new tag"
-                      />
-                    )}
-                  />
-
-                  {/* isActive Toggle */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography variant="body2" component="div">
-                        Active Contact
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {contact.isActive ? 'Contact is active and available for engagement' : 'Contact is archived or inactive'}
-                      </Typography>
-                    </Box>
-                    <LoggableSwitch
-                      fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.isActive`}
-                      trigger="update"
-                      destinationModules={['ContactEngine']}
-                      value={contact.isActive !== false}
-                      onChange={(value) => handleContactUpdate('isActive', value)}
-                      contextType="contact"
-                      urgencyScore={4}
-                      description="Contact active status"
+              {/* Contact Details (Combined Widget) */}
+              <Card>
+                <CardHeader 
+                  title="Contact Details" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <TextField
+                      label="Full Name"
+                      defaultValue={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`) !== next) {
+                          handleContactUpdate('fullName', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
                     />
-                  </Box>
-
-                  {/* Division Dropdown - Only show if company has divisions */}
-                  {selectedCompany && selectedCompany.divisions && selectedCompany.divisions.length > 0 && (
+                    <TextField
+                      label="Email"
+                      defaultValue={contact.email || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.email || '') !== next) {
+                          handleContactUpdate('email', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <EmailIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Phone"
+                      defaultValue={contact.phone || contact.workPhone || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.phone || contact.workPhone || '') !== next) {
+                          handleContactUpdate('phone', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Mobile"
+                      defaultValue={contact.mobilePhone || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.mobilePhone || '') !== next) {
+                          handleContactUpdate('mobilePhone', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Job Title"
+                      defaultValue={contact.jobTitle || contact.title || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.jobTitle || contact.title || '') !== next) {
+                          handleContactUpdate('jobTitle', next);
+                          handleContactUpdate('title', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                    />
+                    <TextField
+                      label="LinkedIn URL"
+                      defaultValue={contact.linkedInUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.linkedInUrl || '') !== next) {
+                          handleContactUpdate('linkedInUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <LinkedInIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    
                     <FormControl fullWidth size="small">
-                      <InputLabel>Division</InputLabel>
+                      <InputLabel>Contact Type</InputLabel>
                       <Select
-                        value={selectedDivision}
-                        label="Division"
-                        onChange={(e) => handleDivisionSelect(e.target.value)}
+                        value={contact.contactType || 'Unknown'}
+                        label="Contact Type"
+                        onChange={(e) => handleContactUpdate('contactType', e.target.value)}
                       >
-                        <MenuItem value="">
-                          <em>No division</em>
-                        </MenuItem>
-                        {selectedCompany.divisions.map((division: string) => (
-                          <MenuItem key={division} value={division}>
-                            {division}
-                          </MenuItem>
-                        ))}
+                        <MenuItem value="Decision Maker">Decision Maker</MenuItem>
+                        <MenuItem value="Champion">Champion</MenuItem>
+                        <MenuItem value="Influencer">Influencer</MenuItem>
+                        <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
+                        <MenuItem value="Referrer">Referrer</MenuItem>
+                        <MenuItem value="Evaluator">Evaluator</MenuItem>
+                        <MenuItem value="Unknown">Unknown</MenuItem>
                       </Select>
                     </FormControl>
-                  )}
 
-                  {/* Location Dropdown - Only show if company has locations */}
-                  {selectedCompany && companyLocations.length > 0 && (
+                    <TextField
+                      label="Lead Source"
+                      defaultValue={contact.leadSource || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.leadSource || '') !== next) {
+                          handleContactUpdate('leadSource', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                    />
+
                     <FormControl fullWidth size="small">
-                      <InputLabel>Location</InputLabel>
+                      <InputLabel>Work Location</InputLabel>
                       <Select
-                        value={selectedLocation}
-                        label="Location"
-                        onChange={(e) => handleLocationSelect(e.target.value)}
+                        value={(() => {
+                          // Check new associations format first
+                          const assocLocations = contact.associations?.locations || [];
+                          if (assocLocations.length > 0) {
+                            const locationId = assocLocations[0];
+                            // Only return the value if it exists in companyLocations
+                            return companyLocations.some(loc => loc.id === locationId) ? locationId : '';
+                          }
+                          // Fallback to legacy locationId format
+                          const legacyLocationId = contact.locationId || '';
+                          return companyLocations.some(loc => loc.id === legacyLocationId) ? legacyLocationId : '';
+                        })() || ''}
+                        label="Work Location"
+                        onChange={(e) => handleLocationAssociationUpdate(e.target.value)}
+                        disabled={companyLocations.length === 0}
                       >
                         <MenuItem value="">
-                          <em>No location</em>
+                          <em>Select a location</em>
                         </MenuItem>
-                        {getFilteredLocations().map((location) => (
+                        {companyLocations.map((location) => (
                           <MenuItem key={location.id} value={location.id}>
-                            {location.name} - {location.address}
+                            {location.nickname || location.name || location.title || 'Unknown Location'}
                           </MenuItem>
                         ))}
                       </Select>
                     </FormControl>
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
+
+
+
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Box>
+                        <Typography variant="body2" component="div">
+                          Active Contact
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {contact.isActive ? 'Contact is active and available for engagement' : 'Contact is archived or inactive'}
+                        </Typography>
+                      </Box>
+                      <LoggableSwitch
+                        fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.isActive`}
+                        trigger="update"
+                        destinationModules={['ContactEngine']}
+                        value={contact.isActive !== false}
+                        onChange={(value) => handleContactUpdate('isActive', value)}
+                        contextType="contact"
+                        urgencyScore={4}
+                        description="Contact active status"
+                      />
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+
+
+            </Box>
           </Grid>
 
-          {/* Associations */}
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardHeader 
-                title="Associations" 
-                action={
-                  shouldShowFixAssociationsButton() ? (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={handleFixAssociations}
-                      disabled={fixingAssociations}
+          {/* Center Column - Contact Intelligence */}
+          <Grid item xs={12} md={5}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Sales Coach Widget */}
+              <Card>
+                <CardHeader 
+                  title="Sales Coach" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <IconButton 
+                      size="small" 
+                      title="Start new conversation"
+                      onClick={() => {
+                        // This will trigger a new conversation in the SalesCoach component
+                        const event = new CustomEvent('startNewSalesCoachConversation', {
+                          detail: { entityId: contact.id }
+                        });
+                        window.dispatchEvent(event);
+                      }}
                     >
-                      {fixingAssociations ? 'Fixing...' : 'Fix Associations'}
-                    </Button>
-                  ) : null
-                }
-                sx={{
-                  '& .MuiCardHeader-action': {
-                    marginRight: 0
+                      <AddIcon />
+                    </IconButton>
                   }
-                }}
+                  sx={{ pb: 1 }}
+                />
+                <CardContent sx={{ p: 0, pt: 0 }}>
+                  <Box sx={{ height: 850 }}>
+                    <SalesCoach 
+                      entityType="contact"
+                      entityId={contact.id}
+                      entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
+                      tenantId={tenantId}
+                      contactCompany={company?.companyName || company?.name}
+                      contactTitle={contact.jobTitle || contact.title}
+                      associations={contact.associations}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Contact Intelligence */}
+              {/* Contact Intelligence - Hidden for now */}
+              {/* <Card>
+                <CardHeader 
+                  title="Contact Intelligence" 
+                  action={
+                    <IconButton size="small">
+                      <AutoAwesomeIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  }
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {aiComponentsLoaded ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Box sx={{ mb: 2 }}>
+                        <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                          AI Insights
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          {insights.slice(0, 3).map((insight, index) => (
+                            <Box key={index} sx={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: 1, 
+                              p: 1, 
+                              borderRadius: 1, 
+                              bgcolor: insight.type === 'success' ? 'success.50' : 
+                                       insight.type === 'warning' ? 'warning.50' : 
+                                       insight.type === 'error' ? 'error.50' : 'info.50',
+                              border: '1px solid',
+                              borderColor: insight.type === 'success' ? 'success.200' : 
+                                          insight.type === 'warning' ? 'warning.200' : 
+                                          insight.type === 'error' ? 'error.200' : 'info.200'
+                            }}>
+                              <Box sx={{ 
+                                width: 8, 
+                                height: 8, 
+                                borderRadius: '50%', 
+                                bgcolor: insight.type === 'success' ? 'success.main' : 
+                                        insight.type === 'warning' ? 'warning.main' : 
+                                        insight.type === 'error' ? 'error.main' : 'info.main' 
+                              }} />
+                              <Typography variant="caption" fontSize="0.75rem">
+                                {insight.message}
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Box>
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Skeleton variant="rectangular" height={24} />
+                      <Skeleton variant="rectangular" height={24} />
+                      <Skeleton variant="rectangular" height={24} />
+                    </Box>
+                  )}
+                </CardContent>
+              </Card> */}
+
+              {/* Key Metrics - Hidden for now */}
+              {/* <Card>
+                <CardHeader 
+                  title="Key Metrics" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {metrics.totalDealValue}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total Deal Value
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {metrics.activeDeals}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Active Deals
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="success.main" fontWeight="bold">
+                          {metrics.completedTasks}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Completed Tasks
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="info.main" fontWeight="bold">
+                          {metrics.totalTasks}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Total Tasks
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  </Grid>
+
+                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                    <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
+                      Task Completion Rate
+                    </Typography>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h6" color="primary" fontWeight="bold">
+                        {metrics.totalTasks > 0 ? Math.round((metrics.completedTasks / metrics.totalTasks) * 100) : 0}%
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {metrics.completedTasks} of {metrics.totalTasks} tasks completed
+                      </Typography>
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card> */}
+
+              {/* Contact Coach - Hidden for now */}
+              {/* <Card>
+                <CardHeader 
+                  title="Contact Coach" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {aiComponentsLoaded ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Strengthen relationship
+                      </Button>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Identify upsell opportunities
+                      </Button>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Optimize communication strategy
+                      </Button>
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  )}
+                </CardContent>
+              </Card> */}
+
+              {/* AI Suggestions */}
+              <Card>
+                <CardHeader 
+                  title="Suggested by AI" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {aiComponentsLoaded ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Research contact's company role
+                      </Button>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Identify communication preferences
+                      </Button>
+                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
+                        Find engagement opportunities
+                      </Button>
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
+
+          {/* Right Column - Active Salespeople + Recent Activity + Associations */}
+          <Grid item xs={12} md={3}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Active Salespeople */}
+              <Card>
+                <CardHeader 
+                  title="Active Salespeople" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                      try {
+                        console.log('🔍 Starting rebuild for contact:', contactId, 'tenant:', tenantId);
+                        console.log('🔍 Available deals from frontend:', associationsData.entities.deals?.length || 0);
+                        console.log('🔍 Deal IDs from frontend:', associationsData.entities.deals?.map((d: any) => d.id) || []);
+                        
+                        setRebuildingActive(true);
+                        const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
+                        
+                        // Pass the deal IDs that are already loaded in the frontend
+                        const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
+                        console.log('🔍 Calling function with params:', { tenantId, contactId, dealIds });
+                        
+                        // Also log the deal data to see what salespeople are in it
+                        if (associationsData.entities.deals && associationsData.entities.deals.length > 0) {
+                          const deal = associationsData.entities.deals[0];
+                          console.log('🔍 Deal data from frontend:', {
+                            id: deal.id,
+                            name: deal.name,
+                            salespersonIds: deal.salespersonIds,
+                            salespeopleIds: deal.salespeopleIds,
+                            salesOwnerId: deal.salesOwnerId,
+                            associations: deal.associations
+                          });
+                        }
+                        
+                        const resp: any = await fn({ tenantId, contactId, dealIds });
+                        console.log('🔍 Function response:', resp);
+                        const data = resp?.data || {};
+                        console.log('🔍 Response data:', data);
+                        if (data.ok) {
+                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                        } else if (data.error) {
+                          setLocalError(`Rebuild failed: ${data.error}`);
+                        } else {
+                          setLocalSuccess('Rebuild requested');
+                        }
+                        // Light refresh
+                        try {
+                          await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+                        } catch {}
+                      } catch (e) {
+                        console.error('Rebuild active salespeople – error', e);
+                        setLocalError('Failed to rebuild active salespeople');
+                      } finally {
+                        setRebuildingActive(false);
+                      }
+                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+
+                  
+                  {contact?.activeSalespeople && Object.keys(contact.activeSalespeople).length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {Object.values(contact.activeSalespeople as any)
+                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                        .slice(0, 5)
+                        .map((sp: any) => (
+                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {sp.jobTitle || sp.department || ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        No active salespeople found
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Click "Rebuild" to scan deals, tasks, and emails
+                      </Typography>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Opportunities */}
+              <Card>
+                <CardHeader 
+                  title="Opportunities" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+
+                  
+                  {associationsData.entities.deals && associationsData.entities.deals.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {associationsData.entities.deals
+                        .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
+                        .slice(0, 5)
+                        .map((deal: any) => {
+                          // Calculate value range using the same logic as Opportunities tab
+                          const calculateExpectedRevenueRange = (deal: any) => {
+                            if (!deal.stageData?.qualification) {
+                              return { min: 0, max: 0, hasData: false };
+                            }
+
+                            const qualData = deal.stageData.qualification;
+                            const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
+                            const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
+                            const timeline = qualData.staffPlacementTimeline;
+
+                            if (!timeline) {
+                              return { min: 0, max: 0, hasData: false };
+                            }
+
+                            // Calculate bill rate: pay rate + markup
+                            const billRate = payRate * (1 + markup / 100);
+                            
+                            // Annual hours per employee (2080 full-time hours)
+                            const annualHoursPerEmployee = 2080;
+                            
+                            // Calculate annual revenue per employee
+                            const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+                            
+                            // Get starting and 180-day numbers
+                            const startingCount = timeline.starting || 0;
+                            const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+                            
+                            // Calculate revenue range
+                            const minRevenue = annualRevenuePerEmployee * startingCount;
+                            const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+                            
+                            return {
+                              min: minRevenue,
+                              max: maxRevenue,
+                              hasData: startingCount > 0 || after180DaysCount > 0
+                            };
+                          };
+
+                          const revenueRange = calculateExpectedRevenueRange(deal);
+                          let valueRange = '$0k';
+                          
+                          if (revenueRange.hasData) {
+                            const minK = (revenueRange.min / 1000).toFixed(0);
+                            const maxK = (revenueRange.max / 1000).toFixed(0);
+                            valueRange = revenueRange.min === revenueRange.max 
+                              ? `$${minK}k`
+                              : `$${minK}k - $${maxK}k`;
+                          } else {
+                            // Fallback to simple fields if no qualification data
+                            const lowValue = deal.valueLow || deal.expectedRevenue || 0;
+                            const highValue = deal.valueHigh || deal.expectedRevenue || 0;
+                            valueRange = lowValue === highValue 
+                              ? `$${(lowValue / 1000).toFixed(0)}k`
+                              : `$${(lowValue / 1000).toFixed(0)}k - $${(highValue / 1000).toFixed(0)}k`;
+                          }
+                          
+                          return (
+                            <Box 
+                              key={deal.id} 
+                              sx={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 1, 
+                                p: 1, 
+                                borderRadius: 1, 
+                                bgcolor: 'grey.50',
+                                cursor: 'pointer',
+                                '&:hover': {
+                                  bgcolor: 'grey.100'
+                                }
+                              }}
+                              onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                            >
+                              <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                                <BusinessIcon sx={{ fontSize: 16 }} />
+                              </Avatar>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {deal.name || deal.title || 'Unknown Deal'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {valueRange} • {deal.stage || 'Unknown Stage'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          );
+                        })}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No associated opportunities</Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Local snackbars for rebuild feedback */}
+              <Snackbar open={!!localSuccess} autoHideDuration={3000} onClose={() => setLocalSuccess(null)}>
+                <Alert severity="success" onClose={() => setLocalSuccess(null)} sx={{ width: '100%' }}>
+                  {localSuccess}
+                </Alert>
+              </Snackbar>
+              <Snackbar open={!!localError} autoHideDuration={4000} onClose={() => setLocalError(null)}>
+                <Alert severity="error" onClose={() => setLocalError(null)} sx={{ width: '100%' }}>
+                  {localError}
+                </Alert>
+              </Snackbar>
+
+              {/* Recent Activity */}
+              <Card>
+                <CardHeader 
+                  title="Recent Activity" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {loadingActivities ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  ) : recentActivities.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {recentActivities.map((activity) => (
+                        <Box 
+                          key={activity.id} 
+                          sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1, 
+                            p: 1, 
+                            borderRadius: 1,
+                            cursor: 'pointer',
+                            '&:hover': {
+                              bgcolor: 'grey.50'
+                            }
+                          }}
+                          onClick={() => {
+                            // Navigate to appropriate section based on activity type
+                            switch (activity.type) {
+                              case 'task':
+                                setTabValue(1); // Tasks tab
+                                break;
+                              case 'note':
+                                setTabValue(4); // Notes tab
+                                break;
+                              case 'email':
+                                setTabValue(5); // Activity tab
+                                break;
+                              default:
+                                break;
+                            }
+                          }}
+                        >
+                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                            {getActivityIcon(activity.icon)}
+                          </Avatar>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="body2" fontSize="0.75rem" fontWeight="medium" noWrap>
+                              {activity.title}
+                            </Typography>
+                            {activity.description && (
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                {activity.description.length > 50 
+                                  ? `${activity.description.substring(0, 50)}...` 
+                                  : activity.description}
+                              </Typography>
+                            )}
+                          </Box>
+                          <Typography variant="caption" color="text.secondary" fontSize="0.7rem">
+                            {formatActivityTime(activity.timestamp)}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No recent activity
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Activities will appear here as they occur
+                      </Typography>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
+        </Grid>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={1}>
+        {/* Tasks - New Balanced Layout matching DealDetails */}
+        <Grid container spacing={3}>
+          {/* Left Column (35%): Action Focused - To-Dos Only */}
+          <Grid item xs={12} md={4}>
+            <Card sx={{ minHeight: 600 }}>
+              <CardHeader 
+                title="To-Dos" 
+                subheader="Priority tasks for this contact"
+                action={
+                  <IconButton 
+                    size="small" 
+                    title="Add new task"
+                    onClick={() => setShowTaskDialog(true)}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                }
+                sx={{ p: 0, mb: 2 }} 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
               />
-              <CardContent>
-                <SimpleAssociationsCard
-                  entityType="contact"
+              <CardContent sx={{ p: 0 }}>
+                <TasksDashboard
                   entityId={contact.id}
-                  entityName={contact.fullName || `${contact.firstName} ${contact.lastName}`}
+                  entityType="contact"
                   tenantId={tenantId}
-                  showAssociations={{
-                    companies: true,
-                    locations: true,
-                    deals: true,
-                    salespeople: true,
-                    contacts: false, // Don't show contacts for contacts
-                    tasks: false
-                  }}
-                  customLabels={{
-                    companies: "Company",
-                    locations: "Work Location",
-                    deals: "Opportunities",
-                    salespeople: "Account Managers"
-                  }}
-                  onAssociationChange={(type, action, entityId) => {
-                    console.log(`${action} ${type} association: ${entityId}`);
-                    // Reload associations after change
-                    loadAssociations();
-                  }}
-                  onError={(error) => {
-                    console.error('Association error:', error);
-                  }}
-                  // Pass cached data to prevent reloading
-                  cachedAssociations={associationsData.associations}
-                  cachedEntities={associationsData.entities}
-                  isLoading={associationsData.loading}
-                  error={associationsData.error}
+                  entity={contact}
+                  preloadedContacts={[contact]}
+                  preloadedSalespeople={salespeople}
+                  preloadedCompany={company}
                 />
               </CardContent>
             </Card>
           </Grid>
 
-          {/* AI Insights */}
-          <Grid item xs={12}>
-            <Grid container spacing={3}>
-              {/* Professional Summary with AI Notes */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="Professional Summary" />
-                  <CardContent>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                      {contact?.professionalSummary || 'No professional summary available. Use AI Enhance to generate one.'}
-                    </Typography>
-                    
-                    {contact?.notes && (
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          AI Notes
-                        </Typography>
-                        <Box 
-                          sx={{ 
-                            p: 2, 
-                            bgcolor: 'grey.50', 
-                            borderRadius: 1,
-                            border: '1px solid',
-                            borderColor: 'grey.200'
-                          }}
-                          dangerouslySetInnerHTML={{ __html: contact.notes }}
-                        />
-                      </Box>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* AI Insights */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="AI Insights" />
-                  <CardContent>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary">Seniority Level</Typography>
-                        <Typography variant="body2">
-                          {contact?.inferredSeniority || 'Not determined'}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary">Industry</Typography>
-                        <Typography variant="body2">
-                          {contact?.inferredIndustry || 'Not determined'}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary">Influence Level</Typography>
-                        <Typography variant="body2">
-                          {contact?.influenceLevel || 'Not determined'}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary">Communication Style</Typography>
-                        <Typography variant="body2">
-                          {contact?.communicationStyle || 'Not determined'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Key Skills */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="Key Skills" />
-                  <CardContent>
-                    {contact?.keySkills && contact.keySkills.length > 0 ? (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {contact.keySkills.map((skill: string, index: number) => (
-                          <Chip key={index} label={skill} size="small" variant="outlined" />
-                        ))}
-                      </Box>
-                    ) : (
-                      <Typography color="text.secondary">No skills identified. Use AI Enhance to discover skills.</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Professional Interests */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="Professional Interests" />
-                  <CardContent>
-                    {contact?.professionalInterests && contact.professionalInterests.length > 0 ? (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {contact.professionalInterests.map((interest: string, index: number) => (
-                          <Chip key={index} label={interest} size="small" variant="outlined" color="primary" />
-                        ))}
-                      </Box>
-                    ) : (
-                      <Typography color="text.secondary">No interests identified. Use AI Enhance to discover interests.</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Social Profiles */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="Social Profiles" />
-                  <CardContent>
-                    {contact?.socialProfiles && contact.socialProfiles.length > 0 ? (
-                      <List dense>
-                        {contact.socialProfiles.map((profile: any, index: number) => (
-                          <ListItem key={index}>
-                            <ListItemIcon>
-                              {profile.platform === 'LinkedIn' && <LinkedInIcon />}
-                              {profile.platform === 'Twitter' && <TwitterIcon />}
-                              {profile.platform === 'Facebook' && <FacebookIcon />}
-                              {profile.platform === 'Instagram' && <InstagramIcon />}
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={profile.platform}
-                              secondary={
-                                <a href={profile.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-                                  {profile.title}
-                                </a>
-                              }
-                            />
-                          </ListItem>
-                        ))}
-                      </List>
-                    ) : (
-                      <Typography color="text.secondary">No social profiles found. Use AI Enhance to discover profiles.</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* News Mentions */}
-              <Grid item xs={12} md={6}>
-                <Card>
-                  <CardHeader title="Recent News Mentions" />
-                  <CardContent>
-                    {contact?.newsMentions && contact.newsMentions.length > 0 ? (
-                      <List dense>
-                        {contact.newsMentions.slice(0, 3).map((news: any, index: number) => (
-                          <ListItem key={index}>
-                            <ListItemText
-                              primary={
-                                <a href={news.link} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-                                  {news.title}
-                                </a>
-                              }
-                              secondary={news.snippet}
-                            />
-                          </ListItem>
-                        ))}
-                      </List>
-                    ) : (
-                      <Typography color="text.secondary">No recent news mentions found. Use AI Enhance to discover mentions.</Typography>
-                    )}
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Contact Recommendations */}
-              <Grid item xs={12}>
-                <Card>
-                  <CardHeader title="Contact Recommendations" />
-                  <CardContent>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={6}>
-                        <Box>
-                          <Typography variant="subtitle2" color="text.secondary">Recommended Approach</Typography>
-                          <Typography variant="body2">
-                            {contact?.recommendedApproach || 'No recommendations available. Use AI Enhance to get personalized contact strategies.'}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box>
-                          <Typography variant="subtitle2" color="text.secondary">Potential Pain Points</Typography>
-                          <Typography variant="body2">
-                            {contact?.potentialPainPoints && contact.potentialPainPoints.length > 0 
-                              ? contact.potentialPainPoints.join(', ')
-                              : 'No pain points identified. Use AI Enhance to discover potential challenges.'}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box>
-                          <Typography variant="subtitle2" color="text.secondary">Networking Opportunities</Typography>
-                          <Typography variant="body2">
-                            {contact?.networkingOpportunities && contact.networkingOpportunities.length > 0 
-                              ? contact.networkingOpportunities.join(', ')
-                              : 'No networking opportunities identified. Use AI Enhance to discover connection points.'}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Tone Settings */}
-              <Grid item xs={12}>
-                <Card>
-                  <CardHeader 
-                    title="Communication Tone Settings" 
-                    subheader="Customize how AI communicates with this contact based on their communication style and preferences"
-                  />
-                  <CardContent>
-                    <Grid container spacing={3}>
-                      {/* Tone Balance */}
-                      <Grid item xs={12} md={8}>
-                        <Typography variant="h6" gutterBottom>Contact-Specific Tone</Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                          Adjust the tone characteristics for AI communications with this contact. The AI will blend these to create the most effective communication style.
-                        </Typography>
-                        
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          <Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="body2">Professional</Typography>
-                              <Typography variant="body2" color="primary">{toneSettings.professional}</Typography>
-                            </Box>
-                            <LoggableSlider
-                              fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.toneSettings.professional`}
-                              trigger="update"
-                              destinationModules={['ToneEngine']}
-                              value={toneSettings.professional}
-                              onChange={handleProfessionalTone}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              label="Professional"
-                              contextType="contact"
-                              urgencyScore={4}
-                              description="Contact professional tone setting"
-                            />
-                          </Box>
-                          
-                          <Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="body2">Friendly</Typography>
-                              <Typography variant="body2" color="primary">{toneSettings.friendly}</Typography>
-                            </Box>
-                            <LoggableSlider
-                              fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.toneSettings.friendly`}
-                              trigger="update"
-                              destinationModules={['ToneEngine']}
-                              value={toneSettings.friendly}
-                              onChange={handleFriendlyTone}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              label="Friendly"
-                              contextType="contact"
-                              urgencyScore={4}
-                              description="Contact friendly tone setting"
-                            />
-                          </Box>
-                          
-                          <Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="body2">Encouraging</Typography>
-                              <Typography variant="body2" color="primary">{toneSettings.encouraging}</Typography>
-                            </Box>
-                            <LoggableSlider
-                              fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.toneSettings.encouraging`}
-                              trigger="update"
-                              destinationModules={['ToneEngine']}
-                              value={toneSettings.encouraging}
-                              onChange={handleEncouragingTone}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              label="Encouraging"
-                              contextType="contact"
-                              urgencyScore={4}
-                              description="Contact encouraging tone setting"
-                            />
-                          </Box>
-                          
-                          <Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="body2">Direct</Typography>
-                              <Typography variant="body2" color="primary">{toneSettings.direct}</Typography>
-                            </Box>
-                            <LoggableSlider
-                              fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.toneSettings.direct`}
-                              trigger="update"
-                              destinationModules={['ToneEngine']}
-                              value={toneSettings.direct}
-                              onChange={handleDirectTone}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              label="Direct"
-                              contextType="contact"
-                              urgencyScore={4}
-                              description="Contact direct tone setting"
-                            />
-                          </Box>
-                          
-                          <Box>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                              <Typography variant="body2">Empathetic</Typography>
-                              <Typography variant="body2" color="primary">{toneSettings.empathetic}</Typography>
-                            </Box>
-                            <LoggableSlider
-                              fieldPath={`tenants:${tenantId}.crm_contacts.${contactId}.toneSettings.empathetic`}
-                              trigger="update"
-                              destinationModules={['ToneEngine']}
-                              value={toneSettings.empathetic}
-                              onChange={handleEmpatheticTone}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              label="Empathetic"
-                              contextType="contact"
-                              urgencyScore={4}
-                              description="Contact empathetic tone setting"
-                            />
-                          </Box>
-                        </Box>
-                      </Grid>
-
-                      {/* Tone Preview */}
-                      <Grid item xs={12} md={4}>
-                        <Typography variant="h6" gutterBottom>AI Communication Preview</Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                          Based on your settings, the AI will prioritize:
-                        </Typography>
-                        
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="body2">Encouraging</Typography>
-                            <Typography variant="body2" color="primary" fontWeight="bold">
-                              {Math.round(toneSettings.encouraging * 100)}%
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="body2">Professional</Typography>
-                            <Typography variant="body2" color="primary" fontWeight="bold">
-                              {Math.round(toneSettings.professional * 100)}%
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="body2">Empathetic</Typography>
-                            <Typography variant="body2" color="primary" fontWeight="bold">
-                              {Math.round(toneSettings.empathetic * 100)}%
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="body2">Friendly</Typography>
-                            <Typography variant="body2" color="primary" fontWeight="bold">
-                              {Math.round(toneSettings.friendly * 100)}%
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="body2">Direct</Typography>
-                            <Typography variant="body2" color="primary" fontWeight="bold">
-                              {Math.round(toneSettings.direct * 100)}%
-                            </Typography>
-                          </Box>
-                        </Box>
-                        
-                        <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1, mb: 2 }}>
-                          <Typography variant="subtitle2" gutterBottom>Communication Style</Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {toneSettings.professional > 0.7 && toneSettings.encouraging > 0.7 
-                              ? "The AI will maintain a highly professional and encouraging tone, perfect for senior executives and decision-makers."
-                              : toneSettings.friendly > 0.7 && toneSettings.empathetic > 0.7
-                              ? "The AI will use a warm, friendly, and empathetic approach, ideal for building relationships and trust."
-                              : toneSettings.direct > 0.7
-                              ? "The AI will be direct and to-the-point, focusing on efficiency and clear communication."
-                              : "The AI will balance professionalism with approachability, adapting to the contact's communication preferences."}
-                          </Typography>
-                        </Box>
-                        
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            startIcon={<AutoAwesomeIcon />}
-                            onClick={handleAutoAdjustTone}
-                          >
-                            Auto-Adjust
-                          </Button>
-                          <Button
-                            variant="contained"
-                            size="small"
-                            startIcon={<SaveIcon />}
-                            onClick={handleSaveToneSettings}
-                          >
-                            Save Settings
-                          </Button>
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
+          {/* Appointments Widget (Expanded to take up remaining space) */}
+          <Grid item xs={12} md={8}>
+            <Card sx={{ minHeight: 600 }}>
+              <CardHeader 
+                title="Appointments" 
+                subheader="Upcoming meetings & calls"
+                action={
+                  <IconButton 
+                    size="small" 
+                    title="Schedule meeting"
+                    onClick={() => setShowAppointmentDialog(true)}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                }
+                sx={{ p: 0, mb: 2 }} 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
+              />
+              <CardContent sx={{ p: 0 }}>
+                <AppointmentsDashboard
+                  entityId={contact.id}
+                  entityType="contact"
+                  tenantId={tenantId}
+                  entity={contact}
+                  preloadedContacts={[contact]}
+                  preloadedSalespeople={salespeople}
+                  preloadedCompany={company}
+                />
+              </CardContent>
+            </Card>
           </Grid>
         </Grid>
       </TabPanel>
+
+
 
       <TabPanel value={tabValue} index={2}>
         {contact && (
@@ -1946,24 +2525,36 @@ const ContactDetails: React.FC = () => {
         )}
       </TabPanel>
 
-      <TabPanel value={tabValue} index={1}>
-        {contact && (
-          <ContactTasksDashboard
-            contactId={contact.id}
-            tenantId={tenantId}
-            contact={contact}
-          />
-        )}
-      </TabPanel>
-
       <TabPanel value={tabValue} index={3}>
-        <ActivityLogTab
-          entityId={contactId}
-          entityType="contact"
-          entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
+        <ContactActivityTab
+          contact={contact}
           tenantId={tenantId}
         />
       </TabPanel>
+
+      {/* Delete Contact Button - Bottom of page */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        mt: 9,
+        pb: 3 
+      }}>
+        <Button 
+          variant="outlined" 
+          color="error"
+          sx={{ 
+            borderColor: 'error.main',
+            '&:hover': {
+              borderColor: 'error.dark',
+              backgroundColor: 'error.light'
+            }
+          }}
+          startIcon={<DeleteIcon />}
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          Delete Contact
+        </Button>
+      </Box>
 
       {/* Delete Confirmation Dialog */}
       <Dialog
@@ -1987,6 +2578,112 @@ const ContactDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Task Creation Dialog */}
+      {showTaskDialog && (
+        <CreateTaskDialog
+          open={showTaskDialog}
+          onClose={() => setShowTaskDialog(false)}
+          onSubmit={async (taskData) => {
+            try {
+              await taskService.createTask({
+                ...taskData,
+                tenantId,
+                createdBy: user?.uid || '',
+                associations: {
+                  companies: Array.isArray(contact?.associations?.companies)
+                    ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+                    : [],
+                  contacts: [contact.id],
+                  deals: Array.isArray(contact?.associations?.deals)
+                    ? contact.associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+                    : [],
+                  salespeople: user?.uid ? [user.uid] : []
+                }
+              });
+              setShowTaskDialog(false);
+              setSnackbarMessage('Task created successfully');
+              setSnackbarSeverity('success');
+              setSnackbarOpen(true);
+            } catch (error) {
+              console.error('Error creating task:', error);
+              setSnackbarMessage('Failed to create task');
+              setSnackbarSeverity('error');
+              setSnackbarOpen(true);
+            }
+          }}
+          prefilledData={{
+            assignedTo: user?.uid || '',
+            associations: {
+              companies: Array.isArray(contact?.associations?.companies)
+                ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+                : [],
+              contacts: [contact.id],
+              deals: Array.isArray(contact?.associations?.deals)
+                ? contact.associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+                : [],
+              salespeople: user?.uid ? [user.uid] : []
+            }
+          }}
+          contacts={[contact]}
+          salespeople={salespeople}
+          currentUserId={user?.uid || ''}
+        />
+      )}
+
+      {/* Appointment Creation Dialog */}
+      {showAppointmentDialog && (
+        <CreateTaskDialog
+          open={showAppointmentDialog}
+          onClose={() => setShowAppointmentDialog(false)}
+          onSubmit={async (taskData) => {
+            try {
+              await taskService.createTask({
+                ...taskData,
+                classification: 'appointment',
+                tenantId,
+                createdBy: user?.uid || '',
+                associations: {
+                  companies: Array.isArray(contact?.associations?.companies)
+                    ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+                    : [],
+                  contacts: [contact.id],
+                  deals: Array.isArray(contact?.associations?.deals)
+                    ? contact.associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+                    : [],
+                  salespeople: user?.uid ? [user.uid] : []
+                }
+              });
+              setShowAppointmentDialog(false);
+              setSnackbarMessage('Appointment created successfully');
+              setSnackbarSeverity('success');
+              setSnackbarOpen(true);
+            } catch (error) {
+              console.error('Error creating appointment:', error);
+              setSnackbarMessage('Failed to create appointment');
+              setSnackbarSeverity('error');
+              setSnackbarOpen(true);
+            }
+          }}
+          prefilledData={{
+            classification: 'appointment',
+            assignedTo: user?.uid || '',
+            associations: {
+              companies: Array.isArray(contact?.associations?.companies)
+                ? contact.associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+                : [],
+              contacts: [contact.id],
+              deals: Array.isArray(contact?.associations?.deals)
+                ? contact.associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+                : [],
+              salespeople: user?.uid ? [user.uid] : []
+            }
+          }}
+          contacts={[contact]}
+          salespeople={salespeople}
+          currentUserId={user?.uid || ''}
+        />
+      )}
 
       {/* Email Selection Dialog */}
       <Dialog open={showEmailDialog} onClose={() => setShowEmailDialog(false)} maxWidth="sm" fullWidth>
@@ -2021,6 +2718,18 @@ const ContactDetails: React.FC = () => {
           <Button onClick={() => setShowEmailDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Log Activity Dialog */}
+      <LogActivityDialog
+        open={showLogActivityDialog}
+        onClose={() => setShowLogActivityDialog(false)}
+        onSubmit={handleLogActivity}
+        loading={logActivityLoading}
+        salespeople={salespeople}
+        contacts={[contact]}
+        currentUserId={user?.uid || ''}
+        tenantId={tenantId}
+      />
 
       {/* Toast Notifications */}
       <Snackbar

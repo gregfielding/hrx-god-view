@@ -241,7 +241,7 @@ Generated on: ${new Date().toLocaleString()}`,
 
   return (
     <Box sx={{ px: 0, py: 0 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 0 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 0, px:3 }}>
         <Typography variant="h6" fontWeight={700}>Decision Makers</Typography>
         <Button
           variant="contained"
@@ -255,7 +255,7 @@ Generated on: ${new Date().toLocaleString()}`,
       </Box>
 
       {lastUpdated && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0, mb: '8px' }}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0, mb: '8px', px:3 }}>
           Last updated: {lastUpdated.toLocaleString()}
         </Typography>
       )}

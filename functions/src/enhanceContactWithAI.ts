@@ -67,6 +67,22 @@ export const enhanceContactWithAI = onCall({
       }
     }
 
+    // 5. Generate professional avatar if LinkedIn URL is found and no avatar exists
+    if ((enhancedData.linkedInUrl || currentContact.linkedInUrl) && !currentContact.avatar) {
+      try {
+        const linkedInUrl = enhancedData.linkedInUrl || currentContact.linkedInUrl;
+        // Use DiceBear API to generate a professional-looking avatar
+        const contactName = currentContact.fullName || `${currentContact.firstName || ''} ${currentContact.lastName || ''}`.trim();
+        if (contactName) {
+          const encodedName = encodeURIComponent(contactName);
+          const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodedName}&backgroundColor=1976d2&textColor=ffffff&fontSize=40&fontWeight=600&size=200`;
+          enhancedData.avatar = avatarUrl;
+        }
+      } catch (avatarError) {
+        console.log('Avatar generation failed, continuing without avatar:', avatarError);
+      }
+    }
+
     // 5. Find company information
     if (currentContact.companyName && !currentContact.companyId) {
       const companyInfo = await findCompanyInformation(currentContact.companyName, tenantId);
@@ -235,9 +251,8 @@ Format the response as JSON with these fields:
 }`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
     });
 
     const response = completion.choices[0]?.message?.content;
@@ -323,9 +338,8 @@ ${JSON.stringify(enhancedData, null, 2)}
 Create a concise, professional summary (2-3 sentences) that captures their role, expertise, and professional background.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
     });
 
     return completion.choices[0]?.message?.content || null;

@@ -52,6 +52,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Hub as HubIcon,
   RocketLaunch as RocketLaunchIcon,
+  CloudUpload as UploadIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
@@ -66,9 +67,9 @@ import DealStageForms from '../../components/DealStageForms';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import ActivityLogTab from '../../components/ActivityLogTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
-import DealCoachPanel from '../../components/DealCoachPanel';
-import DealTasksDashboard from '../../components/DealTasksDashboard';
-import DealAppointmentsDashboard from '../../components/DealAppointmentsDashboard';
+import SalesCoach from '../../components/SalesCoach';
+import TasksDashboard from '../../components/TasksDashboard';
+import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import DealAISummary from '../../components/DealAISummary';
 import EmailTab from '../../components/EmailTab';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
@@ -90,6 +91,14 @@ interface DealData {
   stageData?: any;
   createdAt?: any;
   updatedAt?: any;
+  associations?: {
+    companies?: string[];
+    locations?: string[];
+    contacts?: string[];
+    salespeople?: string[];
+    deals?: string[];
+    tasks?: string[];
+  };
 }
 
 interface StageState {
@@ -200,7 +209,6 @@ const DealDetails: React.FC = () => {
     const loadFoundationalData = async () => {
       try {
         console.log('🚀 FOUNDATIONAL: Starting to load deal and associations...');
-        setAssociationsLoading(true);
         setError('');
         
         // Step 1: Load deal data
@@ -227,20 +235,50 @@ const DealDetails: React.FC = () => {
         setDeal(dealData);
         console.log('✅ Step 1: Deal data loaded:', dealData.name);
         
-        // Step 2: Load associations (contacts and salespeople)
-        console.log('🔗 Step 2: Loading associations...');
-        await Promise.all([
-          loadAssociatedContacts(dealData),
-          loadAssociatedSalespeople(dealData)
-        ]);
+        // Step 2: Load associations from denormalized data (instant)
+        console.log('🔗 Step 2: Loading associations from denormalized data...');
         
-        console.log('✅ Step 2: Associations loaded');
+        // Use associations directly from the deal document
+        const associations = dealData.associations || {};
+        
+        // Load contacts from denormalized data
+        if (associations.contacts && Array.isArray(associations.contacts)) {
+          const contacts = associations.contacts.map((contact: any) => ({
+            id: typeof contact === 'string' ? contact : contact.id,
+            fullName: typeof contact === 'string' ? 'Unknown Contact' : (contact.snapshot?.fullName || contact.snapshot?.name || 'Unknown Contact'),
+            email: typeof contact === 'string' ? '' : (contact.snapshot?.email || ''),
+            phone: typeof contact === 'string' ? '' : (contact.snapshot?.phone || ''),
+            title: typeof contact === 'string' ? '' : (contact.snapshot?.title || '')
+          }));
+          setAssociatedContacts(contacts);
+          console.log('✅ Contacts loaded from denormalized data:', contacts.length);
+        } else {
+          setAssociatedContacts([]);
+          console.log('✅ No contacts in denormalized data');
+        }
+        
+        // Load salespeople from denormalized data
+        if (associations.salespeople && Array.isArray(associations.salespeople)) {
+          const salespeople = associations.salespeople.map((salesperson: any) => ({
+            id: typeof salesperson === 'string' ? salesperson : salesperson.id,
+            fullName: typeof salesperson === 'string' ? 'Unknown Salesperson' : (salesperson.snapshot?.fullName || salesperson.snapshot?.name || 'Unknown Salesperson'),
+            email: typeof salesperson === 'string' ? '' : (salesperson.snapshot?.email || ''),
+            title: typeof salesperson === 'string' ? '' : (salesperson.snapshot?.title || '')
+          }));
+          setAssociatedSalespeople(salespeople);
+          console.log('✅ Salespeople loaded from denormalized data:', salespeople.length);
+        } else {
+          setAssociatedSalespeople([]);
+          console.log('✅ No salespeople in denormalized data');
+        }
+        
+        console.log('✅ Associations loaded instantly from denormalized data');
         setAssociationsLoaded(true);
+        setAssociationsLoading(false);
         
       } catch (err: any) {
         console.error('❌ Error loading foundational data:', err);
         setError(err.message || 'Failed to load foundational data');
-      } finally {
         setAssociationsLoading(false);
       }
     };
@@ -1163,19 +1201,79 @@ const DealDetails: React.FC = () => {
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
             {/* Deal Avatar - Use company avatar if available, otherwise deal icon */}
-            <Avatar
-              sx={{ 
-                width: 80, 
-                height: 80,
-                bgcolor: company?.logo ? 'transparent' : 'primary.main',
-                fontSize: '1.5rem',
-                fontWeight: 'bold'
-              }}
-              src={company?.logo}
-              alt={company?.companyName || company?.name || 'Deal'}
-            >
-              {!company?.logo && <DealIcon />}
-            </Avatar>
+            <Box sx={{ position: 'relative' }}>
+              <Avatar
+                sx={{ 
+                  width: 128, 
+                  height: 128,
+                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                  fontSize: '2.5rem',
+                  fontWeight: 'bold'
+                }}
+                src={company?.logo}
+                alt={company?.companyName || company?.name || 'Deal'}
+              >
+                {!company?.logo && <DealIcon />}
+              </Avatar>
+              
+              {/* Avatar Upload/Delete Buttons */}
+              <Box sx={{ 
+                position: 'absolute', 
+                bottom: -8, 
+                right: -8,
+                display: 'flex',
+                gap: 0.5
+              }}>
+                <input
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  id="deal-avatar-upload"
+                  type="file"
+                  onChange={(e) => {
+                    // TODO: Implement logo upload for deals
+                    console.log('Logo upload for deals not yet implemented');
+                  }}
+                />
+                <label htmlFor="deal-avatar-upload">
+                  <IconButton
+                    component="span"
+                    size="small"
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      },
+                      width: 28,
+                      height: 28
+                    }}
+                  >
+                    <UploadIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </label>
+                
+                {company?.logo && (
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      // TODO: Implement logo delete for deals
+                      console.log('Logo delete for deals not yet implemented');
+                    }}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      },
+                      width: 28,
+                      height: 28
+                    }}
+                  >
+                    <DeleteIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                )}
+              </Box>
+            </Box>
 
             {/* Enhanced Deal Information */}
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1 }}>
@@ -1710,10 +1808,11 @@ const DealDetails: React.FC = () => {
                 subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
               />
               <CardContent sx={{ p: 0 }}>
-                <DealTasksDashboard
-                  dealId={deal.id}
+                <TasksDashboard
+                  entityId={deal.id}
+                  entityType="deal"
                   tenantId={tenantId}
-                  deal={deal}
+                  entity={deal}
                   preloadedContacts={associatedContacts}
                   preloadedSalespeople={associatedSalespeople}
                   preloadedCompany={company}
@@ -1758,10 +1857,14 @@ const DealDetails: React.FC = () => {
                 subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
               />
               <CardContent sx={{ p: 0 }}>
-                <DealAppointmentsDashboard
-                  dealId={deal.id}
+                <AppointmentsDashboard
+                  entityId={deal.id}
+                  entityType="deal"
                   tenantId={tenantId}
-                  deal={deal}
+                  entity={deal}
+                  preloadedContacts={associatedContacts}
+                  preloadedSalespeople={associatedSalespeople}
+                  preloadedCompany={company}
                 />
               </CardContent>
             </Card>
@@ -1796,11 +1899,14 @@ const DealDetails: React.FC = () => {
                     let enable = true;
                     try { enable = localStorage.getItem('feature.dealCoach') !== 'false'; } catch {}
                     return enable ? (
-                      <DealCoachPanel 
+                      <SalesCoach 
                         key={dealCoachKey}
-                        dealId={deal.id} 
-                        stageKey={deal.stage} 
-                        tenantId={tenantId} 
+                        entityType="deal"
+                        entityId={deal.id}
+                        entityName={deal.name}
+                        tenantId={tenantId}
+                        dealStage={deal.stage}
+                        associations={deal.associations}
                       />
                     ) : (
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, px: 2 }}>
@@ -2015,6 +2121,7 @@ const DealDetails: React.FC = () => {
           salespeople={associatedSalespeople}
           contacts={associatedContacts}
           currentUserId={user?.uid || ''}
+          tenantId={tenantId}
           dealId={deal?.id}
           dealName={deal?.name}
         />

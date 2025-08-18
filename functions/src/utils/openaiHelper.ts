@@ -13,9 +13,9 @@ export async function getTraitsAndTags(quote: string): Promise<{ traits: string[
       'Authorization': `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 100,
+      max_completion_tokens: 100,
       temperature: 0.3,
     }),
   });

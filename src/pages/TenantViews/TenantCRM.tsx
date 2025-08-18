@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -53,12 +53,14 @@ import {
   where,
   serverTimestamp,
   doc,
+  getDoc,
   updateDoc,
   deleteDoc,
   onSnapshot,
   orderBy,
   limit,
   startAfter,
+  collectionGroup,
 } from 'firebase/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -142,8 +144,12 @@ const TenantCRM: React.FC = () => {
   const [companiesHasMore, setCompaniesHasMore] = useState(true);
   const [companiesPageSize] = useState(20);
   const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(cacheState.companyFilter);
+  const [companyLocationState, setCompanyLocationState] = useState<string>('all');
   const [contactFilter, setContactFilter] = useState<'all' | 'my'>(cacheState.contactFilter);
   const [dealFilter, setDealFilter] = useState<'all' | 'my'>(cacheState.dealFilter);
+  const [companyPins, setCompanyPins] = useState<any[]>([]);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoMessage, setInfoMessage] = useState('');
   
   // Pagination state for contacts
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -201,14 +207,103 @@ const TenantCRM: React.FC = () => {
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [salesTeam, setSalesTeam] = useState<any[]>([]);
   const [salesTeamLoading, setSalesTeamLoading] = useState(false);
+  const companiesLoadSeq = useRef(0);
 
 
   // Load companies with pagination
-  const loadCompanies = async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false) => {
+  const loadCompanies = async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false, stateOverride?: string) => {
     if (!tenantId) return;
     
+    const mySeq = ++companiesLoadSeq.current;
     setCompaniesLoading(true);
     try {
+      const selectedState = stateOverride ?? companyLocationState;
+      // Advanced filter: Companies with at least one location in selected state
+      if (selectedState && selectedState !== 'all') {
+        // Fast path using mirror collection: tenants/{tenantId}/company_locations
+        const locationsRef = collection(db, 'tenants', tenantId, 'company_locations');
+        const locQ = query(locationsRef, where('stateCode', '==', selectedState));
+        const locSnap = await getDocs(locQ);
+        const companyIdSet = new Set<string>();
+        locSnap.docs.forEach(d => {
+          const data: any = d.data();
+          if (data?.companyId) companyIdSet.add(data.companyId);
+        });
+
+        // Fetch matching companies then re-validate by checking subcollection (guards against stale mirror)
+        const ids = Array.from(companyIdSet);
+        const companyDocsRaw = await Promise.all(
+          ids.map(async (cid) => {
+            const ref = doc(db, 'tenants', tenantId, 'crm_companies', cid);
+            const snap = await getDoc(ref);
+            return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+          })
+        );
+        const companyDocs = (companyDocsRaw.filter(Boolean) as any[]);
+        const validated: any[] = [];
+
+        // Map for full state names by code
+        const STATE_BY_CODE: Record<string, string> = {
+          AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming'
+        };
+        const code = selectedState;
+        const full = STATE_BY_CODE[code] || code;
+        const variants = [code, code.toLowerCase(), (full || '').toString(), (full || '').toString().toLowerCase(), (full || '').toString().toUpperCase()];
+
+        for (const c of companyDocs) {
+          try {
+            const locRef = collection(db, 'tenants', tenantId, 'crm_companies', c.id, 'locations');
+            // Try normalized code first
+            let exists = false;
+            try {
+              const s1 = await getDocs(query(locRef, where('stateCode', '==', code), limit(1)));
+              exists = !s1.empty;
+            } catch {}
+            if (!exists) {
+              // Fallback to various 'state' string variants
+              try {
+                const s2 = await getDocs(query(locRef, where('state', 'in', variants.slice(0, 10)), limit(1)));
+                exists = !s2.empty;
+              } catch {}
+            }
+            if (!exists) {
+              try {
+                const s3 = await getDocs(query(locRef, where('address.state', 'in', variants.slice(0, 10)), limit(1)));
+                exists = !s3.empty;
+              } catch {}
+            }
+            if (exists) validated.push(c);
+          } catch {
+            // skip if any unexpected error
+          }
+        }
+        // Apply search and my filters client-side
+        const searchLower = searchQuery.trim().toLowerCase();
+        const companiesData = validated.filter((company: any) => {
+          if (filterByUser && currentUser?.uid) {
+            const sales = company.associations?.salespeople || [];
+            const mine = sales.some((sp: any) => (typeof sp === 'string' ? sp === currentUser.uid : sp?.id === currentUser.uid));
+            if (!mine) return false;
+          }
+          if (!searchLower) return true;
+          const companyName = (company.companyName || company.name || '').toLowerCase();
+          const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+          const city = (company.city || '').toLowerCase();
+          const industry = (company.industry || '').toLowerCase();
+          return companyName.includes(searchLower) || companyUrl.includes(searchLower) || city.includes(searchLower) || industry.includes(searchLower);
+        });
+
+        // Note: we already validated via subcollection above; no further filtering needed here
+
+        const limitedData = companiesData.slice(0, companiesPageSize);
+        if (companiesLoadSeq.current !== mySeq) return;
+        setCompanies(prev => append ? [...prev, ...limitedData] : limitedData);
+        setCompaniesHasMore(companiesData.length > companiesPageSize);
+        setCompaniesLastDoc(null);
+        setCompaniesLoading(false);
+        return;
+      }
+
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       const constraints: any[] = [orderBy('createdAt', 'desc'), limit(companiesPageSize)];
 
@@ -466,7 +561,7 @@ const TenantCRM: React.FC = () => {
         setCompaniesHasMore(false);
       }
     } finally {
-      setCompaniesLoading(false);
+      if (companiesLoadSeq.current === mySeq) setCompaniesLoading(false);
     }
   };
 
@@ -986,6 +1081,22 @@ const TenantCRM: React.FC = () => {
     loadCompanies('', null, false, newFilter === 'my');
   };
 
+  const handleCompanyLocationStateChange = (newState: string) => {
+    setCompanyLocationState(newState);
+    // Immediately reflect loading state in UI
+    setCompanies([]);
+    setCompaniesHasMore(true);
+    setCompaniesLastDoc(null);
+    setCompaniesLoading(true);
+    setCompanyPins([]);
+    if (newState !== 'all') {
+      setInfoMessage(`Filtering companies by state: ${newState}`);
+      setInfoOpen(true);
+    }
+    // Reload companies using current ownership filter
+    loadCompanies('', null, false, companyFilter === 'my', newState);
+  };
+
   const handleContactFilterChange = (newFilter: 'all' | 'my') => {
     setContactFilter(newFilter);
     updateCacheState({ contactFilter: newFilter });
@@ -1341,6 +1452,8 @@ const TenantCRM: React.FC = () => {
             onCompanyFilterChange={handleCompanyFilterChange}
             tenantId={tenantId}
             onUpdatePipelineTotals={handleUpdatePipelineTotals}
+            locationStateFilter={companyLocationState}
+            onLocationStateFilterChange={handleCompanyLocationStateChange}
           />
         </Box>
       )}
@@ -2671,7 +2784,9 @@ const CompaniesTab: React.FC<{
   onCompanyFilterChange: (newFilter: 'all' | 'my') => void;
   tenantId: string;
   onUpdatePipelineTotals: (companyId: string) => Promise<void>;
-}> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals }) => {
+  locationStateFilter: string;
+  onLocationStateFilterChange: (state: string) => void;
+}> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals, locationStateFilter, onLocationStateFilterChange }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
@@ -2849,7 +2964,7 @@ const CompaniesTab: React.FC<{
     <Box>
       {/* Header with search and actions */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Companies ({filteredCompanies.length})</Typography>
+        <Typography variant="h6">Companies</Typography>
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
           {/* Company Filter Toggle */}
           <ToggleButtonGroup
@@ -2898,6 +3013,31 @@ const CompaniesTab: React.FC<{
             }}
           />
 
+          {/* State Filter */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>State Filter</InputLabel>
+              <Select
+                value={locationStateFilter}
+                onChange={(e) => onLocationStateFilterChange(e.target.value)}
+                label="State Filter"
+              >
+                <MenuItem value="all">All States</MenuItem>
+                {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
+                  <MenuItem key={st} value={st}>{st}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <IconButton
+              size="small"
+              aria-label="Clear state filter"
+              onClick={() => onLocationStateFilterChange('all')}
+              disabled={locationStateFilter === 'all'}
+            >
+              <ClearIcon fontSize="small" />
+            </IconButton>
+          </Box>
+
           <Button
             variant="contained"
             color="primary"
@@ -2906,11 +3046,14 @@ const CompaniesTab: React.FC<{
           >
             Add Company
           </Button>
+          {/* Duplicate cleanup (admin) */}
+          {/* <DuplicateCleanupButton tenantId={tenantId} /> */}
         </Box>
       </Box>
 
       {/* Companies Table */}
       <TableContainer component={Paper}>
+        {loading ? null : (
         <Table>
           <TableHead>
             <TableRow>
@@ -3066,7 +3209,9 @@ const CompaniesTab: React.FC<{
             ))}
           </TableBody>
         </Table>
+        )}
       </TableContainer>
+
 
       {/* Pagination Controls */}
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, gap: 2 }}>
@@ -4003,6 +4148,42 @@ const CompaniesTab: React.FC<{
           </Button>
         </DialogActions>
       </Dialog>
+    </Box>
+  );
+};
+
+// Admin helper: run duplicate cleanup via callable
+const DuplicateCleanupButton: React.FC<{ tenantId: string }> = ({ tenantId }) => {
+  const [busy, setBusy] = useState(false);
+  const [lastResult, setLastResult] = useState<any>(null);
+  const handleRun = async (apply: boolean) => {
+    try {
+      setBusy(true);
+      const fn = httpsCallable(getFunctions(), 'deleteDuplicateCompanies');
+      const res: any = await fn({ tenantId, apply, mode: 'both' });
+      setLastResult(res.data);
+    } catch (e) {
+      console.error('Duplicate cleanup error', e);
+      setLastResult({ ok: false, error: String((e as any)?.message || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Box sx={{ display: 'flex', gap: 1 }}>
+      <Button size="small" variant="outlined" disabled={busy} onClick={() => handleRun(false)}>
+        {busy ? 'Running…' : 'Find Duplicates'}
+      </Button>
+      <Button size="small" variant="outlined" color="error" disabled={busy} onClick={() => handleRun(true)}>
+        {busy ? 'Applying…' : 'Delete Duplicates'}
+      </Button>
+      {lastResult && (
+        <Typography variant="caption" color={lastResult.ok ? 'text.secondary' : 'error'} sx={{ ml: 1 }}>
+          {lastResult.ok
+            ? `Groups: ${lastResult.duplicateGroups}, deletions: ${lastResult.deleted || 0}`
+            : `Error: ${lastResult.error}`}
+        </Typography>
+      )}
     </Box>
   );
 };

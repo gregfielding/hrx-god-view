@@ -32,11 +32,24 @@ import { TaskStatus, TaskClassification } from '../types/Tasks';
 import CreateTaskDialog from './CreateTaskDialog';
 import CreateFollowUpCampaignDialog from './CreateFollowUpCampaignDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
+import TaskCard from './TaskCard';
 
 interface ContactTasksDashboardProps {
   contactId: string;
   tenantId: string;
   contact: any; // Contact information
+  // NEW: Pre-loaded associations to prevent duplicate calls
+  preloadedContacts?: any[];
+  preloadedSalespeople?: any[];
+  preloadedCompany?: any;
+}
+
+interface AISuggestionsListProps {
+  suggestions: any[];
+  onAccept: (suggestion: any) => void;
+  onReject: (suggestionId: string) => void;
+  showEmptyState: boolean;
+  emptyStateMessage: string;
 }
 
 interface TaskDashboardData {
@@ -78,7 +91,10 @@ interface TaskDashboardData {
 const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
   contactId,
   tenantId,
-  contact
+  contact,
+  preloadedContacts,
+  preloadedSalespeople,
+  preloadedCompany
 }) => {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState<TaskDashboardData | null>(null);
@@ -93,9 +109,10 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
 
   const taskService = TaskService.getInstance();
 
-  useEffect(() => {
-    loadDashboardData();
-  }, [contactId, tenantId]);
+  // Removed loadDashboardData call - real-time subscription handles data loading
+  // useEffect(() => {
+  //   loadDashboardData();
+  // }, [contactId, tenantId]);
 
   // Set up real-time subscription for task updates
   useEffect(() => {
@@ -106,37 +123,47 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
       tenantId,
       { contactId },
       (tasks) => {
+        console.log('🔍 ContactTasksDashboard received tasks:', tasks.length, tasks);
         // Process tasks into dashboard format for backward compatibility
         const openTasks = tasks.filter(task => task.status !== 'completed');
         const completedTasks = tasks.filter(task => task.status === 'completed');
+        console.log('🔍 Open tasks:', openTasks.length, openTasks);
+        console.log('🔍 Task statuses:', tasks.map(t => ({ id: t.id, status: t.status, title: t.title })));
         
         const today = new Date().toISOString().split('T')[0];
         const thisWeekStart = new Date();
+        thisWeekStart.setHours(0, 0, 0, 0);
         const thisWeekEnd = new Date(thisWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
         
-        const todayTasks = openTasks.filter(task => task.dueDate === today);
-        const thisWeekTasks = openTasks.filter(task => {
-          const taskDate = new Date(task.dueDate + 'T00:00:00');
-          return taskDate >= thisWeekStart && taskDate <= thisWeekEnd;
+        // For contact tasks, show ALL open tasks regardless of date
+        // This ensures we see all tasks associated with the contact
+        const todayTasks = openTasks.filter(task => {
+          const taskDate = task.dueDate || task.scheduledDate;
+          if (!taskDate) return true; // Show tasks without dates
+          return taskDate === today;
         });
+        
+        // For contacts, always show all open tasks (no date filtering)
+        const displayTasks = openTasks;
+        console.log('🔍 Display tasks:', displayTasks.length, displayTasks);
         
         setDashboardData({
           today: { 
-            totalTasks: todayTasks.length,
-            completedTasks: todayTasks.filter(t => t.status === 'completed').length,
-            pendingTasks: todayTasks.filter(t => t.status !== 'completed').length,
-            tasks: todayTasks
+            totalTasks: displayTasks.length,
+            completedTasks: displayTasks.filter(t => t.status === 'completed').length,
+            pendingTasks: displayTasks.filter(t => t.status !== 'completed').length,
+            tasks: displayTasks
           },
           thisWeek: { 
-            totalTasks: thisWeekTasks.length,
-            completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
-            pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
+            totalTasks: displayTasks.length,
+            completedTasks: displayTasks.filter(t => t.status === 'completed').length,
+            pendingTasks: displayTasks.filter(t => t.status !== 'completed').length,
             quotaProgress: {
-              percentage: thisWeekTasks.length > 0 ? (thisWeekTasks.filter(t => t.status === 'completed').length / thisWeekTasks.length) * 100 : 0,
-              completed: thisWeekTasks.filter(t => t.status === 'completed').length,
-              target: thisWeekTasks.length
+              percentage: displayTasks.length > 0 ? (displayTasks.filter(t => t.status === 'completed').length / displayTasks.length) * 100 : 0,
+              completed: displayTasks.filter(t => t.status === 'completed').length,
+              target: displayTasks.length
             },
-            tasks: thisWeekTasks
+            tasks: displayTasks
           },
           completed: { 
             totalTasks: completedTasks.length,
@@ -375,6 +402,11 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
     }
   };
 
+  const handleEditTask = (task: any) => {
+    setSelectedTask(task);
+    setShowDetailsDialog(true);
+  };
+
   const handleAcceptSuggestion = async (suggestion: any) => {
     if (!user) return;
 
@@ -432,6 +464,17 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
     }
   };
 
+  const calculateUrgency = (task: any) => {
+    const dueDate = new Date((task.dueDate || task.scheduledDate) + 'T00:00:00');
+    const now = new Date();
+    const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+    
+    if (diffHours < 0) return 'overdue';
+    if (diffHours < 24) return 'urgent';
+    if (diffHours < 72) return 'soon';
+    return 'normal';
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'success';
@@ -452,17 +495,6 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
       case 'business': return <BusinessIcon />;
       default: return <AssignmentIcon />;
     }
-  };
-
-  const calculateUrgency = (task: any) => {
-    const dueDate = new Date((task.dueDate || task.scheduledDate) + 'T00:00:00');
-    const now = new Date();
-    const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-    
-    if (diffHours < 0) return 'overdue';
-    if (diffHours < 24) return 'urgent';
-    if (diffHours < 72) return 'soon';
-    return 'normal';
   };
 
   if (loading) {
@@ -486,273 +518,161 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
     );
   }
 
+  const AISuggestionsList: React.FC<AISuggestionsListProps> = ({
+    suggestions,
+    onAccept,
+    onReject,
+    showEmptyState,
+    emptyStateMessage
+  }) => {
+    const getTaskTypeIcon = (type: string) => {
+      switch (type) {
+        case 'email': return <EmailIcon />;
+        case 'phone_call': return <PhoneIcon />;
+        case 'scheduled_meeting_virtual': return <ScheduleIcon />;
+        case 'research': return <PsychologyIcon />;
+        case 'business': return <BusinessIcon />;
+        default: return <AssignmentIcon />;
+      }
+    };
+
+    const getStatusColor = (status: string) => {
+      switch (status) {
+        case 'completed': return 'success';
+        case 'due': return 'warning';
+        case 'upcoming': return 'info';
+        case 'postponed': return 'default';
+        case 'cancelled': return 'error';
+        default: return 'default';
+      }
+    };
+    if (suggestions.length === 0 && showEmptyState) {
+      return (
+        <Card>
+          <CardContent>
+            <Typography variant="body1" color="textSecondary" align="center">
+              {emptyStateMessage}
+            </Typography>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <List>
+        {suggestions.map((suggestion, index) => (
+          <Card key={index} sx={{ mb: 2 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <Box sx={{ flex: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                    {getTaskTypeIcon(suggestion.type)}
+                    <Typography variant="h6" sx={{ ml: 1, flex: 1 }}>
+                      {suggestion.title}
+                    </Typography>
+                    <Chip
+                      label={suggestion.priority}
+                      color={getStatusColor(suggestion.priority) as any}
+                      size="small"
+                    />
+                  </Box>
+                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                    {suggestion.description}
+                  </Typography>
+                  {suggestion.aiReason && (
+                    <Typography variant="caption" color="info.main">
+                      AI Reason: {suggestion.aiReason}
+                    </Typography>
+                  )}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <IconButton
+                    size="small"
+                    color="success"
+                    onClick={() => onAccept(suggestion)}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => onReject(suggestion.id || index.toString())}
+                  >
+                    <RefreshIcon />
+                  </IconButton>
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        ))}
+      </List>
+    );
+  };
+
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h5" component="h2">
-          Contact Tasks - {contact?.fullName || contact?.firstName || 'Contact'}
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          <Button
-            variant="outlined"
-            startIcon={<AddIcon />}
-            onClick={() => setShowCreateDialog(true)}
-          >
-            Add Task
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setShowFollowUpDialog(true)}
-          >
-            Add Follow Up Campaign
-          </Button>
-        </Box>
-      </Box>
-
-      {/* Quick Stats */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="textSecondary" gutterBottom>
-                Today&apos;s Tasks
-              </Typography>
-              <Typography variant="h4">
-                {dashboardData?.today?.totalTasks || 0}
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                {dashboardData?.today?.completedTasks || 0} completed
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="textSecondary" gutterBottom>
-                This Week
-              </Typography>
-              <Typography variant="h4">
-                {dashboardData?.thisWeek?.totalTasks || 0}
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                {dashboardData?.thisWeek?.completedTasks || 0} completed
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="textSecondary" gutterBottom>
-                Quota Progress
-              </Typography>
-              <Typography variant="h4">
-                {dashboardData?.thisWeek?.quotaProgress?.percentage || 0}%
-              </Typography>
-              <LinearProgress 
-                variant="determinate" 
-                value={dashboardData?.thisWeek?.quotaProgress?.percentage || 0}
-                sx={{ mt: 1 }}
-              />
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography color="textSecondary" gutterBottom>
-                AI Suggestions
-              </Typography>
-              <Typography variant="h4">
-                {aiSuggestions.length}
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                Available
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
-      {/* Breadcrumb-style subnavigation to match DealTasksDashboard */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(0)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 0 ? 'bold' : 'normal',
-              textDecoration: activeTab === 0 ? 'underline' : 'none',
-              color: activeTab === 0 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <AssignmentIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Today&apos;s Tasks
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(1)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 1 ? 'bold' : 'normal',
-              textDecoration: activeTab === 1 ? 'underline' : 'none',
-              color: activeTab === 1 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <TrendingUpIcon fontSize="small" sx={{ mr: 0.5 }} />
-            This Week
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(2)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 2 ? 'bold' : 'normal',
-              textDecoration: activeTab === 2 ? 'underline' : 'none',
-              color: activeTab === 2 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <CheckCircleIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Completed
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setActiveTab(3)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: activeTab === 3 ? 'bold' : 'normal',
-              textDecoration: activeTab === 3 ? 'underline' : 'none',
-              color: activeTab === 3 ? 'primary.main' : 'text.secondary'
-            }}
-          >
-            <PsychologyIcon fontSize="small" sx={{ mr: 0.5 }} />
-            AI Suggestions
-          </Button>
-          <Typography variant="body2" color="text.secondary">/</Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setShowCreateDialog(true)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: 'normal'
-            }}
-          >
-            <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Add Task
-          </Button>
-          <Button
-            variant="text"
-            size="small"
-            onClick={() => setShowFollowUpDialog(true)}
-            sx={{ 
-              borderRadius: 0,
-              px: 2,
-              py: 1,
-              minWidth: 'auto',
-              textTransform: 'none',
-              fontWeight: 'normal'
-            }}
-          >
-            <AddIcon fontSize="small" sx={{ mr: 0.5 }} />
-            Add Campaign
-          </Button>
-        </Box>
-      </Box>
-
-      {/* Tab Content */}
+    <Box>
+      {/* Combined Task List - Active tasks first, then completed tasks */}
       {activeTab === 0 && (
         <TasksList
-          tasks={dashboardData?.today?.tasks || []}
+          tasks={[
+            ...(dashboardData?.today?.tasks || []),
+            ...(dashboardData?.completed?.tasks || [])
+          ]}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
+          onEditTask={handleEditTask}
+          showEmptyState={true}
+          emptyStateMessage="No tasks for this contact"
+          preloadedContacts={preloadedContacts}
+          preloadedSalespeople={preloadedSalespeople}
+          preloadedCompany={preloadedCompany}
         />
       )}
-
       {activeTab === 1 && (
         <TasksList
-          tasks={dashboardData?.thisWeek?.tasks || []}
+          tasks={[
+            ...(dashboardData?.thisWeek?.tasks || []),
+            ...(dashboardData?.completed?.tasks || [])
+          ]}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
+          onEditTask={handleEditTask}
+          showEmptyState={true}
+          emptyStateMessage="No tasks for this period"
+          preloadedContacts={preloadedContacts}
+          preloadedSalespeople={preloadedSalespeople}
+          preloadedCompany={preloadedCompany}
         />
       )}
-
       {activeTab === 2 && (
         <TasksList
-          tasks={(() => {
-            const today = dashboardData?.today?.tasks || [];
-            const week = dashboardData?.thisWeek?.tasks || [];
-            const combined = [...today, ...week];
-            
-            // Deduplicate by task ID
-            const taskMap = new Map();
-            combined.forEach(task => {
-              taskMap.set(task.id, task);
-            });
-            
-            return Array.from(taskMap.values()).filter((t: any) => t.status === 'completed');
-          })()}
+          tasks={dashboardData?.completed?.tasks || []}
           onTaskClick={(task) => {
             setSelectedTask(task);
             setShowDetailsDialog(true);
           }}
           onQuickComplete={handleQuickComplete}
-          getStatusColor={getStatusColor}
-          getTaskTypeIcon={getTaskTypeIcon}
-          calculateUrgency={calculateUrgency}
+          onEditTask={handleEditTask}
+          showEmptyState={true}
+          emptyStateMessage="No completed tasks"
+          preloadedContacts={preloadedContacts}
+          preloadedSalespeople={preloadedSalespeople}
+          preloadedCompany={preloadedCompany}
         />
       )}
-
       {activeTab === 3 && (
         <AISuggestionsList
           suggestions={aiSuggestions}
           onAccept={handleAcceptSuggestion}
           onReject={handleRejectSuggestion}
-          getPriorityColor={getStatusColor}
-          getTaskIcon={getTaskTypeIcon}
+          showEmptyState={true}
+          emptyStateMessage="No AI suggestions available"
         />
       )}
 
@@ -762,6 +682,20 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
           open={showCreateDialog}
           onClose={() => setShowCreateDialog(false)}
           onSubmit={handleCreateTask}
+          prefilledData={{
+            assignedTo: user?.uid || '',
+            associations: {
+              companies: Array.isArray((contact as any)?.associations?.companies)
+                ? (contact as any).associations.companies.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+                : [],
+              contacts: [contactId],
+              deals: Array.isArray((contact as any)?.associations?.deals)
+                ? (contact as any).associations.deals.map((d: any) => (typeof d === 'string' ? d : d?.id)).filter(Boolean)
+                : [],
+              salespeople: []
+            }
+          }}
+          currentUserId={user?.uid || ''}
         />
       )}
 
@@ -806,25 +740,51 @@ interface TasksListProps {
   tasks: any[];
   onTaskClick: (task: any) => void;
   onQuickComplete: (taskId: string) => void;
-  getStatusColor: (status: string) => string;
-  getTaskTypeIcon: (type: string) => React.ReactNode;
-  calculateUrgency: (task: any) => string;
+  onEditTask?: (task: any) => void; // New prop for edit functionality
+  showEmptyState: boolean;
+  emptyStateMessage: string;
+  preloadedContacts?: any[];
+  preloadedSalespeople?: any[];
+  preloadedCompany?: any;
 }
 
 const TasksList: React.FC<TasksListProps> = ({
   tasks,
   onTaskClick,
   onQuickComplete,
-  getStatusColor,
-  getTaskTypeIcon,
-  calculateUrgency
+  onEditTask,
+  showEmptyState,
+  emptyStateMessage,
+  preloadedContacts,
+  preloadedSalespeople,
+  preloadedCompany
 }) => {
-  if (tasks.length === 0) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'success';
+      case 'due': return 'warning';
+      case 'upcoming': return 'info';
+      case 'postponed': return 'default';
+      case 'cancelled': return 'error';
+      default: return 'default';
+    }
+  };
+
+  const getTaskStatusDisplay = (task: any) => {
+    if (task.status === 'completed') return 'completed';
+    if (task.status === 'due') return 'due';
+    if (task.status === 'upcoming') return 'upcoming';
+    if (task.status === 'postponed') return 'postponed';
+    if (task.status === 'cancelled') return 'cancelled';
+    return 'pending';
+  };
+
+  if (tasks.length === 0 && showEmptyState) {
     return (
       <Card>
         <CardContent>
           <Typography variant="body1" color="textSecondary" align="center">
-            No tasks for this period
+            {emptyStateMessage}
           </Typography>
         </CardContent>
       </Card>
@@ -832,153 +792,31 @@ const TasksList: React.FC<TasksListProps> = ({
   }
 
   return (
-    <List>
+    <Box>
       {tasks.map((task) => (
-        <Card key={task.id} sx={{ mb: 2 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ flex: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  {getTaskTypeIcon(task.type)}
-                  <Typography variant="h6" sx={{ ml: 1, flex: 1 }}>
-                    {task.title}
-                  </Typography>
-                  <Chip
-                    label={task.status}
-                    color={getStatusColor(task.status) as any}
-                    size="small"
-                    sx={{ mr: 1 }}
-                  />
-                  <Chip
-                    label={task.priority}
-                    color={task.priority === 'high' ? 'error' : task.priority === 'medium' ? 'warning' : 'default'}
-                    size="small"
-                  />
-                </Box>
-                <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                  {task.description}
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="caption" color="textSecondary">
-                    {new Date((task.classification === 'todo' ? task.dueDate : task.scheduledDate) + 'T00:00:00').toLocaleDateString()}
-                  </Typography>
-                  {task.estimatedDuration && (
-                    <Typography variant="caption" color="textSecondary">
-                      • {task.estimatedDuration} min
-                    </Typography>
-                  )}
-                  {task.aiSuggested && (
-                    <Chip
-                      label="AI Suggested"
-                      size="small"
-                      color="info"
-                      icon={<PsychologyIcon />}
-                    />
-                  )}
-                </Box>
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <IconButton
-                  size="small"
-                  onClick={() => onTaskClick(task)}
-                >
-                  <AssignmentIcon />
-                </IconButton>
-                {task.status !== 'completed' && (
-                  <IconButton
-                    size="small"
-                    color="success"
-                    onClick={() => onQuickComplete(task.id)}
-                  >
-                    <CheckCircleIcon />
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
+        <TaskCard
+          key={task.id}
+          task={task}
+          onTaskClick={onTaskClick}
+          onQuickComplete={onQuickComplete}
+          onEditTask={onEditTask}
+          getStatusColor={getStatusColor}
+          getTaskStatusDisplay={getTaskStatusDisplay}
+          showCompany={true}
+          showDeal={true}
+          showContacts={true}
+          deal={task.deal}
+          company={preloadedCompany}
+          contacts={preloadedContacts || []}
+          salespeople={preloadedSalespeople || []}
+          variant="default"
+        />
       ))}
-    </List>
+    </Box>
   );
 };
 
-interface AISuggestionsListProps {
-  suggestions: any[];
-  onAccept: (suggestion: any) => void;
-  onReject: (suggestionId: string) => void;
-  getPriorityColor: (priority: string) => string;
-  getTaskIcon: (type: string) => React.ReactNode;
-}
 
-const AISuggestionsList: React.FC<AISuggestionsListProps> = ({
-  suggestions,
-  onAccept,
-  onReject,
-  getPriorityColor,
-  getTaskIcon
-}) => {
-  if (suggestions.length === 0) {
-    return (
-      <Card>
-        <CardContent>
-          <Typography variant="body1" color="textSecondary" align="center">
-            No AI suggestions available
-          </Typography>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <List>
-      {suggestions.map((suggestion, index) => (
-        <Card key={index} sx={{ mb: 2 }}>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ flex: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  {getTaskIcon(suggestion.type)}
-                  <Typography variant="h6" sx={{ ml: 1, flex: 1 }}>
-                    {suggestion.title}
-                  </Typography>
-                  <Chip
-                    label={suggestion.priority}
-                    color={getPriorityColor(suggestion.priority) as any}
-                    size="small"
-                  />
-                </Box>
-                <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                  {suggestion.description}
-                </Typography>
-                {suggestion.aiReason && (
-                  <Typography variant="caption" color="info.main">
-                    AI Reason: {suggestion.aiReason}
-                  </Typography>
-                )}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <IconButton
-                  size="small"
-                  color="success"
-                  onClick={() => onAccept(suggestion)}
-                >
-                  <AddIcon />
-                </IconButton>
-                <IconButton
-                  size="small"
-                  color="error"
-                  onClick={() => onReject(suggestion.id || index.toString())}
-                >
-                  <RefreshIcon />
-                </IconButton>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-      ))}
-    </List>
-  );
-};
 
 // interface TasksAnalyticsProps {
 //   dashboardData: TaskDashboardData | null;

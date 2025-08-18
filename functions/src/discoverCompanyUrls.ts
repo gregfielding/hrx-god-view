@@ -243,7 +243,7 @@ const discoverUrlsWithAI = async (companyName: string) => {
     `;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
     });

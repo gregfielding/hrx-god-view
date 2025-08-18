@@ -14,12 +14,12 @@ export const devopsChat = functions.https.onRequest(async (req, res) => {
   const systemPrompt = `You are the DevOps assistant for the HRX project. You have access to the following context:\n- Recent logs: ${context?.logs}\n- Current error: ${context?.error}\n- Current file: ${context?.filename}\n- Project structure: ${context?.filetree}\nAnswer as a helpful, expert AI DevOps assistant. Suggest fixes, explain issues, and propose code changes as needed.`;
 
   const payload = {
-    model: 'gpt-4',
+    model: 'gpt-5',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message }
     ],
-    max_tokens: 512,
+          max_completion_tokens: 512,
     temperature: 0.2
   };
 

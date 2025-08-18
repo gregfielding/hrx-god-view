@@ -458,7 +458,7 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [
         {
           role: "system",
@@ -470,7 +470,7 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
         }
       ],
       temperature: 0.1,
-      max_tokens: 2000
+      max_completion_tokens: 2000
     });
 
     const response = completion.choices[0]?.message?.content;
@@ -728,7 +728,7 @@ ${originalText.substring(0, 2000)}
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [
         {
           role: "system",
@@ -740,7 +740,7 @@ ${originalText.substring(0, 2000)}
         }
       ],
       temperature: 0.3,
-      max_tokens: 1500
+      max_completion_tokens: 1500
     });
 
     const response = completion.choices[0]?.message?.content;

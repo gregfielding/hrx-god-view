@@ -99,6 +99,12 @@ export interface Task {
   updatedAt: string;
   completedAt?: string;
   
+  // Repeating task fields
+  isRepeating?: boolean;
+  repeatInterval?: number; // Days between repetitions
+  nextRepeatDate?: string; // ISO date string for next occurrence
+  originalTaskId?: string; // Reference to the original task for repeating tasks
+  
   // Action tracking
   actionResult?: any;
   estimatedValue?: number;

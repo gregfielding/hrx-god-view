@@ -136,13 +136,13 @@ export const enhancedChatWithGPT = onRequest({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: finalUserMessage }
         ],
         temperature: 0.7,
-        max_tokens: 1000
+        max_completion_tokens: 1000
       })
     });
 

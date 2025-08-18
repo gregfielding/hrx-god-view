@@ -39,21 +39,23 @@ interface LogActivityDialogProps {
   salespeople?: any[];
   contacts?: any[];
   currentUserId?: string;
+  tenantId?: string;
   dealId?: string;
   dealName?: string;
 }
 
   const LogActivityDialog: React.FC<LogActivityDialogProps> = ({
-    open,
-    onClose,
-    onSubmit,
-    loading = false,
-    salespeople = [],
-    contacts = [],
-    currentUserId = '',
-    dealId,
-    dealName
-  }) => {
+  open,
+  onClose,
+  onSubmit,
+  loading = false,
+  salespeople = [],
+  contacts = [],
+  currentUserId = '',
+  tenantId = '',
+  dealId,
+  dealName
+}) => {
       // REMOVED: Excessive logging causing re-renders
     
     // REMOVED: Excessive logging causing re-renders
@@ -85,7 +87,7 @@ interface LogActivityDialogProps {
     completedDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 30,
-    category: 'general',
+    category: 'business_generating',
     quotaCategory: 'business_generating',
     notes: '',
     tags: ['logged-activity'] as string[],
@@ -98,6 +100,34 @@ interface LogActivityDialogProps {
   });
 
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+
+  // Pre-populate contacts and salespeople when dialog opens
+  React.useEffect(() => {
+    if (open) {
+      const updates: any = {};
+      
+      // Pre-populate contacts
+      if (contacts && contacts.length > 0) {
+        const contactIds = contacts.map(c => c.id);
+        updates.contacts = contactIds;
+      }
+      
+      // Pre-populate current user as salesperson
+      if (currentUserId) {
+        updates.salespeople = [currentUserId];
+      }
+      
+      if (Object.keys(updates).length > 0) {
+        setFormData(prev => ({
+          ...prev,
+          associations: {
+            ...prev.associations,
+            ...updates
+          }
+        }));
+      }
+    }
+  }, [open, contacts, currentUserId]);
 
   const handleInputChange = (field: string, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -162,6 +192,11 @@ interface LogActivityDialogProps {
 
     const taskData = {
       ...formData,
+      // Required fields that might be missing
+      tenantId: tenantId || '',
+      createdBy: currentUserId || '',
+      assignedTo: Array.isArray(formData.assignedTo) ? formData.assignedTo[0] || currentUserId || '' : formData.assignedTo || currentUserId || '',
+      dueDate: formData.scheduledDate, // Use scheduledDate as dueDate for todos
       estimatedDuration: Number(formData.estimatedDuration || 0),
       completedAt: new Date(),
       createdAt: new Date(),
@@ -183,7 +218,7 @@ interface LogActivityDialogProps {
       completedDate: new Date().toISOString().split('T')[0],
       assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 30,
-      category: 'general',
+      category: 'business_generating',
       quotaCategory: 'business_generating',
       notes: '',
       tags: ['logged-activity'],
@@ -296,7 +331,11 @@ interface LogActivityDialogProps {
             multiple
             options={contacts as any[]}
             getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
-            value={(contacts || []).filter((c: any) => (formData.associations?.contacts || []).includes(c.id)) as any[]}
+            value={(contacts || []).filter((c: any) => 
+              (formData.associations?.contacts || []).some((contactId: any) => 
+                typeof contactId === 'string' ? contactId === c.id : contactId?.id === c.id
+              )
+            ) as any[]}
             onChange={(_, newValue: any[]) => {
               handleAssociationChange('contacts', newValue.map(v => v.id));
             }}
@@ -317,7 +356,11 @@ interface LogActivityDialogProps {
             multiple
             options={allSalespeople as any[]}
             getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
-            value={(allSalespeople || []).filter((s: any) => (formData.associations?.salespeople || []).includes(s.id)) as any[]}
+            value={(allSalespeople || []).filter((s: any) => 
+              (formData.associations?.salespeople || []).some((salespersonId: any) => 
+                typeof salespersonId === 'string' ? salespersonId === s.id : salespersonId?.id === s.id
+              )
+            ) as any[]}
             onChange={(_, newValue: any[]) => {
               handleAssociationChange('salespeople', newValue.map(v => v.id));
             }}

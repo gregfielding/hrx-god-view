@@ -41,7 +41,7 @@ export const app_ai_generateResponse = onCall({ cors: true, region: 'us-central1
         model,
         messages,
         temperature,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         top_p: 1,
         frequency_penalty: 0,
         presence_penalty: 0,

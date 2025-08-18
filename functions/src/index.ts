@@ -48,6 +48,8 @@ import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
 import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
 import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
+import { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
+import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
@@ -82,7 +84,7 @@ export {
 
 // Export association snapshot fan-out triggers
 export {
-  firestoreCompanySnapshotFanout,
+  firestoreCompanySnapshotFanout, // RE-ENABLED WITH FIXES
   firestoreContactSnapshotFanout,
   firestoreLocationSnapshotFanout,
   firestoreSalespersonSnapshotFanout
@@ -93,6 +95,10 @@ export { associationsIntegrityReport, associationsIntegrityNightly };
 export { rebuildDealAssociations, rebuildEntityReverseIndex };
 export { logContactEnhanced };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
+export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
+export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
+export { companyLocationMirrorStats };
+export { deleteDuplicateCompanies };
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors
@@ -113,7 +119,8 @@ import {
   acceptAITaskSuggestion,
   rejectAITaskSuggestion,
   getDealStageAISuggestions,
-  generateTaskContent
+  generateTaskContent,
+  createNextRepeatingTask
 } from './taskEngine';
 
 // 🎯 DEAL ASSOCIATION IMPORTS
@@ -136,7 +143,8 @@ export {
   acceptAITaskSuggestion,
   rejectAITaskSuggestion,
   getDealStageAISuggestions,
-  generateTaskContent
+  generateTaskContent,
+  createNextRepeatingTask
 };
 
 // Export deal association functions
@@ -210,7 +218,7 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
   try {
     // Call OpenAI
     const response = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [{ role: 'system', content: prompt }]
     });
     aiResponse = response.choices[0].message.content;
@@ -256,9 +264,9 @@ export const generateJobDescription = onCall(async (request) => {
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 300,
+      max_completion_tokens: 300,
     });
     const description = response.choices[0].message.content;
     return { description };
@@ -1763,12 +1771,12 @@ async function callOpenAI(systemPrompt: string, userMessage: string) {
   const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
   
   const payload = {
-    model: 'gpt-4',
+    model: 'gpt-5',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
     ],
-    max_tokens: 500,
+    max_completion_tokens: 500,
     temperature: 0.7
   };
 
@@ -2653,7 +2661,7 @@ Provide 3-5 specific, actionable improvements for:
 Format as JSON array of improvement objects with fields: category, suggestion, priority`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });
@@ -3981,7 +3989,7 @@ Respond with JSON:
 }`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3
     });
@@ -4024,7 +4032,7 @@ async function analyzeReplySentiments(replies: any[]) {
   for (const reply of replies.slice(0, 50)) { // Limit to 50 for performance
     try {
       const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-5',
         messages: [{
           role: 'user',
           content: `Analyze the sentiment of this reply: "${reply.reply}". Respond with only: positive, neutral, or negative.`
@@ -8270,7 +8278,7 @@ export const translateContent = onCall(async (request) => {
     
     // Use OpenAI for translation
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-5",
       messages: [
         {
           role: "system",
@@ -8282,7 +8290,7 @@ export const translateContent = onCall(async (request) => {
         }
       ],
       temperature: 0.3,
-      max_tokens: 1000
+      max_completion_tokens: 1000
     });
     
     const translatedContent = completion.choices[0].message.content?.trim() || content;
@@ -10346,9 +10354,12 @@ export { metricsIngest } from './telemetry/metrics';
 export { app_ai_generateResponse } from './appAi';
 // Apollo scaffolding will use utils; callables/triggers to be added next iteration
 export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRecommendedContacts, apolloPing, apolloPingHttp } from './apolloIntegration';
+// RE-ENABLED WITH FIXES
+export { syncApolloHeadquartersLocation } from './apolloLocationSync';
+export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
 // Active Salespeople (Company)
-export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes } from './activeSalespeople';
+export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
 
 // Auto Activity Logger
 export { 

@@ -32,7 +32,7 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import ActivityLogTab from '../../components/ActivityLogTab';
-import { TasksDashboard } from '../../components/TasksDashboard';
+import TasksDashboard from '../../components/TasksDashboard';
 
 interface SalespersonData {
   id: string;
@@ -514,7 +514,12 @@ const TenantSalesperson: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <TasksDashboard salespersonId={salespersonId!} tenantId={tenantId} />
+        <TasksDashboard 
+          entityId={salespersonId!} 
+          entityType="salesperson"
+          tenantId={tenantId} 
+          entity={salesperson}
+        />
       </TabPanel>
     </Box>
   );

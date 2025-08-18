@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Card,
   CardContent,
@@ -20,13 +20,15 @@ import {
   Email as EmailIcon,
   Phone as PhoneIcon,
   Psychology as PsychologyIcon,
-  AutoAwesome as AutoAwesomeIcon
+  AutoAwesome as AutoAwesomeIcon,
+  MoreVert as MoreVertIcon
 } from '@mui/icons-material';
 
 interface TaskCardProps {
   task: any;
   onTaskClick: (task: any) => void;
   onQuickComplete: (taskId: string) => void;
+  onEditTask?: (task: any) => void; // New prop for edit functionality
   getStatusColor: (status: string) => string;
   getTaskStatusDisplay: (task: any) => string;
   // Context flags to show/hide information
@@ -95,6 +97,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
   task,
   onTaskClick,
   onQuickComplete,
+  onEditTask,
   getStatusColor,
   getTaskStatusDisplay,
   showCompany = true,
@@ -129,7 +132,25 @@ const TaskCard: React.FC<TaskCardProps> = ({
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    if (!dateString) return '';
+    
+    try {
+      const date = new Date(dateString);
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        return '';
+      }
+      
+      return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+    } catch (error) {
+      console.warn('Error formatting date:', dateString, error);
+      return '';
+    }
   };
 
   const getContactDisplay = () => {
@@ -204,133 +225,209 @@ const TaskCard: React.FC<TaskCardProps> = ({
     return 'Unassigned';
   };
 
+  const getDealDisplay = () => {
+    // First try to get deal from props
+    if (deal) {
+      return deal.name || deal.title || 'Unknown Deal';
+    }
+    
+    // Then try to get from task associations
+    const associatedDeals = task.associations?.deals || [];
+    if (associatedDeals.length > 0) {
+      // For now, just show the number of deals since we don't have the full deal data
+      return `${associatedDeals.length} deal${associatedDeals.length > 1 ? 's' : ''}`;
+    }
+    
+    return null;
+  };
+
+  // Simple, clean design matching DealDetails style with hover expansion
+  const [isHovered, setIsHovered] = useState(false);
+
   return (
-    <Card sx={{ mb: 2, ...sx }}>
-      <CardContent>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <Box sx={{ flex: 1 }}>
-            {/* Title Row */}
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-              {getTaskTypeIcon(task.type)}
-              <Typography variant="h6" sx={{ ml: 1, flex: 1 }}>
-                {task.title}
-              </Typography>
-            </Box>
+    <Box 
+      sx={{ 
+        display: 'flex', 
+        flexDirection: 'column',
+        p: 1.5,
+        mb: 1,
+        borderRadius: 1,
+        border: '1px solid',
+        borderColor: 'divider',
+        backgroundColor: 'background.paper',
+        cursor: 'pointer',
+        transition: 'all 0.2s ease-in-out',
+        '&:hover': {
+          backgroundColor: 'action.hover',
+          borderColor: 'primary.main'
+        },
+        ...sx
+      }}
+      onClick={() => onTaskClick(task)}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* Main row: Checkbox, Title, and Actions */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Left side: Checkbox and Title */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+          <Box
+            sx={{
+              width: 16,
+              height: 16,
+              border: '2px solid',
+              borderColor: task.status === 'completed' ? 'success.main' : 'text.secondary',
+              borderRadius: 1,
+              backgroundColor: task.status === 'completed' ? 'success.main' : 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              '&:hover': {
+                borderColor: 'primary.main'
+              }
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickComplete(task.id);
+            }}
+          >
+            {task.status === 'completed' && (
+              <CheckCircleIcon sx={{ fontSize: 12, color: 'white' }} />
+            )}
+          </Box>
+          
+          <Typography 
+            variant="body1" 
+            sx={{ 
+              flex: 1,
+              fontWeight: 'bold',
+              textDecoration: task.status === 'completed' ? 'line-through' : 'none',
+              color: task.status === 'completed' ? 'text.secondary' : 'text.primary',
+              opacity: task.status === 'completed' ? 0.7 : 1
+            }}
+          >
+            {task.title}
+          </Typography>
+        </Box>
 
-            {/* Status and Priority Chips */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-              <Chip
-                label={getTaskStatusDisplay(task)}
-                color={getStatusColor(getTaskStatusDisplay(task)) as any}
-                size="small"
-              />
-              <Chip
-                label={task.priority}
-                color={getPriorityColor(task.priority) as any}
-                size="small"
-                sx={
-                  task.priority === 'low' ? {
-                    backgroundColor: '#e3f2fd', // Light blue background
-                    color: '#1976d2', // Dark blue text
-                    '&:hover': {
-                      backgroundColor: '#bbdefb',
-                    }
-                  } : {}
+                {/* Right side: Status chips, completion date, and actions */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Status and Priority Chips */}
+          <Chip
+            label={getTaskStatusDisplay(task)}
+            color={getStatusColor(getTaskStatusDisplay(task)) as any}
+            size="small"
+            variant="outlined"
+            sx={{ fontSize: '0.7rem', height: '20px' }}
+          />
+          <Chip
+            label={task.priority}
+            color={getPriorityColor(task.priority) as any}
+            size="small"
+            variant="outlined"
+            sx={{ 
+              fontSize: '0.7rem', 
+              height: '20px',
+              ...(task.priority === 'low' ? {
+                backgroundColor: '#e3f2fd',
+                color: '#1976d2',
+                '&:hover': {
+                  backgroundColor: '#bbdefb',
                 }
-              />
-              {task.aiSuggested && (
-                <Chip
-                  label="AI Suggested"
-                  size="small"
-                  color="info"
-                  icon={<AutoAwesomeIcon />}
-                />
-              )}
-            </Box>
+              } : {})
+            }}
+          />
 
-            {/* Description */}
-            <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+          {/* Ellipsis menu for additional actions */}
+          {onEditTask && (
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditTask(task);
+              }}
+              sx={{ 
+                color: 'text.secondary',
+                '&:hover': {
+                  color: 'primary.main',
+                  backgroundColor: 'primary.50'
+                }
+              }}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Box>
+      </Box>
+
+      {/* Expanded details on hover */}
+      {isHovered && (
+        <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+          {/* Description */}
+          {task.description && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
               {task.description}
             </Typography>
+          )}
 
-            {/* Context Information */}
-            {(showCompany || showDeal || showContacts) && (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 1 }}>
-                {showCompany && company && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <BusinessIcon fontSize="small" color="action" />
-                    <Typography variant="caption" color="textSecondary">
-                      {company.companyName || company.name}
-                    </Typography>
-                  </Box>
-                )}
-                
-                {showDeal && deal && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <AttachMoneyIcon fontSize="small" color="action" />
-                    <Typography variant="caption" color="textSecondary">
-                      {deal.name}
-                    </Typography>
-                  </Box>
-                )}
-                
-                {showContacts && contacts && contacts.length > 0 && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <PersonIcon fontSize="small" color="action" />
-                    <Typography variant="caption" color="textSecondary">
-                      {getContactDisplay()}
-                    </Typography>
-                  </Box>
-                )}
-              </Box>
-            )}
+          
 
-            {/* Metadata */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="caption" color="textSecondary">
-                {formatDate(task.classification === 'todo' ? task.dueDate : task.scheduledDate)}
+          {/* Due Date */}
+          {(task.dueDate || task.scheduledDate) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <ScheduleIcon fontSize="small" color="action" />
+              <Typography variant="caption" color="text.secondary">
+                Due: {formatDate(task.classification === 'todo' ? task.dueDate : task.scheduledDate)}
               </Typography>
-              {task.estimatedDuration && (
-                <Typography variant="caption" color="textSecondary">
-                  • {task.estimatedDuration} min
+            </Box>
+          )}
+
+          {/* Context Information */}
+          {(showCompany || showDeal || showContacts) && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              {/* Assigned Person */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <PersonIcon fontSize="small" color="action" />
+                <Typography variant="caption" color="text.secondary">
+                  Assigned: {getSalespersonDisplay()}
                 </Typography>
+              </Box>
+              
+              {/* Contacts */}
+              {showContacts && contacts && contacts.length > 0 && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <PersonIcon fontSize="small" color="action" />
+                  <Typography variant="caption" color="text.secondary">
+                    Contacts: {getContactDisplay() || 'Unknown'}
+                  </Typography>
+                </Box>
+              )}
+              
+                            {/* Company */}
+              {showCompany && company && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <BusinessIcon fontSize="small" color="action" />
+                  <Typography variant="caption" color="text.secondary">
+                    Company: {company.companyName || company.name}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* Deal */}
+              {showDeal && getDealDisplay() && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <AttachMoneyIcon fontSize="small" color="action" />
+                  <Typography variant="caption" color="text.secondary">
+                    Deal: {getDealDisplay()}
+                  </Typography>
+                </Box>
               )}
             </Box>
-            
-            {/* Assigned Salesperson */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-              <PersonIcon fontSize="small" color="action" />
-              <Typography variant="caption" color="textSecondary">
-                {getSalespersonDisplay()}
-              </Typography>
-            </Box>
-          </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => onTaskClick(task)}
-              sx={{ minWidth: 'auto', px: 1 }}
-            >
-              View/Edit
-            </Button>
-            {task.status !== 'completed' && (
-              <Button
-                size="small"
-                variant="contained"
-                color="success"
-                onClick={() => onQuickComplete(task.id)}
-                sx={{ minWidth: 'auto', px: 1 }}
-              >
-                Mark Complete
-              </Button>
-            )}
-          </Box>
+          )}
         </Box>
-      </CardContent>
-    </Card>
+      )}
+    </Box>
   );
 };
 

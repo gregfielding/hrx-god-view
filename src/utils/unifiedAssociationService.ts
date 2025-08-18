@@ -281,6 +281,28 @@ export class UnifiedAssociationService {
               updatedAt: entityData.updatedAt || serverTimestamp()
             });
           }
+
+          // Handle deals from associations.deals
+          if (entityData.associations && entityData.associations.deals && Array.isArray(entityData.associations.deals)) {
+            entityData.associations.deals.forEach((dealEntry: any) => {
+              // Handle both string IDs and object entries with id field
+              const dealId = typeof dealEntry === 'string' ? dealEntry : (dealEntry?.id || '');
+              if (dealId && typeof dealId === 'string') {
+                associations.push({
+                  id: `implicit_${entityId}_deal_${dealId}`,
+                  sourceEntityType: 'contact',
+                  sourceEntityId: entityId,
+                  targetEntityType: 'deal',
+                  targetEntityId: dealId,
+                  associationType: 'involvement',
+                  strength: 'strong',
+                  metadata: { source: 'associations.deals' },
+                  createdAt: entityData.createdAt || serverTimestamp(),
+                  updatedAt: entityData.updatedAt || serverTimestamp()
+                });
+              }
+            });
+          }
           break;
 
         default:
@@ -335,6 +357,7 @@ export class UnifiedAssociationService {
       companies: new Set<string>(),
       locations: new Set<string>(),
       contacts: new Set<string>(),
+      deals: new Set<string>(),
       salespeople: new Set<string>()
     };
 
@@ -416,6 +439,21 @@ export class UnifiedAssociationService {
       }));
     }
 
+    // Load deals with timeout
+    if (entityIds.deals.size > 0) {
+      const dealsPromise = this.loadEntitiesBatch('crm_deals', Array.from(entityIds.deals))
+        .then(deals => entities.deals.push(...deals))
+        .catch(err => console.warn('⚠️ Failed to load deals:', err));
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Deals load timeout')), timeout)
+      );
+      
+      loadPromises.push(Promise.race([dealsPromise, timeoutPromise]).catch(() => {
+        console.warn('⚠️ Deals load timed out, continuing with empty deals');
+      }));
+    }
+
     // Wait for all essential entities to load (or timeout)
     await Promise.allSettled(loadPromises);
 
@@ -426,11 +464,15 @@ export class UnifiedAssociationService {
   private async loadEntitiesBatch(collectionName: string, ids: string[]): Promise<any[]> {
     if (ids.length === 0) return [];
 
+    // Filter out invalid IDs
+    const validIds = ids.filter(id => id && typeof id === 'string' && id.trim() !== '');
+    if (validIds.length === 0) return [];
+
     const entities: any[] = [];
     const batchSize = 10; // Firestore limit for 'in' queries
 
-    for (let i = 0; i < ids.length; i += batchSize) {
-      const batch = ids.slice(i, i + batchSize);
+    for (let i = 0; i < validIds.length; i += batchSize) {
+      const batch = validIds.slice(i, i + batchSize);
       const collectionRef = collection(db, 'tenants', this.tenantId, collectionName);
       const q = query(collectionRef, where('__name__', 'in', batch));
       const snapshot = await getDocs(q);

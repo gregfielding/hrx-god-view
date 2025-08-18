@@ -1,19 +1,18 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
+import { defineString } from 'firebase-functions/params';
 
 const db = getFirestore();
 
-// Google Calendar API configuration - used for OAuth flow
-// const CALENDAR_SCOPES = [
-//   'https://www.googleapis.com/auth/calendar',
-//   'https://www.googleapis.com/auth/calendar.events',
-//   'https://www.googleapis.com/auth/calendar.settings.readonly'
-// ] as const;
+// Fix OAuth configuration to use consistent parameter definitions
+const clientId = defineString('GOOGLE_CLIENT_ID');
+const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
+const redirectUri = defineString('GOOGLE_REDIRECT_URI');
 
 const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI
+  clientId.value(),
+  clientSecret.value(),
+  redirectUri.value()
 );
 
 /**
@@ -21,18 +20,44 @@ const oauth2Client = new google.auth.OAuth2(
  */
 export async function syncTaskToCalendar(userId: string, tenantId: string, taskId: string, taskData: any) {
   try {
+    console.log(`🔄 Starting calendar sync for task ${taskId} (user: ${userId})`);
+    
     // Get user's Calendar tokens
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      console.log(`❌ User ${userId} not found`);
+      return { success: false, message: 'User not found' };
     }
 
     const userData = userDoc.data();
     const calendarTokens = userData?.calendarTokens;
 
     if (!calendarTokens?.access_token) {
-      console.log('Google Calendar not connected for user:', userId);
-      return { success: false, message: 'Google Calendar not connected' };
+      console.log(`❌ Google Calendar not connected for user: ${userId}`);
+      return { success: false, message: 'Google Calendar not connected. Please authenticate first.' };
+    }
+
+    // Check if token is expired and needs refresh
+    if (calendarTokens.expiry_date && new Date(calendarTokens.expiry_date) <= new Date()) {
+      console.log(`🔄 Token expired for user ${userId}, attempting refresh...`);
+      try {
+        oauth2Client.setCredentials(calendarTokens);
+        const { credentials } = await oauth2Client.refreshAccessToken();
+        
+        // Update user's tokens
+        await db.collection('users').doc(userId).update({
+          calendarTokens: {
+            ...calendarTokens,
+            access_token: credentials.access_token,
+            expiry_date: credentials.expiry_date
+          }
+        });
+        
+        console.log(`✅ Token refreshed for user ${userId}`);
+      } catch (refreshError) {
+        console.error(`❌ Failed to refresh token for user ${userId}:`, refreshError);
+        return { success: false, message: 'Calendar authentication expired. Please reconnect.' };
+      }
     }
 
     // Set up Calendar API client
@@ -43,6 +68,8 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
     const isAppointment = taskData.classification === 'appointment';
     
     if (isAppointment && taskData.startTime) {
+      console.log(`📅 Creating calendar event for appointment: ${taskData.title}`);
+      
       // Create calendar event for appointment
       const event: any = {
         summary: taskData.title,
@@ -115,6 +142,7 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
 
       await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update(updateData);
 
+      console.log(`✅ Task ${taskId} synced to Google Calendar successfully`);
       return {
         success: true,
         eventId: response.data.id,
@@ -123,7 +151,7 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
     } else {
       // For todos, we'll create a Google Task instead
       // Note: Google Tasks API requires separate implementation
-      console.log('Todo tasks will be implemented with Google Tasks API');
+      console.log(`📝 Todo task ${taskId} - Google Tasks sync coming soon`);
       
       return {
         success: true,
@@ -132,7 +160,18 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
     }
 
   } catch (error) {
-    console.error('Error syncing task to Calendar:', error);
+    console.error(`❌ Error syncing task ${taskId} to Calendar:`, error);
+    
+    // Update task with failed sync status
+    try {
+      await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
+        syncStatus: 'failed',
+        lastGoogleSync: new Date()
+      });
+    } catch (updateError) {
+      console.error('Failed to update task sync status:', updateError);
+    }
+    
     return {
       success: false,
       message: `Failed to sync task: ${error instanceof Error ? error.message : 'Unknown error'}`

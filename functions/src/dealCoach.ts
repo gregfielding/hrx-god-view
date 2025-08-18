@@ -40,7 +40,7 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
       await threadRef.set({
         id: dealId,
         stageKey,
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages: [],
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
@@ -79,7 +79,7 @@ export const dealCoachAnalyze = onRequest({ cors: true, region: 'us-central1' },
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           response_format: {
             type: 'json_schema',
             json_schema: {
@@ -159,7 +159,7 @@ export const dealCoachChat = onRequest({ cors: true, region: 'us-central1' }, as
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: system },
@@ -192,7 +192,7 @@ export const dealCoachChat = onRequest({ cors: true, region: 'us-central1' }, as
     await threadRef.set({
       id: dealId,
       stageKey,
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: appended,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -299,7 +299,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
 // Callable equivalents for easy client access without hosting rewrites
 export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) => {
   try {
-    const { dealId, stageKey, tenantId } = request.data || {};
+    const { dealId, stageKey, tenantId, entityType, entityName, contactCompany, contactTitle } = request.data || {};
     if (!dealId || !stageKey || !tenantId) throw new Error('Missing dealId, stageKey or tenantId');
 
     // Cache key
@@ -312,7 +312,7 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
       if (data.updatedAt && (now - data.updatedAt.toMillis()) < CACHE_TTL_MS) {
         try {
           const parsed = AnalyzeResponse.parse(data.payload);
-          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
+          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
           return { ...parsed, threadId: dealId, cacheHit: true };
         } catch {}
       }
@@ -326,34 +326,81 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
     await threadRef.set({
       id: dealId,
       stageKey,
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: existingMessages,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
-    // Get deal data
-    const dealRef = db.doc(`tenants/${tenantId}/crm_deals/${dealId}`);
-    const dealSnap = await dealRef.get();
-    if (!dealSnap.exists) throw new Error('Deal not found');
-    const dealData = dealSnap.data() as any;
+    // Determine entity type and get appropriate data
+    const isContact = entityType === 'contact';
+    const isCompany = entityType === 'company';
+    
+    let entityData: any = null;
+    let snapshot: any = null;
 
-    // Build snapshot
-    const snapshot = {
-      deal: dealData,
-      stage: stageKey,
-      messages: existingMessages.slice(-10) // last 10 messages for context
-    };
+    if (isContact) {
+      // Get contact data
+      const contactRef = db.doc(`tenants/${tenantId}/crm_contacts/${dealId}`);
+      const contactSnap = await contactRef.get();
+      if (!contactSnap.exists) throw new Error('Contact not found');
+      entityData = contactSnap.data() as any;
+
+      // Build contact snapshot
+      snapshot = {
+        contact: entityData,
+        contactName: entityName || entityData.fullName || entityData.firstName || entityData.lastName,
+        contactCompany: contactCompany || entityData.companyName,
+        contactTitle: contactTitle || entityData.jobTitle || entityData.title,
+        stage: stageKey,
+        messages: existingMessages.slice(-10) // last 10 messages for context
+      };
+    } else if (isCompany) {
+      // Get company data
+      const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${dealId}`);
+      const companySnap = await companyRef.get();
+      if (!companySnap.exists) throw new Error('Company not found');
+      entityData = companySnap.data() as any;
+
+      // Build company snapshot
+      snapshot = {
+        company: entityData,
+        companyName: entityName || entityData.companyName || entityData.name,
+        stage: stageKey,
+        messages: existingMessages.slice(-10) // last 10 messages for context
+      };
+    } else {
+      // Get deal data (default)
+      const dealRef = db.doc(`tenants/${tenantId}/crm_deals/${dealId}`);
+      const dealSnap = await dealRef.get();
+      if (!dealSnap.exists) throw new Error('Deal not found');
+      entityData = dealSnap.data() as any;
+
+      // Build deal snapshot
+      snapshot = {
+        deal: entityData,
+        stage: stageKey,
+        messages: existingMessages.slice(-10) // last 10 messages for context
+      };
+    }
 
     // Call OpenAI
     const apiKey = OPENAI_KEY;
     let result: any = { summary: `Summary for ${stageKey}.`, suggestions: [] };
     if (apiKey) {
-      const system = 'You are the Deal Coach AI. Analyze the current deal stage and provide actionable suggestions. Focus on next steps, potential roadblocks, and specific actions the salesperson can take. Keep suggestions practical and specific to the staffing industry.';
+      let system = '';
+      if (isContact) {
+        system = 'You are the Sales Coach AI. Analyze the current contact and provide actionable suggestions for engagement. Focus on relationship building, communication strategies, and specific actions the salesperson can take. Keep suggestions practical and specific to the staffing industry.';
+      } else if (isCompany) {
+        system = 'You are the Company Coach AI. Analyze the current company and provide actionable suggestions for business development and relationship building. Focus on company engagement strategies, partnership opportunities, and specific actions the salesperson can take to grow the relationship. Keep suggestions practical and specific to the staffing industry.';
+      } else {
+        system = 'You are the Deal Coach AI. Analyze the current deal stage and provide actionable suggestions. Focus on next steps, potential roadblocks, and specific actions the salesperson can take. Keep suggestions practical and specific to the staffing industry.';
+      }
+      
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: system },
@@ -380,7 +427,7 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
     await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
     // Log telemetry (best-effort)
-    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
+    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
 
     return { ...parsed, threadId: dealId, cacheHit: false };
   } catch (e: any) {
@@ -390,101 +437,266 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
 
 export const dealCoachChatCallable = onCall({ cors: true }, async (request) => {
   try {
-    const { dealId, stageKey, tenantId, userId, message } = request.data || {};
+    const { dealId, stageKey, tenantId, userId, message, entityType, entityName, contactCompany, contactTitle } = request.data || {};
     if (!dealId || !stageKey || !tenantId || !message) throw new Error('Missing fields');
     const apiKey = process.env.OPENAI_API_KEY;
     let payload: any = { text: 'Okay — here are next steps.' };
     
-    // 🎯 ENHANCED DEAL CONTEXT GATHERING
+    // 🎯 ENHANCED CONTEXT GATHERING
     let dealContext: any;
     let enhancedMessage: string | undefined;
     
-    try {
-      // Import and use enhanced context system
-      const { getEnhancedDealContext } = await import('./enhancedDealContext');
-      const enhancedContext = await getEnhancedDealContext(dealId, tenantId, userId);
-      
-      // Convert enhanced context to legacy format for compatibility
-      dealContext = {
-        deal: enhancedContext.deal,
-        company: enhancedContext.company?.company || null,
-        contacts: enhancedContext.contacts.map(c => c.contact).filter(Boolean),
-        salespeople: enhancedContext.salespeople.map(s => s.salesperson).filter(Boolean),
-        notes: enhancedContext.notes,
-        emails: enhancedContext.emails,
-        activities: enhancedContext.activities,
-        stageData: enhancedContext.deal?.stageData || {},
-        currentStage: stageKey,
-        stageForms: enhancedContext.deal?.stageData || {},
-        learningInsights: enhancedContext.learningData || {
-          successfulPatterns: [],
-          stageSuccessRates: {},
-          salespersonPerformance: {},
-          commonObjections: [],
-          effectiveQuestions: []
-        },
-        enhancedContext: enhancedContext
-      };
-      
-      console.log(`✅ Enhanced deal context loaded successfully for deal: ${dealId}`);
-      
-    } catch (error) {
-      console.error('❌ Enhanced context failed, falling back to basic context:', error);
-      
-      // Fallback to basic context gathering
-      const dealRef = db.doc(`tenants/${tenantId}/crm_deals/${dealId}`);
-      const dealSnap = await dealRef.get();
-      const dealData = dealSnap.exists ? dealSnap.data() : {};
-      
-      // Get company data
-      let companyData = null;
-      if (dealData.companyId) {
-        const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${dealData.companyId}`);
+    // Determine entity type
+    const isContact = entityType === 'contact';
+    const isCompany = entityType === 'company';
+    
+    if (isContact) {
+      // Contact context gathering
+      try {
+        const contactRef = db.doc(`tenants/${tenantId}/crm_contacts/${dealId}`);
+        const contactSnap = await contactRef.get();
+        if (!contactSnap.exists) throw new Error('Contact not found');
+        const contactData = contactSnap.exists ? contactSnap.data() : {};
+        
+        // Get company data if available
+        let companyData = null;
+        if (contactData.companyId) {
+          const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${contactData.companyId}`);
+          const companySnap = await companyRef.get();
+          companyData = companySnap.exists ? companySnap.data() : null;
+        }
+        
+        // Get associated deals
+        let deals = [];
+        try {
+          const dealsQuery = db.collection(`tenants/${tenantId}/crm_deals`)
+            .where('contactIds', 'array-contains', dealId)
+            .limit(10);
+          const dealsSnap = await dealsQuery.get();
+          deals = dealsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch associated deals:', e);
+        }
+        
+        // Get contact notes
+        let notes = [];
+        try {
+          const notesQuery = db.collection(`tenants/${tenantId}/contact_notes`)
+            .where('contactId', '==', dealId)
+            .orderBy('createdAt', 'desc')
+            .limit(20);
+          const notesSnap = await notesQuery.get();
+          notes = notesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch contact notes:', e);
+        }
+        
+        // Get email activity
+        let emails = [];
+        try {
+          const emailsQuery = db.collection(`tenants/${tenantId}/email_logs`)
+            .where('contactId', '==', dealId)
+            .orderBy('timestamp', 'desc')
+            .limit(10);
+          const emailsSnap = await emailsQuery.get();
+          emails = emailsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch contact emails:', e);
+        }
+        
+        // Build contact context
+        dealContext = {
+          contact: contactData,
+          contactName: entityName || contactData.fullName || contactData.firstName || contactData.lastName,
+          contactCompany: contactCompany || contactData.companyName,
+          contactTitle: contactTitle || contactData.jobTitle || contactData.title,
+          company: companyData,
+          deals: deals,
+          notes: notes,
+          emails: emails,
+          currentStage: stageKey,
+          enhancedContext: {
+            contact: contactData,
+            company: companyData,
+            deals: deals,
+            notes: notes,
+            emails: emails
+          }
+        };
+        
+        console.log(`✅ Contact context loaded successfully for contact: ${dealId}`);
+        
+      } catch (error) {
+        console.error('❌ Contact context failed:', error);
+        throw error;
+      }
+    } else if (isCompany) {
+      // Company context gathering
+      try {
+        const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${dealId}`);
         const companySnap = await companyRef.get();
-        companyData = companySnap.exists ? companySnap.data() : null;
+        if (!companySnap.exists) throw new Error('Company not found');
+        const companyData = companySnap.exists ? companySnap.data() : {};
+        
+        // Get associated contacts
+        let contacts = [];
+        try {
+          const contactsQuery = db.collection(`tenants/${tenantId}/crm_contacts`)
+            .where('companyId', '==', dealId)
+            .limit(20);
+          const contactsSnap = await contactsQuery.get();
+          contacts = contactsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch company contacts:', e);
+        }
+        
+        // Get associated deals
+        let deals = [];
+        try {
+          const dealsQuery = db.collection(`tenants/${tenantId}/crm_deals`)
+            .where('companyId', '==', dealId)
+            .limit(10);
+          const dealsSnap = await dealsQuery.get();
+          deals = dealsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch company deals:', e);
+        }
+        
+        // Get company locations
+        let locations = [];
+        try {
+          const locationsQuery = db.collection(`tenants/${tenantId}/crm_companies/${dealId}/locations`);
+          const locationsSnap = await locationsQuery.get();
+          locations = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch company locations:', e);
+        }
+        
+        // Get company notes
+        let notes = [];
+        try {
+          const notesQuery = db.collection(`tenants/${tenantId}/company_notes`)
+            .where('companyId', '==', dealId)
+            .orderBy('createdAt', 'desc')
+            .limit(20);
+          const notesSnap = await notesQuery.get();
+          notes = notesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch company notes:', e);
+        }
+        
+        // Build company context
+        dealContext = {
+          company: companyData,
+          companyName: entityName || companyData.companyName || companyData.name,
+          contacts: contacts,
+          deals: deals,
+          locations: locations,
+          notes: notes,
+          currentStage: stageKey,
+          enhancedContext: {
+            company: companyData,
+            contacts: contacts,
+            deals: deals,
+            locations: locations,
+            notes: notes
+          }
+        };
+        
+        console.log(`✅ Company context loaded successfully for company: ${dealId}`);
+        
+      } catch (error) {
+        console.error('❌ Company context failed:', error);
+        throw error;
       }
-      
-      // Get associated contacts
-      let contacts = [];
-      if (dealData.contactIds && Array.isArray(dealData.contactIds)) {
-        const contactPromises = dealData.contactIds.map(async (contactId: string) => {
-          const contactRef = db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`);
-          const contactSnap = await contactRef.get();
-          return contactSnap.exists ? { id: contactId, ...contactSnap.data() } : null;
-        });
-        contacts = (await Promise.all(contactPromises)).filter(Boolean);
-      }
-      
-      // Get associated salespeople
-      let salespeople = [];
-      if (dealData.salespeopleIds && Array.isArray(dealData.salespeopleIds)) {
-        const salespersonPromises = dealData.salespeopleIds.map(async (salespersonId: string) => {
-          const salespersonRef = db.doc(`tenants/${tenantId}/users/${salespersonId}`);
-          const salespersonSnap = await salespersonRef.get();
-          return salespersonSnap.exists ? { id: salespersonId, ...salespersonSnap.data() } : null;
-        });
-        salespeople = (await Promise.all(salespersonPromises)).filter(Boolean);
-      }
-      
-      // Get deal notes
-      let notes = [];
+    } else {
+      // Deal context gathering (existing logic)
       try {
-        const notesQuery = db.collection(`tenants/${tenantId}/crm_deals/${dealId}/notes`)
-          .orderBy('createdAt', 'desc')
-          .limit(20);
-        const notesSnap = await notesQuery.get();
-        notes = notesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } catch (e) {
-        console.warn('Could not fetch deal notes:', e);
-      }
-      
-      // Get email activity
-      let emails = [];
-      try {
-        const emailsQuery = db.collection(`tenants/${tenantId}/emails`)
-          .where('dealId', '==', dealId)
-          .orderBy('sentAt', 'desc')
-          .limit(10);
+        // Import and use enhanced context system
+        const { getEnhancedDealContext } = await import('./enhancedDealContext');
+        const enhancedContext = await getEnhancedDealContext(dealId, tenantId, userId);
+        
+        // Convert enhanced context to legacy format for compatibility
+        dealContext = {
+          deal: enhancedContext.deal,
+          company: enhancedContext.company?.company || null,
+          contacts: enhancedContext.contacts.map(c => c.contact).filter(Boolean),
+          salespeople: enhancedContext.salespeople.map(s => s.salesperson).filter(Boolean),
+          notes: enhancedContext.notes,
+          emails: enhancedContext.emails,
+          activities: enhancedContext.activities,
+          stageData: enhancedContext.deal?.stageData || {},
+          currentStage: stageKey,
+          stageForms: enhancedContext.deal?.stageData || {},
+          learningInsights: enhancedContext.learningData || {
+            successfulPatterns: [],
+            stageSuccessRates: {},
+            salespersonPerformance: {},
+            commonObjections: [],
+            effectiveQuestions: []
+          },
+          enhancedContext: enhancedContext
+        };
+        
+        console.log(`✅ Enhanced deal context loaded successfully for deal: ${dealId}`);
+        
+      } catch (error) {
+        console.error('❌ Enhanced context failed, falling back to basic context:', error);
+        
+        // Fallback to basic context gathering
+        const dealRef = db.doc(`tenants/${tenantId}/crm_deals/${dealId}`);
+        const dealSnap = await dealRef.get();
+        const dealData = dealSnap.exists ? dealSnap.data() : {};
+        
+        // Get company data
+        let companyData = null;
+        if (dealData.companyId) {
+          const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${dealData.companyId}`);
+          const companySnap = await companyRef.get();
+          companyData = companySnap.exists ? companySnap.data() : null;
+        }
+        
+        // Get associated contacts
+        let contacts = [];
+        if (dealData.contactIds && Array.isArray(dealData.contactIds)) {
+          const contactPromises = dealData.contactIds.map(async (contactId: string) => {
+            const contactRef = db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`);
+            const contactSnap = await contactRef.get();
+            return contactSnap.exists ? { id: contactId, ...contactSnap.data() } : null;
+          });
+          contacts = (await Promise.all(contactPromises)).filter(Boolean);
+        }
+        
+        // Get associated salespeople
+        let salespeople = [];
+        if (dealData.salespeopleIds && Array.isArray(dealData.salespeopleIds)) {
+          const salespersonPromises = dealData.salespeopleIds.map(async (salespersonId: string) => {
+            const salespersonRef = db.doc(`tenants/${tenantId}/users/${salespersonId}`);
+            const salespersonSnap = await salespersonRef.get();
+            return salespersonSnap.exists ? { id: salespersonId, ...salespersonSnap.data() } : null;
+          });
+          salespeople = (await Promise.all(salespersonPromises)).filter(Boolean);
+        }
+        
+        // Get deal notes
+        let notes = [];
+        try {
+          const notesQuery = db.collection(`tenants/${tenantId}/crm_deals/${dealId}/notes`)
+            .orderBy('createdAt', 'desc')
+            .limit(20);
+          const notesSnap = await notesQuery.get();
+          notes = notesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (e) {
+          console.warn('Could not fetch deal notes:', e);
+        }
+        
+        // Get email activity
+        let emails = [];
+        try {
+          const emailsQuery = db.collection(`tenants/${tenantId}/emails`)
+            .where('dealId', '==', dealId)
+            .orderBy('sentAt', 'desc')
+            .limit(10);
         const emailsSnap = await emailsQuery.get();
         emails = emailsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       } catch (e) {
@@ -554,6 +766,7 @@ export const dealCoachChatCallable = onCall({ cors: true }, async (request) => {
           effectiveQuestions: learningData.effectiveQuestions || []
         }
       };
+      }
     }
     
     // 🎯 ENHANCED SYSTEM PROMPT GENERATION
@@ -574,8 +787,45 @@ export const dealCoachChatCallable = onCall({ cors: true }, async (request) => {
           console.log(`✅ Enhanced prompt generated with rich context`);
           console.log(`📝 Enhanced user message with context`);
         } else {
-          // Fallback to basic system prompt
-          system = `You are the Deal Coach AI, a master sales wizard with 20+ years of enterprise and SMB sales experience, trained in all major sales methodologies including SPIN Selling, Challenger Sale, Solution Selling, Sandler, and MEDDIC.
+          // Fallback to basic system prompt based on entity type
+          if (isContact) {
+            system = `You are the Sales Coach AI, a master relationship builder with 20+ years of experience in B2B sales and account management. You specialize in building and nurturing relationships with key contacts and decision makers.
+
+SALES COACHING EXPERTISE:
+- Relationship building and trust development
+- Communication strategies and messaging
+- Contact engagement and follow-up tactics
+- Account expansion and cross-selling opportunities
+- Executive relationship management
+- Networking and referral strategies
+
+FOCUS AREAS:
+- Understanding contact's role and influence
+- Building rapport and credibility
+- Identifying pain points and opportunities
+- Creating value through insights and solutions
+- Maintaining consistent engagement
+- Leveraging relationships for business growth`;
+          } else if (isCompany) {
+            system = `You are the Company Coach AI, a master business development strategist with 20+ years of experience in B2B sales and account management. You specialize in company-level relationship building, partnership development, and strategic account growth.
+
+COMPANY COACHING EXPERTISE:
+- Strategic account management and growth
+- Business development and partnership strategies
+- Company-wide relationship building
+- Multi-location and division engagement
+- Executive relationship development
+- Account expansion and revenue growth
+
+FOCUS AREAS:
+- Understanding company structure and decision-making
+- Building relationships across multiple stakeholders
+- Identifying company-wide opportunities
+- Strategic partnership development
+- Account expansion and cross-selling
+- Long-term relationship building and retention`;
+          } else {
+            system = `You are the Deal Coach AI, a master sales wizard with 20+ years of enterprise and SMB sales experience, trained in all major sales methodologies including SPIN Selling, Challenger Sale, Solution Selling, Sandler, and MEDDIC.
 
 SALES EXPERTISE & METHODOLOGIES:
 
@@ -730,6 +980,7 @@ RESPONSE FORMAT:
 - Reference relevant context when making recommendations
 - Be specific about which contacts to engage and how
 - Consider the salesperson's strengths and the deal's unique dynamics`;
+          }
         }
         
         // Make OpenAI API call
@@ -737,15 +988,15 @@ RESPONSE FORMAT:
         const r = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: system },
-              { role: 'user', content: userMessage }
-            ],
-            temperature: 0.7,
-            max_tokens: 1000
-          })
+                  body: JSON.stringify({
+          model: 'gpt-5-mini',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userMessage }
+          ],
+          temperature: 0.7,
+          max_completion_tokens: 1000
+        })
         });
         
         const data: any = await r.json();

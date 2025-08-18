@@ -183,9 +183,9 @@ const processWithAI = async (companyName: string, serpData: any) => {
     `;
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-5',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 800,
+      max_completion_tokens: 800,
       temperature: 0.3,
     });
 
