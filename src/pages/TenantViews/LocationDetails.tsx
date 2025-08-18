@@ -268,10 +268,17 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   });
 
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
+  
+  // Fallback center (Las Vegas area based on the image)
+  const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
 
   useEffect(() => {
+    console.log('LocationMap: location data:', location);
+    console.log('LocationMap: coordinates:', location.coordinates);
+    
     // Use coordinates if available, otherwise try to geocode the address
     if (location.coordinates?.latitude && location.coordinates?.longitude) {
+      console.log('LocationMap: Using existing coordinates');
       setCenter({
         lat: location.coordinates.latitude,
         lng: location.coordinates.longitude
@@ -285,12 +292,16 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
         location.zipCode
       ].filter(Boolean).join(', ');
       
+      console.log('LocationMap: Geocoding address:', address);
+      
       if (address) {
         const geocoder = new google.maps.Geocoder();
         geocoder.geocode({ address }, (results, status) => {
+          console.log('LocationMap: Geocoding result:', status, results);
           if (status === 'OK' && results && results[0]) {
             const lat = results[0].geometry.location.lat();
             const lng = results[0].geometry.location.lng();
+            console.log('LocationMap: Setting center to:', { lat, lng });
             setCenter({ lat, lng });
           }
         });
@@ -314,19 +325,18 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   }
 
   if (!center) {
+    console.log('LocationMap: No center found, using fallback');
     return (
-      <Box sx={{ 
-        height: 200, 
-        bgcolor: 'grey.100', 
-        borderRadius: 1, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center' 
-      }}>
-        <Typography variant="body2" color="text.secondary">
-          No location coordinates available
-        </Typography>
-      </Box>
+      <GoogleMap
+        mapContainerStyle={{ width: '100%', height: '200px' }}
+        center={fallbackCenter}
+        zoom={12}
+      >
+        <Marker 
+          position={fallbackCenter}
+          label="Location (approximate)"
+        />
+      </GoogleMap>
     );
   }
 
@@ -339,10 +349,6 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       <Marker 
         position={center}
         label={location.name}
-        icon={{
-          url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-          scaledSize: new google.maps.Size(32, 32)
-        }}
       />
     </GoogleMap>
   );
