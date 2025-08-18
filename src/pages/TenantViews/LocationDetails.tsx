@@ -28,6 +28,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Snackbar,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -48,6 +49,7 @@ import {
   Phone as PhoneIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 
 import { db } from '../../firebase';
@@ -71,6 +73,7 @@ interface LocationData {
   contactCount?: number;
   dealCount?: number;
   salespersonCount?: number;
+  activeSalespeople?: { [key: string]: any };
   createdAt?: any;
   updatedAt?: any;
 }
@@ -117,6 +120,9 @@ const LocationDetails: React.FC = () => {
   const [locationContacts, setLocationContacts] = useState<any[]>([]);
   const [locationDeals, setLocationDeals] = useState<any[]>([]);
   const [companyDivisions, setCompanyDivisions] = useState<string[]>([]);
+  const [rebuildingActive, setRebuildingActive] = useState(false);
+  const [localSuccess, setLocalSuccess] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -797,6 +803,67 @@ const LocationDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
+              {/* Active Salespeople */}
+              <Card>
+                <CardHeader 
+                  title="Active Salespeople" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                      try {
+                        setRebuildingActive(true);
+                        const functions = getFunctions();
+                        const fn = httpsCallable(functions, 'rebuildLocationActiveSalespeople');
+                        const resp: any = await fn({ tenantId, locationId });
+                        const data = resp?.data || {};
+                        if (data.ok) {
+                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                        } else if (data.error) {
+                          setLocalError(`Rebuild failed: ${data.error}`);
+                        } else {
+                          setLocalSuccess('Rebuild requested');
+                        }
+                        // Light refresh
+                        try {
+                          await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!));
+                        } catch {}
+                      } catch (e) {
+                        console.error('Rebuild active salespeople – error', e);
+                        setLocalError('Failed to rebuild active salespeople');
+                      } finally {
+                        setRebuildingActive(false);
+                      }
+                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {location?.activeSalespeople && Object.keys(location.activeSalespeople).length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {Object.values(location.activeSalespeople as any)
+                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                        .slice(0, 5)
+                        .map((sp: any) => (
+                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {sp.jobTitle || sp.department || ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No recent salesperson activity</Typography>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Opportunities (location-scoped) */}
               <Card>
                 <CardHeader 
@@ -913,6 +980,18 @@ const LocationDetails: React.FC = () => {
           Delete Location
         </Button>
       </Box>
+
+      {/* Local snackbars for rebuild feedback */}
+      <Snackbar open={!!localSuccess} autoHideDuration={3000} onClose={() => setLocalSuccess(null)}>
+        <Alert severity="success" onClose={() => setLocalSuccess(null)} sx={{ width: '100%' }}>
+          {localSuccess}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={!!localError} autoHideDuration={4000} onClose={() => setLocalError(null)}>
+        <Alert severity="error" onClose={() => setLocalError(null)} sx={{ width: '100%' }}>
+          {localError}
+        </Alert>
+      </Snackbar>
 
       {/* Delete Confirmation Dialog */}
       <Dialog
