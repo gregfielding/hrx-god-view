@@ -54,7 +54,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { GoogleMap, Marker, Circle, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker, Circle, useJsApiLoader, Libraries } from '@react-google-maps/api';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -98,7 +98,7 @@ interface TabPanelProps {
 }
 
 // Keep libraries array stable to avoid reload warnings
-const GOOGLE_MAP_LIBRARIES = ['places'] as const;
+const GOOGLE_MAP_LIBRARIES: Libraries = ['places', 'marker'];
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
@@ -267,7 +267,7 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: GOOGLE_MAP_LIBRARIES as unknown as string[],
+    libraries: GOOGLE_MAP_LIBRARIES,
   });
 
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
