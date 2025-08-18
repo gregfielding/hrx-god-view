@@ -881,38 +881,7 @@ const LocationDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* Location Insights */}
-              <Card>
-                <CardHeader title="Location Insights" />
-                <CardContent>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <Box sx={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center' 
-                    }}>
-                      <Typography variant="body2" color="text.secondary">Contact Density</Typography>
-                      <Chip 
-                        label={locationContacts.length > 5 ? 'High' : locationContacts.length > 2 ? 'Medium' : 'Low'} 
-                        color={locationContacts.length > 5 ? 'success' : locationContacts.length > 2 ? 'warning' : 'error'} 
-                        size="small" 
-                      />
-                    </Box>
-                    <Box sx={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center' 
-                    }}>
-                      <Typography variant="body2" color="text.secondary">Opportunity Value</Typography>
-                      <Chip 
-                        label={locationDeals.length > 3 ? 'High' : locationDeals.length > 1 ? 'Medium' : 'Low'} 
-                        color={locationDeals.length > 3 ? 'success' : locationDeals.length > 1 ? 'warning' : 'error'} 
-                        size="small" 
-                      />
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card>
+
             </Box>
           </Grid>
 
