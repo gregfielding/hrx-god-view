@@ -29,6 +29,7 @@ import {
   DialogContent,
   DialogActions,
   Snackbar,
+  Skeleton,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -47,8 +48,11 @@ import {
   Notes as NotesIcon,
   Timeline as TimelineIcon,
   Phone as PhoneIcon,
+  Event as EventIcon,
+  Email as EmailIcon,
+  AttachMoney as DealIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 
@@ -78,6 +82,15 @@ interface LocationData {
   updatedAt?: any;
 }
 
+type LocationActivityItem = {
+  id: string;
+  type: 'task' | 'note' | 'deal_stage' | 'email';
+  timestamp: Date;
+  title: string;
+  description?: string;
+  metadata?: any;
+};
+
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -106,6 +119,147 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
     <CardContent sx={{ pt: 2 }}>{children}</CardContent>
   </Card>
 );
+
+const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ location, tenantId }) => {
+  const [items, setItems] = useState<LocationActivityItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!location?.id || !tenantId) return;
+      setLoading(true);
+      try {
+        const locationId: string = location.id;
+        const contactIds: string[] = Array.isArray(location.associations?.contacts) ? location.associations.contacts : [];
+        const dealIds: string[] = Array.isArray(location.associations?.deals) ? location.associations.deals : [];
+
+        const aggregated: LocationActivityItem[] = [];
+
+        // Tasks: completed tasks associated to this location
+        try {
+          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+          const tq = query(
+            tasksRef,
+            where('associations.locations', 'array-contains', locationId),
+            where('status', '==', 'completed'),
+            orderBy('updatedAt', 'desc'),
+            limit(5)
+          );
+          const ts = await getDocs(tq);
+          ts.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `task_${docSnap.id}`,
+              type: 'task',
+              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+              title: d.title || 'Task completed',
+              description: d.description || '',
+              metadata: { priority: d.priority, taskType: d.type }
+            });
+          });
+        } catch {}
+
+        // Notes: location + contact + deal notes
+        const notesScopes = [
+          { coll: 'location_notes', ids: [locationId] },
+          { coll: 'contact_notes', ids: contactIds },
+          { coll: 'deal_notes', ids: dealIds },
+        ];
+        for (const scope of notesScopes) {
+          for (const id of scope.ids) {
+            try {
+              const notesRef = collection(db, 'tenants', tenantId, scope.coll);
+              const nq = query(notesRef, where('entityId', '==', id), orderBy('timestamp', 'desc'), limit(5));
+              const ns = await getDocs(nq);
+              ns.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `note_${scope.coll}_${docSnap.id}`,
+                  type: 'note',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: d.category ? `Note (${d.category})` : 'Note',
+                  description: d.content,
+                  metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+                });
+              });
+            } catch {}
+          }
+        }
+
+        // Deal stage progression
+        for (const dealId of dealIds) {
+          try {
+            const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+            const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(5));
+            const ss = await getDocs(sq);
+            ss.forEach((docSnap) => {
+              const d = docSnap.data() as any;
+              aggregated.push({
+                id: `dealstage_${dealId}_${docSnap.id}`,
+                type: 'deal_stage',
+                timestamp: d.timestamp?.toDate?.() || new Date(),
+                title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+                description: d.reason || 'Stage updated',
+                metadata: { dealId }
+              });
+            });
+          } catch {}
+        }
+
+        // Sort by timestamp and take the most recent 5
+        aggregated.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        setItems(aggregated.slice(0, 5));
+      } catch (error) {
+        console.error('Error loading recent activity:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [location?.id, tenantId]);
+
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Skeleton variant="rectangular" height={32} />
+        <Skeleton variant="rectangular" height={32} />
+        <Skeleton variant="rectangular" height={32} />
+      </Box>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <Box sx={{ textAlign: 'center', py: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          No recent activity
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          Activities will appear here as they occur
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      {items.map((item) => (
+        <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
+          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+            {item.type === 'task' && <EventIcon sx={{ fontSize: 16 }} />}
+            {item.type === 'note' && <NotesIcon sx={{ fontSize: 16 }} />}
+            {item.type === 'deal_stage' && <DealIcon sx={{ fontSize: 16 }} />}
+            {item.type === 'email' && <EmailIcon sx={{ fontSize: 16 }} />}
+          </Avatar>
+          <Typography variant="body2" fontSize="0.75rem">
+            {item.title}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+};
 
 const LocationDetails: React.FC = () => {
   const { companyId, locationId } = useParams<{ companyId: string; locationId: string }>();
@@ -765,6 +919,17 @@ const LocationDetails: React.FC = () => {
           {/* Right Column - Recent Activity + Contacts + Opportunities */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Recent Activity */}
+              <Card>
+                <CardHeader 
+                  title="Recent Activity" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  <RecentActivityWidget location={location} tenantId={tenantId} />
+                </CardContent>
+              </Card>
+
               {/* Contacts at this Location */}
               <Card>
                 <CardHeader 
