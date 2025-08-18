@@ -896,9 +896,64 @@ const LocationDetails: React.FC = () => {
             </Box>
           </Grid>
 
-          {/* Right Column - Contacts + Opportunities */}
+          {/* Right Column - Opportunities + Contacts + Salespeople */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Opportunities (location-scoped) */}
+              <Card>
+                <CardHeader 
+                  title="Opportunities" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {locationDeals && locationDeals.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {locationDeals
+                        .slice()
+                        .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
+                        .slice(0, 5)
+                        .map((deal: any) => (
+                          <Box
+                            key={deal.id}
+                            sx={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: 1, 
+                              p: 1, 
+                              borderRadius: 1, 
+                              bgcolor: 'grey.50', 
+                              cursor: 'pointer' 
+                            }}
+                            onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => { 
+                              if (e.key === 'Enter' || e.key === ' ') { 
+                                e.preventDefault(); 
+                                navigate(`/crm/deals/${deal.id}`); 
+                              } 
+                            }}
+                          >
+                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                              <BusinessIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {deal.name || deal.title || 'Unknown Deal'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Contacts at this Location */}
               <Card>
                 <CardHeader 
@@ -1012,61 +1067,6 @@ const LocationDetails: React.FC = () => {
                     </Box>
                   ) : (
                     <Typography variant="body2" color="text.secondary">No recent salesperson activity</Typography>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Opportunities (location-scoped) */}
-              <Card>
-                <CardHeader 
-                  title="Opportunities" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {locationDeals && locationDeals.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {locationDeals
-                        .slice()
-                        .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
-                        .slice(0, 5)
-                        .map((deal: any) => (
-                          <Box
-                            key={deal.id}
-                            sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: 1, 
-                              p: 1, 
-                              borderRadius: 1, 
-                              bgcolor: 'grey.50', 
-                              cursor: 'pointer' 
-                            }}
-                            onClick={() => navigate(`/crm/deals/${deal.id}`)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => { 
-                              if (e.key === 'Enter' || e.key === ' ') { 
-                                e.preventDefault(); 
-                                navigate(`/crm/deals/${deal.id}`); 
-                              } 
-                            }}
-                          >
-                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
-                              <BusinessIcon sx={{ fontSize: 16 }} />
-                            </Avatar>
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {deal.name || deal.title || 'Unknown Deal'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        ))}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
                   )}
                 </CardContent>
               </Card>
