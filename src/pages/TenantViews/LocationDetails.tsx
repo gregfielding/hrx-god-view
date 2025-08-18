@@ -48,7 +48,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
 
-import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
+
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import AddNoteDialog from '../../components/AddNoteDialog';
@@ -777,35 +777,7 @@ const LocationDetails: React.FC = () => {
           </Card>
         </Grid>
 
-        {/* Universal Associations */}
-        <Grid item xs={12}>
-          <SimpleAssociationsCard
-            entityType="location"
-            entityId={location.id}
-            entityName={location.name}
-            tenantId={tenantId}
-            showAssociations={{
-              companies: true,
-              contacts: true,
-              deals: true,
-              salespeople: true,
-              locations: false, // Don't show locations for locations
-              tasks: false
-            }}
-            customLabels={{
-              companies: "Company",
-              contacts: "Staff",
-              deals: "Opportunities",
-              salespeople: "Account Managers"
-            }}
-            onAssociationChange={(type, action, entityId) => {
-              // Association changed
-            }}
-            onError={(error) => {
-              console.error('Association error:', error);
-            }}
-          />
-        </Grid>
+
         </Grid>
       </TabPanel>
 

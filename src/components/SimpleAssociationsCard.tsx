@@ -231,27 +231,22 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
         if (unifiedServiceCache[cacheKey]) {
           finalResult = unifiedServiceCache[cacheKey];
         } else {
-          try {
-            const unified = createUnifiedAssociationService(tenantId, user?.uid || '');
-            // Add timeout for unified service
-            const unifiedPromise = unified.getEntityAssociations(entityType, entityId);
-            const unifiedResult = await Promise.race([unifiedPromise, timeoutPromise]) as any;
-            
-            // Convert unified result to simple format
-            finalResult = {
-              associations: unifiedResult.associations,
-              entities: unifiedResult.entities
-            };
-            
-            // Cache the result for the lifetime of the component
-            setUnifiedServiceCache(prev => ({
-              ...prev,
-              [cacheKey]: finalResult
-            }));
-            
-          } catch (unifiedError) {
-            throw unifiedError;
-          }
+          const unified = createUnifiedAssociationService(tenantId, user?.uid || '');
+          // Add timeout for unified service
+          const unifiedPromise = unified.getEntityAssociations(entityType, entityId);
+          const unifiedResult = await Promise.race([unifiedPromise, timeoutPromise]) as any;
+          
+          // Convert unified result to simple format
+          finalResult = {
+            associations: unifiedResult.associations,
+            entities: unifiedResult.entities
+          };
+          
+          // Cache the result for the lifetime of the component
+          setUnifiedServiceCache(prev => ({
+            ...prev,
+            [cacheKey]: finalResult
+          }));
         }
         
         setAssociations(finalResult.associations);
