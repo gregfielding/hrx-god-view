@@ -862,6 +862,16 @@ const LocationDetails: React.FC = () => {
           {/* Center Column - Location Intelligence */}
           <Grid item xs={12} md={5}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Recent Activity */}
+              <Card>
+                <CardHeader 
+                  title="Recent Activity" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  <RecentActivityWidget location={location} tenantId={tenantId} />
+                </CardContent>
+              </Card>
 
               {/* Location Map */}
               <Card>
@@ -886,20 +896,9 @@ const LocationDetails: React.FC = () => {
             </Box>
           </Grid>
 
-          {/* Right Column - Recent Activity + Contacts + Opportunities */}
+          {/* Right Column - Contacts + Opportunities */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader 
-                  title="Recent Activity" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <RecentActivityWidget location={location} tenantId={tenantId} />
-                </CardContent>
-              </Card>
-
               {/* Contacts at this Location */}
               <Card>
                 <CardHeader 
