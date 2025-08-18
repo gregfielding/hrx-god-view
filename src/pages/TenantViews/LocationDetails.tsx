@@ -54,7 +54,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker, Circle, useJsApiLoader } from '@react-google-maps/api';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -96,6 +96,9 @@ interface TabPanelProps {
   index: number;
   value: number;
 }
+
+// Keep libraries array stable to avoid reload warnings
+const GOOGLE_MAP_LIBRARIES = ['places'] as const;
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
@@ -264,7 +267,7 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   const { isLoaded } = useJsApiLoader({
     googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: ['places'],
+    libraries: GOOGLE_MAP_LIBRARIES as unknown as string[],
   });
 
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
@@ -364,12 +367,10 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
           zIndex: 1000,
           clickable: true,
           draggable: false,
-          icon: {
-            url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-            scaledSize: new google.maps.Size(40, 40)
-          }
         }}
       />
+      {/* Visual fallback to guarantee a visible marker even if default pin fails to render */}
+      <Circle center={center} radius={25} options={{ strokeColor: '#d32f2f', fillColor: '#d32f2f', fillOpacity: 0.6, strokeOpacity: 0.9, strokeWeight: 2 }} />
     </GoogleMap>
   );
 };
