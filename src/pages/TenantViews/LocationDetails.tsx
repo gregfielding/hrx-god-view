@@ -589,195 +589,306 @@ const LocationDetails: React.FC = () => {
       </Paper>
 
       {/* Tab Panels */}
-      <TabPanel value={tabValue} index={0}>
+            <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
-        {/* Location Information */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardHeader title="Location Information" />
-            <CardContent>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <TextField
-                  label="Location Name"
-                  value={editing ? editForm.name || '' : location.name}
-                  onChange={(e) => handleFieldChange('name', e.target.value)}
-                  disabled={!editing}
-                  fullWidth
-                  size="small"
-                />
-                
-                <TextField
-                  label="Address"
-                  value={editing ? editForm.address || '' : location.address}
-                  onChange={(e) => handleFieldChange('address', e.target.value)}
-                  disabled={!editing}
-                  fullWidth
-                  size="small"
-                />
-                
-                <Grid container spacing={2}>
-                  <Grid item xs={6}>
-                    <TextField
-                      label="City"
-                      value={editing ? editForm.city || '' : location.city}
-                      onChange={(e) => handleFieldChange('city', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
-                  </Grid>
-                  <Grid item xs={3}>
-                    <TextField
-                      label="State"
-                      value={editing ? editForm.state || '' : location.state}
-                      onChange={(e) => handleFieldChange('state', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
-                  </Grid>
-                  <Grid item xs={3}>
-                    <TextField
-                      label="ZIP Code"
-                      value={editing ? editForm.zipCode || '' : location.zipCode}
-                      onChange={(e) => handleFieldChange('zipCode', e.target.value)}
-                      disabled={!editing}
-                      fullWidth
-                      size="small"
-                    />
-                  </Grid>
-                </Grid>
-                
-                <FormControl fullWidth size="small">
-                  <InputLabel>Type</InputLabel>
-                  <Select
-                    value={editing ? editForm.type || '' : location.type}
-                    label="Type"
-                    onChange={(e) => handleFieldChange('type', e.target.value)}
-                    disabled={!editing}
-                  >
-                    <MenuItem value="Headquarters">Headquarters</MenuItem>
-                    <MenuItem value="Office">Office</MenuItem>
-                    <MenuItem value="Warehouse">Warehouse</MenuItem>
-                    <MenuItem value="Factory">Factory</MenuItem>
-                    <MenuItem value="Store">Store</MenuItem>
-                    <MenuItem value="Branch">Branch</MenuItem>
-                  </Select>
-                </FormControl>
-                
-                {location.division && (
-                  <TextField
-                    label="Division"
-                    value={editing ? editForm.division || '' : location.division}
-                    onChange={(e) => handleFieldChange('division', e.target.value)}
-                    disabled={!editing}
-                    fullWidth
-                    size="small"
-                  />
-                )}
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+          {/* Left Column - Location Details */}
+          <Grid item xs={12} md={4}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Location Description */}
+              <Card>
+                <CardHeader title="Location Description" />
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                    {location.address && location.city ? 
+                      `${location.address}, ${location.city}, ${location.state} ${location.zipCode}` : 
+                      'No location description available.'
+                    }
+                  </Typography>
+                </CardContent>
+              </Card>
 
-        {/* Statistics */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardHeader title="Statistics" />
-            <CardContent>
-              <Grid container spacing={2}>
-                <Grid item xs={4}>
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Typography variant="h4" color="primary" fontWeight="bold">
-                      {location.contactCount || 0}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Contacts
-                    </Typography>
+              {/* Location Details */}
+              <Card>
+                <CardHeader title="Location Details" />
+                <CardContent>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <TextField
+                      label="Location Name"
+                      value={editing ? editForm.name || '' : location.name}
+                      onChange={(e) => handleFieldChange('name', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                    />
+                    
+                    <TextField
+                      label="Address"
+                      value={editing ? editForm.address || '' : location.address}
+                      onChange={(e) => handleFieldChange('address', e.target.value)}
+                      disabled={!editing}
+                      fullWidth
+                      size="small"
+                    />
+                    
+                    <Grid container spacing={2}>
+                      <Grid item xs={6}>
+                        <TextField
+                          label="City"
+                          value={editing ? editForm.city || '' : location.city}
+                          onChange={(e) => handleFieldChange('city', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid item xs={3}>
+                        <TextField
+                          label="State"
+                          value={editing ? editForm.state || '' : location.state}
+                          onChange={(e) => handleFieldChange('state', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                      <Grid item xs={3}>
+                        <TextField
+                          label="ZIP Code"
+                          value={editing ? editForm.zipCode || '' : location.zipCode}
+                          onChange={(e) => handleFieldChange('zipCode', e.target.value)}
+                          disabled={!editing}
+                          fullWidth
+                          size="small"
+                        />
+                      </Grid>
+                    </Grid>
+                    
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Type</InputLabel>
+                      <Select
+                        value={editing ? editForm.type || '' : location.type}
+                        label="Type"
+                        onChange={(e) => handleFieldChange('type', e.target.value)}
+                        disabled={!editing}
+                      >
+                        <MenuItem value="Headquarters">Headquarters</MenuItem>
+                        <MenuItem value="Office">Office</MenuItem>
+                        <MenuItem value="Warehouse">Warehouse</MenuItem>
+                        <MenuItem value="Factory">Factory</MenuItem>
+                        <MenuItem value="Store">Store</MenuItem>
+                        <MenuItem value="Branch">Branch</MenuItem>
+                      </Select>
+                    </FormControl>
+                    
+                    {location.division && (
+                      <TextField
+                        label="Division"
+                        value={editing ? editForm.division || '' : location.division}
+                        onChange={(e) => handleFieldChange('division', e.target.value)}
+                        disabled={!editing}
+                        fullWidth
+                        size="small"
+                      />
+                    )}
                   </Box>
-                </Grid>
-                <Grid item xs={4}>
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Typography variant="h4" color="primary" fontWeight="bold">
-                      {location.dealCount || 0}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Deals
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid item xs={4}>
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Typography variant="h4" color="primary" fontWeight="bold">
-                      {location.salespersonCount || 0}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Salespeople
-                    </Typography>
-                  </Box>
-                </Grid>
-              </Grid>
-            </CardContent>
-          </Card>
-        </Grid>
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
 
-        {/* Opportunities (location-scoped) */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardHeader title="Opportunities" />
-            <CardContent>
-              {locationDeals && locationDeals.length > 0 ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {locationDeals
-                    .slice()
-                    .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
-                    .slice(0, 8)
-                    .map((deal: any) => (
-                      <Box key={deal.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                        <Button size="small" variant="text" onClick={() => navigate(`/crm/deals/${deal.id}`)} startIcon={<BusinessIcon fontSize="small" />} sx={{ textTransform: 'none' }}>
-                          <Typography variant="body2" fontWeight="medium">{deal.name || deal.title || 'Unknown Deal'}</Typography>
-                        </Button>
-                        <Box sx={{ ml: 'auto' }}>
-                          <Typography variant="caption" color="text.secondary">
-                            {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
-                          </Typography>
-                        </Box>
+          {/* Center Column - Location Intelligence */}
+          <Grid item xs={12} md={5}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Location Statistics */}
+              <Card>
+                <CardHeader title="Location Statistics" />
+                <CardContent>
+                  <Grid container spacing={2}>
+                    <Grid item xs={4}>
+                      <Box sx={{ textAlign: 'center' }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {locationContacts.length}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Contacts
+                        </Typography>
                       </Box>
-                    ))}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
+                    </Grid>
+                    <Grid item xs={4}>
+                      <Box sx={{ textAlign: 'center' }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {locationDeals.length}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Opportunities
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={4}>
+                      <Box sx={{ textAlign: 'center' }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {location.type}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Type
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
 
-        {/* Contacts at this Location */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardHeader title="Contacts at this Location" />
-            <CardContent>
-              {locationContacts && locationContacts.length > 0 ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {locationContacts.slice(0, 10).map((c: any) => (
-                    <Box key={c.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                      <Typography variant="body2" fontWeight="medium">
-                        {c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown Contact'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {c.jobTitle || c.title || ''}
-                      </Typography>
+              {/* Location Map */}
+              <Card>
+                <CardHeader title="Location Map" />
+                <CardContent>
+                  <Box sx={{ 
+                    height: 200, 
+                    bgcolor: 'grey.100', 
+                    borderRadius: 1, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center' 
+                  }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Map view coming soon
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Location Insights */}
+              <Card>
+                <CardHeader title="Location Insights" />
+                <CardContent>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center' 
+                    }}>
+                      <Typography variant="body2" color="text.secondary">Contact Density</Typography>
+                      <Chip 
+                        label={locationContacts.length > 5 ? 'High' : locationContacts.length > 2 ? 'Medium' : 'Low'} 
+                        color={locationContacts.length > 5 ? 'success' : locationContacts.length > 2 ? 'warning' : 'error'} 
+                        size="small" 
+                      />
                     </Box>
-                  ))}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">No contacts associated to this location</Typography>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center' 
+                    }}>
+                      <Typography variant="body2" color="text.secondary">Opportunity Value</Typography>
+                      <Chip 
+                        label={locationDeals.length > 3 ? 'High' : locationDeals.length > 1 ? 'Medium' : 'Low'} 
+                        color={locationDeals.length > 3 ? 'success' : locationDeals.length > 1 ? 'warning' : 'error'} 
+                        size="small" 
+                      />
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
 
+          {/* Right Column - Recent Activity + Contacts + Opportunities */}
+          <Grid item xs={12} md={3}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Contacts at this Location */}
+              <Card>
+                <CardHeader 
+                  title="Contacts at this Location" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {locationContacts && locationContacts.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {locationContacts.slice(0, 5).map((c: any) => (
+                        <Box
+                          key={c.id}
+                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                          onClick={() => navigate(`/crm/contacts/${c.id}`)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${c.id}`); } }}
+                        >
+                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                            {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}
+                          </Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight="medium">
+                              {c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown Contact'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {c.jobTitle || c.title || ''}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No contacts associated to this location</Typography>
+                  )}
+                </CardContent>
+              </Card>
 
+              {/* Opportunities (location-scoped) */}
+              <Card>
+                <CardHeader 
+                  title="Opportunities" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {locationDeals && locationDeals.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {locationDeals
+                        .slice()
+                        .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
+                        .slice(0, 5)
+                        .map((deal: any) => (
+                          <Box
+                            key={deal.id}
+                            sx={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: 1, 
+                              p: 1, 
+                              borderRadius: 1, 
+                              bgcolor: 'grey.50', 
+                              cursor: 'pointer' 
+                            }}
+                            onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => { 
+                              if (e.key === 'Enter' || e.key === ' ') { 
+                                e.preventDefault(); 
+                                navigate(`/crm/deals/${deal.id}`); 
+                              } 
+                            }}
+                          >
+                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                              <BusinessIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {deal.name || deal.title || 'Unknown Deal'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
+                  )}
+                </CardContent>
+              </Card>
+            </Box>
+          </Grid>
         </Grid>
       </TabPanel>
 
