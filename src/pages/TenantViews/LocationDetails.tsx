@@ -312,7 +312,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   if (!isLoaded) {
     return (
       <Box sx={{ 
-        height: 200, 
+        height: 360, 
         bgcolor: 'grey.100', 
         borderRadius: 1, 
         display: 'flex', 
@@ -328,7 +328,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     console.log('LocationMap: No center found, using fallback');
     return (
       <GoogleMap
-        mapContainerStyle={{ width: '100%', height: '200px' }}
+        mapContainerStyle={{ width: '100%', height: '360px' }}
         center={fallbackCenter}
         zoom={12}
       >
@@ -340,15 +340,18 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     );
   }
 
+  console.log('LocationMap: Rendering map with center:', center);
+  
   return (
     <GoogleMap
-      mapContainerStyle={{ width: '100%', height: '200px' }}
+      mapContainerStyle={{ width: '100%', height: '360px' }}
       center={center}
       zoom={12}
     >
       <Marker 
         position={center}
         label={location.name}
+        title={location.name}
       />
     </GoogleMap>
   );
