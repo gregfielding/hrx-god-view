@@ -1389,46 +1389,6 @@ const DealDetails: React.FC = () => {
               >
                 {(company?.companyName || company?.name || 'D').charAt(0).toUpperCase()}
               </Avatar>
-              <Box sx={{ 
-                position: 'absolute', 
-                bottom: -8, 
-                right: -8, 
-                display: 'flex', 
-                gap: 0.5 
-              }}>
-                <IconButton
-                  size="small"
-                  sx={{
-                    bgcolor: 'grey.300',
-                    '&:hover': { bgcolor: 'grey.400' },
-                    width: 24,
-                    height: 24
-                  }}
-                  onClick={() => {
-                    // TODO: Implement logo upload for deals
-                    console.log('Logo upload for deals not yet implemented');
-                  }}
-                >
-                  <UploadIcon sx={{ fontSize: 16, color: 'grey.600' }} />
-                </IconButton>
-                {company?.logo && (
-                  <IconButton
-                    size="small"
-                    sx={{
-                      bgcolor: 'grey.300',
-                      '&:hover': { bgcolor: 'grey.400' },
-                      width: 24,
-                      height: 24
-                    }}
-                    onClick={() => {
-                      // TODO: Implement logo delete for deals
-                      console.log('Logo delete for deals not yet implemented');
-                    }}
-                  >
-                    <DeleteIcon sx={{ fontSize: 16, color: 'grey.600' }} />
-                  </IconButton>
-                )}
-              </Box>
             </Box>
 
             {/* Deal Information */}
@@ -1537,38 +1497,40 @@ const DealDetails: React.FC = () => {
                 </Box>
               )}
 
-              {/* Deal Health Indicators */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
-                {/* Deal Health */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Health:</Typography>
-                  <Chip
-                    label={deal.stage === 'closed_won' ? 'Won' : deal.stage === 'closed_lost' ? 'Lost' : 'Active'}
-                    size="small"
-                    sx={{
-                      bgcolor: deal.stage === 'closed_won' ? 'success.light' : deal.stage === 'closed_lost' ? 'error.light' : 'info.light',
-                      color: deal.stage === 'closed_won' ? 'success.dark' : deal.stage === 'closed_lost' ? 'error.dark' : 'info.dark',
-                      fontWeight: 500,
-                      fontSize: '0.75rem'
-                    }}
-                  />
+                              {/* Deal Health Indicators */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
+                  {/* Deal Health */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Health:</Typography>
+                    <Chip
+                      label={deal.stage === 'closed_won' ? 'Won' : deal.stage === 'closed_lost' ? 'Lost' : 'Active'}
+                      size="small"
+                      sx={{
+                        bgcolor: deal.stage === 'closed_won' ? 'success.light' : deal.stage === 'closed_lost' ? 'error.light' : 'info.light',
+                        color: deal.stage === 'closed_won' ? 'success.dark' : deal.stage === 'closed_lost' ? 'error.dark' : 'info.dark',
+                        fontWeight: 500,
+                        fontSize: '0.75rem',
+                        my: 0.5
+                      }}
+                    />
+                  </Box>
+                  
+                  {/* Deal Priority */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
+                    <Chip
+                      label={deal.estimatedRevenue > 100000 ? 'High' : deal.estimatedRevenue > 50000 ? 'Medium' : 'Low'}
+                      size="small"
+                      sx={{
+                        bgcolor: deal.estimatedRevenue > 100000 ? 'error.light' : deal.estimatedRevenue > 50000 ? 'warning.light' : 'success.light',
+                        color: deal.estimatedRevenue > 100000 ? 'error.dark' : deal.estimatedRevenue > 50000 ? 'warning.dark' : 'success.dark',
+                        fontWeight: 500,
+                        fontSize: '0.75rem',
+                        my: 0.5
+                      }}
+                    />
+                  </Box>
                 </Box>
-                
-                {/* Deal Priority */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
-                  <Chip
-                    label={deal.estimatedRevenue > 100000 ? 'High' : deal.estimatedRevenue > 50000 ? 'Medium' : 'Low'}
-                    size="small"
-                    sx={{
-                      bgcolor: deal.estimatedRevenue > 100000 ? 'error.light' : deal.estimatedRevenue > 50000 ? 'warning.light' : 'success.light',
-                      color: deal.estimatedRevenue > 100000 ? 'error.dark' : deal.estimatedRevenue > 50000 ? 'warning.dark' : 'success.dark',
-                      fontWeight: 500,
-                      fontSize: '0.75rem'
-                    }}
-                  />
-                </Box>
-              </Box>
             </Box>
           </Box>
 
@@ -1601,17 +1563,7 @@ const DealDetails: React.FC = () => {
           </Box>
         </Box>
         
-        {/* Hidden file input for logo upload */}
-        <input
-          ref={logoInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            // TODO: Implement logo upload for deals
-            console.log('Logo upload for deals not yet implemented');
-          }}
-        />
+
       </Box>
 
       {/* Pattern Alerts */}

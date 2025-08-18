@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -30,6 +30,12 @@ import {
   DialogActions,
   Snackbar,
   Skeleton,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -54,7 +60,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { GoogleMap, Marker, Circle, useJsApiLoader, Libraries } from '@react-google-maps/api';
+import { GoogleMap } from '@react-google-maps/api';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -78,6 +84,11 @@ interface LocationData {
   dealCount?: number;
   salespersonCount?: number;
   activeSalespeople?: { [key: string]: any };
+  associations?: {
+    contacts?: string[];
+    deals?: string[];
+    salespeople?: string[];
+  };
   createdAt?: any;
   updatedAt?: any;
 }
@@ -97,8 +108,7 @@ interface TabPanelProps {
   value: number;
 }
 
-// Keep libraries array stable to avoid reload warnings
-const GOOGLE_MAP_LIBRARIES: Libraries = ['places', 'marker'];
+// Google Maps is loaded globally in App via LoadScript; avoid loading here again
 
 function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
@@ -265,12 +275,10 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 };
 
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: GOOGLE_MAP_LIBRARIES,
-  });
-
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const markerRef = useRef<google.maps.Marker | null>(null);
+  const markerClickRef = useRef<google.maps.MapsEventListener | null>(null);
   
   // Fallback center (Las Vegas area based on the image)
   const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
@@ -318,16 +326,49 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     }
   }, [location]);
 
-  if (!isLoaded) {
+  // Create/update plain JS marker once the map and center are ready
+  useEffect(() => {
+    const g = (window as any).google as typeof google | undefined;
+    if (!g || !mapInstance || !center) return;
+    // Marker
+    if (!markerRef.current) {
+      markerRef.current = new g.maps.Marker({
+        position: center,
+        map: mapInstance,
+        title: location.name || 'Location',
+        zIndex: 999999,
+        icon: {
+          url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+          scaledSize: new g.maps.Size(40, 40),
+        },
+      });
+      console.log('Plain JS marker created:', markerRef.current.getPosition()?.toUrlValue());
+    } else {
+      const pos = markerRef.current.getPosition();
+      const lat = pos?.lat();
+      const lng = pos?.lng();
+      if (lat !== center.lat || lng !== center.lng) {
+        markerRef.current.setPosition(center);
+      }
+      if (!markerRef.current.getMap()) markerRef.current.setMap(mapInstance);
+    }
+    // (Re)attach click listener to recenter map when pin is clicked
+    if (markerClickRef.current) {
+      markerClickRef.current.remove();
+      markerClickRef.current = null;
+    }
+    markerClickRef.current = markerRef.current.addListener('click', () => {
+      try {
+        mapInstance.panTo(center);
+        const currentZoom = mapInstance.getZoom() || 12;
+        if (currentZoom < 14) mapInstance.setZoom(14);
+      } catch {}
+    });
+  }, [mapInstance, center, location.name]);
+
+  if (!(window as any).google) {
     return (
-      <Box sx={{ 
-        height: 360, 
-        bgcolor: 'grey.100', 
-        borderRadius: 1, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center' 
-      }}>
+      <Box sx={{ height: 360, bgcolor: 'grey.100', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <CircularProgress />
       </Box>
     );
@@ -341,37 +382,303 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
         center={fallbackCenter}
         zoom={12}
       >
-        <Marker 
-          position={fallbackCenter}
-          label="Location (approximate)"
-        />
       </GoogleMap>
     );
   }
 
   console.log('LocationMap: Rendering map with center:', center);
   
+  
+
   return (
     <GoogleMap
       mapContainerStyle={{ width: '100%', height: '360px' }}
       center={center}
       zoom={12}
+      onLoad={(m) => setMapInstance(m)}
+      onUnmount={() => setMapInstance(null)}
     >
-      <Marker 
-        position={center}
-        label={location.name}
-        onLoad={(marker) => {
-          console.log('LocationMap: Marker loaded successfully:', marker);
-        }}
-        options={{
-          zIndex: 1000,
-          clickable: true,
-          draggable: false,
-        }}
-      />
-      {/* Visual fallback to guarantee a visible marker even if default pin fails to render */}
-      <Circle center={center} radius={25} options={{ strokeColor: '#d32f2f', fillColor: '#d32f2f', fillOpacity: 0.6, strokeOpacity: 0.9, strokeWeight: 2 }} />
     </GoogleMap>
+  );
+};
+
+// Link component for activity items
+const LinkForActivity: React.FC<{ it: LocationActivityItem; tenantId: string; companyId: string }> = ({ it, tenantId, companyId }) => {
+  // Basic heuristics using metadata: for deal_stage use metadata.dealId; for email prefer metadata.dealId else first contact; for task/note no direct id unless captured – link to location as fallback
+  let href: string | null = null;
+  let label = 'Open';
+  if (it.type === 'deal_stage' && it.metadata?.dealId) {
+    href = `/crm/deals/${it.metadata.dealId}`;
+    label = 'View Deal';
+  } else if (it.type === 'email') {
+    const dealId = it.metadata?.dealId;
+    const contactId = Array.isArray(it.metadata?.contacts) ? it.metadata.contacts[0] : it.metadata?.contactId;
+    if (dealId) {
+      href = `/crm/deals/${dealId}`;
+      label = 'View Deal';
+    } else if (contactId) {
+      href = `/crm/contacts/${contactId}`;
+      label = 'View Contact';
+    }
+  }
+  if (!href) {
+    href = `/crm/companies/${companyId}`;
+    label = 'View Company';
+  }
+  return (
+    <Button size="small" href={href} target="_self" variant="text">{label}</Button>
+  );
+};
+
+// Location Activity Tab Component
+const LocationActivityTab: React.FC<{ location: LocationData; tenantId: string; companyId: string }> = ({ location, tenantId, companyId }) => {
+  const [items, setItems] = useState<LocationActivityItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  // Filters
+  const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'note' | 'deal_stage' | 'email'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  // Pagination
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState<number>(1);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!location?.id || !tenantId) return;
+      setLoading(true);
+      setError('');
+      try {
+        const locationId: string = location.id;
+        const contactIds: string[] = Array.isArray(location.associations?.contacts) ? location.associations.contacts : [];
+        const dealIds: string[] = Array.isArray(location.associations?.deals) ? location.associations.deals : [];
+
+        const aggregated: LocationActivityItem[] = [];
+
+        // Tasks: completed tasks associated to this location
+        try {
+          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+          const tq = query(
+            tasksRef,
+            where('associations.locations', 'array-contains', locationId),
+            where('status', '==', 'completed'),
+            orderBy('updatedAt', 'desc'),
+            limit(200)
+          );
+          const ts = await getDocs(tq);
+          ts.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `task_${docSnap.id}`,
+              type: 'task',
+              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+              title: d.title || 'Task completed',
+              description: d.description || '',
+              metadata: { priority: d.priority, taskType: d.type }
+            });
+          });
+        } catch {}
+
+        // Notes: location + contact + deal notes
+        const notesScopes = [
+          { coll: 'location_notes', ids: [locationId] },
+          { coll: 'contact_notes', ids: contactIds },
+          { coll: 'deal_notes', ids: dealIds },
+        ];
+        for (const scope of notesScopes) {
+          for (const id of scope.ids) {
+            try {
+              const notesRef = collection(db, 'tenants', tenantId, scope.coll);
+              const nq = query(notesRef, where('entityId', '==', id), orderBy('timestamp', 'desc'), limit(200));
+              const ns = await getDocs(nq);
+              ns.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `note_${scope.coll}_${docSnap.id}`,
+                  type: 'note',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: d.category ? `Note (${d.category})` : 'Note',
+                  description: d.content,
+                  metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+                });
+              });
+            } catch {}
+          }
+        }
+
+        // Deal stage progression: subcollection stage_history under each deal
+        for (const dealId of dealIds) {
+          try {
+            const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+            const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+            const ss = await getDocs(sq);
+            ss.forEach((docSnap) => {
+              const d = docSnap.data() as any;
+              aggregated.push({
+                id: `dealstage_${dealId}_${docSnap.id}`,
+                type: 'deal_stage',
+                timestamp: d.timestamp?.toDate?.() || new Date(),
+                title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+                description: d.reason || 'Stage updated',
+                metadata: { dealId }
+              });
+            });
+          } catch {}
+        }
+
+        // Emails: email_logs filtered by locationId and by each contactId
+        try {
+          const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+          const lq = query(emailsRef, where('locationId', '==', locationId), orderBy('timestamp', 'desc'), limit(200));
+          const ls = await getDocs(lq);
+          ls.forEach((docSnap) => {
+            const d = docSnap.data() as any;
+            aggregated.push({
+              id: `email_location_${docSnap.id}`,
+              type: 'email',
+              timestamp: d.timestamp?.toDate?.() || new Date(),
+              title: `Email: ${d.subject || '(no subject)'}`,
+              description: d.bodySnippet,
+              metadata: { from: d.from, to: d.to, direction: d.direction }
+            });
+          });
+          for (const contactId of contactIds) {
+            try {
+              const cq2 = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+              const cs2 = await getDocs(cq2);
+              cs2.forEach((docSnap) => {
+                const d = docSnap.data() as any;
+                aggregated.push({
+                  id: `email_contact_${contactId}_${docSnap.id}`,
+                  type: 'email',
+                  timestamp: d.timestamp?.toDate?.() || new Date(),
+                  title: `Email: ${d.subject || '(no subject)'}`,
+                  description: d.bodySnippet,
+                  metadata: { from: d.from, to: d.to, direction: d.direction }
+                });
+              });
+            } catch {}
+          }
+        } catch {}
+
+        // Sort newest first
+        aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+        setItems(aggregated);
+        setPage(1);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to load activity');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [location?.id, tenantId]);
+
+  // Derived list after filters
+  const filtered = items.filter((it) => {
+    if (typeFilter !== 'all' && it.type !== typeFilter) return false;
+    if (startDate) {
+      const s = new Date(startDate + 'T00:00:00');
+      if (it.timestamp < s) return false;
+    }
+    if (endDate) {
+      const e = new Date(endDate + 'T23:59:59');
+      if (it.timestamp > e) return false;
+    }
+    return true;
+  });
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  return (
+    <Box>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
+        <Box display="flex" alignItems="center" gap={1}>
+          <TimelineIcon /><Typography variant="h6">Location Activity</Typography>
+        </Box>
+        {/* Filters */}
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Type</InputLabel>
+            <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="task">Tasks</MenuItem>
+              <MenuItem value="note">Notes</MenuItem>
+              <MenuItem value="deal_stage">Deal Stages</MenuItem>
+              <MenuItem value="email">Emails</MenuItem>
+            </Select>
+          </FormControl>
+          <TextField
+            type="date"
+            size="small"
+            label="Start"
+            InputLabelProps={{ shrink: true }}
+            value={startDate}
+            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+          />
+          <TextField
+            type="date"
+            size="small"
+            label="End"
+            InputLabelProps={{ shrink: true }}
+            value={endDate}
+            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+          />
+          <Typography variant="body2" color="text.secondary">
+            {total} results
+          </Typography>
+        </Box>
+      </Box>
+      <Card>
+        <CardContent>
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+          {loading ? (
+            <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
+          ) : filtered.length === 0 ? (
+            <Box textAlign="center" py={4}>
+              <Typography color="text.secondary">No activity yet.</Typography>
+              <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
+            </Box>
+          ) : (
+            <TableContainer component={Paper} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Title</TableCell>
+                    <TableCell>Description</TableCell>
+                    <TableCell>When</TableCell>
+                    <TableCell align="right">Link</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {pageItems.map((it) => (
+                    <TableRow key={it.id}>
+                      <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
+                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
+                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
+                      <TableCell align="right">
+                        <LinkForActivity it={it} tenantId={tenantId} companyId={companyId!} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+          {/* Pagination */}
+          {filtered.length > 0 && (
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
+              <Button size="small" variant="outlined" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+              <Typography variant="caption">Page {page} of {totalPages}</Typography>
+              <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+    </Box>
   );
 };
 
@@ -636,47 +943,56 @@ const LocationDetails: React.FC = () => {
             </Box>
 
             {/* Location Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                  {location.name}
-                </Typography>
-              </Box>
-              
-              {/* Company Name */}
-              <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                <BusinessIcon sx={{ fontSize: 16, color: 'primary.main' }} />
-                <MUILink
-                  underline="hover"
-                  color="primary"
-                  href={`/crm/companies/${companyId}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    navigate(`/crm/companies/${companyId}`);
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+                    {location.name}
+                  </Typography>
+                </Box>
+                
+                {/* Location Type */}
+                <Chip
+                  label={location.type}
+                  size="medium"
+                  sx={{
+                    bgcolor: 'primary.50',
+                    color: 'text.primary',
+                    fontWeight: 500,
+                    fontSize: '0.875rem',
+                    height: 28,
+                    maxWidth: 'fit-content',
+                    my: 0.5,
+                    '& .MuiChip-label': {
+                      px: 1,
+                      py: 0.5
+                    }
                   }}
-                  sx={{ cursor: 'pointer', fontWeight: 'normal' }}
-                >
-                  {company?.companyName || company?.name}
-                </MUILink>
-              </Typography>
+                />
+                
+                {/* Company Name */}
+                <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <BusinessIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+                  <MUILink
+                    underline="hover"
+                    color="primary"
+                    href={`/crm/companies/${companyId}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(`/crm/companies/${companyId}`);
+                    }}
+                    sx={{ cursor: 'pointer', fontWeight: 'normal' }}
+                  >
+                    {company?.companyName || company?.name}
+                  </MUILink>
+                </Typography>
 
-              {/* Location Type */}
-              <Chip
-                label={location.type}
-                size="small"
-                sx={{
-                  bgcolor: 'primary.50',
-                  color: 'text.primary',
-                  fontWeight: 500,
-                  fontSize: '0.75rem',
-                  height: 20,
-                  maxWidth: 'fit-content',
-                  '& .MuiChip-label': {
-                    px: 0.5,
-                    py: 0.25
-                  }
-                }}
-              />
+              {/* Location Phone Number */}
+              {location.phone && (
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <PhoneIcon sx={{ fontSize: 16 }} />
+                  {location.phone}
+                </Typography>
+              )}
 
               {/* Location Address */}
               {(location.address || location.city || location.state) && (
@@ -798,21 +1114,7 @@ const LocationDetails: React.FC = () => {
                 </IconButton>
               </Box>
 
-              {/* Location Stats */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Contacts:</Typography>
-                  <Typography variant="body2" color="primary" sx={{ fontWeight: 500 }}>
-                    {locationContacts.length}
-                  </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Opportunities:</Typography>
-                  <Typography variant="body2" color="primary" sx={{ fontWeight: 500 }}>
-                    {locationDeals.length}
-                  </Typography>
-                </Box>
-              </Box>
+
             </Box>
           </Box>
 
@@ -1188,12 +1490,7 @@ const LocationDetails: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
-        <ActivityLogTab
-          entityId={location.id}
-          entityType="location"
-          entityName={`${company?.name || ''} - ${location.name}`.trim()}
-          tenantId={tenantId}
-        />
+        <LocationActivityTab location={location} tenantId={tenantId} companyId={companyId!} />
       </TabPanel>
 
       {/* Add Note Dialog */}

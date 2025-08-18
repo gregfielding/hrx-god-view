@@ -2884,7 +2884,7 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
         </Box>
       </Grid>
 
-      {/* Right Column - Recent Activity + Active Salespeople + Opportunities */}
+      {/* Right Column - Recent Activity + Opportunities + Active Salespeople */}
       <Grid item xs={12} md={3}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Recent Activity - Moved to top of right column */}
@@ -2898,73 +2898,7 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
             </CardContent>
           </Card>
 
-          {/* Active Salespeople */}
-          <Card>
-            <CardHeader 
-              title="Active Salespeople" 
-              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              action={
-                <Button size="small" disabled={rebuildingActive} onClick={async () => {
-                  try {
-                    setRebuildingActive(true);
-                    // eslint-disable-next-line no-console
-                    console.log('Rebuild active salespeople – calling', { tenantId, companyId: company.id });
-                    const fn = httpsCallable(functions, 'rebuildCompanyActiveSalespeople');
-                    const resp: any = await fn({ tenantId, companyId: company.id });
-                    // eslint-disable-next-line no-console
-                    console.log('Rebuild active salespeople – response', resp, resp?.data);
-                    const data = resp?.data || {};
-                    if (data.ok) {
-                      setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
-                    } else if (data.error) {
-                      setLocalError(`Rebuild failed: ${data.error}`);
-                    } else {
-                      setLocalSuccess('Rebuild requested');
-                    }
-                    // Light refresh (no state wire-in here, but triggers firestore listener paths elsewhere)
-                    try {
-                      await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id));
-                    } catch {}
-                  } catch (e) {
-                    // eslint-disable-next-line no-console
-                    console.error('Rebuild active salespeople – error', e);
-                    setLocalError('Failed to rebuild active salespeople');
-                  } finally {
-                    setRebuildingActive(false);
-                  }
-                }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
-              }
-            />
-            <CardContent sx={{ p: 2 }}>
-              {company?.activeSalespeople && Object.keys(company.activeSalespeople).length > 0 ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  {Object.values(company.activeSalespeople as any)
-                    .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
-                    .slice(0, 5)
-                    .map((sp: any) => (
-                      <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                        <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
-                          {(sp.displayName || sp.firstName || 'S').charAt(0)}
-                        </Avatar>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="body2" fontWeight="medium">
-                            {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {sp.jobTitle || sp.department || ''}
-                          </Typography>
-                        </Box>
-                        {/* Date removed per request */}
-                      </Box>
-                    ))}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">No recent salesperson activity</Typography>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Opportunities - Moved from center column */}
+          {/* Opportunities - Moved above Active Salespeople */}
           <Card>
             <CardHeader 
               title="Opportunities" 
@@ -3062,6 +2996,72 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
                 </Box>
               ) : (
                 <Typography variant="body2" color="text.secondary">No associated opportunities</Typography>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Active Salespeople */}
+          <Card>
+            <CardHeader 
+              title="Active Salespeople" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              action={
+                <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                  try {
+                    setRebuildingActive(true);
+                    // eslint-disable-next-line no-console
+                    console.log('Rebuild active salespeople – calling', { tenantId, companyId: company.id });
+                    const fn = httpsCallable(functions, 'rebuildCompanyActiveSalespeople');
+                    const resp: any = await fn({ tenantId, companyId: company.id });
+                    // eslint-disable-next-line no-console
+                    console.log('Rebuild active salespeople – response', resp, resp?.data);
+                    const data = resp?.data || {};
+                    if (data.ok) {
+                      setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                    } else if (data.error) {
+                      setLocalError(`Rebuild failed: ${data.error}`);
+                    } else {
+                      setLocalSuccess('Rebuild requested');
+                    }
+                    // Light refresh (no state wire-in here, but triggers firestore listener paths elsewhere)
+                    try {
+                      await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id));
+                    } catch {}
+                  } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.error('Rebuild active salespeople – error', e);
+                    setLocalError('Failed to rebuild active salespeople');
+                  } finally {
+                    setRebuildingActive(false);
+                  }
+                }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+              }
+            />
+            <CardContent sx={{ p: 2 }}>
+              {company?.activeSalespeople && Object.keys(company.activeSalespeople).length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {Object.values(company.activeSalespeople as any)
+                    .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                    .slice(0, 5)
+                    .map((sp: any) => (
+                      <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                        <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                          {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" fontWeight="medium">
+                            {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {sp.jobTitle || sp.department || ''}
+                          </Typography>
+                        </Box>
+                        {/* Date removed per request */}
+                      </Box>
+                    ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No recent salesperson activity</Typography>
               )}
             </CardContent>
           </Card>
