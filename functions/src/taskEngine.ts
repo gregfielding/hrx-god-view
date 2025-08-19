@@ -30,7 +30,8 @@ export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSec
     duration = null,
     dueDate = null,
     isRepeating = false,
-    repeatInterval = 30
+    repeatInterval = 30,
+    userTimezone = 'America/Los_Angeles' // Default timezone
   } = request.data;
 
   try {
@@ -159,7 +160,7 @@ export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSec
     if (classification === 'appointment' && startTime) {
       try {
         const { syncTaskToCalendar } = await import('./calendarSyncService');
-        const syncResult = await syncTaskToCalendar(createdBy, tenantId, taskRef.id, taskData);
+        const syncResult = await syncTaskToCalendar(createdBy, tenantId, taskRef.id, taskData, userTimezone);
         
         if (syncResult.success) {
           console.log('✅ Task synced to Google Calendar:', syncResult.message);
@@ -554,29 +555,54 @@ export const deleteTask = onCall({
       throw new Error('Missing required fields: taskId, tenantId');
     }
 
-    const taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId);
-    const taskDoc = await taskRef.get();
+    // Try to find the task in both possible collections
+    let taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId);
+    let taskDoc = await taskRef.get();
+
+    // If not found in main tasks collection, try crm_tasks collection
+    if (!taskDoc.exists) {
+      taskRef = db.collection('tenants').doc(tenantId).collection('crm_tasks').doc(taskId);
+      taskDoc = await taskRef.get();
+    }
+
+    // If still not found, try collectionGroup query as fallback
+    if (!taskDoc.exists) {
+      const taskQuery = await db.collectionGroup('tasks').where('__name__', '==', taskId).get();
+      if (!taskQuery.empty) {
+        const foundTask = taskQuery.docs[0];
+        const foundTenantId = foundTask.data().tenantId;
+        if (foundTenantId === tenantId) {
+          taskRef = foundTask.ref;
+          taskDoc = foundTask;
+        }
+      }
+    }
 
     if (!taskDoc.exists) {
-      throw new Error(`Task ${taskId} not found`);
+      throw new Error(`Task ${taskId} not found in tenant ${tenantId}`);
     }
 
     const taskData = taskDoc.data();
 
-    // Create AI log for task deletion
-    await createTaskAILog(
-      'task.deleted',
-      taskId,
-      `Task "${taskData?.title}" deleted`,
-      tenantId,
-      taskData?.assignedTo,
-      taskData?.associations,
-      JSON.stringify({
-        originalStatus: taskData?.status,
-        originalType: taskData?.type,
-        originalPriority: taskData?.priority
-      })
-    );
+    // Create AI log for task deletion (with error handling)
+    try {
+      await createTaskAILog(
+        'task.deleted',
+        taskId,
+        `Task "${taskData?.title}" deleted`,
+        tenantId,
+        taskData?.assignedTo,
+        taskData?.associations,
+        JSON.stringify({
+          originalStatus: taskData?.status,
+          originalType: taskData?.type,
+          originalPriority: taskData?.priority
+        })
+      );
+    } catch (aiLogError) {
+      console.warn('⚠️ Failed to create AI log for task deletion:', aiLogError);
+      // Continue with task deletion even if AI log fails
+    }
 
     await taskRef.delete();
 
@@ -589,6 +615,21 @@ export const deleteTask = onCall({
 
   } catch (error) {
     console.error('❌ Error deleting task:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
+    
+    // Handle specific error types
+    if (error.code === 'permission-denied') {
+      throw new Error('Permission denied. You do not have access to delete this task.');
+    }
+    
+    if (error.code === 'not-found') {
+      throw new Error('Task not found or already deleted.');
+    }
+    
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to delete task: ${errorMessage}`);
   }

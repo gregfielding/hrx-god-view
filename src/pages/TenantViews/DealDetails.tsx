@@ -220,6 +220,7 @@ const DealDetails: React.FC = () => {
   const [showManageContactsDialog, setShowManageContactsDialog] = useState(false);
   const [showManageLocationDialog, setShowManageLocationDialog] = useState(false);
   const [dealCoachKey, setDealCoachKey] = useState<string>(`${dealId}-${Date.now()}`);
+  const [tasksDashboardKey, setTasksDashboardKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [loadingSalespeople, setLoadingSalespeople] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const foundationalDataLoadedRef = useRef(false);
@@ -1697,6 +1698,7 @@ const DealDetails: React.FC = () => {
                 }>
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <TasksDashboard
+                      key={tasksDashboardKey}
                       entityId={deal.id}
                       entityType="deal"
                       tenantId={tenantId}
@@ -1704,6 +1706,7 @@ const DealDetails: React.FC = () => {
                       preloadedContacts={associatedContacts}
                       preloadedSalespeople={associatedSalespeople}
                       preloadedCompany={company}
+                      showOnlyTodos={true}
                     />
                   </Box>
                 </SectionCard>
@@ -2281,9 +2284,51 @@ const DealDetails: React.FC = () => {
             }}
             onSubmit={async (taskData) => {
               // Handle task creation
-              console.log('Task created:', taskData);
-              setShowCreateTaskDialog(false);
-              setPrefilledTaskData(null); // Clear prefilled data after submission
+              try {
+                console.log('Creating task:', taskData);
+                
+                // Import TaskService dynamically to avoid circular dependencies
+                const { TaskService } = await import('../../utils/taskService');
+                const taskService = TaskService.getInstance();
+                
+                // Create the task with proper associations
+                const taskWithAssociations = {
+                  ...taskData,
+                  tenantId,
+                  createdBy: user?.uid || '', // Required by Cloud Function
+                  assignedTo: user?.uid || '', // Required by Cloud Function
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                  associations: {
+                    ...taskData.associations,
+                    deals: [deal.id], // Associate with current deal
+                    companies: getDealPrimaryCompanyId(deal) ? [getDealPrimaryCompanyId(deal)!] : [],
+                    contacts: associatedContacts.map(contact => contact.id),
+                    salespeople: associatedSalespeople.map(salesperson => salesperson.id)
+                  }
+                };
+                
+                console.log('Task with associations:', taskWithAssociations);
+                console.log('Deal ID:', deal.id);
+                
+                const taskId = await taskService.createTask(taskWithAssociations);
+                console.log('Task created successfully with ID:', taskId);
+                console.log('Task associations:', taskWithAssociations.associations);
+                
+                // Task created successfully - the TasksDashboard should pick it up via real-time subscription
+                
+                setShowCreateTaskDialog(false);
+                setPrefilledTaskData(null); // Clear prefilled data after submission
+                
+                // Force refresh the TasksDashboard by updating the key after a short delay
+                setTimeout(() => {
+                  setTasksDashboardKey(`${deal.id}-${Date.now()}`);
+                }, 500);
+                
+              } catch (error) {
+                console.error('Error creating task:', error);
+                // You might want to show an error message to the user here
+              }
             }}
             prefilledData={prefilledTaskData}
             salespeople={associatedSalespeople}
@@ -2345,25 +2390,31 @@ const DealDetails: React.FC = () => {
       />
 
       {/* Manage Location Dialog */}
-      <ManageLocationDialog
-        open={showManageLocationDialog}
-        onClose={() => setShowManageLocationDialog(false)}
-        tenantId={tenantId}
-        companyId={(() => {
-          const companyId = getDealPrimaryCompanyId(deal) || '';
-          console.log('ManageLocationDialog companyId:', companyId, 'deal:', deal?.id);
-          return companyId;
-        })()}
-        currentLocationId={(() => {
-          const locations = (deal as any)?.associations?.locations || [];
-          if (locations.length > 0) {
-            const locationEntry = locations[0];
-            return typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
-          }
-          return undefined;
-        })()}
-        onLocationChange={handleLocationChange}
-      />
+      {(() => {
+        const companyId = getDealPrimaryCompanyId(deal);
+        if (!companyId) {
+          console.log('ManageLocationDialog: No company associated with deal, skipping dialog');
+          return null;
+        }
+        
+        return (
+          <ManageLocationDialog
+            open={showManageLocationDialog}
+            onClose={() => setShowManageLocationDialog(false)}
+            tenantId={tenantId}
+            companyId={companyId}
+            currentLocationId={(() => {
+              const locations = (deal as any)?.associations?.locations || [];
+              if (locations.length > 0) {
+                const locationEntry = locations[0];
+                return typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+              }
+              return undefined;
+            })()}
+            onLocationChange={handleLocationChange}
+          />
+        );
+      })()}
     </Box>
   );
 };

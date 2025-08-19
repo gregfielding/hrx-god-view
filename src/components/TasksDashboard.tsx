@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -43,7 +43,10 @@ interface TasksDashboardProps {
   preloadedContacts?: any[];
   preloadedSalespeople?: any[];
   preloadedCompany?: any;
+  preloadedDeals?: any[];
+  preloadedCompanies?: any[];
   onAddTask?: () => void;
+  showOnlyTodos?: boolean;
 }
 
 interface AISuggestionsListProps {
@@ -76,6 +79,7 @@ interface TaskDashboardData {
     totalTasks: number;
     tasks: any[];
   };
+  mainDashboardTasks: any[]; // All non-completed tasks for main dashboard
   priorities: {
     high: number;
     medium: number;
@@ -98,7 +102,10 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   preloadedContacts,
   preloadedSalespeople,
   preloadedCompany,
-  onAddTask
+  preloadedDeals,
+  preloadedCompanies,
+  onAddTask,
+  showOnlyTodos = false
 }) => {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState<TaskDashboardData | null>(null);
@@ -113,9 +120,10 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [associatedCompany, setAssociatedCompany] = useState<any>(null);
+  const subscriptionRef = useRef<(() => void) | null>(null);
 
   // Load dashboard data
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     if (!entityId || !tenantId || !user?.uid) return;
     
     setLoading(true);
@@ -129,20 +137,36 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
         ? { dealId: entityId }
         : { assignedTo: entityId };
       
+      // Clean up any existing subscription
+      if (subscriptionRef.current) {
+        subscriptionRef.current();
+      }
+      
       const unsubscribe = taskService.subscribeToTasks(
         user.uid,
         tenantId,
         filter,
         (tasks) => {
+          const baseTasks = showOnlyTodos
+            ? tasks.filter(t => (t.classification || '').toLowerCase() === 'todo')
+            : tasks;
+          if (process.env.NODE_ENV === 'development') {
+            console.log('🔍 TasksDashboard: Received tasks from service:', tasks);
+            console.log('🔍 TasksDashboard: Visible (after filter) tasks:', baseTasks);
+            console.log('🔍 TasksDashboard: Current user:', user.uid);
+          }
+          
           // Process tasks into dashboard data
           const today = new Date();
-          const todayTasks = tasks.filter(task => {
-            const taskDate = task.dueDate ? new Date(task.dueDate) : null;
+          const todayTasks = baseTasks.filter(task => {
+            const dateStr = task.dueDate || task.scheduledDate;
+            const taskDate = dateStr ? new Date(dateStr) : null;
             return taskDate && taskDate.toDateString() === today.toDateString();
           });
           
-          const thisWeekTasks = tasks.filter(task => {
-            const taskDate = task.dueDate ? new Date(task.dueDate) : null;
+          const thisWeekTasks = baseTasks.filter(task => {
+            const dateStr = task.dueDate || task.scheduledDate;
+            const taskDate = dateStr ? new Date(dateStr) : null;
             if (!taskDate) return false;
             const weekStart = new Date(today);
             weekStart.setDate(today.getDate() - today.getDay());
@@ -151,14 +175,107 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             return taskDate >= weekStart && taskDate <= weekEnd;
           });
           
-          const completedTasks = tasks.filter(task => task.status === 'completed');
+          const completedTasks = baseTasks.filter(task => task.status === 'completed');
+          
+          // Show all tasks in the main list, not just those due today
+          const allTasks = baseTasks.filter(task => task.status !== 'completed');
+          
+          // Add overdue tasks to today's tasks
+          const overdueTasks = baseTasks.filter(task => task.status === 'overdue');
+          const todayTasksWithOverdue = [...todayTasks, ...overdueTasks];
+          
+          // For the main dashboard, show a focused view: overdue, today, tomorrow, and this week
+          const dashboardOverdueTasks = baseTasks.filter(task => task.status === 'overdue');
+          
+          const dashboardToday = new Date();
+          const dashboardTomorrow = new Date(dashboardToday);
+          dashboardTomorrow.setDate(dashboardToday.getDate() + 1);
+          
+          const dashboardTodayTasks = baseTasks.filter(task => {
+            if (task.status === 'completed') return false;
+            const dateStr = task.dueDate || task.scheduledDate;
+            const taskDate = dateStr ? new Date(dateStr) : null;
+            return taskDate && taskDate.toDateString() === dashboardToday.toDateString();
+          });
+          
+          const dashboardTomorrowTasks = baseTasks.filter(task => {
+            if (task.status === 'completed') return false;
+            const dateStr = task.dueDate || task.scheduledDate;
+            const taskDate = dateStr ? new Date(dateStr) : null;
+            return taskDate && taskDate.toDateString() === dashboardTomorrow.toDateString();
+          });
+          
+          // Get tasks for the next 7 days (excluding today and tomorrow which are handled above)
+          const dashboardNextWeekTasks = baseTasks.filter(task => {
+            if (task.status === 'completed') return false;
+            const dateStr = task.dueDate || task.scheduledDate;
+            const taskDate = dateStr ? new Date(dateStr) : null;
+            if (!taskDate) return false;
+            
+            const weekStart = new Date(dashboardToday);
+            weekStart.setDate(dashboardToday.getDate() + 2); // Start from day after tomorrow
+            const weekEnd = new Date(dashboardToday);
+            weekEnd.setDate(dashboardToday.getDate() + 8); // Next 7 days
+            
+            return taskDate >= weekStart && taskDate <= weekEnd;
+          });
+          
+          // Combine all relevant tasks: overdue first, then today, tomorrow, next week
+          // Use a Map to ensure unique tasks by ID
+          const uniqueTasksMap = new Map();
+          
+          // Add tasks in priority order (overdue first, then today, etc.)
+          const allTaskArrays = [
+            dashboardOverdueTasks,
+            dashboardTodayTasks,
+            dashboardTomorrowTasks,
+            dashboardNextWeekTasks
+          ];
+          
+          allTaskArrays.forEach(taskArray => {
+            taskArray.forEach(task => {
+              uniqueTasksMap.set(task.id, task);
+            });
+          });
+          
+          let mainDashboardTasks = Array.from(uniqueTasksMap.values());
+
+          // If To-Dos widget requests all todos, override with all open todos (no time window)
+          if (showOnlyTodos) {
+            const openTodos = baseTasks.filter(t => (t.classification || '').toLowerCase() === 'todo' && t.status !== 'completed');
+            mainDashboardTasks = openTodos.sort((a, b) => {
+              const aDateStr = a.dueDate || a.scheduledDate || '';
+              const bDateStr = b.dueDate || b.scheduledDate || '';
+              const aDate = aDateStr ? new Date(aDateStr + (aDateStr.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
+              const bDate = bDateStr ? new Date(bDateStr + (bDateStr.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
+              return aDate - bDate;
+            });
+          }
+          
+          console.log('🔍 TasksDashboard: Filtered tasks:', {
+            totalTasks: tasks.length,
+            mainDashboardTasks: mainDashboardTasks.length,
+            breakdown: {
+              overdue: dashboardOverdueTasks.length,
+              today: dashboardTodayTasks.length,
+              tomorrow: dashboardTomorrowTasks.length,
+              nextWeek: dashboardNextWeekTasks.length
+            },
+            mainDashboardTasksDetails: mainDashboardTasks.map(t => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              dueDate: t.dueDate,
+              assignedTo: t.assignedTo
+            }))
+          });
           
           const dashboardData: TaskDashboardData = {
             today: {
-              totalTasks: todayTasks.length,
-              completedTasks: todayTasks.filter(t => t.status === 'completed').length,
-              pendingTasks: todayTasks.filter(t => t.status !== 'completed').length,
-              tasks: todayTasks
+              totalTasks: todayTasksWithOverdue.length,
+              completedTasks: todayTasksWithOverdue.filter(t => t.status === 'completed').length,
+              pendingTasks: todayTasksWithOverdue.filter(t => t.status !== 'completed').length,
+              tasks: todayTasksWithOverdue
             },
             thisWeek: {
               totalTasks: thisWeekTasks.length,
@@ -175,17 +292,18 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               totalTasks: completedTasks.length,
               tasks: completedTasks
             },
+            mainDashboardTasks: mainDashboardTasks,
             priorities: {
-              high: tasks.filter(t => t.priority === 'high').length,
-              medium: tasks.filter(t => t.priority === 'medium').length,
-              low: tasks.filter(t => t.priority === 'low').length
+              high: baseTasks.filter(t => t.priority === 'high').length,
+              medium: baseTasks.filter(t => t.priority === 'medium').length,
+              low: baseTasks.filter(t => t.priority === 'low').length
             },
             types: {
-              email: tasks.filter(t => t.type === 'email').length,
-              phone_call: tasks.filter(t => t.type === 'phone_call').length,
-              scheduled_meeting_virtual: tasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
-              research: tasks.filter(t => t.type === 'research').length,
-              custom: tasks.filter(t => t.type === 'custom').length
+              email: baseTasks.filter(t => t.type === 'email').length,
+              phone_call: baseTasks.filter(t => t.type === 'phone_call').length,
+              scheduled_meeting_virtual: baseTasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
+              research: baseTasks.filter(t => t.type === 'research').length,
+              custom: baseTasks.filter(t => t.type === 'custom').length
             }
           };
           
@@ -194,30 +312,45 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
         }
       );
       
+      // Store the unsubscribe function in the ref
+      subscriptionRef.current = unsubscribe;
+      
       return unsubscribe;
     } catch (err) {
       console.error('Error loading dashboard data:', err);
       setError('Failed to load dashboard data');
       setLoading(false);
     }
-  };
+  }, [entityId, tenantId, user?.uid || '', entityType]);
 
   // Load associations
-  const loadAssociations = async () => {
+  const loadAssociations = useCallback(async () => {
     if (preloadedContacts || preloadedSalespeople || preloadedCompany) {
       if (preloadedContacts) setAssociatedContacts(preloadedContacts);
       if (preloadedSalespeople) setAssociatedSalespeople(preloadedSalespeople);
       if (preloadedCompany) setAssociatedCompany(preloadedCompany);
     }
-  };
+  }, [preloadedContacts, preloadedSalespeople, preloadedCompany]);
+
+  // Only load associations when preloaded data changes
+  useEffect(() => {
+    loadAssociations();
+  }, [loadAssociations]);
 
   useEffect(() => {
     loadDashboardData();
-    loadAssociations();
-  }, [entityId, tenantId, preloadedContacts, preloadedSalespeople, preloadedCompany]);
+    
+    // Cleanup function to unsubscribe when component unmounts or dependencies change
+    return () => {
+      if (subscriptionRef.current) {
+        subscriptionRef.current();
+        subscriptionRef.current = null;
+      }
+    };
+  }, [loadDashboardData]);
 
   // Handle task creation
-  const handleCreateTask = async (taskData: any) => {
+  const handleCreateTask = useCallback(async (taskData: any) => {
     try {
       const taskService = TaskService.getInstance();
       await taskService.createTask({
@@ -233,29 +366,29 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
     } catch (error) {
       console.error('Error creating task:', error);
     }
-  };
+  }, [tenantId, user?.uid, entityType, entityId]);
 
   // Handle task editing
-  const handleEditTask = (task: any) => {
+  const handleEditTask = useCallback((task: any) => {
     setSelectedTask(task);
     setShowDetailsDialog(true);
-  };
+  }, []);
 
   // Handle task completion
-  const handleQuickComplete = async (taskId: string) => {
+  const handleQuickComplete = useCallback(async (taskId: string) => {
     try {
       const taskService = TaskService.getInstance();
       await taskService.quickCompleteTask(taskId, tenantId, user?.uid || '');
     } catch (error) {
       console.error('Error completing task:', error);
     }
-  };
+  }, [tenantId, user?.uid]);
 
   // Handle task click
-  const handleTaskClick = (task: any) => {
+  const handleTaskClick = useCallback((task: any) => {
     setSelectedTask(task);
     setShowDetailsDialog(true);
-  };
+  }, []);
 
   // Get status color
   const getStatusColor = (status: string) => {
@@ -350,13 +483,16 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             onEditTask={handleEditTask}
             getStatusColor={getStatusColor}
             getTaskStatusDisplay={getTaskStatusDisplay}
-            showCompany={entityType === 'contact'}
-            showDeal={entityType === 'deal'}
+            showCompany={entityType === 'contact' || entityType === 'salesperson'}
+            showDeal={entityType === 'deal' || entityType === 'salesperson'}
             showContacts={true}
             deal={entityType === 'deal' ? entity : undefined}
             company={preloadedCompany}
             contacts={preloadedContacts || []}
             salespeople={preloadedSalespeople || []}
+            // Pass additional context data for association resolution
+            deals={preloadedDeals || []}
+            companies={preloadedCompanies || []}
             variant="default"
           />
         ))}
@@ -366,25 +502,40 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
 
   return (
     <Box>
-      {/* Combined Task List - Active tasks first, then completed tasks */}
+      {/* Combined Task List - Show all non-completed tasks for the main dashboard */}
       {activeTab === 0 && (
         <TasksList
-          tasks={[
-            ...(dashboardData?.today?.tasks || []),
-            ...(dashboardData?.completed?.tasks || [])
-          ]}
+          tasks={dashboardData?.mainDashboardTasks || []}
           emptyStateMessage={`No tasks for this ${entityType}`}
           preloadedContacts={preloadedContacts}
           preloadedSalespeople={preloadedSalespeople}
           preloadedCompany={preloadedCompany}
         />
       )}
+      
+
       {activeTab === 1 && (
         <TasksList
-          tasks={[
-            ...(dashboardData?.thisWeek?.tasks || []),
-            ...(dashboardData?.completed?.tasks || [])
-          ]}
+          tasks={(() => {
+            // Combine tasks but ensure uniqueness by ID
+            const thisWeekTasks = dashboardData?.thisWeek?.tasks || [];
+            const completedTasks = dashboardData?.completed?.tasks || [];
+            
+            // Create a Map to ensure unique tasks by ID
+            const uniqueTasksMap = new Map();
+            
+            // Add this week tasks first
+            thisWeekTasks.forEach(task => {
+              uniqueTasksMap.set(task.id, task);
+            });
+            
+            // Add completed tasks (will overwrite if same ID exists)
+            completedTasks.forEach(task => {
+              uniqueTasksMap.set(task.id, task);
+            });
+            
+            return Array.from(uniqueTasksMap.values());
+          })()}
           emptyStateMessage="No tasks for this period"
           preloadedContacts={preloadedContacts}
           preloadedSalespeople={preloadedSalespeople}

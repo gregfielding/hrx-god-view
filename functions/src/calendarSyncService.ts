@@ -18,7 +18,7 @@ const oauth2Client = new google.auth.OAuth2(
 /**
  * Sync task to Google Calendar
  */
-export async function syncTaskToCalendar(userId: string, tenantId: string, taskId: string, taskData: any) {
+export async function syncTaskToCalendar(userId: string, tenantId: string, taskId: string, taskData: any, userTimezone: string = 'America/Los_Angeles') {
   try {
     console.log(`🔄 Starting calendar sync for task ${taskId} (user: ${userId})`);
     
@@ -76,11 +76,11 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
         description: taskData.description || '',
         start: {
           dateTime: taskData.startTime,
-          timeZone: 'America/Los_Angeles'
+          timeZone: userTimezone
         },
         end: {
           dateTime: taskData.endTime || new Date(new Date(taskData.startTime).getTime() + (taskData.duration || 60) * 60000).toISOString(),
-          timeZone: 'America/Los_Angeles'
+          timeZone: userTimezone
         },
         reminders: {
           useDefault: false,
@@ -149,14 +149,64 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
         message: 'Task synced to Google Calendar'
       };
     } else {
-      // For todos, we'll create a Google Task instead
-      // Note: Google Tasks API requires separate implementation
-      console.log(`📝 Todo task ${taskId} - Google Tasks sync coming soon`);
+      // For todos, we'll create a Google Task
+      console.log(`📝 Syncing todo task ${taskId} to Google Tasks`);
       
-      return {
-        success: true,
-        message: 'Todo task sync to Google Tasks coming soon'
-      };
+      try {
+        // Set up Tasks API client
+        const tasks = google.tasks({ version: 'v1', auth: oauth2Client });
+        
+        // Get user's task lists
+        const taskListsResponse = await tasks.tasklists.list();
+        const taskLists = taskListsResponse.data.items || [];
+        
+        // Use the first available task list (usually "My Tasks")
+        const taskListId = taskLists.length > 0 ? taskLists[0].id : '@default';
+        
+        // Create the task
+        const taskBody = {
+          title: taskData.title,
+          notes: taskData.description || '',
+          due: taskData.dueDate ? new Date(taskData.dueDate).toISOString() : undefined,
+          status: taskData.status === 'completed' ? 'completed' : 'needsAction'
+        };
+        
+        const response = await tasks.tasks.insert({
+          tasklist: taskListId,
+          requestBody: taskBody
+        });
+        
+        // Update task with Google Tasks sync info
+        const updateData = {
+          googleTasksTaskId: response.data.id,
+          googleTasksListId: taskListId,
+          syncStatus: 'synced',
+          lastGoogleSync: new Date()
+        };
+        
+        await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update(updateData);
+        
+        console.log(`✅ Todo task ${taskId} synced to Google Tasks successfully`);
+        return {
+          success: true,
+          taskId: response.data.id,
+          message: 'Todo synced to Google Tasks'
+        };
+        
+      } catch (tasksError) {
+        console.error(`❌ Error syncing todo ${taskId} to Google Tasks:`, tasksError);
+        
+        // Update task with failed sync status
+        await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
+          syncStatus: 'failed',
+          lastGoogleSync: new Date()
+        });
+        
+        return {
+          success: false,
+          message: `Failed to sync todo to Google Tasks: ${tasksError instanceof Error ? tasksError.message : 'Unknown error'}`
+        };
+      }
     }
 
   } catch (error) {
@@ -180,9 +230,9 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
 }
 
 /**
- * Update calendar event when task is updated
+ * Update calendar event or Google Task when task is updated
  */
-export async function updateCalendarEvent(userId: string, tenantId: string, taskId: string, taskData: any) {
+export async function updateGoogleSync(userId: string, tenantId: string, taskId: string, taskData: any) {
   try {
     // Get user's Calendar tokens
     const userDoc = await db.collection('users').doc(userId).get();
@@ -209,30 +259,53 @@ export async function updateCalendarEvent(userId: string, tenantId: string, task
 
     const task = taskDoc.data();
     const eventId = task?.googleCalendarEventId;
+    const tasksTaskId = task?.googleTasksTaskId;
+    const tasksListId = task?.googleTasksListId;
 
-    if (!eventId) {
-      return { success: false, message: 'Task not synced to calendar yet' };
+    // Update based on task classification
+    if (taskData.classification === 'appointment' && eventId) {
+      // Update calendar event for appointments
+      const event = {
+        summary: taskData.title,
+        description: taskData.description || '',
+        start: {
+          dateTime: taskData.startTime,
+          timeZone: 'America/Los_Angeles'
+        },
+        end: {
+          dateTime: taskData.endTime || new Date(new Date(taskData.startTime).getTime() + (taskData.duration || 60) * 60000).toISOString(),
+          timeZone: 'America/Los_Angeles'
+        }
+      };
+
+      await calendar.events.update({
+        calendarId: 'primary',
+        eventId: eventId,
+        requestBody: event
+      });
+
+      console.log(`✅ Calendar event updated for task ${taskId}`);
+    } else if (taskData.classification === 'todo' && tasksTaskId && tasksListId) {
+      // Update Google Task for todos
+      const tasks = google.tasks({ version: 'v1', auth: oauth2Client });
+      
+      const taskBody = {
+        title: taskData.title,
+        notes: taskData.description || '',
+        due: taskData.dueDate ? new Date(taskData.dueDate).toISOString() : undefined,
+        status: taskData.status === 'completed' ? 'completed' : 'needsAction'
+      };
+
+      await tasks.tasks.update({
+        tasklist: tasksListId,
+        task: tasksTaskId,
+        requestBody: taskBody
+      });
+
+      console.log(`✅ Google Task updated for task ${taskId}`);
+    } else {
+      return { success: false, message: 'Task not synced to Google yet' };
     }
-
-    // Update calendar event
-    const event = {
-      summary: taskData.title,
-      description: taskData.description || '',
-      start: {
-        dateTime: taskData.startTime,
-        timeZone: 'America/Los_Angeles'
-      },
-      end: {
-        dateTime: taskData.endTime || new Date(new Date(taskData.startTime).getTime() + (taskData.duration || 60) * 60000).toISOString(),
-        timeZone: 'America/Los_Angeles'
-      }
-    };
-
-    await calendar.events.update({
-      calendarId: 'primary',
-      eventId: eventId,
-      requestBody: event
-    });
 
     // Update task sync status
     await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
@@ -240,7 +313,7 @@ export async function updateCalendarEvent(userId: string, tenantId: string, task
       syncStatus: 'synced'
     });
 
-    return { success: true, message: 'Calendar event updated' };
+    return { success: true, message: 'Google sync updated' };
 
   } catch (error) {
     console.error('Error updating calendar event:', error);
@@ -252,9 +325,9 @@ export async function updateCalendarEvent(userId: string, tenantId: string, task
 }
 
 /**
- * Delete calendar event when task is deleted
+ * Delete calendar event or Google Task when task is deleted
  */
-export async function deleteCalendarEvent(userId: string, tenantId: string, taskId: string) {
+export async function deleteGoogleSync(userId: string, tenantId: string, taskId: string) {
   try {
     // Get user's Calendar tokens
     const userDoc = await db.collection('users').doc(userId).get();
@@ -281,6 +354,8 @@ export async function deleteCalendarEvent(userId: string, tenantId: string, task
 
     const task = taskDoc.data();
     const eventId = task?.googleCalendarEventId;
+    const tasksTaskId = task?.googleTasksTaskId;
+    const tasksListId = task?.googleTasksListId;
 
     if (eventId) {
       // Delete calendar event
@@ -288,6 +363,17 @@ export async function deleteCalendarEvent(userId: string, tenantId: string, task
         calendarId: 'primary',
         eventId: eventId
       });
+      console.log(`✅ Calendar event deleted for task ${taskId}`);
+    }
+
+    if (tasksTaskId && tasksListId) {
+      // Delete Google Task
+      const tasks = google.tasks({ version: 'v1', auth: oauth2Client });
+      await tasks.tasks.delete({
+        tasklist: tasksListId,
+        task: tasksTaskId
+      });
+      console.log(`✅ Google Task deleted for task ${taskId}`);
     }
 
     // Update task sync status

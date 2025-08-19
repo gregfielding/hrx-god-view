@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -85,6 +85,8 @@ import {
   FiberManualRecord as MediumPriorityIcon,
   RadioButtonUnchecked as LowPriorityIcon,
   Clear as ClearIcon,
+  Dashboard as DashboardIcon,
+  FilterAlt as FilterAltIcon,
 
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -104,6 +106,9 @@ import GoogleIntegration from '../../components/GoogleIntegration';
 import StageChip from '../../components/StageChip';
 import UserTasksDashboard from '../../components/UserTasksDashboard';
 import PipelineFunnel from '../../components/PipelineFunnel';
+import SalesCoach from '../../components/SalesCoach';
+import TasksDashboard from '../../components/TasksDashboard';
+import UserAppointmentsDashboard from '../../components/UserAppointmentsDashboard';
 
 
 
@@ -211,7 +216,7 @@ const TenantCRM: React.FC = () => {
 
 
   // Load companies with pagination
-  const loadCompanies = async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false, stateOverride?: string) => {
+  const loadCompanies = useCallback(async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false, stateOverride?: string) => {
     if (!tenantId) return;
     
     const mySeq = ++companiesLoadSeq.current;
@@ -307,79 +312,54 @@ const TenantCRM: React.FC = () => {
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       const constraints: any[] = [orderBy('createdAt', 'desc'), limit(companiesPageSize)];
 
-      // If filtering by user associations, add user-specific constraints
+      // If filtering by user associations, load ALL companies and filter client-side
       if (filterByUser && currentUser?.uid) {
         console.log('🔍 Loading companies where user is in salespeople array:', currentUser.uid);
         console.log('🔍 Current user:', currentUser);
         
-        // First, try to query companies where user ID is directly in the salespeople array
-        // This handles the case where salespeople are stored as strings
-        const directQuery = query(
+        // Load ALL companies to ensure we find all user-associated companies
+        const allCompaniesQuery = query(
           companiesRef,
-          where('associations.salespeople', 'array-contains', currentUser.uid),
-          orderBy('createdAt', 'desc'),
-          limit(companiesPageSize)
+          orderBy('createdAt', 'desc')
         );
         
         try {
-          const directSnapshot = await getDocs(directQuery);
-          let companiesData = directSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          console.log('🔍 Found', companiesData.length, 'companies with direct user ID in salespeople array');
+          const allSnapshot = await getDocs(allCompaniesQuery);
+          const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          console.log('🔍 Loaded', allCompanies.length, 'total companies for user filtering');
           
-          // If no results, try querying for companies where user ID is in the 'id' field of salespeople objects
-          if (companiesData.length === 0) {
-            console.log('🔍 No direct matches, trying object-based query...');
+          // Filter companies where user ID is in the salespeople array
+          const companiesData = allCompanies.filter((company: any) => {
+            if (!company.associations?.salespeople) {
+              return false;
+            }
             
-            // Load all companies and filter client-side for object-based salespeople
-            const allCompaniesQuery = query(
-              companiesRef,
-              orderBy('createdAt', 'desc'),
-              limit(100) // Load more to ensure we find matches
-            );
-            
-            const allSnapshot = await getDocs(allCompaniesQuery);
-            const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            
-            // Debug: Log a few companies to see their structure
-            console.log('🔍 Sample companies structure:', allCompanies.slice(0, 3).map((company: any) => ({
-              id: company.id,
-              name: company.companyName || company.name,
-              associations: company.associations,
-              salespeople: company.associations?.salespeople
-            })));
-            
-            // Filter companies where user ID is in the 'id' field of any salespeople object
-            companiesData = allCompanies.filter((company: any) => {
-              if (!company.associations?.salespeople) {
-                console.log('🔍 Company', company.id, 'has no salespeople associations');
-                return false;
+            const hasUser = company.associations.salespeople.some((salesperson: any) => {
+              if (typeof salesperson === 'string') {
+                const match = salesperson === currentUser.uid;
+                if (match) console.log('🔍 Found string match for company', company.id, company.companyName || company.name);
+                return match;
+              } else if (salesperson && typeof salesperson === 'object') {
+                const match = salesperson.id === currentUser.uid;
+                if (match) console.log('🔍 Found object match for company', company.id, company.companyName || company.name);
+                return match;
               }
-              
-              const hasUser = company.associations.salespeople.some((salesperson: any) => {
-                if (typeof salesperson === 'string') {
-                  const match = salesperson === currentUser.uid;
-                  if (match) console.log('🔍 Found string match for company', company.id);
-                  return match;
-                } else if (salesperson && typeof salesperson === 'object') {
-                  const match = salesperson.id === currentUser.uid;
-                  if (match) console.log('🔍 Found object match for company', company.id, 'salesperson:', salesperson);
-                  return match;
-                }
-                return false;
-              });
-              
-              if (hasUser) {
-                console.log('🔍 Company', company.id, 'is associated with current user');
-              }
-              
-              return hasUser;
+              return false;
             });
             
-            console.log('🔍 Found', companiesData.length, 'companies with user ID in salespeople object IDs');
-          }
+            if (hasUser) {
+              console.log('🔍 Company', company.id, company.companyName || company.name, 'is associated with current user');
+            }
+            
+            return hasUser;
+          });
           
-          setCompanies(prev => append ? [...prev, ...companiesData] : companiesData);
-          setCompaniesHasMore(companiesData.length === companiesPageSize);
+          console.log('🔍 Found', companiesData.length, 'companies associated with current user');
+          
+          // Apply pagination to the filtered results
+          const limitedData = companiesData.slice(0, companiesPageSize);
+          setCompanies(prev => append ? [...prev, ...limitedData] : limitedData);
+          setCompaniesHasMore(companiesData.length > companiesPageSize);
           setCompaniesLastDoc(companiesData[companiesData.length - 1]);
           
         } catch (error) {
@@ -563,7 +543,7 @@ const TenantCRM: React.FC = () => {
     } finally {
       if (companiesLoadSeq.current === mySeq) setCompaniesLoading(false);
     }
-  };
+  }, [tenantId, currentUser?.uid, companyFilter, companyLocationState]);
 
   const loadMoreCompanies = () => {
     if (companiesHasMore && !companiesLoading) {
@@ -582,7 +562,9 @@ const TenantCRM: React.FC = () => {
       const snapshot = await getDocs(q);
       const companiesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllCompanies(companiesData);
-      console.log('Loaded', companiesData.length, 'companies for autocomplete');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Loaded', companiesData.length, 'companies for autocomplete');
+      }
     } catch (error) {
       console.error('Error loading all companies:', error);
       setAllCompanies([]);
@@ -600,10 +582,12 @@ const TenantCRM: React.FC = () => {
       // First, let's check if there are any workforce members at all
       const workforceRef = collection(db, 'tenants', tenantId, 'workforce');
       const allWorkforceSnapshot = await getDocs(workforceRef);
-      console.log(`🔍 Total workforce members in tenant ${tenantId}: ${allWorkforceSnapshot.docs.length}`);
-      
-      if (allWorkforceSnapshot.docs.length > 0) {
-        console.log('🔍 Sample workforce member data:', allWorkforceSnapshot.docs[0].data());
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔍 Total workforce members in tenant ${tenantId}: ${allWorkforceSnapshot.docs.length}`);
+        
+        if (allWorkforceSnapshot.docs.length > 0) {
+          console.log('🔍 Sample workforce member data:', allWorkforceSnapshot.docs[0].data());
+        }
       }
       
       // Use Firebase Function to get salespeople with proper tenant filtering
@@ -614,13 +598,17 @@ const TenantCRM: React.FC = () => {
         activeTenantId: activeTenant?.id || tenantId
       };
       
-      console.log('🔍 Calling getSalespeople with params:', params);
-      console.log('🔍 activeTenant:', activeTenant);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Calling getSalespeople with params:', params);
+        console.log('🔍 activeTenant:', activeTenant);
+      }
       
       const result = await getSalespeople(params);
       const data = result.data as { salespeople: any[] };
       setSalesTeam(data.salespeople || []);
-      console.log('✅ Loaded', data.salespeople?.length || 0, 'sales team members');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Loaded', data.salespeople?.length || 0, 'sales team members');
+      }
       
     } catch (error: any) {
       console.error('❌ Error loading sales team:', error);
@@ -631,7 +619,7 @@ const TenantCRM: React.FC = () => {
   };
 
   // Load contacts with pagination
-  const loadContacts = async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false) => {
+  const loadContacts = useCallback(async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false) => {
     if (!tenantId) return;
     
     setContactsLoading(true);
@@ -838,7 +826,7 @@ const TenantCRM: React.FC = () => {
     } finally {
       setContactsLoading(false);
     }
-  };
+  }, [tenantId, currentUser?.uid, contactFilter]);
 
   const loadMoreContacts = () => {
     if (contactsHasMore && !contactsLoading) {
@@ -858,7 +846,9 @@ const TenantCRM: React.FC = () => {
       const allDealsData = allDealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllDeals(allDealsData);
       
-      console.log('🔍 Total deals in database:', allDealsData.length);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Total deals in database:', allDealsData.length);
+      }
       
       // If filtering by user associations, add user-specific constraints
       if (filterByUser && currentUser?.uid) {
@@ -984,19 +974,18 @@ const TenantCRM: React.FC = () => {
     }, 300);
     
     return () => clearTimeout(timeoutId);
-  }, [search, tenantId]);
+  }, [search, tenantId, loadCompanies, loadContacts]);
 
   // Real-time listeners for CRM data
   useEffect(() => {
-    console.log('TenantCRM Debug:', { tenantId, role, accessRole, orgType });
-    
     if (!tenantId) {
-      console.log('No tenantId, skipping CRM data fetch');
       return;
     }
 
     if (tenantId) {
-      loadCompanies();
+      // For the dashboard, we need ALL companies to resolve names in task cards
+      // Load companies without pagination to ensure all companies are available
+      loadCompanies('', null, false, false); // Load all companies, not just user's companies
       loadContacts();
       loadDeals();
       loadAllCompanies(); // Load all companies for autocomplete
@@ -1272,151 +1261,298 @@ const TenantCRM: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+      {/* <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Typography variant="h3" gutterBottom>
           Sales CRM
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          {/* <Button
-            variant="outlined"
-            color="primary"
-            onClick={() => setShowImportDialog(true)}
+      </Box> */}
+
+      {/* Navigation Menu */}
+      <Box sx={{ mb: 4 }}>
+        <Box sx={{ 
+          display: 'flex', 
+          gap: { xs: 2, sm: 3.5, md: 4 },
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          alignItems: 'center',
+          borderBottom: '1px solid',
+          borderColor: '#F1F3F5',
+          py: 1.5,
+          scrollBehavior: 'smooth'
+        }}>
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 0)}
           >
-            Import Freshsales Data
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={() => handleAddNew('contact')}
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 0 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 0 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 0 ? 1 : 0
+              }}
+            >
+              Dashboard
+            </Typography>
+            {tabValue === 0 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 1)}
           >
-            Add New
-          </Button> */}
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 1 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 1 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 1 ? 1 : 0
+              }}
+            >
+              Contacts
+            </Typography>
+            {tabValue === 1 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 2)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 2 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 2 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 2 ? 1 : 0
+              }}
+            >
+              Companies
+            </Typography>
+            {tabValue === 2 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 3)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 3 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 3 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 3 ? 1 : 0
+              }}
+            >
+              Opportunities
+            </Typography>
+            {tabValue === 3 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 4)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 4 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 4 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 4 ? 1 : 0
+              }}
+            >
+              Pipeline
+            </Typography>
+            {tabValue === 4 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
         </Box>
       </Box>
 
-      {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="CRM management tabs"
-        >
-          <Tab data-testid="tab-tasks"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TaskIcon fontSize="small" />
-                Tasks
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-contacts"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PersonIcon fontSize="small" />
-                Contacts
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-companies"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BusinessIcon fontSize="small" />
-                Companies
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-deals"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DealIcon fontSize="small" />
-                Opportunities
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-sales"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <GroupIcon fontSize="small" />
-                Sales Team
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-pipeline"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PipelineIcon fontSize="small" />
-                Pipeline
-              </Box>
-            } 
-          />
-          {/* <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BusinessIcon fontSize="small" />
-                National Accounts
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-reports"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PeopleIcon fontSize="small" />
-                Enhanced Contacts
-              </Box>
-            } 
-          />
-          <Tab data-testid="tab-settings"
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BusinessIcon fontSize="small" />
-                Company Hierarchy
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <ReportsIcon fontSize="small" />
-                Reports
-              </Box>
-            } 
-          /> */}
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <SettingsIcon fontSize="small" />
-                Gmail Settings
-              </Box>
-            } 
-          />
-          {/* <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AssessmentIcon fontSize="small" />
-                KPIs
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TrendingUpIcon fontSize="small" />
-                My KPIs
-              </Box>
-            } 
-          /> */}
-        </Tabs>
-      </Paper>
-
       {/* Tab Panels */}
       {tabValue === 0 && (
-        <UserTasksDashboard 
+        <SalesDashboard 
           tenantId={tenantId}
+          currentUser={currentUser}
+          deals={deals}
+          companies={companies}
+          contacts={contacts}
+          tasks={tasks}
+          pipelineStages={pipelineStages}
+          allCompanies={allCompanies}
         />
       )}
       
@@ -1481,16 +1617,6 @@ const TenantCRM: React.FC = () => {
       )}
       
       {tabValue === 4 && (
-        <SalesTeamTab 
-          salesTeam={salesTeam}
-          search={search}
-          onSearchChange={setSearch}
-          loading={salesTeamLoading}
-          tenantId={tenantId}
-        />
-      )}
-      
-      {tabValue === 5 && (
         <PipelineTab 
           deals={deals}
           companies={companies}
@@ -1500,18 +1626,6 @@ const TenantCRM: React.FC = () => {
         />
       )}
       
-      {tabValue === 10 && (
-        <NationalAccountManager tenantId={tenantId} />
-      )}
-      
-      {tabValue === 7 && (
-        <EnhancedContactManager tenantId={tenantId} />
-      )}
-      
-      {tabValue === 8 && (
-        <CompanyHierarchyManager tenantId={tenantId} />
-      )}
-      
       {tabValue === 9 && (
         <ReportsTab 
           deals={deals}
@@ -1519,20 +1633,6 @@ const TenantCRM: React.FC = () => {
           contacts={contacts}
         />
       )}
-      
-      {tabValue === 6 && (
-        <SettingsTab 
-          pipelineStages={pipelineStages}
-          tenantId={tenantId}
-        />
-      )}
-      
-      {/* {tabValue === 8 && (
-        <SettingsTab 
-          pipelineStages={pipelineStages}
-          tenantId={tenantId}
-        />
-      )} */}
       
       {tabValue === 7 && (
         <KPIManagement tenantId={tenantId} />
@@ -3544,73 +3644,7 @@ const CompaniesTab: React.FC<{
     return '-';
   };
 
-  const getDealEstimatedValue = (deal: any) => {
-    // Debug logging to see what data we have
-    console.log('Deal estimated value debug:', {
-      dealId: deal.id,
-      dealName: deal.name,
-      hasStageData: !!deal.stageData,
-      hasQualification: !!deal.stageData?.qualification,
-      qualificationData: deal.stageData?.qualification,
-      estimatedRevenue: deal.estimatedRevenue
-    });
 
-    // Check if we have qualification stage data
-    if (deal.stageData?.qualification) {
-      const qualData = deal.stageData.qualification;
-      const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
-      const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
-      const timeline = qualData.staffPlacementTimeline;
-
-      console.log('Qualification data found:', {
-        payRate,
-        markup,
-        timeline,
-        hasTimeline: !!timeline
-      });
-
-      if (timeline) {
-        // Calculate bill rate: pay rate + markup
-        const billRate = payRate * (1 + markup / 100);
-        
-        // Annual hours per employee (2080 full-time hours)
-        const annualHoursPerEmployee = 2080;
-        
-        // Calculate annual revenue per employee
-        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
-        
-        // Get starting and 180-day numbers
-        const startingCount = timeline.starting || 0;
-        const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
-        
-        console.log('Timeline data:', {
-          startingCount,
-          after180DaysCount,
-          billRate,
-          annualRevenuePerEmployee
-        });
-        
-        if (startingCount > 0 || after180DaysCount > 0) {
-          // Calculate revenue range
-          const minRevenue = annualRevenuePerEmployee * startingCount;
-          const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
-          
-          const result = `$${minRevenue.toLocaleString()} - $${maxRevenue.toLocaleString()}`;
-          console.log('Calculated range:', result);
-          return result;
-        }
-      }
-    }
-    
-    // Fallback to estimatedRevenue if qualification data is not available
-    if (deal.estimatedRevenue) {
-      console.log('Using fallback estimatedRevenue:', deal.estimatedRevenue);
-      return `$${Number(deal.estimatedRevenue).toLocaleString()}`;
-    }
-    
-    console.log('No data available, returning "-"');
-    return '-';
-  };
 
   // Handle sorting
   const handleSort = (field: string) => {
@@ -4339,6 +4373,448 @@ const PipelineTab: React.FC<{
   );
 };
 
+// Shared utility function for calculating deal estimated value
+const getDealEstimatedValue = (deal: any) => {
+  // Check if we have qualification stage data
+  if (deal.stageData?.qualification) {
+    const qualData = deal.stageData.qualification;
+    const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
+    const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
+    const timeline = qualData.staffPlacementTimeline;
+
+    if (timeline) {
+      // Calculate bill rate: pay rate + markup
+      const billRate = payRate * (1 + markup / 100);
+      
+      // Annual hours per employee (2080 full-time hours)
+      const annualHoursPerEmployee = 2080;
+      
+      // Calculate annual revenue per employee
+      const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+      
+      // Get starting and 180-day numbers
+      const startingCount = timeline.starting || 0;
+      const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+      
+      if (startingCount > 0 || after180DaysCount > 0) {
+        // Calculate revenue range
+        const minRevenue = annualRevenuePerEmployee * startingCount;
+        const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+        
+        const result = `$${minRevenue.toLocaleString()} - $${maxRevenue.toLocaleString()}`;
+        return result;
+      }
+    }
+  }
+  
+  // Fallback to estimatedRevenue if qualification data is not available
+  if (deal.estimatedRevenue) {
+    return `$${Number(deal.estimatedRevenue).toLocaleString()}`;
+  }
+  
+  return '-';
+};
+
+// Sales Dashboard Component
+const SalesDashboard: React.FC<{
+  tenantId: string;
+  currentUser: any;
+  deals: any[];
+  companies: any[];
+  contacts: any[];
+  tasks: any[];
+  pipelineStages: any[];
+  allCompanies: any[];
+}> = ({ tenantId, currentUser, deals, companies, contacts, tasks, pipelineStages, allCompanies }) => {
+  const navigate = useNavigate();
+  const [userData, setUserData] = useState<any>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+
+  // Fetch user data from Users collection
+  useEffect(() => {
+    const fetchUserData = async () => {
+      if (!currentUser?.uid || !tenantId) {
+        setLoadingUser(false);
+        return;
+      }
+
+      try {
+        // Try the root users collection first (as shown in the Firestore screenshot)
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          setUserData(userDoc.data());
+        } else {
+          // Fallback to tenant-specific users collection
+          const tenantUserDoc = await getDoc(doc(db, 'tenants', tenantId, 'users', currentUser.uid));
+          if (tenantUserDoc.exists()) {
+            setUserData(tenantUserDoc.data());
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+      } finally {
+        setLoadingUser(false);
+      }
+    };
+
+    fetchUserData();
+  }, [currentUser?.uid, tenantId]);
+  
+  // Calculate dashboard metrics
+  const myDeals = React.useMemo(() => deals.filter(deal => {
+    if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
+      return deal.associations.salespeople.some((salesperson: any) => {
+        if (typeof salesperson === 'string') {
+          return salesperson === currentUser?.uid;
+        } else if (salesperson && typeof salesperson === 'object') {
+          return salesperson.id === currentUser?.uid;
+        }
+        return false;
+      });
+    }
+    return false;
+  }), [deals, currentUser?.uid]);
+
+  const myCompanies = React.useMemo(() => companies.filter(company => {
+    if (company.associations?.salespeople && company.associations.salespeople.length > 0) {
+      return company.associations.salespeople.some((salesperson: any) => {
+        if (typeof salesperson === 'string') {
+          return salesperson === currentUser?.uid;
+        } else if (salesperson && typeof salesperson === 'object') {
+          return salesperson.id === currentUser?.uid;
+        }
+        return false;
+      });
+    }
+    return false;
+  }), [companies, currentUser?.uid]);
+
+  const myContacts = React.useMemo(() => contacts.filter(contact => {
+    const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+    return assocCompanies.some(companyId => 
+      myCompanies.some(company => company.id === companyId)
+    );
+  }), [contacts, myCompanies]);
+
+  const myTasks = React.useMemo(() => tasks.filter(task => task.assignedTo === currentUser?.uid), [tasks, currentUser?.uid]);
+
+  // Calculate pipeline value
+  const pipelineValue = React.useMemo(() => myDeals.reduce((sum, deal) => {
+    const value = getDealEstimatedValue(deal);
+    if (value !== '-') {
+      const numericValue = value.replace(/[$,]/g, '').replace(/\s*-\s*.*/, '');
+      return sum + (parseFloat(numericValue) || 0);
+    }
+    return sum;
+  }, 0), [myDeals]);
+
+  // Get deals by stage
+  const dealsByStage = React.useMemo(() => pipelineStages.map(stage => ({
+    stage: stage.name,
+    count: myDeals.filter(deal => deal.stage === stage.name).length,
+    value: myDeals.filter(deal => deal.stage === stage.name).reduce((sum, deal) => {
+      const value = getDealEstimatedValue(deal);
+      if (value !== '-') {
+        const numericValue = value.replace(/[$,]/g, '').replace(/\s*-\s*.*/, '');
+        return sum + (parseFloat(numericValue) || 0);
+      }
+      return sum;
+    }, 0)
+  })), [pipelineStages, myDeals]);
+
+  // Get recent activity (last 5 tasks)
+  const recentTasks = React.useMemo(() => myTasks
+    .sort((a, b) => new Date(b.createdAt?.toDate?.() || b.createdAt).getTime() - new Date(a.createdAt?.toDate?.() || a.createdAt).getTime())
+    .slice(0, 5), [myTasks]);
+
+  // Get upcoming tasks (due in next 7 days)
+  const upcomingTasks = React.useMemo(() => myTasks.filter(task => {
+    if (!task.dueDate) return false;
+    const dueDate = new Date(task.dueDate);
+    const today = new Date();
+    const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return dueDate >= today && dueDate <= nextWeek;
+  }), [myTasks]);
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  // Memoize the entity object to prevent unnecessary re-renders
+  const tasksEntity = React.useMemo(() => ({
+    id: currentUser?.uid || 'dashboard',
+    name: 'My Tasks',
+    associations: {
+      deals: myDeals.map(deal => deal.id),
+      companies: myCompanies.map(company => company.id),
+      contacts: myContacts.map(contact => contact.id),
+      salespeople: [currentUser?.uid]
+    }
+  }), [currentUser?.uid, myDeals, myCompanies, myContacts]);
+
+  // Memoize the preloaded arrays to prevent unnecessary re-renders
+  const memoizedContacts = React.useMemo(() => contacts, [contacts]);
+  const memoizedMyDeals = React.useMemo(() => myDeals, [myDeals]);
+  const memoizedAllCompanies = React.useMemo(() => allCompanies, [allCompanies]);
+  const memoizedEmptyArray = React.useMemo(() => [], []);
+
+  return (
+    <Box>
+      {/* Welcome Header */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h4" gutterBottom>
+          Welcome back, {loadingUser ? '...' : (userData?.firstName || 'there')}!
+        </Typography>
+        <Typography variant="body1" color="text.secondary">
+          Here's your sales dashboard overview
+        </Typography>
+      </Box>
+
+
+
+      {/* 3-Column Layout */}
+      <Grid container spacing={3}>
+        {/* Left Column - Todos & Pipeline Overview */}
+        <Grid item xs={12} md={4}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {/* Todos Widget */}
+            <Card>
+              <CardHeader 
+                title="To-Dos" 
+                action={
+                  <IconButton 
+                    size="small" 
+                    title="Add new task"
+                    onClick={() => {
+                      // This will open the task creation dialog
+                      // For now, we'll navigate to the tasks tab
+                      navigate('/crm?tab=tasks');
+                    }}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                }
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 0 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <TasksDashboard
+                    entityId={currentUser?.uid || 'dashboard'}
+                    entityType="salesperson"
+                    tenantId={tenantId}
+                    entity={tasksEntity}
+                    preloadedContacts={memoizedContacts}
+                    preloadedSalespeople={memoizedEmptyArray}
+                    preloadedCompany={null}
+                    // Pass ALL companies for association resolution (not just myCompanies)
+                    preloadedDeals={memoizedMyDeals}
+                    preloadedCompanies={memoizedAllCompanies}
+                    showOnlyTodos={true}
+                  />
+                </Box>
+              </CardContent>
+            </Card>
+
+            {/* Appointments Widget */}
+            <Card>
+              <CardHeader 
+                title="Appointments" 
+                action={
+                  <IconButton 
+                    size="small" 
+                    title="Schedule meeting"
+                    onClick={() => {
+                      // This will open the appointment creation dialog
+                      // For now, we'll navigate to the tasks tab
+                      navigate('/crm?tab=tasks');
+                    }}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                }
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 0 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <UserAppointmentsDashboard
+                    userId={currentUser?.uid || ''}
+                    tenantId={tenantId}
+                    preloadedContacts={memoizedContacts}
+                    preloadedSalespeople={memoizedEmptyArray}
+                    preloadedCompanies={memoizedAllCompanies}
+                    preloadedDeals={memoizedMyDeals}
+                  />
+                </Box>
+              </CardContent>
+            </Card>
+
+            {/* Key Metrics */}
+            <Card>
+              <CardHeader 
+                title="Key Metrics" 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 2 }}>
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h4" color="primary" fontWeight="bold">
+                        {myDeals.length}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        My Deals
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h4" color="success.main" fontWeight="bold">
+                        {formatCurrency(pipelineValue)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Pipeline Value
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h4" color="info.main" fontWeight="bold">
+                        {myCompanies.length}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        My Companies
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Box sx={{ textAlign: 'center', p: 1 }}>
+                      <Typography variant="h4" color="warning.main" fontWeight="bold">
+                        {myContacts.length}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        My Contacts
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+
+
+          </Box>
+        </Grid>
+
+        {/* Center Column - Main Dashboard Content */}
+        <Grid item xs={12} md={5}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {/* Sales Coach Widget */}
+            <Card>
+              <CardHeader 
+                title="Sales Coach" 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                action={
+                  <IconButton 
+                    size="small" 
+                    title="Start new conversation"
+                    onClick={() => {
+                      // This will trigger a new conversation in the SalesCoach component
+                      const event = new CustomEvent('startNewSalesCoachConversation', {
+                        detail: { entityId: 'dashboard' }
+                      });
+                      window.dispatchEvent(event);
+                    }}
+                  >
+                    <AddIcon />
+                  </IconButton>
+                }
+                sx={{ pb: 1 }}
+              />
+              <CardContent sx={{ p: 0, pt: 0 }}>
+                <Box sx={{ height: 600 }}>
+                  <SalesCoach 
+                    entityType="deal"
+                    entityId="dashboard"
+                    entityName="Sales Dashboard"
+                    tenantId={tenantId}
+                    contactCompany=""
+                    contactTitle=""
+                    associations={{}}
+                  />
+                </Box>
+              </CardContent>
+            </Card>
+
+
+          </Box>
+        </Grid>
+
+        {/* Right Column - Quick Actions */}
+        <Grid item xs={12} md={3}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+
+            {/* Quick Actions */}
+            <Card>
+              <CardHeader 
+                title="Quick Actions" 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 2 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    fullWidth 
+                    sx={{ justifyContent: 'flex-start' }}
+                    onClick={() => navigate('/crm?tab=contacts')}
+                  >
+                    Add New Contact
+                  </Button>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    fullWidth 
+                    sx={{ justifyContent: 'flex-start' }}
+                    onClick={() => navigate('/crm?tab=companies')}
+                  >
+                    Add New Company
+                  </Button>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    fullWidth 
+                    sx={{ justifyContent: 'flex-start' }}
+                    onClick={() => navigate('/crm?tab=deals')}
+                  >
+                    Create Opportunity
+                  </Button>
+                  <Button 
+                    variant="outlined" 
+                    size="small" 
+                    fullWidth 
+                    sx={{ justifyContent: 'flex-start' }}
+                    onClick={() => navigate('/crm?tab=tasks')}
+                  >
+                    Create Task
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+
+
+          </Box>
+        </Grid>
+      </Grid>
+
+
+    </Box>
+  );
+};
+
 // Reports Tab Component
 const ReportsTab: React.FC<{
   deals: any[];
@@ -4613,6 +5089,8 @@ const SettingsTab: React.FC<{
     </Box>
   );
 };
+
+
 
 // Helper function for calculating total value
 const getTotalValue = (deals: any[]) => {

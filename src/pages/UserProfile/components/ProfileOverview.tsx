@@ -34,7 +34,7 @@ import {
   Psychology as PsychologyIcon,
   ContactEmergency as EmergencyIcon,
 } from '@mui/icons-material';
-import { doc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 
 import { db , auth } from '../../../firebase';
@@ -51,7 +51,7 @@ type Props = {
 };
 
 const ProfileOverview: React.FC<Props> = ({ uid }) => {
-  const { tenantId: activeTenantId, user, securityLevel } = useAuth();
+  const { tenantId: activeTenantId, user, securityLevel, activeTenant } = useAuth();
   const [form, setForm] = useState<UserProfileForm>({
     firstName: '',
     lastName: '',
@@ -262,20 +262,13 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     try {
       console.log('Loading tenant data for tenantId:', tenantId);
       
-      // Set default tenant name as fallback
-      setTenantName(tenantId);
-      setCustomerName(tenantId);
-      
-      // Try to fetch tenant name with error handling
-      try {
-        const tenantDoc = await getDocs(collection(db, 'tenants'));
-        const tenant = tenantDoc.docs.find((doc) => doc.id === tenantId);
-        if (tenant) {
-          setTenantName(tenant.data().name || tenantId);
-          setCustomerName(tenant.data().name || tenantId);
-        }
-      } catch (tenantError) {
-        console.warn('Could not fetch tenant name:', tenantError);
+      // Use tenant name from activeTenant if available, otherwise use tenantId as fallback
+      if (activeTenant?.name) {
+        setTenantName(activeTenant.name);
+        setCustomerName(activeTenant.name);
+      } else {
+        setTenantName(tenantId);
+        setCustomerName(tenantId);
       }
       
       // Fetch departments with error handling

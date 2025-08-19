@@ -34,7 +34,7 @@ import {
 import { getDealPrimaryCompanyId } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { TaskService } from '../utils/taskService';
-import { TaskStatus, TaskClassification } from '../types/Tasks';
+import { TaskStatus, TaskClassification, TaskCategory } from '../types/Tasks';
 
 import CreateTaskDialog from './CreateTaskDialog';
 import TaskDetailsDialog from './TaskDetailsDialog';
@@ -348,15 +348,27 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
       const { collection, query, where, getDocs } = await import('firebase/firestore');
       const { db } = await import('../firebase');
       
-      // Query all tasks for this deal
+      // Query all tasks for this deal (support both schemas)
       const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-      const tasksQuery = query(
-        tasksRef,
-        where('associations.deals', 'array-contains', dealId)
-      );
-      
-      const tasksSnapshot = await getDocs(tasksQuery);
-      const allTasks = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
+      const qAssoc = query(tasksRef, where('associations.deals', 'array-contains', dealId));
+      const qTopLevel = query(tasksRef, where('deals', 'array-contains', dealId));
+      const qCrmAssoc = query(crmTasksRef, where('associations.deals', 'array-contains', dealId));
+      const qCrmTop = query(crmTasksRef, where('deals', 'array-contains', dealId));
+
+      const [snapAssoc, snapTop, snapCrmAssoc, snapCrmTop] = await Promise.all([
+        getDocs(qAssoc),
+        getDocs(qTopLevel),
+        getDocs(qCrmAssoc),
+        getDocs(qCrmTop)
+      ]);
+
+      const allTasksMap = new Map<string, any>();
+      snapAssoc.docs.forEach(d => allTasksMap.set(d.id, { id: d.id, ...d.data() }));
+      snapTop.docs.forEach(d => allTasksMap.set(d.id, { id: d.id, ...d.data() }));
+      snapCrmAssoc.docs.forEach(d => allTasksMap.set(d.id, { id: d.id, ...d.data() }));
+      snapCrmTop.docs.forEach(d => allTasksMap.set(d.id, { id: d.id, ...d.data() }));
+      const allTasks = Array.from(allTasksMap.values());
               // REMOVED: Excessive logging causing re-renders
 
       // Also check for tasks assigned to the current user
@@ -608,7 +620,7 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
       dueTime: '',
       estimatedDuration: 30,
       assignedTo: user?.uid || '',
-      category: suggestion.category || 'follow_up',
+      category: 'follow_up' as TaskCategory, // Use valid TaskCategory value
       quotaCategory: suggestion.category || 'business_generating',
       selectedCompany: associatedCompany?.id || primaryCompanyId || '',
       selectedContact: '',

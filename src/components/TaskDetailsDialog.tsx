@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { localDateTimeToUTC, getUserTimezone } from '../utils/dateUtils';
 import {
   Dialog,
   DialogTitle,
@@ -20,7 +21,8 @@ import {
   Alert,
   CircularProgress,
   LinearProgress,
-  Chip
+  Chip,
+  Autocomplete
 } from '@mui/material';
 import {
   Schedule as ScheduleIcon,
@@ -150,7 +152,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   };
 
   // Load associated data when task changes
-  const loadAssociatedData = async () => {
+  const loadAssociatedData = useCallback(async () => {
     if (!task || !tenantId) return;
     
     setLoading(true);
@@ -222,7 +224,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [task, tenantId, contacts, salespeople]);
 
   useEffect(() => {
     if (task && open) {
@@ -237,7 +239,35 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         startTime: (task.classification === 'appointment' ? (task.startTime || '') : ''),
         duration: (task.classification === 'appointment' ? (task.duration ?? undefined) : undefined),
         scheduledDate: task.scheduledDate ? new Date(task.scheduledDate) : new Date(),
-        dueDate: task.dueDate || '',
+        dueDate: (() => {
+          if (!task.dueDate) return '';
+          
+          try {
+            console.log('🔍 Original dueDate:', task.dueDate);
+            
+            // Convert the stored date to YYYY-MM-DD format for the date input
+            const date = new Date(task.dueDate);
+            if (isNaN(date.getTime())) {
+              console.warn('Invalid dueDate:', task.dueDate);
+              return '';
+            }
+            
+            console.log('🔍 Parsed date:', date);
+            console.log('🔍 Date in local timezone:', date.toLocaleDateString());
+            
+            // Format as YYYY-MM-DD (local date, no timezone)
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const formattedDate = `${year}-${month}-${day}`;
+            
+            console.log('🔍 Formatted date for input:', formattedDate);
+            return formattedDate;
+          } catch (error) {
+            console.warn('Error formatting dueDate:', task.dueDate, error);
+            return '';
+          }
+        })(),
         assignedTo: Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : [salespersonId]),
         category: task.category || 'follow_up',
         reason: task.reason || '',
@@ -345,24 +375,19 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   };
 
   const handleAssociationChange = (type: string, value: any) => {
-    // Use helper function to merge new selections with existing associations
-    const entityMap = type === 'contacts' ? associatedContacts : 
-                     type === 'salespeople' ? associatedSalespeople : [];
+    console.log('🔍 handleAssociationChange called:', { type, value });
     
-    const mergedAssociations = mergeAssociations(
-      formData.associations?.[type], 
-      value, 
-      entityMap
-    );
-
+    // For Autocomplete, value is already the array of selected IDs, so we can use it directly
     setFormData(prev => {
       const newFormData = {
         ...prev,
         associations: {
           ...prev.associations,
-          [type]: mergedAssociations
+          [type]: value // value is already an array of IDs from Autocomplete
         }
       };
+      
+      console.log('🔍 New formData associations:', newFormData.associations);
       
       // Auto-update meeting attendees when associations change and it's a Google Meet
       if (newFormData.type === 'scheduled_meeting_virtual') {
@@ -422,8 +447,13 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       
       // For appointments, extract date from startTime and set scheduledDate
       let scheduledDate = formData.scheduledDate.toISOString().split('T')[0];
+      let startTimeForSync = formData.startTime;
+      
       if (formData.classification === 'appointment' && formData.startTime) {
         scheduledDate = formData.startTime.split('T')[0];
+        
+        // Convert local datetime to UTC for Google Calendar sync
+        startTimeForSync = localDateTimeToUTC(formData.startTime);
       }
 
       const taskData = {
@@ -433,7 +463,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         priority: formData.priority as 'low' | 'medium' | 'high' | 'urgent',
         status, // Use calculated status instead of form data
         classification: formData.classification,
-        startTime: formData.classification === 'appointment' ? formData.startTime : null,
+        startTime: formData.classification === 'appointment' ? startTimeForSync : null,
         duration: formData.classification === 'appointment' ? formData.duration : null,
         scheduledDate: scheduledDate,
         dueDate: formData.dueDate,
@@ -447,7 +477,9 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         aiPrompt: formData.aiPrompt,
         aiRecommendations: formData.aiRecommendations,
         associations: formData.associations,
-        communicationDetails: formData.type === 'email' ? formData.communicationDetails : undefined
+        communicationDetails: formData.type === 'email' ? formData.communicationDetails : undefined,
+        // Add user's timezone for proper sync
+        userTimezone: getUserTimezone()
       };
 
       await taskService.updateTask(task.id, taskData, tenantId);
@@ -718,89 +750,81 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
 
               {/* Company Contacts */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Company Contacts</InputLabel>
-                  <Select
-                    multiple
-                    value={toSelectValue(formData.associations?.contacts)}
-                    onChange={(e) => handleAssociationChange('contacts', e.target.value)}
-                    label="Company Contacts"
-                    renderValue={(selected) => (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {selected.map((contactId) => {
-                          const contact = associatedContacts.find(c => c.id === contactId);
-                          const displayName = contact?.fullName || contact?.name || contact?.email || contactId;
-                          
-                          return (
-                            <Chip 
-                              key={contactId} 
-                              label={displayName} 
-                              size="small"
-                              sx={{ zIndex: 2 }}
-                              onDelete={(e) => {
-                                e.stopPropagation();
-                                const currentContactIds = toSelectValue(formData.associations?.contacts);
-                                const newContactIds = currentContactIds.filter(id => id !== contactId);
-                                handleAssociationChange('contacts', newContactIds);
-                              }}
-                            />
-                          );
-                        })}
-                      </Box>
-                    )}
-                  >
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName || contact.name || contact.email}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  multiple
+                  options={associatedContacts || []}
+                  getOptionLabel={(option) => option?.fullName || option?.name || option?.email || ''}
+                  value={(() => {
+                    const contactIds = toSelectValue(formData.associations?.contacts);
+                    const value = contactIds.map(contactId => {
+                      const contact = associatedContacts.find(c => c.id === contactId);
+                      return contact || { id: contactId, fullName: contactId, name: contactId, email: contactId };
+                    });
+                    console.log('🔍 Company Contacts value prop:', { contactIds, value, associatedContacts: associatedContacts.length });
+                    return value;
+                  })()}
+                  onChange={(_, newValue) => {
+                    console.log('🔍 Company Contacts onChange:', newValue);
+                    handleAssociationChange('contacts', newValue.map(v => v.id));
+                  }}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip 
+                        {...getTagProps({ index })} 
+                        key={option.id} 
+                        label={option.fullName || option.name || option.email || option.id} 
+                        size="small" 
+                      />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Company Contacts"
+                      placeholder="Select contacts..."
+                    />
+                  )}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  noOptionsText="No contacts available"
+                  loading={loading}
+                />
               </Grid>
 
               {/* Assigned To */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Assigned To</InputLabel>
-                  <Select
-                    multiple
-                    value={Array.isArray(formData.assignedTo) ? formData.assignedTo : formData.assignedTo ? [formData.assignedTo] : []}
-                    onChange={(e) => handleInputChange('assignedTo', e.target.value)}
-                    label="Assigned To"
-                    renderValue={(selected) => (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {selected.map((salespersonId) => {
-                          const salesperson = associatedSalespeople.find(s => s.id === salespersonId);
-                          const displayName = salesperson?.fullName || salesperson?.name || salesperson?.displayName || salesperson?.email || salespersonId;
-                          console.log('🔍 Rendering salesperson chip:', { salespersonId, displayName, associatedSalespeople });
-                          
-                          return (
-                            <Chip 
-                              key={salespersonId} 
-                              label={displayName} 
-                              size="small"
-                              sx={{ zIndex: 2 }}
-                              onDelete={(e) => {
-                                e.stopPropagation();
-                                console.log('🗑️ Deleting salesperson:', salespersonId);
-                                const currentSalespersonIds = Array.isArray(formData.assignedTo) ? formData.assignedTo : formData.assignedTo ? [formData.assignedTo] : [];
-                                const newSalespersonIds = currentSalespersonIds.filter(id => id !== salespersonId);
-                                console.log('🗑️ New salesperson IDs:', newSalespersonIds);
-                                handleInputChange('assignedTo', newSalespersonIds);
-                              }}
-                            />
-                          );
-                        })}
-                      </Box>
-                    )}
-                  >
-                    {associatedSalespeople.map((salesperson) => (
-                      <MenuItem key={salesperson.id} value={salesperson.id}>
-                        {salesperson.fullName || salesperson.name || salesperson.displayName || salesperson.email}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  multiple
+                  options={associatedSalespeople || []}
+                  getOptionLabel={(option) => option?.fullName || option?.name || option?.displayName || option?.email || ''}
+                  value={(Array.isArray(formData.assignedTo) ? formData.assignedTo : formData.assignedTo ? [formData.assignedTo] : []).map(salespersonId => {
+                    const salesperson = associatedSalespeople.find(s => s.id === salespersonId);
+                    return salesperson || { id: salespersonId, fullName: salespersonId, name: salespersonId, displayName: salespersonId, email: salespersonId };
+                  })}
+                  onChange={(_, newValue) => {
+                    console.log('🔍 Assigned To onChange:', newValue);
+                    handleInputChange('assignedTo', newValue.map(v => v.id));
+                  }}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip 
+                        {...getTagProps({ index })} 
+                        key={option.id} 
+                        label={option.fullName || option.name || option.displayName || option.email || option.id} 
+                        size="small" 
+                      />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Assigned To"
+                      placeholder="Select salespeople..."
+                    />
+                  )}
+                  isOptionEqualToValue={(option, value) => option.id === value.id}
+                  noOptionsText="No salespeople available"
+                  loading={loading}
+                />
               </Grid>
 
               {/* Google Meet Specific Fields */}

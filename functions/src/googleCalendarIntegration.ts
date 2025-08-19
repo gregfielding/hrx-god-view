@@ -1,14 +1,17 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
+import { syncTaskToCalendar as syncTaskToCalendarService, updateGoogleSync as updateGoogleSyncService, deleteGoogleSync as deleteGoogleSyncService } from './calendarSyncService';
 
 const db = getFirestore();
 
-// Google Calendar API configuration
+// Google Calendar and Tasks API configuration
 const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/calendar.settings.readonly'
+  'https://www.googleapis.com/auth/calendar.settings.readonly',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/tasks.readonly'
 ];
 
 import { defineString } from 'firebase-functions/params';
@@ -16,10 +19,19 @@ import { defineString } from 'firebase-functions/params';
 const clientId = defineString('GOOGLE_CLIENT_ID');
 const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
 
+// Get Calendar OAuth configuration from Firebase config
+const getCalendarOAuthConfig = () => {
+  return {
+    clientId: clientId.value(),
+    clientSecret: clientSecret.value(),
+    redirectUri: 'https://us-central1-hrx1-d3beb.cloudfunctions.net/gmailOAuthCallback'
+  };
+};
+
 const oauth2Client = new google.auth.OAuth2(
   clientId.value(),
   clientSecret.value(),
-  'https://us-central1-hrx1-d3beb.cloudfunctions.net/handleCalendarCallback'
+  'https://us-central1-hrx1-d3beb.cloudfunctions.net/gmailOAuthCallback'
 );
 
 /**
@@ -51,24 +63,22 @@ export const getCalendarAuthUrl = onCall({
 });
 
 /**
- * Handle Google Calendar OAuth callback and store tokens
+ * Handle Google Calendar OAuth callback (HTTP GET) and store tokens
  */
-export const handleCalendarCallback = onCall({
-  cors: true
-}, async (request) => {
+export const handleCalendarCallback = onRequest(async (req, res) => {
   try {
-    const { code, state } = request.data;
+    const code = (req.query.code as string) || '';
+    const state = (req.query.state as string) || '';
 
     if (!code || !state) {
-      throw new Error('Missing required fields: code, state');
+      res.status(400).send('Missing required fields: code, state');
+      return;
     }
 
     const { userId } = JSON.parse(state);
 
-    // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
-    
-    // Store tokens securely
+
     await db.collection('users').doc(userId).update({
       calendarTokens: {
         access_token: tokens.access_token,
@@ -81,10 +91,10 @@ export const handleCalendarCallback = onCall({
       calendarConnectedAt: new Date()
     });
 
-    return { success: true, message: 'Google Calendar connected successfully' };
+    res.status(200).send('<html><body>Google Calendar connected. You can close this window.</body><script>window.close && window.close();</script></html>');
   } catch (error) {
     console.error('Error handling Calendar callback:', error);
-    throw new Error(`Failed to connect Calendar: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    res.status(500).send('Failed to connect Calendar');
   }
 });
 
@@ -114,69 +124,12 @@ export const syncTaskToCalendar = onCall({
       throw new Error('Google Calendar not connected. Please authenticate first.');
     }
 
-    // Set up Calendar API client
+    // Set up OAuth client
     oauth2Client.setCredentials(calendarTokens);
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Determine if this is an appointment or todo
-    const isAppointment = taskData.classification === 'appointment';
-    
-    if (isAppointment) {
-      // Create calendar event for appointment
-      const event = {
-        summary: taskData.title,
-        description: taskData.description || '',
-        start: {
-          dateTime: taskData.startTime,
-          timeZone: 'America/Los_Angeles'
-        },
-        end: {
-          dateTime: taskData.endTime || new Date(new Date(taskData.startTime).getTime() + (taskData.duration || 60) * 60000).toISOString(),
-          timeZone: 'America/Los_Angeles'
-        },
-        reminders: {
-          useDefault: false,
-          overrides: [
-            { method: 'email', minutes: 24 * 60 },
-            { method: 'popup', minutes: 10 }
-          ]
-        },
-        extendedProperties: {
-          private: {
-            taskId: taskId,
-            tenantId: tenantId,
-            crmTask: 'true'
-          }
-        }
-      };
-
-      const response = await calendar.events.insert({
-        calendarId: 'primary',
-        requestBody: event
-      });
-
-      // Update task with calendar event ID
-      await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
-        googleCalendarEventId: response.data.id,
-        lastGoogleSync: new Date(),
-        syncStatus: 'synced'
-      });
-
-      return {
-        success: true,
-        eventId: response.data.id,
-        message: 'Task synced to Google Calendar'
-      };
-    } else {
-      // For todos, we'll create a Google Task instead
-      // Note: Google Tasks API requires separate implementation
-      console.log('Todo tasks will be implemented with Google Tasks API');
-      
-      return {
-        success: true,
-        message: 'Todo task sync to Google Tasks coming soon'
-      };
-    }
+    // Use the service function
+    const result = await syncTaskToCalendarService(userId, tenantId, taskId, taskData);
+    return result;
 
   } catch (error) {
     console.error('Error syncing task to Calendar:', error);
@@ -187,7 +140,7 @@ export const syncTaskToCalendar = onCall({
 /**
  * Update calendar event when task is updated
  */
-export const updateCalendarEvent = onCall({
+export const updateGoogleSync = onCall({
   cors: true
 }, async (request) => {
   try {
@@ -210,50 +163,12 @@ export const updateCalendarEvent = onCall({
       throw new Error('Google Calendar not connected. Please authenticate first.');
     }
 
-    // Set up Calendar API client
+    // Set up OAuth client
     oauth2Client.setCredentials(calendarTokens);
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Get the task to find the calendar event ID
-    const taskDoc = await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).get();
-    if (!taskDoc.exists) {
-      throw new Error('Task not found');
-    }
-
-    const task = taskDoc.data();
-    const eventId = task?.googleCalendarEventId;
-
-    if (!eventId) {
-      throw new Error('Task not synced to calendar yet');
-    }
-
-    // Update calendar event
-    const event = {
-      summary: taskData.title,
-      description: taskData.description || '',
-      start: {
-        dateTime: taskData.startTime,
-        timeZone: 'America/Los_Angeles'
-      },
-      end: {
-        dateTime: taskData.endTime || new Date(new Date(taskData.startTime).getTime() + (taskData.duration || 60) * 60000).toISOString(),
-        timeZone: 'America/Los_Angeles'
-      }
-    };
-
-    await calendar.events.update({
-      calendarId: 'primary',
-      eventId: eventId,
-      requestBody: event
-    });
-
-    // Update task sync status
-    await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
-      lastGoogleSync: new Date(),
-      syncStatus: 'synced'
-    });
-
-    return { success: true, message: 'Calendar event updated' };
+    // Use the service function
+    const result = await updateGoogleSyncService(userId, tenantId, taskId, taskData);
+    return result;
 
   } catch (error) {
     console.error('Error updating calendar event:', error);
@@ -264,7 +179,7 @@ export const updateCalendarEvent = onCall({
 /**
  * Delete calendar event when task is deleted
  */
-export const deleteCalendarEvent = onCall({
+export const deleteGoogleSync = onCall({
   cors: true
 }, async (request) => {
   try {
@@ -287,35 +202,12 @@ export const deleteCalendarEvent = onCall({
       throw new Error('Google Calendar not connected. Please authenticate first.');
     }
 
-    // Set up Calendar API client
+    // Set up OAuth client
     oauth2Client.setCredentials(calendarTokens);
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Get the task to find the calendar event ID
-    const taskDoc = await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).get();
-    if (!taskDoc.exists) {
-      throw new Error('Task not found');
-    }
-
-    const task = taskDoc.data();
-    const eventId = task?.googleCalendarEventId;
-
-    if (eventId) {
-      // Delete calendar event
-      await calendar.events.delete({
-        calendarId: 'primary',
-        eventId: eventId
-      });
-    }
-
-    // Update task sync status
-    await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update({
-      googleCalendarEventId: null,
-      lastGoogleSync: new Date(),
-      syncStatus: 'deleted'
-    });
-
-    return { success: true, message: 'Calendar event deleted' };
+    // Use the service function
+    const result = await deleteGoogleSyncService(userId, tenantId, taskId);
+    return result;
 
   } catch (error) {
     console.error('Error deleting calendar event:', error);
@@ -384,12 +276,12 @@ export const listCalendarEvents = onCall({
     // Get user's Calendar tokens
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      throw new HttpsError('not-found', 'User not found');
     }
 
     const userData = userDoc.data();
     if (!userData?.calendarTokens?.access_token) {
-      throw new Error('Calendar not connected');
+      throw new HttpsError('failed-precondition', 'Calendar not connected');
     }
 
     // Set up OAuth2 client
@@ -424,10 +316,15 @@ export const listCalendarEvents = onCall({
       events,
       totalEvents: events.length
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error listing calendar events:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    throw new HttpsError('internal', 'Failed to list calendar events', { message });
+    if (error instanceof HttpsError) {
+      // Preserve specific codes/messages for client handling
+      throw error;
+    }
+    const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
+    // Surface the real message so the client can display actionable info
+    throw new HttpsError('internal', message);
   }
 });
 
@@ -490,22 +387,199 @@ export const disconnectCalendar = onCall({
   cors: true
 }, async (request) => {
   try {
-    const { userId } = request.data;
+    const { userId, tenantId } = request.data;
 
-    if (!userId) {
-      throw new Error('Missing required field: userId');
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
     }
 
-    // Remove Calendar tokens
-    await db.collection('users').doc(userId).update({
+    // Update tenant integration flags if present
+    const integRef = db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail');
+    const integSnap = await integRef.get();
+    if (integSnap.exists) {
+      await integRef.update({
+        calendarEnabled: false,
+        calendarConnected: false,
+        calendarDisconnectedAt: new Date()
+      });
+    }
+
+    // Also clear user-level tokens/flags so UI shows fully disconnected
+    await db.collection('users').doc(userId).set({
       calendarTokens: null,
       calendarConnected: false,
-      calendarDisconnectedAt: new Date()
-    });
+      lastCalendarSync: null
+    }, { merge: true });
 
     return { success: true, message: 'Google Calendar disconnected successfully' };
   } catch (error) {
     console.error('Error disconnecting Calendar:', error);
     throw new Error(`Failed to disconnect Calendar: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+/**
+ * Disconnect ALL Google services (Gmail and Calendar) for a user
+ */
+export const disconnectAllGoogleServices = onCall({
+  cors: true
+}, async (request) => {
+  try {
+    const { userId, tenantId } = request.data;
+
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    console.log(`Disconnecting all Google services for user ${userId} in tenant ${tenantId}`);
+
+    // Update tenant integration flags if present
+    const integRef = db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail');
+    const integSnap = await integRef.get();
+    if (integSnap.exists) {
+      await integRef.update({
+        calendarEnabled: false,
+        calendarConnected: false,
+        gmailConnected: false,
+        calendarDisconnectedAt: new Date(),
+        gmailDisconnectedAt: new Date()
+      });
+    }
+
+    // Clear ALL user-level Google tokens and flags
+    await db.collection('users').doc(userId).set({
+      gmailTokens: null,
+      gmailConnected: false,
+      gmailConnectedAt: null,
+      gmailDisconnectedAt: new Date(),
+      calendarTokens: null,
+      calendarConnected: false,
+      calendarConnectedAt: null,
+      lastCalendarSync: null,
+      lastGmailSync: null
+    }, { merge: true });
+
+    console.log(`Successfully disconnected all Google services for user ${userId}`);
+
+    return { 
+      success: true, 
+      message: 'All Google services (Gmail and Calendar) disconnected successfully' 
+    };
+  } catch (error) {
+    console.error('Error disconnecting all Google services:', error);
+    throw new Error(`Failed to disconnect Google services: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+});
+
+/**
+ * Enable Calendar sync for existing Gmail integration
+ */
+export const enableCalendarSync = onCall({
+  cors: true
+}, async (request) => {
+  try {
+    const { userId, tenantId } = request.data;
+
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    // Get the current Gmail integration config
+    const configDoc = await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').get();
+    
+    if (!configDoc.exists) {
+      throw new Error('Gmail integration not found. Please connect Gmail first.');
+    }
+
+    const config = configDoc.data() as any;
+    
+    if (!config.accessToken) {
+      throw new Error('Gmail integration not properly configured. Please reconnect Gmail.');
+    }
+
+    // Test the access token with Calendar API using the v2 params-authenticated client
+    oauth2Client.setCredentials({
+      access_token: config.accessToken,
+      refresh_token: config.refreshToken
+    });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    
+    // Test Calendar API access
+    const test = await calendar.calendarList.list().catch((calendarError: any) => {
+      console.error('Calendar API test failed:', calendarError?.response?.data || calendarError);
+      const message = calendarError?.response?.data?.error?.message || calendarError?.message || 'Unknown calendar error';
+      throw new HttpsError('failed-precondition', `Calendar scope missing: ${message}`);
+    });
+
+    // Update the Gmail integration to enable calendar sync
+    await db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail').update({
+      calendarEnabled: true,
+      calendarConnected: true,
+      calendarConnectedAt: new Date(),
+      calendarDisconnectedAt: null
+    });
+
+    return { success: true, message: 'Google Calendar sync enabled successfully' };
+  } catch (error: any) {
+    console.error('Error enabling Calendar sync:', error);
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
+    throw new HttpsError('internal', message);
+  }
+});
+
+/**
+ * Clear expired Google tokens and force re-authentication
+ */
+export const clearExpiredTokens = onCall({
+  cors: true
+}, async (request) => {
+  try {
+    const { userId, tenantId } = request.data;
+
+    if (!userId || !tenantId) {
+      throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    console.log(`Clearing expired tokens for user ${userId} in tenant ${tenantId}`);
+
+    // Clear ALL user-level Google tokens and flags
+    await db.collection('users').doc(userId).set({
+      gmailTokens: null,
+      gmailConnected: false,
+      gmailConnectedAt: null,
+      gmailDisconnectedAt: new Date(),
+      calendarTokens: null,
+      calendarConnected: false,
+      calendarConnectedAt: null,
+      lastCalendarSync: null,
+      lastGmailSync: null
+    }, { merge: true });
+
+    // Update tenant integration flags if present
+    const integRef = db.collection('tenants').doc(tenantId).collection('integrations').doc('gmail');
+    const integSnap = await integRef.get();
+    if (integSnap.exists) {
+      await integRef.update({
+        calendarEnabled: false,
+        calendarConnected: false,
+        gmailConnected: false,
+        calendarDisconnectedAt: new Date(),
+        gmailDisconnectedAt: new Date()
+      });
+    }
+
+    console.log(`Successfully cleared expired tokens for user ${userId}`);
+
+    return { 
+      success: true, 
+      message: 'Expired tokens cleared. Please reconnect your Google account.' 
+    };
+  } catch (error) {
+    console.error('Error clearing expired tokens:', error);
+    throw new Error(`Failed to clear expired tokens: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });

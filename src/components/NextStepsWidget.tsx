@@ -239,14 +239,14 @@ const NextStepsWidget: React.FC<NextStepsWidgetProps> = ({
                 </Typography>
               }
               secondary={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                <Typography component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                   <Chip
                     label={getStageDisplayName(question.stage)}
                     size="small"
                     variant="outlined"
                     sx={{ fontSize: '0.625rem', height: 20 }}
                   />
-                </Box>
+                </Typography>
               }
             />
             <ListItemSecondaryAction>

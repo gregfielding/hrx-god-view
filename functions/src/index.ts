@@ -10266,13 +10266,24 @@ export {
   getCalendarAuthUrl,
   handleCalendarCallback,
   syncTaskToCalendar,
-  updateCalendarEvent,
-  deleteCalendarEvent,
+  updateGoogleSync,
+  deleteGoogleSync,
   getCalendarStatus,
   disconnectCalendar,
+  disconnectAllGoogleServices,
+  clearExpiredTokens,
+  enableCalendarSync,
   listCalendarEvents,
   createCalendarEvent
 } from './googleCalendarIntegration';
+
+// Calendar Integration Functions
+export {
+  syncCalendarEventsToCRM,
+  createCalendarEventFromTask,
+  getCalendarAvailability,
+  testCalendarTokenValidity
+} from './calendarIntegration';
 
 // Gmail-Tasks Integration Functions
 export {

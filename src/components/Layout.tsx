@@ -44,6 +44,7 @@ import { generateMenuItems, MenuItem as MenuItemType } from '../utils/menuGenera
 import { Role, SecurityLevel } from '../utils/AccessRoles';
 
 import TenantSwitcher from './TenantSwitcher';
+import GoogleConnectionChip from './GoogleConnectionChip';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -685,6 +686,10 @@ const Layout: React.FC = React.memo(function Layout() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* Google Connection Chip */}
+            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && (
+              <GoogleConnectionChip tenantId={activeTenant.id} />
+            )}
             {/* User menu and actions can go here */}
           </Box>
         </Box>

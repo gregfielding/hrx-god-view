@@ -192,7 +192,7 @@ const UserTasksDashboard: React.FC<UserTasksDashboardProps> = ({
       dueTime: '',
       estimatedDuration: 30,
       assignedTo: user?.uid || '',
-      category: suggestion.category || 'follow_up',
+      category: 'follow_up', // Use valid TaskCategory value
       quotaCategory: suggestion.category || 'business_generating',
       selectedCompany: '',
       selectedContact: '',

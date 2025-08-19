@@ -24,6 +24,7 @@ import {
   Google as GoogleIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getUserTimezone } from '../utils/dateUtils';
 
 import { useAuth } from '../contexts/AuthContext';
 
@@ -104,6 +105,11 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   const disconnectCalendarFn = httpsCallable(functions, 'disconnectCalendar');
   const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEvents');
   const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
+  
+  // Sync functions
+  const syncGmailAndCreateTasksFn = httpsCallable(functions, 'syncGmailAndCreateTasks');
+  const syncGmailCalendarAsTasksFn = httpsCallable(functions, 'syncGmailCalendarAsTasks');
+  const syncCalendarEventsToCRMFn = httpsCallable(functions, 'syncCalendarEventsToCRM');
 
   // Load Google services status
   const loadGoogleStatus = async () => {
@@ -126,6 +132,18 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
       console.log('Calling getCalendarStatus...');
       const calendarResult = await getCalendarStatusFn({ userId: user.uid });
       console.log('Calendar status response:', calendarResult.data);
+      
+      // Debug: Check if calendar tokens exist
+      const calendarData = calendarResult.data as any;
+      if (calendarData && calendarData.connected) {
+        console.log('✅ Calendar is connected!');
+        console.log('Calendar email:', calendarData.email);
+        console.log('Last sync:', calendarData.lastSync);
+        console.log('Sync status:', calendarData.syncStatus);
+      } else {
+        console.log('❌ Calendar is NOT connected');
+        console.log('Calendar status:', calendarData);
+      }
       
       const gmailStatus = gmailResult.data as any;
       const calendarStatus = calendarResult.data as any;
@@ -383,15 +401,150 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
     setLoading(true);
     setError(null);
     try {
-      // Attempt to disconnect both; ignore individual failures
-      try { await disconnectGmailFn({ userId: user.uid }); } catch (e) { /* no-op */ }
-      try { await disconnectCalendarFn({ userId: user.uid }); } catch (e) { /* no-op */ }
-
-      setSuccess('Google account disconnected');
+      // Use the comprehensive disconnect function
+      const disconnectAllGoogleServicesFn = httpsCallable(functions, 'disconnectAllGoogleServices');
+      const result = await disconnectAllGoogleServicesFn({ userId: user.uid, tenantId });
+      const data = result.data as any;
+      
+      if (data.success) {
+        setSuccess(data.message || 'All Google services disconnected successfully');
+      } else {
+        setError(data.message || 'Failed to disconnect Google services');
+      }
+      
       await loadGoogleStatus();
     } catch (err: any) {
       console.error('Error disconnecting Google:', err);
       setError(err.message || 'Failed to disconnect Google');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sync handlers
+  const handleSyncGmailAndCreateTasks = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await syncGmailAndCreateTasksFn({ 
+        userId: user.uid,
+        tenantId: tenantId 
+      });
+      const data = result.data as any;
+      
+      if (data.success) {
+        setSuccess(`Gmail sync completed! ${data.tasksCreated || 0} tasks created from emails.`);
+      } else {
+        setError(data.message || 'Failed to sync Gmail');
+      }
+    } catch (error: any) {
+      console.error('Error syncing Gmail:', error);
+      setError(`Failed to sync Gmail: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncGmailCalendarAsTasks = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await syncGmailCalendarAsTasksFn({ 
+        userId: user.uid,
+        tenantId: tenantId 
+      });
+      const data = result.data as any;
+      
+      if (data.success) {
+        setSuccess(`Calendar sync completed! ${data.tasksCreated || 0} tasks created from calendar events.`);
+      } else {
+        setError(data.message || 'Failed to sync calendar');
+      }
+    } catch (error: any) {
+      console.error('Error syncing calendar:', error);
+      setError(`Failed to sync calendar: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncCalendarEventsToCRM = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await syncCalendarEventsToCRMFn({ 
+        userId: user.uid,
+        tenantId: tenantId 
+      });
+      const data = result.data as any;
+      
+      if (data.success) {
+        setSuccess(`Calendar events synced to CRM! ${data.eventsSynced || 0} events processed.`);
+      } else {
+        setError(data.message || 'Failed to sync calendar events to CRM');
+      }
+    } catch (error: any) {
+      console.error('Error syncing calendar events to CRM:', error);
+      setError(`Failed to sync calendar events to CRM: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Test function to manually sync a task to calendar
+  const handleTestCalendarSync = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      // Create a test task that should sync to calendar
+      const testTaskData = {
+        title: 'Test Calendar Sync',
+        description: 'This is a test appointment to verify calendar sync',
+        classification: 'appointment' as any,
+        startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
+        duration: 60, // 1 hour
+        type: 'scheduled_meeting_virtual' as any,
+        priority: 'medium' as any,
+        status: 'scheduled' as any,
+        scheduledDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        category: 'general' as any,
+        quotaCategory: 'business_generating' as any,
+        tenantId: tenantId,
+        createdBy: user.uid,
+        assignedTo: user.uid,
+        userTimezone: getUserTimezone()
+      };
+
+      // Import TaskService to create the task
+      const { TaskService } = await import('../utils/taskService');
+      const taskService = TaskService.getInstance();
+      
+      const taskId = await taskService.createTask(testTaskData);
+      
+      setSuccess(`Test task created with ID: ${taskId}. Check your Google Calendar for the event.`);
+    } catch (error: any) {
+      console.error('Error creating test task:', error);
+      setError(`Failed to create test task: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -463,12 +616,24 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
               </Button>
             ) : (
               <Button
-                variant="outlined"
-                color="error"
+                variant="contained"
+                color="success"
+                startIcon={<CheckCircleIcon />}
                 onClick={handleDisconnectGoogle}
                 disabled={loading}
+                size="large"
+                sx={{
+                  bgcolor: '#2e7d32',
+                  color: 'white',
+                  border: '2px solid #4caf50',
+                  boxShadow: '0 2px 8px rgba(76, 175, 80, 0.3)',
+                  '&:hover': {
+                    bgcolor: '#1b5e20',
+                    boxShadow: '0 4px 12px rgba(76, 175, 80, 0.4)',
+                  }
+                }}
               >
-                Disconnect Google
+                Connected ✓
               </Button>
             )}
 
@@ -483,6 +648,63 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
           </Box>
         </CardContent>
       </Card>
+
+      {/* Sync Options - Only show when connected */}
+      {isAnyServiceConnected && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Sync Options
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              Sync your Google data with your CRM to create tasks and track activities.
+            </Typography>
+
+                        <Box display="flex" flexDirection="column" gap={2}>
+              <Button
+                variant="outlined"
+                startIcon={<SyncIcon />}
+                onClick={handleSyncGmailAndCreateTasks}
+                disabled={loading}
+                fullWidth
+              >
+                Sync Gmail & Create Tasks
+              </Button>
+              
+              <Button
+                variant="outlined"
+                startIcon={<SyncIcon />}
+                onClick={handleSyncGmailCalendarAsTasks}
+                disabled={loading}
+                fullWidth
+              >
+                Sync Calendar Events as Tasks
+              </Button>
+              
+              <Button
+                variant="outlined"
+                startIcon={<SyncIcon />}
+                onClick={handleSyncCalendarEventsToCRM}
+                disabled={loading}
+                fullWidth
+              >
+                Sync Calendar Events to CRM
+              </Button>
+
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<SyncIcon />}
+                onClick={handleTestCalendarSync}
+                disabled={loading}
+                fullWidth
+              >
+                Test Calendar Sync
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Calendar Events hidden on this layout */}
       {SHOW_EVENTS && googleStatus.calendar.connected && (

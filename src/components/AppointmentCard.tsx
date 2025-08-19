@@ -291,7 +291,16 @@ const AppointmentCard: React.FC<AppointmentCardProps> = ({
           hour12: true
         }) : '';
       
-      const durationStr = appointment.duration ? `${appointment.duration} min` : '';
+      // Calculate duration for Google Calendar events
+      let durationStr = '';
+      if (appointment.duration) {
+        durationStr = `${appointment.duration} min`;
+      } else if (appointment.startTime && appointment.endTime) {
+        const start = new Date(appointment.startTime);
+        const end = new Date(appointment.endTime);
+        const durationMinutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60));
+        durationStr = `${durationMinutes} min`;
+      }
       
       return { dateStr, timeStr, durationStr };
     } catch (error) {

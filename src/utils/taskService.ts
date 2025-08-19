@@ -2,7 +2,7 @@
 // Handles all task-related operations and integrates with backend Firebase Functions
 
 import { httpsCallable } from 'firebase/functions';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, collectionGroup, query, where, onSnapshot } from 'firebase/firestore';
 
 import { functions, db } from '../firebase';
 import { CRMTask, TaskDashboard as TaskDashboardData } from '../types/Tasks';
@@ -490,57 +490,230 @@ export class TaskService {
     const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
     
     // Build query based on filters
-    let q;
+    let primaryQuery;
     
-    // If we have a dealId filter, we want to show ALL tasks for that deal (not just user-assigned ones)
+    // Special handling for dealId: support both schemas
     if (filters.dealId) {
-      q = query(tasksRef, where('associations.deals', 'array-contains', filters.dealId));
-    } else {
-      // Default behavior: only show tasks assigned to the current user
-      q = query(tasksRef, where('assignedTo', '==', userId));
-    }
-    
-    if (filters.contactId) {
-      q = query(q, where('associations.contacts', 'array-contains', filters.contactId));
-    }
-    if (filters.companyId) {
-      q = query(q, where('associations.companies', 'array-contains', filters.companyId));
-    }
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const tasks: any[] = [];
-      snapshot.forEach((doc) => {
-        tasks.push({ id: doc.id, ...doc.data() });
-      });
-      
-      // Sort tasks: open tasks first (by due date), then completed tasks (by completion date)
-      const sortedTasks = tasks.sort((a, b) => {
-        // First, separate open and completed tasks
-        const aIsCompleted = a.status === 'completed';
-        const bIsCompleted = b.status === 'completed';
-        
-        if (aIsCompleted && !bIsCompleted) return 1; // completed tasks go last
-        if (!aIsCompleted && bIsCompleted) return -1; // open tasks go first
-        
-        if (aIsCompleted && bIsCompleted) {
-          // Both completed - sort by completion date (newest first)
-          const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-          const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-          return bDate - aDate;
-        } else {
-          // Both open - sort by due date (earliest first)
+      const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
+      // Collection group fallback across any nested tasks collections
+      const cgTasks = collectionGroup(db as any, 'tasks');
+      const qByAssociations = query(tasksRef, where('associations.deals', 'array-contains', filters.dealId));
+      const qByTopLevel = query(tasksRef, where('deals', 'array-contains', filters.dealId));
+      const qCrmAssoc = query(crmTasksRef, where('associations.deals', 'array-contains', filters.dealId));
+      const qCrmTop = query(crmTasksRef, where('deals', 'array-contains', filters.dealId));
+
+      let assocTasks: any[] = [];
+      let topLevelTasks: any[] = [];
+      let crmAssocTasks: any[] = [];
+      let crmTopTasks: any[] = [];
+      let cgAssocTasks: any[] = [];
+
+      const combineAndEmit = () => {
+        const byId = new Map<string, any>();
+        [...assocTasks, ...topLevelTasks, ...crmAssocTasks, ...crmTopTasks, ...cgAssocTasks].forEach((t) => byId.set(t.id, t));
+        const tasks = Array.from(byId.values());
+        // Sort: open first by due date, then completed by completion date
+        const sortedTasks = tasks.sort((a, b) => {
+          const aIsCompleted = a.status === 'completed';
+          const bIsCompleted = b.status === 'completed';
+          if (aIsCompleted && !bIsCompleted) return 1;
+          if (!aIsCompleted && bIsCompleted) return -1;
+          if (aIsCompleted && bIsCompleted) {
+            const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+            const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+            return bDate - aDate;
+          }
           const aDate = a.dueDate ? new Date(a.dueDate + 'T00:00:00').getTime() : 0;
           const bDate = b.dueDate ? new Date(b.dueDate + 'T00:00:00').getTime() : 0;
           return aDate - bDate;
+        });
+        callback(sortedTasks);
+      };
+
+      const unsubA = onSnapshot(qByAssociations, (snapshot) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔎 TaskService(deal): assoc.deals snapshot size =', snapshot.size);
         }
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        if (process.env.NODE_ENV === 'development') {
+          try {
+            console.log('🔎 TaskService(deal): assoc.deals tasks =>', list.map((t:any) => ({
+              id: t.id,
+              title: t.title,
+              assignedTo: t.assignedTo,
+              status: t.status,
+              classification: t.classification,
+              deals: t.associations?.deals
+            })));
+          } catch {}
+        }
+        assocTasks = list;
+        combineAndEmit();
+      }, (error) => console.error('Error listening to deal-associations tasks:', error));
+
+      const unsubB = onSnapshot(qByTopLevel, (snapshot) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔎 TaskService(deal): top-level deals snapshot size =', snapshot.size);
+        }
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        if (process.env.NODE_ENV === 'development') {
+          try {
+            console.log('🔎 TaskService(deal): top-level deals tasks =>', list.map((t:any) => ({
+              id: t.id,
+              title: t.title,
+              assignedTo: t.assignedTo,
+              status: t.status,
+              classification: t.classification,
+              deals: t.deals
+            })));
+          } catch {}
+        }
+        topLevelTasks = list;
+        combineAndEmit();
+      }, (error) => console.error('Error listening to deal top-level tasks:', error));
+
+      const unsubC = onSnapshot(qCrmAssoc, (snapshot) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔎 TaskService(deal): CRM assoc.deals snapshot size =', snapshot.size);
+        }
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        if (process.env.NODE_ENV === 'development') {
+          try {
+            console.log('🔎 TaskService(deal): CRM assoc.deals tasks =>', list.map((t:any) => ({
+              id: t.id,
+              title: t.title,
+              assignedTo: t.assignedTo,
+              status: t.status,
+              classification: t.classification,
+              deals: t.associations?.deals
+            })));
+          } catch {}
+        }
+        crmAssocTasks = list;
+        combineAndEmit();
+      }, (error) => console.error('Error listening to CRM deal-associations tasks:', error));
+
+      const unsubD = onSnapshot(qCrmTop, (snapshot) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔎 TaskService(deal): CRM top-level deals snapshot size =', snapshot.size);
+        }
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        if (process.env.NODE_ENV === 'development') {
+          try {
+            console.log('🔎 TaskService(deal): CRM top-level deals tasks =>', list.map((t:any) => ({
+              id: t.id,
+              title: t.title,
+              assignedTo: t.assignedTo,
+              status: t.status,
+              classification: t.classification,
+              deals: t.deals
+            })));
+          } catch {}
+        }
+        crmTopTasks = list;
+        combineAndEmit();
+      }, (error) => console.error('Error listening to CRM deal top-level tasks:', error));
+
+      // Collection group listener (fallback)
+      const cgQuery = query(cgTasks as any,
+        where('tenantId', '==', tenantId),
+        where('associations.deals', 'array-contains', filters.dealId)
+      );
+      const unsubE = onSnapshot(cgQuery as any, (snapshot) => {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔎 TaskService(deal): collectionGroup assoc.deals snapshot size =', snapshot.size);
+        }
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        if (process.env.NODE_ENV === 'development') {
+          try {
+            console.log('🔎 TaskService(deal): collectionGroup assoc.deals tasks =>', list.map((t:any) => ({
+              id: t.id,
+              title: t.title,
+              assignedTo: t.assignedTo,
+              status: t.status,
+              classification: t.classification,
+              deals: t.associations?.deals
+            })));
+          } catch {}
+        }
+        cgAssocTasks = list;
+        combineAndEmit();
+      }, (error) => {
+        // Many projects disallow collectionGroup reads in rules; treat as optional
+        // and silence the noisy console error if it's a permission issue.
+        // We already have primary listeners on tenant-scoped collections.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const code = (error as any)?.code || (error as any)?.message;
+        if (code === 'permission-denied' || (typeof code === 'string' && code.includes('insufficient permissions'))) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('ℹ️ Skipping collectionGroup fallback due to security rules. This is safe.');
+          }
+          return;
+        }
+        console.error('Error listening to collectionGroup tasks:', error);
       });
-      
-      callback(sortedTasks);
-    }, (error) => {
-      console.error('Error listening to task updates:', error);
-    });
-    
-    return unsubscribe;
+
+      return () => {
+        unsubA();
+        unsubB();
+        unsubC();
+        unsubD();
+        unsubE();
+      };
+    } else {
+      // Salesperson dashboard: include tasks assigned to user OR where user is in associations.salespeople
+      // Build two listeners and merge results
+      const qAssigned = query(tasksRef, where('assignedTo', '==', userId));
+      const qBySalesperson = query(tasksRef, where('associations.salespeople', 'array-contains', userId));
+
+      let assignedTasks: any[] = [];
+      let salespersonTasks: any[] = [];
+
+      const emitMerged = () => {
+        const byId = new Map<string, any>();
+        [...assignedTasks, ...salespersonTasks].forEach((t) => byId.set(t.id, t));
+        const tasks = Array.from(byId.values());
+        const sortedTasks = tasks.sort((a, b) => {
+          const aIsCompleted = a.status === 'completed';
+          const bIsCompleted = b.status === 'completed';
+          if (aIsCompleted && !bIsCompleted) return 1;
+          if (!aIsCompleted && bIsCompleted) return -1;
+          if (aIsCompleted && bIsCompleted) {
+            const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+            const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+            return bDate - aDate;
+          }
+          const aDate = a.dueDate ? new Date(a.dueDate + 'T00:00:00').getTime() : 0;
+          const bDate = b.dueDate ? new Date(b.dueDate + 'T00:00:00').getTime() : 0;
+          return aDate - bDate;
+        });
+        callback(sortedTasks);
+      };
+
+      const unsubAssigned = onSnapshot(qAssigned, (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        assignedTasks = list;
+        emitMerged();
+      }, (error) => console.error('Error listening to assigned tasks:', error));
+
+      const unsubSalesperson = onSnapshot(qBySalesperson, (snapshot) => {
+        const list: any[] = [];
+        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
+        salespersonTasks = list;
+        emitMerged();
+      }, (error) => console.error('Error listening to salesperson-associated tasks:', error));
+
+      return () => {
+        unsubAssigned();
+        unsubSalesperson();
+      };
+    }
   }
 
   private processTasksIntoDashboard(tasks: any[], date: string): any {

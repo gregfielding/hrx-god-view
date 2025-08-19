@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { formatDateForDisplay } from '../utils/dateUtils';
 import {
   Card,
   CardContent,
@@ -40,6 +41,8 @@ interface TaskCardProps {
   deal?: any;
   contacts?: any[];
   salespeople?: any[];
+  deals?: any[];
+  companies?: any[];
   // Custom styling
   variant?: 'default' | 'compact';
   sx?: any;
@@ -107,6 +110,8 @@ const TaskCard: React.FC<TaskCardProps> = ({
   deal,
   contacts = [],
   salespeople = [],
+  deals = [],
+  companies = [],
   variant = 'default',
   sx = {}
 }) => {
@@ -132,33 +137,17 @@ const TaskCard: React.FC<TaskCardProps> = ({
   };
 
   const formatDate = (dateString: string) => {
-    if (!dateString) return '';
-    
-    try {
-      const date = new Date(dateString);
-      
-      // Check if the date is valid
-      if (isNaN(date.getTime())) {
-        return '';
-      }
-      
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
-    } catch (error) {
-      console.warn('Error formatting date:', dateString, error);
-      return '';
-    }
+    return formatDateForDisplay(dateString);
   };
 
-  const getContactDisplay = () => {
+  const contactDisplay = useMemo(() => {
     // First, try to get contacts from task associations
     if (task.associations?.contacts && task.associations.contacts.length > 0) {
       // If we have contact IDs in task associations, try to resolve them
-      const taskContactIds = task.associations.contacts;
-      
+      const taskContactIds = task.associations.contacts.map((c: any) => 
+        typeof c === 'string' ? c : c?.id
+      ).filter(Boolean);
+
       // If we have contacts prop (from deal context), try to match by ID
       if (contacts && contacts.length > 0) {
         const matchedContacts = contacts.filter((contact: any) => 
@@ -167,13 +156,17 @@ const TaskCard: React.FC<TaskCardProps> = ({
         
         if (matchedContacts.length > 0) {
           if (matchedContacts.length === 1) {
-            return matchedContacts[0].fullName || `${matchedContacts[0].firstName} ${matchedContacts[0].lastName}`;
+            const contactName = matchedContacts[0].fullName || `${matchedContacts[0].firstName} ${matchedContacts[0].lastName}`;
+            return contactName;
           }
           return `${matchedContacts.length} contacts`;
         }
       }
-      
-      // Fallback: show the number of contact IDs
+
+      // Fallback: show the contact ID if we can't find the contact object
+      if (taskContactIds.length === 1) {
+        return taskContactIds[0];
+      }
       return `${taskContactIds.length} contacts`;
     }
     
@@ -186,9 +179,10 @@ const TaskCard: React.FC<TaskCardProps> = ({
     }
     
     return null;
-  };
+  // Stable dependencies; uses ids/length to avoid recalculating on hover-only rerenders
+  }, [task.id, task.title, JSON.stringify(task.associations?.contacts || []), contacts?.length]);
 
-  const getSalespersonDisplay = () => {
+  const salespersonDisplay = useMemo(() => {
     // Check if task has assignedTo field
     if (task.assignedTo) {
       // First, try to use the optimized assignedToName field (new optimization)
@@ -223,23 +217,78 @@ const TaskCard: React.FC<TaskCardProps> = ({
       return task.assignedTo;
     }
     return 'Unassigned';
-  };
+  }, [task.assignedTo, task.assignedToName, JSON.stringify(task.associations?.salespeople || []), salespeople?.length]);
 
-  const getDealDisplay = () => {
+  const dealDisplay = useMemo(() => {
     // First try to get deal from props
     if (deal) {
       return deal.name || deal.title || 'Unknown Deal';
     }
     
-    // Then try to get from task associations
+    // Then try to get from task associations using the deals array
     const associatedDeals = task.associations?.deals || [];
+    if (associatedDeals.length > 0 && deals.length > 0) {
+      // Try to find the first associated deal in our deals array
+      const dealIds = associatedDeals.map((d: any) => 
+        typeof d === 'string' ? d : d?.id
+      ).filter(Boolean);
+      
+      const foundDeal = deals.find(d => dealIds.includes(d.id));
+      if (foundDeal) {
+        return foundDeal.name || foundDeal.title || 'Unknown Deal';
+      }
+      // Fallback to showing count if we can't find the specific deal
+      return `${dealIds.length} deal${dealIds.length > 1 ? 's' : ''}`;
+    }
+    
+    // Fallback to just showing count
     if (associatedDeals.length > 0) {
-      // For now, just show the number of deals since we don't have the full deal data
-      return `${associatedDeals.length} deal${associatedDeals.length > 1 ? 's' : ''}`;
+      const dealIds = associatedDeals.map((d: any) => 
+        typeof d === 'string' ? d : d?.id
+      ).filter(Boolean);
+      return `${dealIds.length} deal${dealIds.length > 1 ? 's' : ''}`;
     }
     
     return null;
-  };
+  }, [deal, JSON.stringify(task.associations?.deals || []), deals?.length]);
+
+  const companyDisplay = useMemo(() => {
+    // First try to get company from props
+    if (company) {
+      return company.companyName || company.name || 'Unknown Company';
+    }
+    
+    // Then try to get from task associations using the companies array
+    const associatedCompanies = task.associations?.companies || [];
+    if (associatedCompanies.length > 0 && companies.length > 0) {
+      // Try to find the first associated company in our companies array
+      const companyIds = associatedCompanies.map((c: any) => 
+        typeof c === 'string' ? c : c?.id
+      ).filter(Boolean);
+      
+      const foundCompany = companies.find(c => companyIds.includes(c.id));
+      
+      if (foundCompany) {
+        const companyName = foundCompany.companyName || foundCompany.name || 'Unknown Company';
+        return companyName;
+      }
+      // Fallback: show the company ID if we can't find the company object
+      if (companyIds.length === 1) {
+        return companyIds[0];
+      }
+      return `${companyIds.length} company${companyIds.length > 1 ? 'ies' : ''}`;
+    }
+    
+    // Fallback to just showing count
+    if (associatedCompanies.length > 0) {
+      const companyIds = associatedCompanies.map((c: any) => 
+        typeof c === 'string' ? c : c?.id
+      ).filter(Boolean);
+      return `${companyIds.length} company${companyIds.length > 1 ? 'ies' : ''}`;
+    }
+    
+    return null;
+  }, [company, JSON.stringify(task.associations?.companies || []), companies?.length, task.id, task.title]);
 
   // Simple, clean design matching DealDetails style with hover expansion
   const [isHovered, setIsHovered] = useState(false);
@@ -390,36 +439,36 @@ const TaskCard: React.FC<TaskCardProps> = ({
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                 <PersonIcon fontSize="small" color="action" />
                 <Typography variant="caption" color="text.secondary">
-                  Assigned: {getSalespersonDisplay()}
+                  Assigned: {salespersonDisplay}
                 </Typography>
               </Box>
               
               {/* Contacts */}
-              {showContacts && contacts && contacts.length > 0 && (
+              {showContacts && (contactDisplay || (contacts && contacts.length > 0)) && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <PersonIcon fontSize="small" color="action" />
                   <Typography variant="caption" color="text.secondary">
-                    Contacts: {getContactDisplay() || 'Unknown'}
+                    Contacts: {contactDisplay || 'Unknown'}
                   </Typography>
                 </Box>
               )}
               
                             {/* Company */}
-              {showCompany && company && (
+              {showCompany && companyDisplay && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <BusinessIcon fontSize="small" color="action" />
                   <Typography variant="caption" color="text.secondary">
-                    Company: {company.companyName || company.name}
+                    Company: {companyDisplay}
                   </Typography>
                 </Box>
               )}
 
               {/* Deal */}
-              {showDeal && getDealDisplay() && (
+              {showDeal && dealDisplay && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <AttachMoneyIcon fontSize="small" color="action" />
                   <Typography variant="caption" color="text.secondary">
-                    Deal: {getDealDisplay()}
+                    Deal: {dealDisplay}
                   </Typography>
                 </Box>
               )}

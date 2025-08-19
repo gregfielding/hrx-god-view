@@ -52,7 +52,6 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
 }) => {
   const { user } = useAuth();
   const [summary, setSummary] = useState<string>('');
-  const [suggestions, setSuggestions] = useState<Array<{ label: string; action: any }>>([]);
   const [messages, setMessages] = useState<CoachMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -73,7 +72,12 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
         setMessages(parsed);
       } catch {}
     }
-    analyze();
+    
+    // Only analyze if we have a valid entityId
+    if (entityId && entityId !== 'dashboard' && entityId !== 'unknown' && entityId.length >= 3) {
+      analyze();
+    }
+    
     loadConversations();
   }, [entityId, entityType]);
 
@@ -121,24 +125,48 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
   const analyze = async () => {
     setAnalyzing(true);
     try {
+      // Only attempt to analyze if we have valid entity data
+      if (!entityId || !tenantId) {
+        console.log('Sales Coach: Missing required entity data');
+        setSummary('');
+        return;
+      }
+
       const functions = getFunctions(undefined, 'us-central1');
       const analyzeFn = httpsCallable(functions, 'dealCoachAnalyzeCallable');
-      const { data }: any = await analyzeFn({ 
-        dealId: entityId, // Use dealId for both deals and contacts
-        stageKey: dealStage || 'general', // Use 'general' for contacts
+      
+      const params = {
+        dealId: entityId,
+        stageKey: dealStage || 'general',
         tenantId,
-        entityType, // Pass entity type for context
-        entityName,
-        contactCompany,
-        contactTitle
-      });
-      setSummary(data.summary || '');
-      setSuggestions(data.suggestions || []);
+        entityType: entityType || 'deal',
+        entityName: entityName || 'Unknown',
+        contactCompany: contactCompany || '',
+        contactTitle: contactTitle || ''
+      };
+
+      console.log('Sales Coach analyze params:', params);
+      
+      const { data }: any = await analyzeFn(params);
+      setSummary(data?.summary || '');
     } catch (e) {
-      console.log('Sales Coach analyze feature not available:', e);
-      // Don't show error toast since this is optional functionality
-      setSummary('');
-      setSuggestions([]);
+      console.error('Sales Coach analyze error:', e);
+      
+      // Provide more detailed error information
+      let errorMessage = 'Analysis feature temporarily unavailable';
+      if (e && typeof e === 'object' && 'message' in e) {
+        errorMessage = `Analysis error: ${e.message}`;
+      }
+      
+      // Set fallback content instead of empty strings
+      setSummary('Unable to analyze at this time. Please try again later or contact support if the issue persists.');
+      
+      // Log the error for debugging
+      console.error('Sales Coach analyze failed:', {
+        error: e,
+        entityId,
+        tenantId
+      });
     } finally {
       setAnalyzing(false);
     }
@@ -151,19 +179,46 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
     setMessages((m) => [...m, { role: 'user', text, at: Date.now() }]);
     setLoading(true);
     try {
+      // Only attempt to chat if we have valid entity data
+      if (!entityId || !tenantId) {
+        console.log('Sales Coach: Missing required entity data');
+        setMessages((m) => [...m, { 
+          role: 'assistant', 
+          text: 'I\'m having trouble accessing the data. Please try refreshing the page.', 
+          at: Date.now() 
+        }]);
+        return;
+      }
+
+      // Additional validation to prevent 500 errors
+      if (entityId === 'dashboard' || entityId === 'unknown' || entityId.length < 3) {
+        console.warn('Sales Coach: Invalid entityId for chat:', entityId);
+        setMessages((m) => [...m, { 
+          role: 'assistant', 
+          text: 'Chat is not available for this context. Please select a specific deal, contact, or company to get personalized assistance.', 
+          at: Date.now() 
+        }]);
+        return;
+      }
+
       const functions = getFunctions(undefined, 'us-central1');
       const chatFn = httpsCallable(functions, 'dealCoachChatCallable');
-      const { data }: any = await chatFn({ 
-        dealId: entityId, // Use dealId for both deals and contacts
-        stageKey: dealStage || 'general', // Use 'general' for contacts
+      
+      const params = {
+        dealId: entityId,
+        stageKey: dealStage || 'general',
         tenantId, 
         userId: user?.uid || 'unknown', 
         message: text,
-        entityType, // Pass entity type for context
-        entityName,
-        contactCompany,
-        contactTitle
-      });
+        entityType: entityType || 'deal',
+        entityName: entityName || 'Unknown',
+        contactCompany: contactCompany || '',
+        contactTitle: contactTitle || ''
+      };
+
+      console.log('Sales Coach chat params:', params);
+      
+      const { data }: any = await chatFn(params);
       
       // Convert JSON response to readable text
       let replyText = '';
@@ -218,7 +273,31 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
         await runAction(a);
       }
     } catch (e) {
-      setMessages((m) => [...m, { role: 'assistant', text: 'Sorry — something went wrong.', at: Date.now() }]);
+      console.error('Sales Coach chat error:', e);
+      
+      // Provide more helpful error message
+      let errorMessage = 'Sorry — something went wrong. Please try again.';
+      if (e && typeof e === 'object' && 'message' in e) {
+        if (e.message.includes('500')) {
+          errorMessage = 'The AI service is temporarily unavailable. Please try again in a few minutes.';
+        } else if (e.message.includes('network')) {
+          errorMessage = 'Network error. Please check your connection and try again.';
+        }
+      }
+      
+      setMessages((m) => [...m, { 
+        role: 'assistant', 
+        text: errorMessage, 
+        at: Date.now() 
+      }]);
+      
+      // Log the error for debugging
+      console.error('Sales Coach chat failed:', {
+        error: e,
+        entityId,
+        tenantId,
+        message: text
+      });
     } finally {
       setLoading(false);
     }
@@ -347,20 +426,6 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
 
   return (
     <Box sx={{ p: 0 }}>
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-            {suggestions.map((s, idx) => (
-              <Box key={idx} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Chip label={s.label} onClick={() => setInput(s.label)} />
-                <Button size="small" variant="outlined" onClick={() => runAction(s.action)}>
-                  {s.action?.type === 'createTask' ? 'Create Task' : s.action?.type === 'draftEmail' ? 'Draft Email' : s.action?.type === 'draftCall' ? 'Draft Call' : 'Apply'}
-                </Button>
-              </Box>
-            ))}
-          </Box>
-        )}
-
         {/* Chat */}
         <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: compact ? '300px' : height, minHeight: compact ? 250 : 350 }}>
           <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
@@ -471,7 +536,7 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
             <TextField
               fullWidth
               size="small"
-                              placeholder={`Ask ${entityType === 'deal' ? 'Deal' : entityType === 'company' ? 'Company' : 'Sales'} Coach…`}
+              placeholder={`Ask ${entityType === 'deal' ? 'Deal' : entityType === 'company' ? 'Company' : 'Sales'} Coach…`}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {

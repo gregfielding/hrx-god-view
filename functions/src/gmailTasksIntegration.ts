@@ -1,18 +1,22 @@
 import { onCall } from 'firebase-functions/v2/https';
+import { defineString } from 'firebase-functions/params';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
-import * as functions from 'firebase-functions';
 import { logAIAction } from './utils/aiLogging';
 
 const db = getFirestore();
 
+// Google OAuth configuration using Firebase Functions v2 params
+const clientId = defineString('GOOGLE_CLIENT_ID');
+const clientSecret = defineString('GOOGLE_CLIENT_SECRET');
+const redirectUri = defineString('GOOGLE_REDIRECT_URI');
+
 // Gmail OAuth configuration
 const getGmailOAuthConfig = () => {
-  const config = functions.config();
   return {
-    clientId: config.gmail?.client_id,
-    clientSecret: config.gmail?.client_secret,
-    redirectUri: config.gmail?.redirect_uri
+    clientId: clientId.value(),
+    clientSecret: clientSecret.value(),
+    redirectUri: redirectUri.value()
   };
 };
 
@@ -320,7 +324,9 @@ export const syncGmailAndCreateTasks = onCall(async (request) => {
 });
 
 // Sync Gmail calendar events as tasks
-export const syncGmailCalendarAsTasks = onCall(async (request) => {
+export const syncGmailCalendarAsTasks = onCall({
+  cors: true
+}, async (request) => {
   if (!request.auth) {
     throw new Error('User must be authenticated');
   }

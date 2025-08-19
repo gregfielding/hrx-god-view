@@ -23,7 +23,7 @@ import {
   CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
 
-import { TaskClassification } from '../types/Tasks';
+import { TaskClassification, TaskCategory } from '../types/Tasks';
 import { 
   normalizeAssociationArray, 
   toSelectValue, 
@@ -87,7 +87,7 @@ interface LogActivityDialogProps {
     completedDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 30,
-    category: 'business_generating',
+    category: 'general' as TaskCategory,
     quotaCategory: 'business_generating',
     notes: '',
     tags: ['logged-activity'] as string[],
@@ -218,7 +218,7 @@ interface LogActivityDialogProps {
       completedDate: new Date().toISOString().split('T')[0],
       assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 30,
-      category: 'business_generating',
+      category: 'general' as TaskCategory,
       quotaCategory: 'business_generating',
       notes: '',
       tags: ['logged-activity'],

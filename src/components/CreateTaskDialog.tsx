@@ -1,4 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { 
+  getCurrentLocalDate, 
+  getCurrentLocalDateTime, 
+  localDateTimeToUTC, 
+  getUserTimezone 
+} from '../utils/dateUtils';
 import {
   Dialog,
   DialogTitle,
@@ -28,7 +34,7 @@ import {
   CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
 
-import { TaskClassification } from '../types/Tasks';
+import { TaskClassification, TaskCategory } from '../types/Tasks';
 
 interface CreateTaskDialogProps {
   open: boolean;
@@ -65,7 +71,7 @@ interface CreateTaskDialogProps {
     dueDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 0,
-    category: 'business_generating',
+    category: 'general' as TaskCategory,
     quotaCategory: 'business_generating',
     notes: '',
     tags: [] as string[],
@@ -102,7 +108,7 @@ interface CreateTaskDialogProps {
         ...formData,
         ...prefilledData,
         classification: prefilledData.classification || 'todo',
-        startTime: prefilledData.startTime || (prefilledData.classification === 'appointment' ? new Date().toISOString().slice(0, 16) : ''),
+        startTime: prefilledData.startTime || (prefilledData.classification === 'appointment' ? getCurrentLocalDateTime() : ''),
         duration: prefilledData.classification === 'appointment' ? prefilledData.duration || undefined : undefined,
         // Ensure associations are properly merged
         associations: {
@@ -225,18 +231,26 @@ interface CreateTaskDialogProps {
 
     // For appointments, extract date from startTime and set scheduledDate
     let scheduledDate = formData.scheduledDate;
+    let startTimeForSync = formData.startTime;
+    
     if (formData.classification === 'appointment' && formData.startTime) {
       scheduledDate = formData.startTime.split('T')[0];
+      
+      // Convert local datetime to UTC for Google Calendar sync
+      startTimeForSync = localDateTimeToUTC(formData.startTime);
     }
 
     const taskData = {
       ...formData,
       scheduledDate: scheduledDate,
+      startTime: startTimeForSync, // Use UTC time for sync
       duration: formData.classification === 'appointment' && formData.duration ? Number(formData.duration) : undefined,
       estimatedDuration: Number(formData.estimatedDuration || 0),
       // Include repeating task data
       isRepeating: formData.isRepeating,
-      repeatInterval: formData.isRepeating ? Number(formData.repeatInterval) : undefined
+      repeatInterval: formData.isRepeating ? Number(formData.repeatInterval) : undefined,
+      // Add user's timezone for proper sync
+      userTimezone: getUserTimezone()
     };
 
     onSubmit(taskData);
@@ -252,11 +266,11 @@ interface CreateTaskDialogProps {
       classification: 'todo',
       startTime: '',
       duration: undefined,
-      scheduledDate: new Date().toISOString().split('T')[0],
-      dueDate: new Date().toISOString().split('T')[0],
+      scheduledDate: getCurrentLocalDate(),
+      dueDate: getCurrentLocalDate(),
       assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 0,
-      category: 'business_generating',
+      category: 'general' as TaskCategory,
       quotaCategory: 'business_generating',
       notes: '',
       tags: [],
@@ -525,7 +539,12 @@ interface CreateTaskDialogProps {
               }}
               renderTags={(value, getTagProps) =>
                 value.map((option: any, index: number) => (
-                  <Chip {...getTagProps({ index })} key={option.id} label={option.fullName || option.name || option.email || option.id} size="small" />
+                  <Chip 
+                    {...getTagProps({ index })} 
+                    key={option.id} 
+                    label={option.fullName || option.name || option.email || option.id} 
+                    size="small"
+                  />
                 ))
               }
               renderInput={(params) => (
@@ -548,7 +567,12 @@ interface CreateTaskDialogProps {
               }}
               renderTags={(value, getTagProps) =>
                 value.map((option: any, index: number) => (
-                  <Chip {...getTagProps({ index })} key={option.id} label={option.displayName || option.fullName || option.name || option.email || option.id} size="small" />
+                  <Chip 
+                    {...getTagProps({ index })} 
+                    key={option.id} 
+                    label={option.displayName || option.fullName || option.name || option.email || option.id} 
+                    size="small"
+                  />
                 ))
               }
               renderInput={(params) => (

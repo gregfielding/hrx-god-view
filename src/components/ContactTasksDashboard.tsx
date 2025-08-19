@@ -27,7 +27,7 @@ import {
 
 import { useAuth } from '../contexts/AuthContext';
 import { TaskService } from '../utils/taskService';
-import { TaskStatus, TaskClassification } from '../types/Tasks';
+import { TaskStatus, TaskClassification, TaskCategory } from '../types/Tasks';
 
 import CreateTaskDialog from './CreateTaskDialog';
 import CreateFollowUpCampaignDialog from './CreateFollowUpCampaignDialog';
@@ -430,7 +430,7 @@ const ContactTasksDashboard: React.FC<ContactTasksDashboardProps> = ({
         assignedTo: user.uid,
         createdBy: user.uid,
         tenantId,
-        category: suggestion.category || 'follow_up',
+        category: 'follow_up' as TaskCategory, // Use valid TaskCategory value
         quotaCategory: suggestion.category || 'business_generating',
         associations: {
           contacts: [contactId],
