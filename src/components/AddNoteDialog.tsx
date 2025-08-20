@@ -107,17 +107,48 @@ const AddNoteDialog: React.FC<AddNoteDialogProps> = ({
       // Trigger AI review (optional - skip if function doesn't exist)
       try {
         const functions = getFunctions();
-        const triggerAIReview = httpsCallable(functions, 'triggerNoteAIReview');
+        const triggerAIReview = httpsCallable(functions, 'triggerAINoteReview');
         
         await triggerAIReview({
           noteId: docRef.id,
           tenantId,
           entityId,
-          entityType
+          entityType,
+          content: noteContent.trim(),
+          category: 'general',
+          priority: 'medium',
+          tags: []
         });
       } catch (aiError) {
-        console.warn('AI review function not available, note saved without AI processing:', aiError);
-        // Continue without AI review - the note is still saved successfully
+        console.warn('Callable failed, falling back to HTTP:', aiError);
+        
+        // HTTP fallback for CORS issues
+        try {
+          const resp = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/triggerAINoteReviewHttp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              noteId: docRef.id,
+              tenantId,
+              entityId,
+              entityType,
+              content: noteContent.trim(),
+              category: 'general',
+              priority: 'medium',
+              tags: []
+            })
+          });
+          
+          if (!resp.ok) {
+            const errText = await resp.text();
+            throw new Error(`HTTP fallback failed: ${resp.status} ${errText}`);
+          }
+          
+          console.log('AI review completed via HTTP fallback');
+        } catch (httpErr) {
+          console.warn('AI review function not available, note saved without AI processing:', httpErr);
+          // Continue without AI review - the note is still saved successfully
+        }
       }
 
       // Reset form

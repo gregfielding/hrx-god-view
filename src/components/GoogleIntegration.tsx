@@ -110,6 +110,10 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   const syncGmailAndCreateTasksFn = httpsCallable(functions, 'syncGmailAndCreateTasks');
   const syncGmailCalendarAsTasksFn = httpsCallable(functions, 'syncGmailCalendarAsTasks');
   const syncCalendarEventsToCRMFn = httpsCallable(functions, 'syncCalendarEventsToCRM');
+  
+  // Gmail email capture functions
+  const monitorGmailForContactEmailsFn = httpsCallable(functions, 'monitorGmailForContactEmails');
+  const testGmailEmailCaptureFn = httpsCallable(functions, 'testGmailEmailCapture');
 
   // Load Google services status
   const loadGoogleStatus = async () => {
@@ -506,6 +510,67 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
     }
   };
 
+  // Gmail email capture handlers
+  const handleMonitorGmailForContactEmails = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await monitorGmailForContactEmailsFn({ 
+        userId: user.uid,
+        tenantId: tenantId,
+        maxResults: 20
+      });
+      const data = result.data as any;
+      
+      if (data.success) {
+        setSuccess(`Gmail monitoring completed! Processed ${data.processedCount} emails, created ${data.activityLogsCreated} activity logs.`);
+      } else {
+        setError(data.message || 'Failed to monitor Gmail for contact emails');
+      }
+    } catch (error: any) {
+      console.error('Error monitoring Gmail for contact emails:', error);
+      setError(`Failed to monitor Gmail: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestGmailEmailCapture = async () => {
+    if (!user?.uid) {
+      setError('User not authenticated');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await testGmailEmailCaptureFn({ 
+        userId: user.uid,
+        tenantId: tenantId
+      });
+      const data = result.data as any;
+      
+      if (data.success) {
+        const testResults = data.testResults || [];
+        const contactsFound = testResults.reduce((sum: number, result: any) => sum + (result.contactsFound || 0), 0);
+        setSuccess(`Gmail test completed! Found ${data.totalMessagesFound} sent messages, ${contactsFound} contacts identified. Check console for detailed results.`);
+        console.log('Gmail Email Capture Test Results:', data);
+      } else {
+        setError(data.message || 'Failed to test Gmail email capture');
+      }
+    } catch (error: any) {
+      console.error('Error testing Gmail email capture:', error);
+      setError(`Failed to test Gmail: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Test function to manually sync a task to calendar
   const handleTestCalendarSync = async () => {
     if (!user?.uid) {
@@ -701,6 +766,52 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
               >
                 Test Calendar Sync
               </Button>
+            </Box>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Gmail Email Capture - Only show when Gmail is connected */}
+      {googleStatus.gmail.connected && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              📧 Gmail Email Capture
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              Automatically capture emails sent to your CRM contacts and log them as activities.
+            </Typography>
+
+            <Box display="flex" flexDirection="column" gap={2}>
+              <Button
+                variant="contained"
+                color="secondary"
+                startIcon={<SyncIcon />}
+                onClick={handleMonitorGmailForContactEmails}
+                disabled={loading}
+                fullWidth
+              >
+                Monitor Gmail for Contact Emails
+              </Button>
+              
+              <Button
+                variant="outlined"
+                startIcon={<SyncIcon />}
+                onClick={handleTestGmailEmailCapture}
+                disabled={loading}
+                fullWidth
+              >
+                Test Gmail Email Capture
+              </Button>
+            </Box>
+            
+            <Box mt={2} p={2} bgcolor="grey.50" borderRadius={1}>
+              <Typography variant="body2" color="text.secondary">
+                <strong>How it works:</strong> This feature monitors your Gmail for emails sent to contacts in your CRM. 
+                When an email is sent to a contact, it automatically creates an activity log on their contact record.
+                <br /><br />
+                <strong>Note:</strong> This only captures emails you send TO your contacts, not emails you receive FROM them.
+              </Typography>
             </Box>
           </CardContent>
         </Card>

@@ -61,6 +61,11 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEvents');
   const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
   
+  // Gmail Email Capture Functions
+  const monitorGmailForContactEmailsFn = httpsCallable(functions, 'monitorGmailForContactEmails');
+  const testGmailEmailCaptureFn = httpsCallable(functions, 'testGmailEmailCapture');
+  const testGmailTokenValidityFn = httpsCallable(functions, 'testGmailTokenValidity');
+  
   // State for Google services status
   const [googleStatus, setGoogleStatus] = useState<GoogleStatus>({
     gmail: { connected: false, syncStatus: 'not_synced' },
@@ -310,20 +315,39 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     
     setLoading(true);
     try {
-      const result = await testCalendarTokenValidityFn({ userId: user.uid, tenantId });
-      const data = result.data as any;
+      // Test both Calendar and Gmail tokens
+      const [calendarResult, gmailResult] = await Promise.all([
+        testCalendarTokenValidityFn({ userId: user.uid, tenantId }),
+        testGmailTokenValidityFn({ userId: user.uid, tenantId })
+      ]);
       
-      if (data.valid) {
-        setSuccessMsg('Tokens are valid - no action needed');
+      const calendarData = calendarResult.data as any;
+      const gmailData = gmailResult.data as any;
+      
+      console.log('Calendar token test result:', calendarData);
+      console.log('Gmail token test result:', gmailData);
+      
+      // Check if both tokens are valid
+      if (calendarData.valid && gmailData.valid) {
+        setSuccessMsg('All tokens are valid - no action needed');
         setError(null);
-      } else if (data.needsReauth) {
+      } else if (calendarData.needsReauth || gmailData.needsReauth) {
         // Clear the invalid tokens and reload status
         await clearExpiredTokensFn({ userId: user.uid, tenantId });
         await loadGoogleStatus();
-        setError('Invalid tokens cleared. Please reconnect your Google account.');
+        
+        const issues = [];
+        if (calendarData.needsReauth) issues.push('Calendar');
+        if (gmailData.needsReauth) issues.push('Gmail');
+        
+        setError(`Invalid ${issues.join(' and ')} tokens cleared. Please reconnect your Google account.`);
         setSuccessMsg(null);
       } else {
-        setError(`Token issue: ${data.reason}`);
+        const issues = [];
+        if (!calendarData.valid) issues.push(`Calendar: ${calendarData.reason}`);
+        if (!gmailData.valid) issues.push(`Gmail: ${gmailData.reason}`);
+        
+        setError(`Token issues: ${issues.join('; ')}`);
         setSuccessMsg(null);
       }
     } catch (error) {
@@ -363,12 +387,69 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           return;
         }
       }
-      setError('Failed to enable Calendar sync. Please try reconnecting.');
+      setError('Failed to enable Calendar sync');
+    } finally {
+      setLoading(false);
       setIsOAuthInProgress(false);
+    }
+  };
+
+  // Handle Gmail email capture test
+  const handleTestGmailEmailCapture = async () => {
+    if (!user?.uid) return;
+    
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const result = await testGmailEmailCaptureFn({ 
+        userId: user.uid, 
+        tenantId,
+        maxResults: 10 
+      });
+      const data = result.data as any;
+      if (data.success) {
+        const totalMessages = data.totalMessagesFound || 0;
+        const contactsFound = data.testResults?.reduce((sum: number, result: any) => sum + (result.contactsFound || 0), 0) || 0;
+        setSuccessMsg(`Test completed: ${totalMessages} emails found, ${contactsFound} contacts matched in CRM`);
+      } else {
+        setError(data.message || 'Test failed');
+      }
+    } catch (error: any) {
+      console.error('Error testing Gmail email capture:', error);
+      setError(error?.message || 'Failed to test Gmail email capture');
     } finally {
       setLoading(false);
     }
   };
+
+  // Handle manual Gmail monitoring
+  const handleMonitorGmailEmails = async () => {
+    if (!user?.uid) return;
+    
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const result = await monitorGmailForContactEmailsFn({ 
+        userId: user.uid, 
+        tenantId,
+        maxResults: 20 
+      });
+      const data = result.data as any;
+      if (data.success) {
+        setSuccessMsg(`Monitoring completed: ${data.processedCount} emails processed, ${data.activityLogsCreated} activities created`);
+      } else {
+        setError(data.message || 'Monitoring failed');
+      }
+    } catch (error: any) {
+      console.error('Error monitoring Gmail emails:', error);
+      setError(error?.message || 'Failed to monitor Gmail emails');
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   // Load status on mount
   useEffect(() => {
@@ -597,6 +678,9 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
 
             <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
               Your CRM tasks and appointments will automatically sync to your Google Calendar and Tasks.
+              {googleStatus.gmail.connected && (
+                <span> Gmail emails sent to contacts are automatically captured and logged as activities.</span>
+              )}
             </Typography>
           </Box>
         </DialogContent>
@@ -604,6 +688,26 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           <Button onClick={() => setShowDialog(false)} disabled={loading}>
             Close
           </Button>
+          {googleStatus.gmail.connected && (
+            <>
+              <Button 
+                onClick={handleTestGmailEmailCapture} 
+                disabled={loading}
+                color="info"
+                variant="outlined"
+              >
+                Test Email Capture
+              </Button>
+              <Button 
+                onClick={handleMonitorGmailEmails} 
+                disabled={loading}
+                color="primary"
+                variant="outlined"
+              >
+                Monitor Emails
+              </Button>
+            </>
+          )}
           <Button 
             onClick={handleTestAndFixTokens} 
             disabled={loading}

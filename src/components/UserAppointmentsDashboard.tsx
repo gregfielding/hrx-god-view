@@ -180,8 +180,15 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
             }
           } as AppointmentData;
         });
-      } catch (e) {
-        console.warn('Failed to load calendar activities from CRM:', e);
+        console.log(`✅ Loaded ${activityAppointments.length} calendar activities from CRM`);
+      } catch (e: any) {
+        // Gracefully handle permission errors for activities collection
+        if (e.code === 'permission-denied' || e.message?.includes('permission')) {
+          console.log('ℹ️ Activities collection not accessible, skipping calendar activities');
+        } else {
+          console.warn('Failed to load calendar activities from CRM:', e);
+        }
+        activityAppointments = [];
       }
 
       // Also get local CRM appointments (tasks)
@@ -240,37 +247,58 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
   }, [userId, tenantId, functions]);
 
   const syncWithGoogleCalendar = useCallback(async () => {
-    if (!userId || !tenantId) return;
+    if (!userId || !tenantId) {
+      console.log('❌ Missing userId or tenantId for sync:', { userId, tenantId });
+      return;
+    }
     
+    console.log('🔄 Starting Google Calendar sync...', { userId, tenantId });
     setSyncing(true);
     setError(null);
     try {
       // First check if user is connected to Google Calendar
+      console.log('🔍 Checking calendar status...');
       const getCalendarStatus = httpsCallable(functions, 'getCalendarStatus');
       const statusResult = await getCalendarStatus({ userId });
       const statusData = statusResult.data as any;
       
+      console.log('📊 Calendar status result:', statusData);
+      
       if (!statusData.connected) {
+        console.log('❌ Calendar not connected according to status check');
         setError('Google Calendar not connected. Please connect your Google Calendar first.');
         return;
       }
       
+      console.log('✅ Calendar is connected, proceeding with sync...');
+      
       // Sync Google Calendar events to CRM
       const syncCalendarEventsToCRM = httpsCallable(functions, 'syncCalendarEventsToCRM');
+      console.log('📤 Calling syncCalendarEventsToCRM with params:', { userId, tenantId });
+      
       const result = await syncCalendarEventsToCRM({
         userId,
         tenantId
       });
       
+      console.log('📥 Sync result received:', result.data);
+      
       const data = result.data as any;
       if (data.success) {
+        console.log('✅ Sync successful, reloading appointments...');
         // Reload appointments after sync
         await loadAppointments();
       } else {
+        console.log('❌ Sync failed:', data.message);
         setError(data.message || 'Failed to sync with Google Calendar');
       }
     } catch (err: any) {
-      console.error('Error syncing with Google Calendar:', err);
+      console.error('❌ Error syncing with Google Calendar:', err);
+      console.error('❌ Error details:', {
+        message: err.message,
+        code: err.code,
+        details: err.details
+      });
       
       // Handle specific error types
       if (err.message?.includes('not connected') || err.message?.includes('not authenticated')) {
@@ -287,6 +315,7 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
         setError(`Failed to sync with Google Calendar: ${err.message}`);
       }
     } finally {
+      console.log('🏁 Sync process completed');
       setSyncing(false);
     }
   }, [userId, tenantId, functions, loadAppointments]);

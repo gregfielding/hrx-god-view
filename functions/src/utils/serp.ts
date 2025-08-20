@@ -50,13 +50,12 @@ export async function fetchAndNormalize(url: string, serpApiKey: string, maxChar
 }
 
 export async function fetchBestGuessUrls(companyName: string): Promise<{ website?: string; linkedin?: string; indeed?: string }> {
-  // Lightweight deterministic guesses; the proper discoverCompanyUrls callable can refine later
-  const base = companyName.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-  const slug = base.replace(/\s+/g, '');
+  // URL guessing disabled - return empty values instead of guessing
+  // This prevents automatic generation of potentially incorrect URLs
   return {
-    website: `https://${slug}.com`,
-    linkedin: `https://www.linkedin.com/company/${slug}`,
-    indeed: `https://www.indeed.com/cmp/${base.replace(/\s+/g, '-')}`,
+    website: undefined,
+    linkedin: undefined,
+    indeed: undefined,
   };
 }
 

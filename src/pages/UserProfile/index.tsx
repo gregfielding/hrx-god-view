@@ -252,7 +252,7 @@ const UserProfilePage = () => {
           onBack={() => navigate(-1)}
         />
 
-        <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
+        <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
           <Tabs
             value={tabIndex}
             onChange={handleTabChange}

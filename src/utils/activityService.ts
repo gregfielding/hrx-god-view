@@ -8,7 +8,9 @@ import {
   getDoc,
   setDoc,
   updateDoc,
-  WriteBatch
+  WriteBatch,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 
 import { db } from '../firebase';
@@ -38,11 +40,15 @@ export interface ActivityLog {
     emailFrom?: string;
     emailTo?: string[];
     taskStatus?: 'completed' | 'pending' | 'cancelled';
+    taskType?: string;
     callDuration?: number;
     meetingType?: 'internal' | 'client' | 'prospect';
     sentiment?: 'positive' | 'neutral' | 'negative';
     priority?: 'low' | 'medium' | 'high';
+    direction?: string;
+    noteType?: string;
     tags?: string[];
+    [key: string]: any;
   };
   
   // AI logging fields
@@ -55,287 +61,321 @@ export interface ActivityQuery {
   tenantId: string;
   entityType?: 'contact' | 'deal' | 'company' | 'salesperson';
   entityId?: string;
-  activityTypes?: string[];
+  activityType?: string;
   startDate?: Date;
   endDate?: Date;
   limit?: number;
-  includeRelated?: boolean;
 }
 
-export class ActivityService {
-  private tenantId: string;
-  private userId: string;
+export interface UnifiedActivityItem {
+  id: string;
+  type: 'email' | 'task' | 'note' | 'call' | 'meeting' | 'ai_activity';
+  title: string;
+  description: string;
+  timestamp: Date;
+  salespersonId?: string;
+  salespersonName?: string;
+  metadata?: {
+    priority?: string;
+    taskType?: string;
+    from?: string;
+    to?: string;
+    direction?: string;
+    subject?: string;
+    status?: string;
+    [key: string]: any;
+  };
+  source: 'tasks' | 'email_logs' | 'contact_notes' | 'ai_logs' | 'activities';
+}
 
-  constructor(tenantId: string, userId: string) {
-    this.tenantId = tenantId;
-    this.userId = userId;
-  }
+/**
+ * Unified function to load contact activities from all sources
+ * This ensures consistency across Last Activity column, Contact Activity Tab, and Contact Details Dashboard
+ */
+export async function loadContactActivities(
+  tenantId: string, 
+  contactId: string, 
+  options: {
+    limit?: number;
+    includeTasks?: boolean;
+    includeEmails?: boolean;
+    includeNotes?: boolean;
+    includeAIActivities?: boolean;
+    onlyCompletedTasks?: boolean;
+  } = {}
+): Promise<UnifiedActivityItem[]> {
+  const {
+    limit: limitCount = 50,
+    includeTasks = true,
+    includeEmails = true,
+    includeNotes = true,
+    includeAIActivities = false,
+    onlyCompletedTasks = true
+  } = options;
 
-  /**
-   * Log an activity and automatically cross-reference to related entities
-   */
-  async logActivity(activity: Omit<ActivityLog, 'id' | 'tenantId' | 'timestamp' | 'userId' | 'userName' | 'aiLogged' | 'aiContext' | 'aiInsights'>): Promise<string> {
+  const activities: UnifiedActivityItem[] = [];
+
+  // 1. Load completed tasks associated with this contact
+  if (includeTasks) {
     try {
-      // For now, just log to console since we need to implement proper activity storage
-      // This will be implemented when we add activity logging to the existing CRM structure
-      console.log('✅ Activity logged (console only):', activity.title, 'for', activity.entityType, ':', activity.entityId);
-      return 'temp-activity-id';
-
-      // TODO: Implement proper activity logging to entity subcollections
-      // const batch = writeBatch(db);
-      // const activitiesRef = collection(db, 'tenants', this.tenantId, 'activities');
+      const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+      const tasksQuery = query(
+        tasksRef,
+        where('associations.contacts', 'array-contains', contactId),
+        ...(onlyCompletedTasks ? [where('status', '==', 'completed')] : []),
+        orderBy('updatedAt', 'desc'),
+        limit(limitCount)
+      );
+      const tasksSnapshot = await getDocs(tasksQuery);
       
-      // // Create the main activity log
-      // const activityData: ActivityLog = {
-      //   ...activity,
-      //   tenantId: this.tenantId,
-      //   timestamp: Timestamp.now(),
-      //   userId: this.userId,
-      //   userName: await this.getUserName(),
-      //   aiLogged: false // Will be set to true after AI processing
-      // };
-
-      // const activityRef = doc(activitiesRef);
-      // batch.set(activityRef, activityData);
-
-      // // If this activity should appear in related entities, create cross-references
-      // if (activity.relatedEntities) {
-      //   await this.createCrossReferences(batch, activityRef.id, activity);
-      // }
-
-      // await batch.commit();
-
-      // // Trigger AI logging
-      // await this.triggerAILogging(activityRef.id, activityData);
-
-      // console.log(`✅ Activity logged: ${activity.title} for ${activity.entityType}:${activity.entityId}`);
-      // return activityRef.id;
-
+      tasksSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        activities.push({
+          id: `task_${doc.id}`,
+          type: 'task',
+          title: data.title || 'Task completed',
+          description: data.description || '',
+          timestamp: data.completedAt ? new Date(data.completedAt) : (data.updatedAt?.toDate?.() || new Date()),
+          salespersonId: data.assignedTo || data.createdBy,
+          metadata: { 
+            priority: data.priority, 
+            taskType: data.type,
+            status: data.status
+          },
+          source: 'tasks'
+        });
+      });
     } catch (error) {
-      console.error('❌ Error logging activity:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to log activity: ${message}`);
+      console.warn('Failed to load tasks for contact:', error);
     }
   }
 
-  /*
-   * createCrossReferences disabled until activities subcollections are fully implemented
-   * Keeping stub for future use to avoid unused private member errors with strict settings
-   */
-  // private async createCrossReferences(
-  //   batch: WriteBatch,
-  //   activityId: string,
-  //   activity: Omit<ActivityLog, 'id' | 'tenantId' | 'timestamp' | 'userId' | 'userName'>
-  // ) {
-  //   const { relatedEntities } = activity;
-  //   if (relatedEntities?.contacts) { /* ... */ }
-  //   if (relatedEntities?.deals) { /* ... */ }
-  //   if (relatedEntities?.companies) { /* ... */ }
-  // }
-
-  /**
-   * Query activities for a specific entity
-   */
-  async queryActivities(queryParams: ActivityQuery): Promise<ActivityLog[]> {
+  // 2. Load email logs for this contact
+  if (includeEmails) {
     try {
-      // For now, return empty array since we need to implement activities as subcollections
-      // This will be implemented when we add activity logging to the existing CRM structure
-      console.log('Activity logging not yet implemented - returning empty activities');
-      return [];
-
-      // TODO: Implement proper activity querying from entity subcollections
-      // const activitiesRef = collection(db, 'tenants', this.tenantId, 'activities');
-      // let q = query(activitiesRef);
-
-      // // Add filters
-      // if (queryParams.entityType && queryParams.entityId) {
-      //   q = query(q, where('entityType', '==', queryParams.entityType));
-      //   q = query(q, where('entityId', '==', queryParams.entityId));
-      // }
-
-      // if (queryParams.activityTypes && queryParams.activityTypes.length > 0) {
-      //   q = query(q, where('activityType', 'in', queryParams.activityTypes));
-      // }
-
-      // if (queryParams.startDate) {
-      //   q = query(q, where('timestamp', '>=', Timestamp.fromDate(queryParams.startDate)));
-      // }
-
-      // if (queryParams.endDate) {
-      //   q = query(q, where('timestamp', '<=', Timestamp.fromDate(queryParams.endDate)));
-      // }
-
-      // // Order by timestamp (newest first)
-      // q = query(q, orderBy('timestamp', 'desc'));
-
-      // if (queryParams.limit) {
-      //   q = query(q, limit(queryParams.limit));
-      // }
-
-      // const snapshot = await getDocs(q);
-      // const activities = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as ActivityLog[];
-
-      // // If includeRelated is true, also fetch activities from related entities
-      // if (queryParams.includeRelated) {
-      //   const relatedActivities = await this.getRelatedActivities(queryParams);
-      //   activities.push(...relatedActivities);
-        
-      //   // Sort by timestamp and remove duplicates
-      //   activities.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
-      //   return this.removeDuplicateActivities(activities);
-      // }
-
-      // return activities;
-
+      const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+      const emailsQuery = query(
+        emailsRef,
+        where('contactId', '==', contactId),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+      const emailsSnapshot = await getDocs(emailsQuery);
+      
+      emailsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        activities.push({
+          id: `email_${doc.id}`,
+          type: 'email',
+          title: `Email: ${data.subject || '(no subject)'}`,
+          description: data.bodySnippet || data.snippet || '',
+          timestamp: data.timestamp?.toDate?.() || data.sentAt?.toDate?.() || new Date(),
+          salespersonId: data.userId || data.salespersonId,
+          metadata: { 
+            from: data.from, 
+            to: data.to, 
+            direction: data.direction,
+            subject: data.subject
+          },
+          source: 'email_logs'
+        });
+      });
     } catch (error) {
-      console.error('❌ Error querying activities:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to query activities: ${message}`);
+      console.warn('Failed to load emails for contact:', error);
     }
   }
 
-  // private async getRelatedActivities(_queryParams: ActivityQuery): Promise<ActivityLog[]> {
-  //   return [];
-  // }
-
-  // private removeDuplicateActivities(activities: ActivityLog[]): ActivityLog[] {
-  //   const seen = new Set<string>();
-  //   return activities.filter(activity => {
-  //     if (seen.has(activity.id!)) {
-  //       return false;
-  //     }
-  //     seen.add(activity.id!);
-  //     return true;
-  //   });
-  // }
-
-  // private async triggerAILogging(_activityId: string, _activity: ActivityLog) {
-  //   /* disabled */
-  // }
-
-  /**
-   * Generate AI context from activity
-   */
-  private generateAIContext(activity: ActivityLog): string {
-    const context = {
-      entityType: activity.entityType,
-      entityId: activity.entityId,
-      activityType: activity.activityType,
-      title: activity.title,
-      description: activity.description,
-      metadata: activity.metadata,
-      relatedEntities: activity.relatedEntities,
-      timestamp: activity.timestamp.toDate().toISOString()
-    };
-
-    return JSON.stringify(context);
-  }
-
-  // private async getUserName(): Promise<string> {
-  //   return 'Unknown User';
-  // }
-
-  /**
-   * Log email activity (for Gmail integration)
-   */
-  async logEmailActivity(
-    entityType: 'contact' | 'deal' | 'company' | 'salesperson',
-    entityId: string,
-    emailData: {
-      subject: string;
-      from: string;
-      to: string[];
-      body: string;
-      timestamp: Date;
-    }
-  ): Promise<string> {
-    return this.logActivity({
-      entityType,
-      entityId,
-      activityType: 'email',
-      title: `Email: ${emailData.subject}`,
-      description: emailData.body,
-      metadata: {
-        emailSubject: emailData.subject,
-        emailFrom: emailData.from,
-        emailTo: emailData.to
-      },
-      relatedEntities: await this.getRelatedEntities(entityType, entityId)
-    });
-  }
-
-  /**
-   * Log task completion
-   */
-  async logTaskActivity(
-    entityType: 'contact' | 'deal' | 'company' | 'salesperson',
-    entityId: string,
-    taskData: {
-      title: string;
-      description: string;
-      status: 'completed' | 'pending' | 'cancelled';
-      priority: 'low' | 'medium' | 'high';
-    }
-  ): Promise<string> {
-    return this.logActivity({
-      entityType,
-      entityId,
-      activityType: 'task',
-      title: `Task ${taskData.status}: ${taskData.title}`,
-      description: taskData.description,
-      metadata: {
-        taskStatus: taskData.status,
-        priority: taskData.priority
-      },
-      relatedEntities: await this.getRelatedEntities(entityType, entityId)
-    });
-  }
-
-  /**
-   * Get related entities for cross-referencing
-   */
-  private async getRelatedEntities(entityType: string, entityId: string) {
-    const relatedEntities: { contacts?: string[]; deals?: string[]; companies?: string[] } = {};
-
+  // 3. Load notes for this contact
+  if (includeNotes) {
     try {
-      // For salesperson entity type, we don't need to read from a collection
-      // since we're logging activity for the salesperson themselves
-      if (entityType === 'salesperson') {
-        // For salesperson activities, we can return empty related entities
-        // or try to get their associated deals/companies if needed
-        return relatedEntities;
-      }
-
-      const entityRef = doc(db, 'tenants', this.tenantId, `crm_${entityType}s`, entityId);
-      const entityDoc = await getDoc(entityRef);
-
-      if (!entityDoc.exists()) {
-        return relatedEntities;
-      }
-
-      const entityData = entityDoc.data();
-
-      if (entityType === 'contact') {
-        if (entityData.dealIds) relatedEntities.deals = entityData.dealIds;
-        if (entityData.companyId) relatedEntities.companies = [entityData.companyId];
-      } else if (entityType === 'deal') {
-        if (entityData.contactIds) relatedEntities.contacts = entityData.contactIds;
-        if (entityData.companyId) relatedEntities.companies = [entityData.companyId];
-      } else if (entityType === 'company') {
-        // For companies, we'll get related entities when needed
-        relatedEntities.contacts = [entityId]; // This will be expanded in query
-        relatedEntities.deals = [entityId]; // This will be expanded in query
-      }
-
-      return relatedEntities;
-
+      const notesRef = collection(db, 'tenants', tenantId, 'contact_notes');
+      const notesQuery = query(
+        notesRef,
+        where('contactId', '==', contactId),
+        orderBy('createdAt', 'desc'),
+        limit(limitCount)
+      );
+      const notesSnapshot = await getDocs(notesQuery);
+      
+      notesSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        activities.push({
+          id: `note_${doc.id}`,
+          type: 'note',
+          title: 'Note added',
+          description: data.content || '',
+          timestamp: data.createdAt?.toDate?.() || data.updatedAt?.toDate?.() || new Date(),
+          salespersonId: data.createdBy || data.userId,
+          metadata: { 
+            noteType: data.type || 'general'
+          },
+          source: 'contact_notes'
+        });
+      });
     } catch (error) {
-      console.error('Error getting related entities:', error);
-      return relatedEntities;
+      console.warn('Failed to load notes for contact:', error);
     }
   }
+
+  // 4. Load AI activities (optional, due to permissions)
+  if (includeAIActivities) {
+    try {
+      const aiRef = collection(db, 'tenants', tenantId, 'ai_logs');
+      const aiQuery = query(
+        aiRef,
+        where('entityId', '==', contactId),
+        where('entityType', '==', 'contact'),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+      const aiSnapshot = await getDocs(aiQuery);
+      
+      aiSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        activities.push({
+          id: `ai_${doc.id}`,
+          type: 'ai_activity',
+          title: data.reason || 'AI Activity',
+          description: data.aiResponse || '',
+          timestamp: data.timestamp?.toDate?.() || data.createdAt?.toDate?.() || new Date(),
+          salespersonId: data.userId,
+          metadata: { 
+            eventType: data.eventType,
+            aiTags: data.aiTags,
+            urgencyScore: data.urgencyScore
+          },
+          source: 'ai_logs'
+        });
+      });
+    } catch (error) {
+      // Silently handle permission errors for ai_logs collection
+      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+        console.log('AI logs not accessible, skipping AI activities');
+      } else {
+        console.warn('Failed to load AI activities for contact:', error);
+      }
+    }
+  }
+
+  // Sort all activities by timestamp (newest first)
+  activities.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+  return activities;
 }
 
-export const createActivityService = (tenantId: string, userId: string): ActivityService => {
-  return new ActivityService(tenantId, userId);
-};
+/**
+ * Get the most recent activity for a contact (for Last Activity column)
+ */
+export async function getLastContactActivity(
+  tenantId: string, 
+  contactId: string
+): Promise<UnifiedActivityItem | null> {
+  const activities = await loadContactActivities(tenantId, contactId, {
+    limit: 1,
+    includeTasks: true,
+    includeEmails: true,
+    includeNotes: true,
+    includeAIActivities: false
+  });
+  
+  return activities.length > 0 ? activities[0] : null;
+}
+
+/**
+ * Log a new activity
+ */
+export async function logActivity(activity: ActivityLog): Promise<void> {
+  const activitiesRef = collection(db, 'tenants', activity.tenantId, 'activities');
+  await setDoc(doc(activitiesRef), {
+    ...activity,
+    timestamp: activity.timestamp || Timestamp.now(),
+    createdAt: Timestamp.now()
+  });
+}
+
+/**
+ * Log a task activity
+ */
+export async function logTaskActivity(
+  tenantId: string,
+  taskId: string,
+  taskData: any,
+  activityType: 'created' | 'completed' | 'updated' | 'assigned'
+): Promise<void> {
+  const activity: ActivityLog = {
+    tenantId,
+    entityType: 'contact',
+    entityId: taskData.associations?.contacts?.[0] || '',
+    activityType: 'task',
+    title: `Task ${activityType}: ${taskData.title}`,
+    description: taskData.description || '',
+    timestamp: Timestamp.now(),
+    userId: taskData.assignedTo || taskData.createdBy || '',
+    userName: taskData.assignedToName || taskData.createdByName || '',
+    relatedEntities: {
+      contacts: taskData.associations?.contacts || [],
+      deals: taskData.associations?.deals || [],
+      companies: taskData.associations?.companies || []
+    },
+    metadata: {
+      taskStatus: taskData.status,
+      priority: taskData.priority,
+      taskType: taskData.type
+    }
+  };
+
+  await logActivity(activity);
+}
+
+/**
+ * Log an email activity
+ */
+export async function logEmailActivity(
+  tenantId: string,
+  emailData: any
+): Promise<void> {
+  const activity: ActivityLog = {
+    tenantId,
+    entityType: 'contact',
+    entityId: emailData.contactId || '',
+    activityType: 'email',
+    title: `Email ${emailData.direction || 'sent'}: ${emailData.subject}`,
+    description: emailData.bodySnippet || emailData.snippet || '',
+    timestamp: emailData.timestamp || Timestamp.now(),
+    userId: emailData.userId || emailData.salespersonId || '',
+    userName: emailData.userName || emailData.salespersonName || '',
+    metadata: {
+      emailSubject: emailData.subject,
+      emailFrom: emailData.from,
+      emailTo: emailData.to,
+      direction: emailData.direction
+    }
+  };
+
+  await logActivity(activity);
+}
+
+/**
+ * Log a note activity
+ */
+export async function logNoteActivity(
+  tenantId: string,
+  noteData: any
+): Promise<void> {
+  const activity: ActivityLog = {
+    tenantId,
+    entityType: 'contact',
+    entityId: noteData.contactId || '',
+    activityType: 'note',
+    title: 'Note added',
+    description: noteData.content || '',
+    timestamp: noteData.createdAt || Timestamp.now(),
+    userId: noteData.createdBy || noteData.userId || '',
+    userName: noteData.createdByName || noteData.userName || '',
+    metadata: {
+      noteType: noteData.type || 'general'
+    }
+  };
+
+  await logActivity(activity);
+}

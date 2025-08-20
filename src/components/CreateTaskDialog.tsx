@@ -66,7 +66,7 @@ interface CreateTaskDialogProps {
     status: 'scheduled',
     classification: 'todo' as TaskClassification, // NEW: Default to todo
     startTime: '', // NEW: For appointments
-    duration: undefined as number | undefined,
+    duration: 30, // FIXED: Default to 30 instead of undefined
     scheduledDate: new Date().toISOString().split('T')[0],
     dueDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
@@ -109,7 +109,7 @@ interface CreateTaskDialogProps {
         ...prefilledData,
         classification: prefilledData.classification || 'todo',
         startTime: prefilledData.startTime || (prefilledData.classification === 'appointment' ? getCurrentLocalDateTime() : ''),
-        duration: prefilledData.classification === 'appointment' ? prefilledData.duration || undefined : undefined,
+        duration: prefilledData.classification === 'appointment' ? prefilledData.duration || 30 : 30,
         // Ensure associations are properly merged
         associations: {
           companies: prefilledData.associations?.companies || [],
@@ -244,11 +244,11 @@ interface CreateTaskDialogProps {
       ...formData,
       scheduledDate: scheduledDate,
       startTime: startTimeForSync, // Use UTC time for sync
-      duration: formData.classification === 'appointment' && formData.duration ? Number(formData.duration) : undefined,
+      duration: formData.classification === 'appointment' && formData.duration ? Number(formData.duration) : 30,
       estimatedDuration: Number(formData.estimatedDuration || 0),
       // Include repeating task data
       isRepeating: formData.isRepeating,
-      repeatInterval: formData.isRepeating ? Number(formData.repeatInterval) : undefined,
+      repeatInterval: formData.isRepeating ? Number(formData.repeatInterval) : 30,
       // Add user's timezone for proper sync
       userTimezone: getUserTimezone()
     };
@@ -265,7 +265,7 @@ interface CreateTaskDialogProps {
       status: 'scheduled',
       classification: 'todo',
       startTime: '',
-      duration: undefined,
+      duration: 30,
       scheduledDate: getCurrentLocalDate(),
       dueDate: getCurrentLocalDate(),
       assignedTo: currentUserId ? [currentUserId] : [],
@@ -397,7 +397,7 @@ interface CreateTaskDialogProps {
                 <FormControl fullWidth error={!!errors.duration}>
                   <InputLabel>Duration</InputLabel>
                   <Select
-                    value={formData.duration}
+                    value={formData.duration || 30}
                     onChange={(e) => handleInputChange('duration', e.target.value)}
                     label="Duration"
                   >
@@ -451,7 +451,7 @@ interface CreateTaskDialogProps {
                   <FormControl fullWidth>
                     <InputLabel>Repeat Every</InputLabel>
                     <Select
-                      value={formData.repeatInterval}
+                      value={formData.repeatInterval || 30}
                       onChange={(e) => handleInputChange('repeatInterval', e.target.value)}
                       label="Repeat Every"
                     >

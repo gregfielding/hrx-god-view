@@ -74,9 +74,39 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         setDecisionMakers([]);
       }
     } catch (err) {
-      console.error('Error fetching decision-makers:', err);
-      setError('Failed to fetch decision-makers');
-      setDecisionMakers([]);
+      console.warn('Callable failed, falling back to HTTP:', err);
+      
+      // HTTP fallback for CORS issues
+      try {
+        const resp = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/findDecisionMakersHttp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyName,
+            companyId: forceRefresh ? `${companyId}-${Date.now()}` : companyId,
+            tenantId,
+          })
+        });
+        
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`HTTP fallback failed: ${resp.status} ${errText}`);
+        }
+        
+        const data = await resp.json();
+        
+        if (data.success) {
+          setDecisionMakers(data.decisionMakers || []);
+          setLastUpdated(new Date());
+        } else {
+          setError(data.message || 'Failed to fetch decision-makers');
+          setDecisionMakers([]);
+        }
+      } catch (httpErr) {
+        console.error('HTTP fallback also failed:', httpErr);
+        setError('Failed to fetch decision-makers (both callable and HTTP methods failed)');
+        setDecisionMakers([]);
+      }
     } finally {
       setLoading(false);
     }

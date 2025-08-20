@@ -1,7 +1,12 @@
-import { onCall } from 'firebase-functions/v2/https';
+import { onCall, onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
-export const triggerAINoteReview = onCall(async (request) => {
+export const triggerAINoteReview = onCall({
+  cors: true,
+  maxInstances: 10,
+  timeoutSeconds: 60,
+  memory: '256MiB'
+}, async (request) => {
   try {
     const { noteId, entityType, tenantId, content, category, priority, tags } = request.data;
 
@@ -35,6 +40,71 @@ export const triggerAINoteReview = onCall(async (request) => {
   } catch (error: any) {
     console.error('❌ Error in AI note review:', error);
     throw new Error(`AI review failed: ${error.message || 'Unknown error'}`);
+  }
+});
+
+// HTTP wrapper (supports direct fetch with proper CORS)
+export const triggerAINoteReviewHttp = onRequest({
+  cors: true,
+  maxInstances: 10,
+  timeoutSeconds: 60,
+  memory: '256MiB'
+}, async (req, res) => {
+  try {
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.status(204).send('');
+      return;
+    }
+
+    const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const { noteId, entityType, tenantId, content, category, priority, tags } = payload || {};
+
+    if (!noteId || !entityType || !tenantId || !content) {
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.status(400).json({
+        success: false,
+        message: 'Missing required parameters'
+      });
+      return;
+    }
+
+    console.log(`🤖 Starting AI review for ${entityType} note: ${noteId}`);
+
+    const db = admin.firestore();
+    const noteRef = db.doc(`tenants/${tenantId}/${entityType}_notes/${noteId}`);
+
+    // Generate AI insights based on note content and context
+    const aiInsights = await generateAINoteInsights(content, category, priority, tags, entityType);
+
+    // Update the note with AI insights
+    await noteRef.update({
+      aiReviewed: true,
+      aiInsights: aiInsights,
+      aiReviewedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    console.log(`✅ AI review completed for note: ${noteId}`);
+
+    const result = {
+      success: true,
+      message: 'AI review completed successfully',
+      insights: aiInsights
+    };
+
+    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.status(200).json(result);
+
+  } catch (error: any) {
+    console.error('❌ Error in AI note review:', error);
+    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+    res.status(500).json({
+      success: false,
+      message: `AI review failed: ${error.message || 'Unknown error'}`
+    });
   }
 });
 

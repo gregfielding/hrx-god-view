@@ -28,7 +28,7 @@ import { db } from '../firebase';
 // Types for contact activity items
 type ContactActivityItem = {
   id: string;
-  type: 'task' | 'email';
+  type: 'task' | 'email' | 'note' | 'call' | 'meeting' | 'ai_activity';
   timestamp: Date;
   title: string;
   description?: string;
@@ -45,7 +45,7 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   // Filters
-  const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'email'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'email' | 'note'>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   // Pagination
@@ -58,53 +58,26 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
       setLoading(true);
       setError('');
       try {
-        const contactId: string = contact.id;
-        const aggregated: ContactActivityItem[] = [];
-
-        // Tasks: completed tasks associated to this contact
-        try {
-          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-          const tq = query(
-            tasksRef,
-            where('associations.contacts', 'array-contains', contactId),
-            where('status', '==', 'completed'),
-            orderBy('updatedAt', 'desc'),
-            limit(200)
-          );
-          const ts = await getDocs(tq);
-          ts.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `task_${docSnap.id}`,
-              type: 'task',
-              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
-              title: d.title || 'Task completed',
-              description: d.description || '',
-              metadata: { priority: d.priority, taskType: d.type }
-            });
-          });
-        } catch {}
-
-        // Emails: email_logs filtered by contactId
-        try {
-          const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
-          const cq = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
-          const cs = await getDocs(cq);
-          cs.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `email_${docSnap.id}`,
-              type: 'email',
-              timestamp: d.timestamp?.toDate?.() || new Date(),
-              title: `Email: ${d.subject || '(no subject)'}`,
-              description: d.bodySnippet,
-              metadata: { from: d.from, to: d.to, direction: d.direction }
-            });
-          });
-        } catch {}
-
-        // Sort newest first
-        aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+        const { loadContactActivities } = await import('../utils/activityService');
+        const activities = await loadContactActivities(tenantId, contact.id, {
+          limit: 200,
+          includeTasks: true,
+          includeEmails: true,
+          includeNotes: true,
+          includeAIActivities: false,
+          onlyCompletedTasks: true
+        });
+        
+        // Convert to ContactActivityItem format
+        const aggregated: ContactActivityItem[] = activities.map(activity => ({
+          id: activity.id,
+          type: activity.type,
+          timestamp: activity.timestamp,
+          title: activity.title,
+          description: activity.description,
+          metadata: activity.metadata
+        }));
+        
         setItems(aggregated);
         setPage(1);
       } catch (e: any) {
@@ -147,6 +120,7 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
               <MenuItem value="all">All</MenuItem>
               <MenuItem value="task">Tasks</MenuItem>
               <MenuItem value="email">Emails</MenuItem>
+              <MenuItem value="note">Notes</MenuItem>
             </Select>
           </FormControl>
           <TextField

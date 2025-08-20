@@ -27,8 +27,8 @@ import { scrapeIndeedJobs } from './scrapeIndeedJobs';
 import { getCompanyLocations } from './getCompanyLocations';
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
-import { triggerAINoteReview } from './triggerAINoteReview';
-import { findDecisionMakers } from './findDecisionMakers';
+import { triggerAINoteReview, triggerAINoteReviewHttp } from './triggerAINoteReview';
+import { findDecisionMakers, findDecisionMakersHttp } from './findDecisionMakers';
 import { enhanceCompanyWithSerp } from './enhanceCompanyWithSerp';
 import { enhanceContactWithAI } from './enhanceContactWithAI';
 import { fetchFollowedCompanyNews } from './fetchFollowedCompanyNews';
@@ -50,9 +50,11 @@ import { associationsIntegrityReport, associationsIntegrityNightly } from './tel
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
 import { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
+import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
+import { enrichContactOnDemand } from './contactEnrichment';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -95,10 +97,12 @@ export { associationsIntegrityReport, associationsIntegrityNightly };
 export { rebuildDealAssociations, rebuildEntityReverseIndex };
 export { logContactEnhanced };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
+export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
+export { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp };
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors
@@ -10252,13 +10256,17 @@ export {
 };
 
 // Gmail Integration Functions
-export { 
+export {
   getGmailAuthUrl,
   handleGmailCallback,
   gmailOAuthCallback,
   syncGmailEmails,
   disconnectGmail,
-  getGmailStatus
+  getGmailStatus,
+  monitorGmailForContactEmails,
+  testGmailEmailCapture,
+  testGmailTokenValidity,
+  scheduledGmailMonitoring
 } from './gmailIntegration';
 
 // Google Calendar Integration Functions
@@ -10318,10 +10326,10 @@ export { getLocationAssociations } from './getLocationAssociations';
 export { updateLocationAssociation, updateLocationAssociationHttp } from './updateLocationAssociation';
 
 // CRM Data Management Functions
-export { linkContactsToCompanies, linkCRMEntities, triggerAINoteReview };
+export { linkContactsToCompanies, linkCRMEntities, triggerAINoteReview, triggerAINoteReviewHttp };
 
 // Decision Maker Search Functions
-export { findDecisionMakers };
+export { findDecisionMakers, findDecisionMakersHttp };
 
 // Company Enhancement Functions
 export { enhanceCompanyWithSerp };

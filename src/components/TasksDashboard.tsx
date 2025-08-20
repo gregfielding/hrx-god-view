@@ -131,6 +131,8 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
       const taskService = TaskService.getInstance();
       
       // Subscribe to tasks for this entity
+      // For contact pages, show ALL tasks for that contact (not just assigned to current user)
+      // For salesperson dashboard, show tasks assigned to the current user
       const filter = entityType === 'contact' 
         ? { contactId: entityId }
         : entityType === 'deal'

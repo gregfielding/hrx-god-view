@@ -21,6 +21,14 @@ const oauth2Client = new google.auth.OAuth2(
 export async function syncTaskToCalendar(userId: string, tenantId: string, taskId: string, taskData: any, userTimezone: string = 'America/Los_Angeles') {
   try {
     console.log(`🔄 Starting calendar sync for task ${taskId} (user: ${userId})`);
+    console.log(`📋 Task data:`, {
+      title: taskData.title,
+      classification: taskData.classification,
+      startTime: taskData.startTime,
+      duration: taskData.duration,
+      type: taskData.type,
+      status: taskData.status
+    });
     
     // Get user's Calendar tokens
     const userDoc = await db.collection('users').doc(userId).get();
@@ -31,6 +39,15 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
 
     const userData = userDoc.data();
     const calendarTokens = userData?.calendarTokens;
+
+    console.log(`🔍 User calendar tokens check:`, {
+      hasUserData: !!userData,
+      hasCalendarTokens: !!calendarTokens,
+      hasAccessToken: !!calendarTokens?.access_token,
+      hasRefreshToken: !!calendarTokens?.refresh_token,
+      expiryDate: calendarTokens?.expiry_date,
+      isExpired: calendarTokens?.expiry_date ? new Date(calendarTokens.expiry_date) <= new Date() : 'unknown'
+    });
 
     if (!calendarTokens?.access_token) {
       console.log(`❌ Google Calendar not connected for user: ${userId}`);
@@ -67,13 +84,137 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
     // Determine if this is an appointment or todo
     const isAppointment = taskData.classification === 'appointment';
     
+    console.log(`🔍 Task classification check:`, {
+      classification: taskData.classification,
+      isAppointment,
+      hasStartTime: !!taskData.startTime,
+      startTime: taskData.startTime
+    });
+    
     if (isAppointment && taskData.startTime) {
       console.log(`📅 Creating calendar event for appointment: ${taskData.title}`);
+      
+      // Build rich description with all available task data
+      let description = taskData.description || '';
+      
+      // Add notes if available
+      if (taskData.notes && taskData.notes.trim()) {
+        description += `\n\n📝 Notes: ${taskData.notes}`;
+      }
+      
+      // Add agenda if available
+      if (taskData.agenda && taskData.agenda.trim()) {
+        description += `\n\n📋 Agenda: ${taskData.agenda}`;
+      }
+      
+      // Add goals if available
+      if (taskData.goals && taskData.goals.length > 0) {
+        description += `\n\n🎯 Goals: ${taskData.goals.join(', ')}`;
+      }
+      
+      // Add follow-up notes if available
+      if (taskData.followUpNotes && taskData.followUpNotes.trim()) {
+        description += `\n\n📌 Follow-up: ${taskData.followUpNotes}`;
+      }
+      
+      // Add call script if available
+      if (taskData.callScript && taskData.callScript.trim()) {
+        description += `\n\n📞 Call Script: ${taskData.callScript}`;
+      }
+      
+      // Add associated contacts if available
+      if (taskData.associations?.contacts && taskData.associations.contacts.length > 0) {
+        try {
+          const contactIds = taskData.associations.contacts.map((c: any) => typeof c === 'string' ? c : c?.id).filter(Boolean);
+          if (contactIds.length > 0) {
+            const contactsSnapshot = await db.collection('tenants').doc(tenantId).collection('crm_contacts')
+              .where('__name__', 'in', contactIds.slice(0, 10)) // Limit to 10 contacts
+              .get();
+            
+            const contactNames = contactsSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return data?.fullName || data?.firstName + ' ' + data?.lastName || 'Unknown Contact';
+            });
+            
+            if (contactNames.length > 0) {
+              description += `\n\n👥 Contacts: ${contactNames.join(', ')}`;
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ Could not fetch contact names:', error.message);
+        }
+      }
+      
+      // Add associated companies if available
+      if (taskData.associations?.companies && taskData.associations.companies.length > 0) {
+        try {
+          const companyIds = taskData.associations.companies.map((c: any) => typeof c === 'string' ? c : c?.id).filter(Boolean);
+          if (companyIds.length > 0) {
+            const companiesSnapshot = await db.collection('tenants').doc(tenantId).collection('crm_companies')
+              .where('__name__', 'in', companyIds.slice(0, 5)) // Limit to 5 companies
+              .get();
+            
+            const companyNames = companiesSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return data?.companyName || data?.name || 'Unknown Company';
+            });
+            
+            if (companyNames.length > 0) {
+              description += `\n\n🏢 Companies: ${companyNames.join(', ')}`;
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ Could not fetch company names:', error.message);
+        }
+      }
+      
+      // Add associated deals if available
+      if (taskData.associations?.deals && taskData.associations.deals.length > 0) {
+        try {
+          const dealIds = taskData.associations.deals.map((d: any) => typeof d === 'string' ? d : d?.id).filter(Boolean);
+          if (dealIds.length > 0) {
+            const dealsSnapshot = await db.collection('tenants').doc(tenantId).collection('crm_deals')
+              .where('__name__', 'in', dealIds.slice(0, 3)) // Limit to 3 deals
+              .get();
+            
+            const dealNames = dealsSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return data?.name || data?.title || 'Unknown Deal';
+            });
+            
+            if (dealNames.length > 0) {
+              description += `\n\n💼 Deals: ${dealNames.join(', ')}`;
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ Could not fetch deal names:', error.message);
+        }
+      }
+      
+      // Add task metadata
+      description += `\n\n---\n📊 Task Details:`;
+      description += `\n• Type: ${taskData.type || 'N/A'}`;
+      description += `\n• Category: ${taskData.category || 'N/A'}`;
+      description += `\n• Priority: ${taskData.priority || 'N/A'}`;
+      description += `\n• Status: ${taskData.status || 'N/A'}`;
+      if (taskData.assignedToName) {
+        description += `\n• Assigned to: ${taskData.assignedToName}`;
+      }
+      
+      // Add tags if available
+      if (taskData.tags && taskData.tags.length > 0) {
+        description += `\n• Tags: ${taskData.tags.join(', ')}`;
+      }
+      
+      // Add research topics if available
+      if (taskData.researchTopics && taskData.researchTopics.length > 0) {
+        description += `\n• Research: ${taskData.researchTopics.join(', ')}`;
+      }
       
       // Create calendar event for appointment
       const event: any = {
         summary: taskData.title,
-        description: taskData.description || '',
+        description: description || `Task: ${taskData.title}`,
         start: {
           dateTime: taskData.startTime,
           timeZone: userTimezone
@@ -98,6 +239,8 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
         }
       };
 
+      console.log(`📤 Sending calendar event to Google:`, JSON.stringify(event, null, 2));
+
       // Add Google Meet for virtual meetings
       if (taskData.type === 'scheduled_meeting_virtual') {
         event.conferenceData = {
@@ -108,6 +251,7 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
             }
           }
         };
+        console.log(`🎥 Adding Google Meet for virtual meeting`);
       }
 
       // Add attendees if provided
@@ -116,12 +260,21 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
           email: attendee.email,
           displayName: attendee.displayName
         }));
+        console.log(`👥 Adding ${event.attendees.length} attendees to calendar event`);
       }
 
       const response = await calendar.events.insert({
         calendarId: 'primary',
         requestBody: event,
         conferenceDataVersion: taskData.type === 'scheduled_meeting_virtual' ? 1 : 0
+      });
+
+      console.log(`📥 Google Calendar API response:`, {
+        status: response.status,
+        statusText: response.statusText,
+        eventId: response.data.id,
+        htmlLink: response.data.htmlLink,
+        conferenceData: response.data.conferenceData
       });
 
       // Update task with calendar event ID and Google Meet info
@@ -137,9 +290,11 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
         if (meetEntry) {
           updateData.googleMeetLink = meetEntry.uri;
           updateData.googleMeetConferenceId = response.data.conferenceData.conferenceId;
+          console.log(`🔗 Google Meet link added: ${meetEntry.uri}`);
         }
       }
 
+      console.log(`💾 Updating task with calendar sync data:`, updateData);
       await db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId).update(updateData);
 
       console.log(`✅ Task ${taskId} synced to Google Calendar successfully`);
@@ -149,6 +304,14 @@ export async function syncTaskToCalendar(userId: string, tenantId: string, taskI
         message: 'Task synced to Google Calendar'
       };
     } else {
+      console.log(`ℹ️ Task ${taskId} is not an appointment or missing startTime - skipping calendar sync`);
+      console.log(`📋 Task details:`, {
+        classification: taskData.classification,
+        startTime: taskData.startTime,
+        isAppointment,
+        hasStartTime: !!taskData.startTime
+      });
+      
       // For todos, we'll create a Google Task
       console.log(`📝 Syncing todo task ${taskId} to Google Tasks`);
       

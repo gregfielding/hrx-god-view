@@ -214,7 +214,7 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
   }, [isEphemeral, threadId, messages, functions, onThreadCreated, tenantId, userId]);
 
   return (
-    <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'row', height: '100%', borderRadius: 0, gap: showThreadListPanel ? 3 : 0 }}>
+    <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'row', height: '100%', borderRadius: 1, gap: showThreadListPanel ? 3 : 0 }}>
       {/* Left: historical threads (optional) */}
       {showThreadListPanel && (
         <Box sx={{ width: 300, borderRight: '1px solid', borderColor: 'divider', height: '100%', overflow: 'hidden' }}>

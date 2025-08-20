@@ -87,7 +87,7 @@ import {
   Clear as ClearIcon,
   Dashboard as DashboardIcon,
   FilterAlt as FilterAltIcon,
-
+  MoreVert as MoreVertIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -95,6 +95,7 @@ import { db , functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
+import { AssociationUtils } from '../../utils/associationUtils';
 import CRMImportDialog from '../../components/CRMImportDialog';
 import DealIntelligenceWizard from '../../components/DealIntelligenceWizard';
 import KPIManagement from '../../components/KPIManagement';
@@ -155,6 +156,7 @@ const TenantCRM: React.FC = () => {
   const [companyPins, setCompanyPins] = useState<any[]>([]);
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoMessage, setInfoMessage] = useState('');
+  const [locations, setLocations] = useState<any[]>([]);
   
   // Pagination state for contacts
   const [contactsLoading, setContactsLoading] = useState(false);
@@ -212,6 +214,7 @@ const TenantCRM: React.FC = () => {
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [salesTeam, setSalesTeam] = useState<any[]>([]);
   const [salesTeamLoading, setSalesTeamLoading] = useState(false);
+  const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   const companiesLoadSeq = useRef(0);
 
 
@@ -286,9 +289,14 @@ const TenantCRM: React.FC = () => {
         const searchLower = searchQuery.trim().toLowerCase();
         const companiesData = validated.filter((company: any) => {
           if (filterByUser && currentUser?.uid) {
-            const sales = company.associations?.salespeople || [];
-            const mine = sales.some((sp: any) => (typeof sp === 'string' ? sp === currentUser.uid : sp?.id === currentUser.uid));
-            if (!mine) return false;
+            // Use the new unified association logic
+            const isAssociated = AssociationUtils.isCompanyAssociatedWithUser(company, currentUser.uid);
+            if (!isAssociated) return false;
+            
+            // Debug logging in development
+            if (process.env.NODE_ENV === 'development') {
+              AssociationUtils.debugAssociation(company, currentUser.uid, 'company');
+            }
           }
           if (!searchLower) return true;
           const companyName = (company.companyName || company.name || '').toLowerCase();
@@ -328,30 +336,20 @@ const TenantCRM: React.FC = () => {
           const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
           console.log('🔍 Loaded', allCompanies.length, 'total companies for user filtering');
           
-          // Filter companies where user ID is in the salespeople array
+          // Filter companies using the new unified association logic
           const companiesData = allCompanies.filter((company: any) => {
-            if (!company.associations?.salespeople) {
-              return false;
-            }
+            const isAssociated = AssociationUtils.isCompanyAssociatedWithUser(company, currentUser.uid);
             
-            const hasUser = company.associations.salespeople.some((salesperson: any) => {
-              if (typeof salesperson === 'string') {
-                const match = salesperson === currentUser.uid;
-                if (match) console.log('🔍 Found string match for company', company.id, company.companyName || company.name);
-                return match;
-              } else if (salesperson && typeof salesperson === 'object') {
-                const match = salesperson.id === currentUser.uid;
-                if (match) console.log('🔍 Found object match for company', company.id, company.companyName || company.name);
-                return match;
-              }
-              return false;
-            });
-            
-            if (hasUser) {
+            if (isAssociated) {
               console.log('🔍 Company', company.id, company.companyName || company.name, 'is associated with current user');
+              
+              // Debug logging in development
+              if (process.env.NODE_ENV === 'development') {
+                AssociationUtils.debugAssociation(company, currentUser.uid, 'company');
+              }
             }
             
-            return hasUser;
+            return isAssociated;
           });
           
           console.log('🔍 Found', companiesData.length, 'companies associated with current user');
@@ -543,7 +541,7 @@ const TenantCRM: React.FC = () => {
     } finally {
       if (companiesLoadSeq.current === mySeq) setCompaniesLoading(false);
     }
-  }, [tenantId, currentUser?.uid, companyFilter, companyLocationState]);
+  }, [tenantId, currentUser?.uid, companyLocationState]);
 
   const loadMoreCompanies = () => {
     if (companiesHasMore && !companiesLoading) {
@@ -615,6 +613,66 @@ const TenantCRM: React.FC = () => {
       setSalesTeam([]);
     } finally {
       setSalesTeamLoading(false);
+    }
+  };
+
+  // Load all user-associated data for dashboard metrics
+  const loadUserAssociatedData = useCallback(async () => {
+    if (!tenantId || !currentUser?.uid || initialDataLoaded) return;
+    
+    try {
+      // Load all companies to calculate user associations
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const allCompaniesQuery = query(companiesRef, orderBy('createdAt', 'desc'));
+      const allCompaniesSnapshot = await getDocs(allCompaniesQuery);
+      const allCompaniesData = allCompaniesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Load all contacts to calculate user associations
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const allContactsQuery = query(contactsRef, orderBy('createdAt', 'desc'));
+      const allContactsSnapshot = await getDocs(allContactsQuery);
+      const allContactsData = allContactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Load all deals to calculate user associations
+      const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
+      const allDealsQuery = query(dealsRef, orderBy('createdAt', 'desc'));
+      const allDealsSnapshot = await getDocs(allDealsQuery);
+      const allDealsData = allDealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Update state with all data
+      setAllCompanies(allCompaniesData);
+      setAllDeals(allDealsData);
+      
+      // Mark initial data as loaded
+      setInitialDataLoaded(true);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Loaded initial data for dashboard metrics:', {
+          companies: allCompaniesData.length,
+          contacts: allContactsData.length,
+          deals: allDealsData.length
+        });
+      }
+    } catch (error) {
+      console.error('❌ Error loading initial data for dashboard metrics:', error);
+      setInitialDataLoaded(true); // Still mark as loaded to prevent infinite loading
+    }
+  }, [tenantId, currentUser?.uid, initialDataLoaded]);
+
+  const loadLocations = async () => {
+    if (!tenantId) return;
+    
+    try {
+      const locationsRef = collection(db, 'tenants', tenantId, 'locations');
+      const locationsSnapshot = await getDocs(locationsRef);
+      const locationsData = locationsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setLocations(locationsData);
+    } catch (error) {
+      console.error('Error loading locations:', error);
+      setLocations([]);
     }
   };
 
@@ -694,8 +752,15 @@ const TenantCRM: React.FC = () => {
         const snapshot = await getDocs(q);
         const allCandidates = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
         const filtered = allCandidates.filter((c: any) => {
-          const assocCompanies = (c.associations?.companies || []).map((v: any) => (typeof v === 'string' ? v : v?.id)).filter(Boolean);
-          return assocCompanies.some((cid: string) => myCompanyIds.includes(cid));
+          // Use the new unified association logic
+          const isAssociated = AssociationUtils.isContactAssociatedWithUser(c, currentUser.uid, myCompanyIds);
+          
+          // Debug logging in development
+          if (process.env.NODE_ENV === 'development' && isAssociated) {
+            AssociationUtils.debugAssociation(c, currentUser.uid, 'contact');
+          }
+          
+          return isAssociated;
         });
         const page = filtered.slice(0, contactsPageSize);
         setContacts(prev => append ? [...prev, ...page] : page);
@@ -826,7 +891,7 @@ const TenantCRM: React.FC = () => {
     } finally {
       setContactsLoading(false);
     }
-  }, [tenantId, currentUser?.uid, contactFilter]);
+  }, [tenantId, currentUser?.uid]);
 
   const loadMoreContacts = () => {
     if (contactsHasMore && !contactsLoading) {
@@ -880,31 +945,20 @@ const TenantCRM: React.FC = () => {
               salespeople: deal.associations?.salespeople
             })));
             
-            // Filter all deals where user ID is in the 'id' field of any salespeople object
+            // Filter all deals using the new unified association logic
             dealsData = allDealsData.filter((deal: any) => {
-              if (!deal.associations?.salespeople) {
-                console.log('🔍 Deal', deal.id, 'has no salespeople associations');
-                return false;
-              }
+              const isAssociated = AssociationUtils.isDealAssociatedWithUser(deal, currentUser.uid);
               
-              const hasUser = deal.associations.salespeople.some((salesperson: any) => {
-                if (typeof salesperson === 'string') {
-                  const match = salesperson === currentUser.uid;
-                  if (match) console.log('🔍 Found string match for deal', deal.id);
-                  return match;
-                } else if (salesperson && typeof salesperson === 'object') {
-                  const match = salesperson.id === currentUser.uid;
-                  if (match) console.log('🔍 Found object match for deal', deal.id, 'salesperson:', salesperson);
-                  return match;
-                }
-                return false;
-              });
-              
-              if (hasUser) {
+              if (isAssociated) {
                 console.log('🔍 Deal', deal.id, 'is associated with current user');
+                
+                // Debug logging in development
+                if (process.env.NODE_ENV === 'development') {
+                  AssociationUtils.debugAssociation(deal, currentUser.uid, 'deal');
+                }
               }
               
-              return hasUser;
+              return isAssociated;
             });
             
             console.log('🔍 Found', dealsData.length, 'deals with user ID in salespeople object IDs');
@@ -976,6 +1030,13 @@ const TenantCRM: React.FC = () => {
     return () => clearTimeout(timeoutId);
   }, [search, tenantId, loadCompanies, loadContacts]);
 
+  // Load initial data for dashboard metrics
+  useEffect(() => {
+    if (tenantId && currentUser?.uid) {
+      loadUserAssociatedData();
+    }
+  }, [tenantId, currentUser?.uid, loadUserAssociatedData]);
+
   // Real-time listeners for CRM data
   useEffect(() => {
     if (!tenantId) {
@@ -983,13 +1044,13 @@ const TenantCRM: React.FC = () => {
     }
 
     if (tenantId) {
-      // For the dashboard, we need ALL companies to resolve names in task cards
-      // Load companies without pagination to ensure all companies are available
-      loadCompanies('', null, false, false); // Load all companies, not just user's companies
-      loadContacts();
-      loadDeals();
+      // Load data based on current filter states
+      loadCompanies('', null, false, companyFilter === 'my');
+      loadContacts('', null, false, contactFilter === 'my');
+      loadDeals('', null, false, dealFilter === 'my');
       loadAllCompanies(); // Load all companies for autocomplete
       loadSalesTeam(); // Load sales team
+      loadLocations(); // Load locations for contact location display
     }
 
     // Listen for deals
@@ -997,6 +1058,7 @@ const TenantCRM: React.FC = () => {
     const dealsUnsubscribe = onSnapshot(dealsRef, (snapshot) => {
       const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setDeals(dealsData);
+      setAllDeals(dealsData); // Also update allDeals for metrics calculation
     });
 
     // Listen for pipeline stages
@@ -1051,7 +1113,9 @@ const TenantCRM: React.FC = () => {
       crmTasksUnsubscribe();
       tasksUnsubscribe();
     };
-  }, [tenantId]);
+  }, [tenantId, companyFilter, contactFilter, dealFilter]); // Add filter states as dependencies
+
+  // Remove the separate useEffects for filter changes - they're now handled in the main useEffect above
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -1066,8 +1130,7 @@ const TenantCRM: React.FC = () => {
   const handleCompanyFilterChange = (newFilter: 'all' | 'my') => {
     setCompanyFilter(newFilter);
     updateCacheState({ companyFilter: newFilter });
-    // Reload companies with the new filter
-    loadCompanies('', null, false, newFilter === 'my');
+    // The useEffect will handle reloading companies with the new filter
   };
 
   const handleCompanyLocationStateChange = (newState: string) => {
@@ -1089,15 +1152,13 @@ const TenantCRM: React.FC = () => {
   const handleContactFilterChange = (newFilter: 'all' | 'my') => {
     setContactFilter(newFilter);
     updateCacheState({ contactFilter: newFilter });
-    // Reload contacts with the new filter
-    loadContacts('', null, false, newFilter === 'my');
+    // The useEffect will handle reloading contacts with the new filter
   };
 
   const handleDealFilterChange = (newFilter: 'all' | 'my') => {
     setDealFilter(newFilter);
     updateCacheState({ dealFilter: newFilter });
-    // Reload deals with the new filter
-    loadDeals('', null, false, newFilter === 'my');
+    // The useEffect will handle reloading deals with the new filter
   };
 
 
@@ -1268,7 +1329,7 @@ const TenantCRM: React.FC = () => {
       </Box> */}
 
       {/* Navigation Menu */}
-      <Box sx={{ mb: 4 }}>
+      <Box sx={{ mb: 3 }}>
         <Box sx={{ 
           display: 'flex', 
           gap: { xs: 2, sm: 3.5, md: 4 },
@@ -1553,6 +1614,8 @@ const TenantCRM: React.FC = () => {
           tasks={tasks}
           pipelineStages={pipelineStages}
           allCompanies={allCompanies}
+          allDeals={allDeals}
+          initialDataLoaded={initialDataLoaded}
         />
       )}
       
@@ -1560,6 +1623,7 @@ const TenantCRM: React.FC = () => {
         <ContactsTab 
           contacts={contacts}
           companies={companies}
+          locations={locations}
           search={search}
           onSearchChange={setSearch}
           onAddNew={() => handleAddNew('contact')}
@@ -2278,9 +2342,9 @@ const TasksTab: React.FC<{
 
       {/* Tasks Table */}
       <TableContainer component={Paper}>
-        <Table>
+        <Table sx={{ minWidth: 1200 }}>
           <TableHead>
-            <TableRow>
+            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
               <TableCell padding="checkbox">
                 <Checkbox
                   checked={selectedTasks.length === filteredTasks.length && filteredTasks.length > 0}
@@ -2513,6 +2577,7 @@ const TasksTab: React.FC<{
 const ContactsTab: React.FC<{
   contacts: any[];
   companies: any[];
+  locations: any[];
   search: string;
   onSearchChange: (value: string) => void;
   onAddNew: () => void;
@@ -2521,13 +2586,66 @@ const ContactsTab: React.FC<{
   onLoadMore: () => void;
   contactFilter: 'all' | 'my';
   onContactFilterChange: (newFilter: 'all' | 'my') => void;
-}> = ({ contacts, companies, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, contactFilter, onContactFilterChange }) => {
+}> = ({ contacts, companies, locations, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, contactFilter, onContactFilterChange }) => {
   const navigate = useNavigate();
   const { currentUser, tenantId } = useAuth();
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string | null>(null);
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [lastActivities, setLastActivities] = useState<{[key: string]: any}>({});
+  const [runningCleanup, setRunningCleanup] = useState(false);
+
+  // Function to run the cleanup
+  const runCleanup = async () => {
+    if (!tenantId) return;
+    
+    setRunningCleanup(true);
+    try {
+      console.log('🔧 Starting cleanup for tenant:', tenantId);
+      
+      // Use HTTP function directly (more reliable for CORS)
+      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/cleanupContactCompanyAssociationsHttp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tenantId })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP function failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ HTTP Cleanup result:', result);
+      
+      // Show success message
+      alert('Contact company associations cleanup completed! Check the console for details.');
+      
+      // Reload contacts to see the changes
+      window.location.reload();
+    } catch (error: any) {
+      console.error('❌ Error running cleanup:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error details:', error.details);
+      
+      let errorMessage = 'Error running cleanup. ';
+      if (error.code === 'functions/unavailable') {
+        errorMessage += 'Function is not available. Please try again in a few minutes.';
+      } else if (error.code === 'functions/permission-denied') {
+        errorMessage += 'Permission denied. Please check your authentication.';
+      } else if (error.message?.includes('CORS')) {
+        errorMessage += 'CORS error. Please try again or contact support.';
+      } else {
+        errorMessage += 'Check the console for details.';
+      }
+      
+      alert(errorMessage);
+    } finally {
+      setRunningCleanup(false);
+    }
+  };
 
   // Function to get companies the current user is associated with
   const getMyCompanies = React.useCallback(() => {
@@ -2600,33 +2718,17 @@ const ContactsTab: React.FC<{
     if (!tenantId) return;
     
     try {
-      const { collection, query, where, orderBy, limit, getDocs } = await import('firebase/firestore');
-      const { db } = await import('../../firebase');
+      const { getLastContactActivity } = await import('../../utils/activityService');
+      const lastActivity = await getLastContactActivity(tenantId, contactId);
       
-      const logsRef = collection(db, 'tenants', tenantId, 'ai_logs');
-      const q = query(
-        logsRef,
-        where('entityId', '==', contactId),
-        where('entityType', '==', 'contact'),
-        orderBy('timestamp', 'desc'),
-        limit(1)
-      );
-      
-      const snapshot = await getDocs(q);
-      if (!snapshot.empty) {
-        const lastLog = snapshot.docs[0].data();
+      if (lastActivity) {
         setLastActivities(prev => ({
           ...prev,
-          [contactId]: lastLog
+          [contactId]: lastActivity
         }));
       }
     } catch (error) {
-      // Silently handle permission errors for ai_logs collection
-      if (error.code === 'permission-denied' || error.message?.includes('permission')) {
-        console.log('AI logs not accessible, skipping last activity');
-      } else {
-        console.error('Error loading last activity:', error);
-      }
+      console.error('Error loading last activity:', error);
     }
   }, [tenantId]);
 
@@ -2637,12 +2739,75 @@ const ContactsTab: React.FC<{
     });
   }, [filteredContacts, getLastActivity]);
 
+  // Helper function to format relative time
+  const formatRelativeTime = (activity: any) => {
+    if (!activity) return 'No Activity';
+    
+    // Handle both old timestamp format and new activity object format
+    const timestamp = activity.timestamp || activity;
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const now = new Date();
+    const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
+    
+    if (diffInHours < 1) return 'Just now';
+    if (diffInHours < 24) return `${diffInHours}h ago`;
+    if (diffInHours < 48) return '1d ago';
+    if (diffInHours < 168) return `${Math.floor(diffInHours / 24)}d ago`;
+    if (diffInHours < 720) return `${Math.floor(diffInHours / 168)}w ago`;
+    return `${Math.floor(diffInHours / 720)}mo ago`;
+  };
+
+  // Helper function to get avatar background color - softer pastel palette
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      '#F3F4F6', // Light gray
+      '#FEF3C7', // Light yellow
+      '#DBEAFE', // Light blue
+      '#D1FAE5', // Light green
+      '#FCE7F3', // Light pink
+      '#EDE9FE', // Light purple
+      '#FEE2E2', // Light red
+      '#FEF5E7'  // Light orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
+  // Helper function to get avatar text color - darker for contrast
+  const getAvatarTextColor = (name: string) => {
+    const colors = [
+      '#6B7280', // Gray
+      '#92400E', // Amber
+      '#1E40AF', // Blue
+      '#065F46', // Green
+      '#BE185D', // Pink
+      '#5B21B6', // Purple
+      '#DC2626', // Red
+      '#EA580C'  // Orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
   return (
     <Box>
       {/* Header with search and actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Contacts ({filteredContacts.length})</Typography>
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
+          Contacts ({filteredContacts.length})
+        </Typography>
+      </Box> */}
+
+      {/* Filter & Toolbar Area - Consolidated with card background */}
+      <Box sx={{ 
+        mb: 2,
+        p: 1.5,
+        backgroundColor: '#F9FAFB',
+        borderRadius: '8px',
+        border: '1px solid #E5E7EB',
+        borderBottom: '1px solid #D1D5DB'
+      }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Contact Filter Toggle */}
           <ToggleButtonGroup
             value={contactFilter}
@@ -2654,22 +2819,36 @@ const ContactsTab: React.FC<{
             }}
             size="small"
             sx={{ 
+              height: 36,
               '& .MuiToggleButton-root': {
-                px: 2,
-                py: 0.5,
-                fontSize: '0.875rem'
+                px: 2.5,
+                py: 0.75,
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+                borderRadius: '18px',
+                border: '1px solid #E5E7EB',
+                color: '#6B7280',
+                backgroundColor: 'white',
+                '&.Mui-selected': {
+                  backgroundColor: '#0B63C5',
+                  color: 'white',
+                  '&:hover': {
+                    backgroundColor: '#0B63C5',
+                  }
+                },
+                '&:hover': {
+                  backgroundColor: '#F3F4F6',
+                }
               }
             }}
           >
-            <ToggleButton value="all">
+            <ToggleButton value="all" sx={{ mr: 1 }}>
               All Contacts
             </ToggleButton>
             <ToggleButton value="my">
               My Contacts
             </ToggleButton>
           </ToggleButtonGroup>
-          
-          {/* Removed setup button - using existing associations */}
           
           {/* Company Filter */}
           <Autocomplete
@@ -2687,17 +2866,32 @@ const ContactsTab: React.FC<{
                 placeholder={loadingAllCompanies ? "Loading companies..." : "Filter by company..."}
                 variant="outlined"
                 size="small"
-                sx={{ width: 200 }}
+                sx={{ 
+                  width: 180,
+                  height: 36,
+                  '& .MuiOutlinedInput-root': {
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                    '& fieldset': {
+                      borderColor: '#E5E7EB',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: '#D1D5DB',
+                    },
+                  }
+                }}
                 InputProps={{
                   ...params.InputProps,
                   endAdornment: (
                     <>
-                      {loadingAllCompanies && <CircularProgress size={16} />}
+                      {loadingAllCompanies && <CircularProgress size={14} />}
                       {selectedCompanyFilter && (
                         <IconButton
                           size="small"
                           onClick={() => setSelectedCompanyFilter(null)}
-                          sx={{ mr: 1 }}
+                          sx={{ mr: 0.5, p: 0.5 }}
                         >
                           <ClearIcon fontSize="small" />
                         </IconButton>
@@ -2707,19 +2901,18 @@ const ContactsTab: React.FC<{
                 }}
               />
             )}
-                renderOption={(props, option) => (
-                  <Box component="li" {...props}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <BusinessIcon fontSize="small" color="action" />
-                      <Typography variant="body2">
-                        {option.companyName || option.name}
-                      </Typography>
-                    </Box>
-                  </Box>
-                )}
+            renderOption={(props, option) => (
+              <Box component="li" {...props}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <BusinessIcon fontSize="small" color="action" />
+                  <Typography variant="body2">
+                    {option.companyName || option.name}
+                  </Typography>
+                </Box>
+              </Box>
+            )}
             isOptionEqualToValue={(option, value) => option.id === value.id}
             clearOnBlur={false}
-            sx={{ width: 200 }}
           />
           
           <TextField
@@ -2728,121 +2921,305 @@ const ContactsTab: React.FC<{
             placeholder="Search contacts..."
             value={search}
             onChange={e => onSearchChange(e.target.value)}
-            sx={{ width: 300 }}
+            sx={{ 
+              width: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
             InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
               endAdornment: search && (
                 <IconButton
                   size="small"
                   onClick={() => onSearchChange('')}
-                  sx={{ mr: 1 }}
+                  sx={{ mr: 0.5, p: 0.5 }}
                 >
                   <ClearIcon fontSize="small" />
                 </IconButton>
               ),
             }}
           />
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={onAddNew}
-          >
-            Add Contact
-          </Button>
+          
+          <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={runCleanup}
+              disabled={runningCleanup}
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                textTransform: 'none',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                px: 2.5,
+                py: 0.75
+              }}
+            >
+              {runningCleanup ? 'Running...' : 'Fix Company Links'}
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AddIcon />}
+              onClick={onAddNew}
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                textTransform: 'none',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                px: 2.5,
+                py: 0.75
+              }}
+            >
+              Add Contact
+            </Button>
+          </Box>
         </Box>
       </Box>
+      
+      {/* Divider */}
+      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Contacts Table */}
-      <TableContainer component={Paper} sx={{ overflowX: 'auto' }}>
+      <TableContainer component={Paper} sx={{ 
+        overflowX: 'auto',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+      }}>
         <Table sx={{ minWidth: 1200 }}>
           <TableHead>
-            <TableRow>
-              <TableCell sx={{ width: 200 }}>Name</TableCell>
-              <TableCell sx={{ width: 150 }}>Job Title</TableCell>
-              <TableCell sx={{ width: 150 }}>Company</TableCell>
-              <TableCell sx={{ width: 200 }}>Email</TableCell>
-              <TableCell sx={{ width: 120 }}>Phone</TableCell>
-              <TableCell sx={{ width: 120 }}>Location</TableCell>
-              <TableCell sx={{ width: 150 }}>Last Activity</TableCell>
-              <TableCell sx={{ width: 100 }}>Actions</TableCell>
+            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+              <TableCell sx={{ 
+                width: 200,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Name
+              </TableCell>
+              <TableCell sx={{ 
+                width: 150,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Job Title
+              </TableCell>
+              <TableCell sx={{ 
+                width: 200,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Contact Info
+              </TableCell>
+              <TableCell sx={{ 
+                width: 150,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Company
+              </TableCell>
+              
+              <TableCell sx={{ 
+                width: 120,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Location
+              </TableCell>
+              <TableCell sx={{ 
+                width: 150,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Last Activity
+              </TableCell>
+
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredContacts.map((contact) => (
-              <TableRow key={contact.id} hover>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Avatar sx={{ width: 32, height: 32 }}>
-                      {contact.fullName?.charAt(0)}
+              <TableRow 
+                key={contact.id} 
+                hover
+                onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                sx={{ 
+                  height: '48px',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    backgroundColor: '#F9FAFB'
+                  }
+                }}
+              >
+                <TableCell sx={{ px: 2, py: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Avatar 
+                      src={contact.avatar || contact.logoUrl}
+                      sx={{ 
+                        width: 32, 
+                        height: 32,
+                        backgroundColor: getAvatarColor(contact.fullName || ''),
+                        color: getAvatarTextColor(contact.fullName || ''),
+                        fontWeight: 600,
+                        fontSize: '12px'
+                      }}
+                    >
+                      {contact.fullName?.charAt(0) || '?'}
                     </Avatar>
-                    <Typography variant="body2" fontWeight="medium">
+                    <Typography 
+                      variant="body2" 
+                      fontWeight={600} 
+                      color="#111827"
+                      sx={{ fontSize: '0.9375rem' }}
+                    >
                       {contact.fullName}
                     </Typography>
                   </Box>
                 </TableCell>
-                <TableCell>{contact.jobTitle || contact.title || '-'}</TableCell>
-                <TableCell>
-                  {(() => {
-                    const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
-                    const primaryCompanyId = assocCompanies[0];
-                    const company = companies.find(c => c.id === primaryCompanyId);
-                    return company?.companyName || '-';
-                  })()}
+                <TableCell sx={{ py: 1 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {contact.jobTitle || contact.title || '-'}
+                  </Typography>
                 </TableCell>
-                <TableCell>
-                  {contact.email ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <EmailIcon fontSize="small" color="action" />
-                      <Typography variant="body2">
-                        {contact.email}
-                      </Typography>
-                    </Box>
-                  ) : '-'}
+                
+                <TableCell sx={{ py: 1 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                    {contact.email && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <EmailIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
+                        <Typography 
+                          variant="body2" 
+                          sx={{ 
+                            color: '#6B7280',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '140px',
+                            fontSize: '0.8125rem'
+                          }}
+                          title={contact.email}
+                        >
+                          {contact.email}
+                        </Typography>
+                      </Box>
+                    )}
+                    {contact.phone && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pl: 2 }}>
+                        <PhoneIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
+                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.8125rem' }}>
+                          {contact.phone}
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
                 </TableCell>
-                <TableCell>
-                  {contact.phone || contact.workPhone ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <PhoneIcon fontSize="small" color="action" />
-                      <Typography variant="body2">
-                        {contact.phone || contact.workPhone}
-                      </Typography>
-                    </Box>
-                  ) : '-'}
+                <TableCell sx={{ py: 1 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {(() => {
+                      // First check for direct companyName field (most reliable)
+                      if (contact.companyName) {
+                        return contact.companyName;
+                      }
+                      
+                      // Second check for legacy companyId field
+                      if (contact.companyId) {
+                        const company = companies.find(c => c.id === contact.companyId);
+                        if (company) {
+                          return company.companyName || company.name || '-';
+                        }
+                      }
+                      
+                      // Third check for associations.companies array
+                      const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+                      const primaryCompanyId = assocCompanies[0];
+                      const company = companies.find(c => c.id === primaryCompanyId);
+                      return company?.companyName || company?.name || '-';
+                    })()}
+                  </Typography>
                 </TableCell>
-                <TableCell>
-                  {(() => {
-                    const assocLocs = (contact.associations?.locations || []) as any[];
-                    const obj = assocLocs.find(l => typeof l === 'object');
-                    const locName = obj?.snapshot?.name || obj?.name;
-                    if (locName) return <Typography variant="body2">{locName}</Typography>;
-                    if (contact.city && contact.state) return <Typography variant="body2">{contact.city}, {contact.state}</Typography>;
-                    return '-';
-                  })()}
+                <TableCell sx={{ py: 1 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {(() => {
+                      // First check for legacy locationId field
+                      if (contact.locationId) {
+                        const location = locations.find(loc => loc.id === contact.locationId);
+                        if (location) {
+                          const locationName = location.name || location.nickname || 'Unknown Location';
+                          const cityState = [location.city, location.state].filter(Boolean).join(', ');
+                          return cityState ? `${locationName} (${cityState})` : locationName;
+                        }
+                        // If locationId exists but location not found, show locationName if available
+                        if (contact.locationName) {
+                          return contact.locationName;
+                        }
+                      }
+                      
+                      // Fallback to associations.locations array
+                      const assocLocs = (contact.associations?.locations || []) as any[];
+                      const obj = assocLocs.find(l => typeof l === 'object');
+                      const locName = obj?.snapshot?.name || obj?.name;
+                      if (locName) return locName;
+                      
+                      // Final fallback to contact city/state
+                      if (contact.city && contact.state) return `${contact.city}, ${contact.state}`;
+                      return '-';
+                    })()}
+                  </Typography>
                 </TableCell>
-                <TableCell>
-                  {lastActivities[contact.id] ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Typography variant="caption">
-                        {new Date(lastActivities[contact.id].timestamp?.toDate?.() || lastActivities[contact.id].timestamp).toLocaleDateString()}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {lastActivities[contact.id].eventType || lastActivities[contact.id].action || 'Activity'}
-                      </Typography>
-                    </Box>
-                  ) : '-'}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<VisibilityIcon />}
-                    onClick={() => navigate(`/crm/contacts/${contact.id}`)}
-                    sx={{ minWidth: 80 }}
+                <TableCell sx={{ py: 1 }}>
+                  <Typography 
+                    variant="body2" 
+                    color={lastActivities[contact.id] ? "#6B7280" : "#9CA3AF"}
+                    sx={{ fontSize: '0.875rem' }}
                   >
-                    View
-                  </Button>
+                    {lastActivities[contact.id] 
+                      ? formatRelativeTime(lastActivities[contact.id].timestamp)
+                      : 'No Activity'
+                    }
+                  </Typography>
                 </TableCell>
+
               </TableRow>
             ))}
           </TableBody>
@@ -2851,19 +3228,72 @@ const ContactsTab: React.FC<{
 
       {/* Load More Button */}
       {hasMore && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
           <Button
             variant="outlined"
             onClick={onLoadMore}
             disabled={loading}
             startIcon={loading ? <CircularProgress size={16} /> : null}
+            sx={{
+              borderRadius: '8px',
+              textTransform: 'none',
+              fontWeight: 500,
+              borderColor: '#E5E7EB',
+              color: '#6B7280',
+              '&:hover': {
+                borderColor: '#D1D5DB',
+                backgroundColor: '#F9FAFB',
+              }
+            }}
           >
             {loading ? 'Loading...' : 'Load More Contacts'}
           </Button>
         </Box>
       )}
 
-
+      {/* Empty State */}
+      {filteredContacts.length === 0 && !loading && (
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          py: 8,
+          textAlign: 'center'
+        }}>
+          <Box sx={{ 
+            width: 120, 
+            height: 120, 
+            borderRadius: '50%', 
+            backgroundColor: '#F3F4F6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            mb: 3
+          }}>
+            <PersonIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+          </Box>
+          <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827', mb: 1 }}>
+            No contacts yet
+          </Typography>
+          <Typography variant="body2" color="#6B7280" sx={{ mb: 3 }}>
+            Add your first contact to get started with your CRM
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={onAddNew}
+            sx={{
+              borderRadius: '8px',
+              textTransform: 'none',
+              fontWeight: 500
+            }}
+          >
+            Add Your First Contact
+          </Button>
+        </Box>
+      )}
     </Box>
   );
 };
@@ -2912,7 +3342,37 @@ const CompaniesTab: React.FC<{
   // Since filtering is now handled at the database level, we just use the companies as-is
   const filteredCompanies = companies;
 
+  // Helper function to get avatar background color - softer pastel palette
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      '#F3F4F6', // Light gray
+      '#FEF3C7', // Light yellow
+      '#DBEAFE', // Light blue
+      '#D1FAE5', // Light green
+      '#FCE7F3', // Light pink
+      '#EDE9FE', // Light purple
+      '#FEE2E2', // Light red
+      '#FEF5E7'  // Light orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
 
+  // Helper function to get avatar text color - darker for contrast
+  const getAvatarTextColor = (name: string) => {
+    const colors = [
+      '#6B7280', // Gray
+      '#92400E', // Amber
+      '#1E40AF', // Blue
+      '#065F46', // Green
+      '#BE185D', // Pink
+      '#5B21B6', // Purple
+      '#DC2626', // Red
+      '#EA580C'  // Orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
 
   const handleViewCompany = (company: any) => {
     navigate(`/crm/companies/${company.id}`);
@@ -3063,9 +3523,22 @@ const CompaniesTab: React.FC<{
   return (
     <Box>
       {/* Header with search and actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Companies</Typography>
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
+          Companies ({companies.length})
+        </Typography>
+      </Box> */}
+
+      {/* Filter & Toolbar Area - Consolidated with card background */}
+      <Box sx={{ 
+        mb: 2,
+        p: 1.5,
+        backgroundColor: '#F9FAFB',
+        borderRadius: '8px',
+        border: '1px solid #E5E7EB',
+        borderBottom: '1px solid #D1D5DB'
+      }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Company Filter Toggle */}
           <ToggleButtonGroup
             value={companyFilter}
@@ -3077,14 +3550,30 @@ const CompaniesTab: React.FC<{
             }}
             size="small"
             sx={{ 
+              height: 36,
               '& .MuiToggleButton-root': {
-                px: 2,
-                py: 0.5,
-                fontSize: '0.875rem'
+                px: 2.5,
+                py: 0.75,
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+                borderRadius: '18px',
+                border: '1px solid #E5E7EB',
+                color: '#6B7280',
+                backgroundColor: 'white',
+                '&.Mui-selected': {
+                  backgroundColor: '#0B63C5',
+                  color: 'white',
+                  '&:hover': {
+                    backgroundColor: '#0B63C5',
+                  }
+                },
+                '&:hover': {
+                  backgroundColor: '#F3F4F6',
+                }
               }
             }}
           >
-            <ToggleButton value="all">
+            <ToggleButton value="all" sx={{ mr: 1 }}>
               All Companies
             </ToggleButton>
             <ToggleButton value="my">
@@ -3098,14 +3587,29 @@ const CompaniesTab: React.FC<{
             placeholder="Search by company name, URL, or city..."
             value={search}
             onChange={e => onSearchChange(e.target.value)}
-            sx={{ width: 300 }}
+            sx={{ 
+              width: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
             InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
               endAdornment: search && (
                 <IconButton
                   size="small"
                   onClick={() => onSearchChange('')}
-                  sx={{ mr: 1 }}
+                  sx={{ mr: 0.5, p: 0.5 }}
                 >
                   <ClearIcon fontSize="small" />
                 </IconButton>
@@ -3115,12 +3619,24 @@ const CompaniesTab: React.FC<{
 
           {/* State Filter */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <FormControl size="small" sx={{ minWidth: 180 }}>
-              <InputLabel>State Filter</InputLabel>
+            <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+              <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
               <Select
                 value={locationStateFilter}
                 onChange={(e) => onLocationStateFilterChange(e.target.value)}
                 label="State Filter"
+                sx={{
+                  height: 36,
+                  borderRadius: '6px',
+                  backgroundColor: 'white',
+                  fontSize: '0.875rem',
+                  '& .MuiOutlinedInput-notchedOutline': {
+                    borderColor: '#E5E7EB',
+                  },
+                  '&:hover .MuiOutlinedInput-notchedOutline': {
+                    borderColor: '#D1D5DB',
+                  },
+                }}
               >
                 <MenuItem value="all">All States</MenuItem>
                 {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
@@ -3133,97 +3649,224 @@ const CompaniesTab: React.FC<{
               aria-label="Clear state filter"
               onClick={() => onLocationStateFilterChange('all')}
               disabled={locationStateFilter === 'all'}
+              sx={{ height: 36, width: 36, p: 0.75 }}
             >
               <ClearIcon fontSize="small" />
             </IconButton>
           </Box>
 
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={onAddNew}
-          >
-            Add Company
-          </Button>
-          {/* Duplicate cleanup (admin) */}
-          {/* <DuplicateCleanupButton tenantId={tenantId} /> */}
+          <Box sx={{ ml: 'auto' }}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AddIcon />}
+              onClick={onAddNew}
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                textTransform: 'none',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                px: 2.5,
+                py: 0.75
+              }}
+            >
+              Add Company
+            </Button>
+          </Box>
         </Box>
       </Box>
+      
+      {/* Divider */}
+      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Companies Table */}
-      <TableContainer component={Paper}>
-        {loading ? null : (
-        <Table>
+      <TableContainer component={Paper} sx={{ 
+        overflowX: 'auto',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+      }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : (
+        <Table sx={{ minWidth: 1200 }}>
           <TableHead>
-            <TableRow>
-              <TableCell>Company Name</TableCell>
-              <TableCell>Contacts</TableCell>
-              <TableCell>Deals</TableCell>
-              <TableCell>Pipeline Value</TableCell>
-              <TableCell>Closed Value</TableCell>
-              <TableCell>Account Owner</TableCell>
-              <TableCell>Actions</TableCell>
+            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Company Name
+              </TableCell>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Contacts
+              </TableCell>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Deals
+              </TableCell>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                textAlign: 'right',
+                py: 1.5
+              }}>
+                Pipeline Value
+              </TableCell>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                textAlign: 'right',
+                py: 1.5
+              }}>
+                Closed Value
+              </TableCell>
+              <TableCell sx={{ 
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                Account Owner
+              </TableCell>
+
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredCompanies.map((company) => (
-              <TableRow key={company.id} hover>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <BusinessIcon color="primary" />
-                    <Typography variant="body2" fontWeight="medium">
+              <TableRow 
+                key={company.id} 
+                hover
+                onClick={() => handleViewCompany(company)}
+                sx={{ 
+                  height: '48px',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    backgroundColor: '#F9FAFB'
+                  }
+                }}
+              >
+                <TableCell sx={{ px: 2, py: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Avatar 
+                      src={company.logo || company.logoUrl || company.logo_url || company.avatar}
+                      sx={{ 
+                        width: 32, 
+                        height: 32,
+                        backgroundColor: getAvatarColor(company.companyName || company.name || ''),
+                        color: getAvatarTextColor(company.companyName || company.name || ''),
+                        fontWeight: 600,
+                        fontSize: '12px'
+                      }}
+                    >
+                      {(company.companyName || company.name || '?').charAt(0).toUpperCase()}
+                    </Avatar>
+                    <Typography 
+                      variant="body2" 
+                      fontWeight={600} 
+                      color="#111827"
+                      sx={{ fontSize: '0.9375rem' }}
+                    >
                       {company.companyName || company.name || company.legalName || '-'}
                     </Typography>
                   </Box>
                 </TableCell>
-                <TableCell>
-                  <Badge badgeContent={getCompanyContacts(company.id).length} color="primary">
-                    <PersonIcon />
-                  </Badge>
+                <TableCell sx={{ py: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <PersonIcon sx={{ color: '#9CA3AF', fontSize: 18 }} />
+                    <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                      {getCompanyContacts(company.id).length}
+                    </Typography>
+                  </Box>
                 </TableCell>
-                <TableCell>
-                  <Badge badgeContent={getCompanyDeals(company.id).length} color="secondary">
-                    <DealIcon />
-                  </Badge>
+                <TableCell sx={{ py: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <DealIcon sx={{ color: '#9CA3AF', fontSize: 18 }} />
+                    <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                      {getCompanyDeals(company.id).length}
+                    </Typography>
+                  </Box>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ py: 1, textAlign: 'right' }}>
                   {(() => {
                     const pipeline = getCompanyPipelineValue(company);
                     if (pipeline.dealCount === 0) {
-                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                      return <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>;
                     }
                     return (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        <Typography variant="body2" fontWeight="medium">
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-end' }}>
+                        <Typography 
+                          variant="body2" 
+                          fontWeight={500}
+                          color="#374151"
+                          sx={{ fontSize: '0.8125rem' }}
+                        >
                           {formatCurrency(pipeline.totalLow)} - {formatCurrency(pipeline.totalHigh)}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" color="#9CA3AF" sx={{ fontSize: '0.6875rem' }}>
                           {pipeline.dealCount} deal{pipeline.dealCount !== 1 ? 's' : ''}
                         </Typography>
                       </Box>
                     );
                   })()}
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ py: 1, textAlign: 'right' }}>
                   {(() => {
                     const closed = getCompanyClosedValue(company);
                     if (closed.dealCount === 0) {
-                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                      return <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>;
                     }
                     return (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        <Typography variant="body2" fontWeight="medium" color="success.main">
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, alignItems: 'flex-end' }}>
+                        <Typography 
+                          variant="body2" 
+                          fontWeight={500}
+                          color="#059669"
+                          sx={{ fontSize: '0.8125rem' }}
+                        >
                           {formatCurrency(closed.totalValue)}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" color="#9CA3AF" sx={{ fontSize: '0.6875rem' }}>
                           {closed.dealCount} deal{closed.dealCount !== 1 ? 's' : ''}
                         </Typography>
                       </Box>
                     );
                   })()}
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ py: 1 }}>
                   {(() => {
                     // Get associated salespeople for this company using the associations system
                     const salespeople = new Set<string>();
@@ -3265,46 +3908,23 @@ const CompaniesTab: React.FC<{
                     const salespeopleList = Array.from(salespeople);
                     
                     if (salespeopleList.length === 0) {
-                      return <Typography variant="body2" color="text.secondary">-</Typography>;
+                      return <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>;
                     }
                     
+                    const primarySalesperson = salespeopleList[0];
+                    const displayName = primarySalesperson.includes('@') 
+                      ? primarySalesperson.split('@')[0] 
+                      : `${primarySalesperson.split(' ')[0]} ${primarySalesperson.split(' ')[1]?.[0] || ''}.`;
+                    
                     return (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        {salespeopleList.slice(0, 2).map((salesperson, index) => (
-                          <Typography key={index} variant="body2" fontWeight="medium">
-                            {salesperson}
-                          </Typography>
-                        ))}
-                        {salespeopleList.length > 2 && (
-                          <Typography variant="caption" color="text.secondary">
-                            +{salespeopleList.length - 2} more
-                          </Typography>
-                        )}
-                      </Box>
+                      <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                        {displayName}
+                        {salespeopleList.length > 1 && ` +${salespeopleList.length - 1}`}
+                      </Typography>
                     );
                   })()}
                 </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => handleViewCompany(company)}
-                      sx={{ minWidth: 'auto', px: 1 }}
-                    >
-                      View
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color="secondary"
-                      onClick={() => onUpdatePipelineTotals(company.id)}
-                      sx={{ minWidth: 'auto', px: 1 }}
-                    >
-                      Update Totals
-                    </Button>
-                  </Box>
-                </TableCell>
+
               </TableRow>
             ))}
           </TableBody>
@@ -3314,11 +3934,11 @@ const CompaniesTab: React.FC<{
 
 
       {/* Pagination Controls */}
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, gap: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, gap: 2 }}>
         {loading && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <CircularProgress size={20} />
-            <Typography variant="body2">Loading companies...</Typography>
+            <Typography variant="body2" color="#6B7280">Loading companies...</Typography>
           </Box>
         )}
         {hasMore && !loading && (
@@ -3326,21 +3946,71 @@ const CompaniesTab: React.FC<{
             variant="outlined"
             onClick={onLoadMore}
             disabled={loading}
+            sx={{
+              borderRadius: '8px',
+              textTransform: 'none',
+              fontWeight: 500,
+              borderColor: '#E5E7EB',
+              color: '#6B7280',
+              '&:hover': {
+                borderColor: '#D1D5DB',
+                backgroundColor: '#F9FAFB',
+              }
+            }}
           >
             Load More Companies
           </Button>
         )}
         {!hasMore && companies.length > 0 && (
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" color="#6B7280">
             All companies loaded ({companies.length} total)
           </Typography>
         )}
-        {!hasMore && companies.length === 0 && !loading && (
-          <Typography variant="body2" color="text.secondary">
-            No companies found
-          </Typography>
-        )}
       </Box>
+
+      {/* Empty State */}
+      {filteredCompanies.length === 0 && !loading && (
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          py: 8,
+          textAlign: 'center'
+        }}>
+          <Box sx={{ 
+            width: 120, 
+            height: 120, 
+            borderRadius: '50%', 
+            backgroundColor: '#F3F4F6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            mb: 3
+          }}>
+            <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+          </Box>
+          <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827', mb: 1 }}>
+            No companies yet
+          </Typography>
+          <Typography variant="body2" color="#6B7280" sx={{ mb: 3 }}>
+            Add your first company to start building your CRM
+          </Typography>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={onAddNew}
+            sx={{
+              borderRadius: '8px',
+              textTransform: 'none',
+              fontWeight: 500
+            }}
+          >
+            Add Your First Company
+          </Button>
+        </Box>
+      )}
 
       {/* Company Dialog */}
       <Dialog open={showCompanyDialog} onClose={() => setShowCompanyDialog(false)} maxWidth="md" fullWidth>
@@ -3500,6 +4170,38 @@ const CompaniesTab: React.FC<{
   // Salesperson filter state
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
 
+  // Helper function to get avatar background color - softer pastel palette
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      '#F3F4F6', // Light gray
+      '#FEF3C7', // Light yellow
+      '#DBEAFE', // Light blue
+      '#D1FAE5', // Light green
+      '#FCE7F3', // Light pink
+      '#EDE9FE', // Light purple
+      '#FEE2E2', // Light red
+      '#FEF5E7'  // Light orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
+  // Helper function to get avatar text color - darker for contrast
+  const getAvatarTextColor = (name: string) => {
+    const colors = [
+      '#6B7280', // Gray
+      '#92400E', // Amber
+      '#1E40AF', // Blue
+      '#065F46', // Green
+      '#BE185D', // Pink
+      '#5B21B6', // Purple
+      '#DC2626', // Red
+      '#EA580C'  // Orange
+    ];
+    const index = name.charCodeAt(0) % colors.length;
+    return colors[index];
+  };
+
   const getDealContactsFromAssociations = (deal: any) => {
     const assocContacts = (deal?.associations?.contacts || []) as any[];
     const ids = assocContacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
@@ -3577,21 +4279,12 @@ const CompaniesTab: React.FC<{
   };
 
   const getUserDealsCount = () => {
-    // Count deals that belong to the current user
-    return allDeals.filter(deal => {
-      // Check if user is in the salespeople array
-      if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
-        return deal.associations.salespeople.some((salesperson: any) => {
-          if (typeof salesperson === 'string') {
-            return salesperson === currentUser?.uid;
-          } else if (salesperson && typeof salesperson === 'object') {
-            return salesperson.id === currentUser?.uid;
-          }
-          return false;
-        });
-      }
-      return false;
-    }).length;
+    // Count deals that belong to the current user using unified association logic
+    const userDeals = AssociationUtils.getUserAssociatedDeals(allDeals, currentUser?.uid);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🔍 User deals count: ${userDeals.length} for user ${currentUser?.uid}`);
+    }
+    return userDeals.length;
   };
 
   const getDealOwner = (deal: any) => {
@@ -3686,6 +4379,19 @@ const CompaniesTab: React.FC<{
   const filteredDeals = React.useMemo(() => {
     let filtered = deals;
     
+    // Apply deal filter (all vs my)
+    if (dealFilter === 'my' && currentUser?.uid) {
+      const beforeFilter = filtered.length;
+      filtered = filtered.filter(deal => {
+        // Use the unified association logic to check if deal is associated with current user
+        return AssociationUtils.isDealAssociatedWithUser(deal, currentUser.uid);
+      });
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`🔍 Deal filtering: ${beforeFilter} -> ${filtered.length} deals for user ${currentUser.uid}`);
+      }
+    }
+    
     // Apply salesperson filter
     if (selectedSalesperson !== 'all') {
       filtered = filtered.filter(deal => {
@@ -3722,7 +4428,7 @@ const CompaniesTab: React.FC<{
     });
     
     return filtered;
-  }, [deals, search, sortField, sortDirection, selectedSalesperson]);
+  }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson]);
 
 
 
@@ -3799,9 +4505,22 @@ const CompaniesTab: React.FC<{
   return (
     <Box>
       {/* Header with search and actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Opportunities ({filteredDeals.length})</Typography>
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
+          Opportunities ({filteredDeals.length})
+        </Typography>
+      </Box> */}
+
+      {/* Filter & Toolbar Area - Consolidated with card background */}
+      <Box sx={{ 
+        mb: 2,
+        p: 1.5,
+        backgroundColor: '#F9FAFB',
+        borderRadius: '8px',
+        border: '1px solid #E5E7EB',
+        borderBottom: '1px solid #D1D5DB'
+      }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Deal Filter Toggle */}
           <ToggleButtonGroup
             value={dealFilter}
@@ -3812,23 +4531,57 @@ const CompaniesTab: React.FC<{
               }
             }}
             size="small"
-            sx={{ mr: 2 }}
+            sx={{ 
+              height: 36,
+              '& .MuiToggleButton-root': {
+                px: 2.5,
+                py: 0.75,
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+                borderRadius: '18px',
+                border: '1px solid #E5E7EB',
+                color: '#6B7280',
+                backgroundColor: 'white',
+                '&.Mui-selected': {
+                  backgroundColor: '#0B63C5',
+                  color: 'white',
+                  '&:hover': {
+                    backgroundColor: '#0B63C5',
+                  }
+                },
+                '&:hover': {
+                  backgroundColor: '#F3F4F6',
+                }
+              }
+            }}
           >
-            <ToggleButton value="all">
-              All Opportunities ({allDeals.length})
+            <ToggleButton value="all" sx={{ mr: 1 }}>
+              All Opportunities
             </ToggleButton>
             <ToggleButton value="my">
-              My Opportunities ({getUserDealsCount()})
+              My Opportunities
             </ToggleButton>
           </ToggleButtonGroup>
           
           {/* Salesperson Filter */}
-          <FormControl size="small" sx={{ minWidth: 200, mr: 2 }}>
-            <InputLabel>Salesperson</InputLabel>
+          <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+            <InputLabel sx={{ fontSize: '0.875rem' }}>Salesperson</InputLabel>
             <Select
               value={selectedSalesperson}
               onChange={(e) => setSelectedSalesperson(e.target.value)}
               label="Salesperson"
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#D1D5DB',
+                },
+              }}
             >
               <MenuItem value="all">All Salespeople</MenuItem>
               {salesTeam.map((salesperson) => (
@@ -3844,124 +4597,297 @@ const CompaniesTab: React.FC<{
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             size="small"
-            sx={{ minWidth: 300 }}
+            sx={{ 
+              minWidth: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchIcon />
+                  <SearchIcon sx={{ color: '#9CA3AF', fontSize: '18px' }} />
                 </InputAdornment>
               ),
             }}
           />
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={() => setShowNewOpportunityDialog(true)}
-          >
-            Add New Opportunity
-          </Button>
+          
+          <Box sx={{ ml: 'auto' }}>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AddIcon />}
+              onClick={() => setShowNewOpportunityDialog(true)}
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                textTransform: 'none',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                px: 2.5,
+                py: 0.75
+              }}
+            >
+              Add New Opportunity
+            </Button>
+          </Box>
         </Box>
       </Box>
+      
+      {/* Divider */}
+      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Deals Table */}
-        <TableContainer component={Paper} sx={{ overflowX: 'auto' }} data-testid="customers-list">
+        <TableContainer component={Paper} sx={{ 
+          overflowX: 'auto',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+        }} data-testid="customers-list">
           <Table sx={{ minWidth: 1400 }} data-testid="customers-table">
           <TableHead>
-            <TableRow>
-              <TableCell sx={{ width: 250 }}>
+            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+              <TableCell sx={{ 
+                width: 250,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'name'}
                   direction={sortField === 'name' ? sortDirection : 'asc'}
                   onClick={() => handleSort('name')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Deal Name
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 150 }}>
+              <TableCell sx={{ 
+                width: 150,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'company'}
                   direction={sortField === 'company' ? sortDirection : 'asc'}
                   onClick={() => handleSort('company')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Company
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 120 }}>
+              <TableCell sx={{ 
+                width: 120,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'stage'}
                   direction={sortField === 'stage' ? sortDirection : 'asc'}
                   onClick={() => handleSort('stage')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Stage
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 120 }}>
+              <TableCell sx={{ 
+                width: 120,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                textAlign: 'right',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'value'}
                   direction={sortField === 'value' ? sortDirection : 'asc'}
                   onClick={() => handleSort('value')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Value
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 120 }}>
+              <TableCell sx={{ 
+                width: 120,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'closeDate'}
                   direction={sortField === 'closeDate' ? sortDirection : 'asc'}
                   onClick={() => handleSort('closeDate')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Close Date
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 100 }}>
+              <TableCell sx={{ 
+                width: 100,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
                 <TableSortLabel
                   active={sortField === 'owner'}
                   direction={sortField === 'owner' ? sortDirection : 'asc'}
                   onClick={() => handleSort('owner')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
                 >
                   Owner
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: 150 }}>Actions</TableCell>
+
             </TableRow>
           </TableHead>
           <TableBody>
             {filteredDeals.map((deal) => (
-              <TableRow key={deal.id} hover>
-                <TableCell>
-                  <Typography variant="body2" fontWeight="medium">
+              <TableRow 
+                key={deal.id} 
+                hover
+                onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                sx={{ 
+                  height: '48px',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    backgroundColor: '#F9FAFB'
+                  }
+                }}
+              >
+                <TableCell sx={{ py: 1 }}>
+                  <Typography 
+                    variant="body2" 
+                    fontWeight={600}
+                    sx={{ fontSize: '0.9375rem' }}
+                  >
                     {deal.name}
                   </Typography>
                 </TableCell>
-                <TableCell>
-                  {getDealCompanyName(deal)}
+                <TableCell sx={{ py: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Avatar 
+                      src={(() => {
+                        const primaryId = getDealPrimaryCompanyId(deal);
+                        if (primaryId) {
+                          const company = companies.find(c => c.id === primaryId);
+                          return company?.logo || company?.logoUrl || company?.logo_url || company?.avatar;
+                        }
+                        return null;
+                      })()}
+                      sx={{ 
+                        width: 24, 
+                        height: 24,
+                        backgroundColor: getAvatarColor(getDealCompanyName(deal) || ''),
+                        color: getAvatarTextColor(getDealCompanyName(deal) || ''),
+                        fontWeight: 600,
+                        fontSize: '10px'
+                      }}
+                    >
+                      {getDealCompanyName(deal)?.charAt(0)?.toUpperCase() || '?'}
+                    </Avatar>
+                    <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                      {getDealCompanyName(deal)}
+                    </Typography>
+                  </Box>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ py: 1 }}>
                   <StageChip 
                     stage={deal.stage} 
                     size="small" 
                     useCustomColors={true}
                   />
                 </TableCell>
-                <TableCell>
-                  <Typography variant="body2" fontWeight="medium">
+                <TableCell sx={{ py: 1, textAlign: 'right' }}>
+                  <Typography 
+                    variant="body2" 
+                    fontWeight={500}
+                    color="#374151"
+                    sx={{ fontSize: '0.8125rem' }}
+                  >
                     {getDealEstimatedValue(deal)}
                   </Typography>
                 </TableCell>
-                <TableCell>{getDealCloseDate(deal)}</TableCell>
-                <TableCell>{getDealOwner(deal)}</TableCell>
-                <TableCell>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<VisibilityIcon />}
-                    onClick={() => navigate(`/crm/deals/${deal.id}`)}
-                    sx={{ minWidth: 80 }}
-                  >
-                    View
-                  </Button>
+                <TableCell sx={{ py: 1 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {getDealCloseDate(deal)}
+                  </Typography>
                 </TableCell>
+                <TableCell sx={{ py: 1 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {getDealOwner(deal)}
+                  </Typography>
+                </TableCell>
+
               </TableRow>
             ))}
           </TableBody>
@@ -4425,7 +5351,9 @@ const SalesDashboard: React.FC<{
   tasks: any[];
   pipelineStages: any[];
   allCompanies: any[];
-}> = ({ tenantId, currentUser, deals, companies, contacts, tasks, pipelineStages, allCompanies }) => {
+  allDeals: any[];
+  initialDataLoaded: boolean;
+}> = ({ tenantId, currentUser, deals, companies, contacts, tasks, pipelineStages, allCompanies, allDeals, initialDataLoaded }) => {
   const navigate = useNavigate();
   const [userData, setUserData] = useState<any>(null);
   const [loadingUser, setLoadingUser] = useState(true);
@@ -4460,41 +5388,21 @@ const SalesDashboard: React.FC<{
     fetchUserData();
   }, [currentUser?.uid, tenantId]);
   
-  // Calculate dashboard metrics
-  const myDeals = React.useMemo(() => deals.filter(deal => {
-    if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
-      return deal.associations.salespeople.some((salesperson: any) => {
-        if (typeof salesperson === 'string') {
-          return salesperson === currentUser?.uid;
-        } else if (salesperson && typeof salesperson === 'object') {
-          return salesperson.id === currentUser?.uid;
-        }
-        return false;
-      });
-    }
-    return false;
-  }), [deals, currentUser?.uid]);
+  // Calculate dashboard metrics using unified association logic
+  const myDeals = React.useMemo(() => 
+    AssociationUtils.getUserAssociatedDeals(allDeals, currentUser?.uid), 
+    [allDeals, currentUser?.uid]
+  );
 
-  const myCompanies = React.useMemo(() => companies.filter(company => {
-    if (company.associations?.salespeople && company.associations.salespeople.length > 0) {
-      return company.associations.salespeople.some((salesperson: any) => {
-        if (typeof salesperson === 'string') {
-          return salesperson === currentUser?.uid;
-        } else if (salesperson && typeof salesperson === 'object') {
-          return salesperson.id === currentUser?.uid;
-        }
-        return false;
-      });
-    }
-    return false;
-  }), [companies, currentUser?.uid]);
+  const myCompanies = React.useMemo(() => 
+    AssociationUtils.getUserAssociatedCompanies(allCompanies, currentUser?.uid), 
+    [allCompanies, currentUser?.uid]
+  );
 
-  const myContacts = React.useMemo(() => contacts.filter(contact => {
-    const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
-    return assocCompanies.some(companyId => 
-      myCompanies.some(company => company.id === companyId)
-    );
-  }), [contacts, myCompanies]);
+  const myContacts = React.useMemo(() => 
+    AssociationUtils.getUserAssociatedContacts(contacts, currentUser?.uid, myCompanies.map(c => c.id)), 
+    [contacts, myCompanies]
+  );
 
   const myTasks = React.useMemo(() => tasks.filter(task => task.assignedTo === currentUser?.uid), [tasks, currentUser?.uid]);
 
@@ -4570,9 +5478,9 @@ const SalesDashboard: React.FC<{
         <Typography variant="h4" gutterBottom>
           Welcome back, {loadingUser ? '...' : (userData?.firstName || 'there')}!
         </Typography>
-        <Typography variant="body1" color="text.secondary">
+        {/* <Typography variant="body1" color="text.secondary">
           Here's your sales dashboard overview
-        </Typography>
+        </Typography> */}
       </Box>
 
 
@@ -4653,59 +5561,6 @@ const SalesDashboard: React.FC<{
               </CardContent>
             </Card>
 
-            {/* Key Metrics */}
-            <Card>
-              <CardHeader 
-                title="Key Metrics" 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ p: 2 }}>
-                <Grid container spacing={2}>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h4" color="primary" fontWeight="bold">
-                        {myDeals.length}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        My Deals
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h4" color="success.main" fontWeight="bold">
-                        {formatCurrency(pipelineValue)}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Pipeline Value
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h4" color="info.main" fontWeight="bold">
-                        {myCompanies.length}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        My Companies
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h4" color="warning.main" fontWeight="bold">
-                        {myContacts.length}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        My Contacts
-                      </Typography>
-                    </Box>
-                  </Grid>
-                </Grid>
-              </CardContent>
-            </Card>
-
-
           </Box>
         </Grid>
 
@@ -4753,9 +5608,70 @@ const SalesDashboard: React.FC<{
           </Box>
         </Grid>
 
-        {/* Right Column - Quick Actions */}
+        {/* Right Column - Key Metrics & Quick Actions */}
         <Grid item xs={12} md={3}>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+
+            {/* Key Metrics */}
+            <Card>
+              <CardHeader 
+                title="Key Metrics" 
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 2 }}>
+                {!initialDataLoaded ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 4 }}>
+                    <CircularProgress size={24} />
+                    <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
+                      Loading metrics...
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="primary" fontWeight="bold">
+                          {myDeals.length}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          My Deals
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="success.main" fontWeight="bold">
+                          {formatCurrency(pipelineValue)}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          Pipeline Value
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="info.main" fontWeight="bold">
+                          {myCompanies.length}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          My Companies
+                        </Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Box sx={{ textAlign: 'center', p: 1 }}>
+                        <Typography variant="h4" color="warning.main" fontWeight="bold">
+                          {myContacts.length}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          My Contacts
+                        </Typography>
+                      </Box>
+                    </Grid>
+                  </Grid>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Quick Actions */}
             <Card>

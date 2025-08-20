@@ -50,7 +50,7 @@ export const enhancedChatWithGPT = onRequest({
   
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
@@ -59,7 +59,7 @@ export const enhancedChatWithGPT = onRequest({
 
     const { tenantId, userId, threadId, messages, toolMode } = req.body || {};
     if (!tenantId || !userId || !threadId || !Array.isArray(messages)) {
-      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
@@ -127,7 +127,7 @@ export const enhancedChatWithGPT = onRequest({
     // Call OpenAI with enhanced context
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.status(500).json({ error: 'OpenAI API key not configured' });
       return;
     }
@@ -168,12 +168,12 @@ export const enhancedChatWithGPT = onRequest({
       }
     }
 
-    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
     res.json({ reply, latencyMs: Date.now() - startedAt });
 
   } catch (error) {
     console.error('enhancedChatWithGPT error:', error);
-    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

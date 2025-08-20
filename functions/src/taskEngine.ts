@@ -584,7 +584,10 @@ export const deleteTask = onCall({
 
     const taskData = taskDoc.data();
 
-    // Create AI log for task deletion (with error handling)
+    // Delete the task first
+    await taskRef.delete();
+
+    // Create AI log for task deletion (with comprehensive error handling)
     try {
       await createTaskAILog(
         'task.deleted',
@@ -599,12 +602,13 @@ export const deleteTask = onCall({
           originalPriority: taskData?.priority
         })
       );
+      console.log(`✅ AI log created for task deletion: ${taskId}`);
     } catch (aiLogError) {
       console.warn('⚠️ Failed to create AI log for task deletion:', aiLogError);
+      console.warn('⚠️ This is likely due to permission restrictions on ai_logs collection');
+      console.warn('⚠️ Task deletion completed successfully despite AI log failure');
       // Continue with task deletion even if AI log fails
     }
-
-    await taskRef.delete();
 
     console.log(`✅ Task deleted: ${taskId}`);
 

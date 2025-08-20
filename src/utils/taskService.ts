@@ -5,9 +5,44 @@ import { httpsCallable } from 'firebase/functions';
 import { collection, collectionGroup, query, where, onSnapshot } from 'firebase/firestore';
 
 import { functions, db } from '../firebase';
-import { CRMTask, TaskDashboard as TaskDashboardData } from '../types/Tasks';
+import { CRMTask, TaskDashboard } from '../types/Tasks';
 
-import { ActivityService } from './activityService';
+// Define the interface that components expect
+interface TaskDashboardData {
+  today: {
+    totalTasks: number;
+    completedTasks: number;
+    pendingTasks: number;
+    tasks: any[];
+  };
+  thisWeek: {
+    totalTasks: number;
+    completedTasks: number;
+    pendingTasks: number;
+    quotaProgress: {
+      percentage: number;
+      completed: number;
+      target: number;
+    };
+    tasks: any[];
+  };
+  completed: {
+    totalTasks: number;
+    tasks: any[];
+  };
+  priorities: {
+    high: number;
+    medium: number;
+    low: number;
+  };
+  types: {
+    email: number;
+    phone_call: number;
+    scheduled_meeting_virtual: number;
+    research: number;
+    custom: number;
+  };
+}
 
 export class TaskService {
   private static instance: TaskService;
@@ -31,18 +66,7 @@ export class TaskService {
       const result = await createTaskFunction(taskData);
       const response = result.data as { taskId: string; success: boolean };
       
-      // Log activity
-      const activityService = new ActivityService(taskData.tenantId, taskData.createdBy);
-      await activityService.logTaskActivity(
-        'salesperson',
-        taskData.assignedTo,
-        {
-          title: taskData.title,
-          description: taskData.description || '',
-          status: taskData.status === 'completed' ? 'completed' : 'pending',
-          priority: taskData.priority === 'urgent' ? 'high' : taskData.priority
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -57,20 +81,7 @@ export class TaskService {
       const result = await updateTaskFunction({ taskId, updates, tenantId });
       const response = result.data as { success: boolean };
       
-      // Log activity
-      if (updates.tenantId && updates.createdBy) {
-        const activityService = new ActivityService(updates.tenantId, updates.createdBy);
-        await activityService.logTaskActivity(
-          'salesperson',
-          updates.assignedTo || '',
-          {
-            title: updates.title || '',
-            description: updates.description || '',
-            status: updates.status === 'completed' ? 'completed' : 'pending',
-            priority: updates.priority === 'urgent' ? 'high' : (updates.priority || 'medium')
-          }
-        );
-      }
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -85,18 +96,7 @@ export class TaskService {
       const result = await completeTaskFunction({ taskId, completionData, tenantId });
       const response = result.data as { success: boolean };
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: `Completed task`,
-          description: completionData.notes || 'Task completed',
-          status: 'completed',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -105,102 +105,13 @@ export class TaskService {
     }
   }
 
-  async deleteTask(taskId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
-    try {
-      const deleteTaskFunction = httpsCallable(functions, 'deleteTask');
-      const result = await deleteTaskFunction({ taskId, tenantId });
-      const response = result.data as { success: boolean };
-      
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: `Deleted task`,
-          description: 'Task was deleted',
-          status: 'cancelled',
-          priority: 'medium'
-        }
-      );
-      
-      return response;
-    } catch (error) {
-      console.error('Error deleting task:', error);
-      throw error;
-    }
-  }
-
-  // 📅 TASK QUERIES & FILTERING
-  
-  async getTasks(query: any): Promise<CRMTask[]> {
-    try {
-      const getTasksFunction = httpsCallable(functions, 'getTasks');
-      const result = await getTasksFunction({ query });
-      return result.data as CRMTask[];
-    } catch (error) {
-      console.error('Error fetching tasks:', error);
-      throw error;
-    }
-  }
-
-  async getTasksForDate(date: string, userId?: string): Promise<CRMTask[]> {
-    try {
-      const getTasksForDateFunction = httpsCallable(functions, 'getTasksForDate');
-      const result = await getTasksForDateFunction({ date, userId });
-      return result.data as CRMTask[];
-    } catch (error) {
-      console.error('Error fetching tasks for date:', error);
-      throw error;
-    }
-  }
-
-  async getTaskDashboard(
-    userId: string, 
-    date: string, 
-    tenantId: string,
-    filters?: { dealId?: string; companyId?: string; contactId?: string }
-  ): Promise<any> {
-    try {
-      const getTaskDashboardFunction = httpsCallable(functions, 'getTaskDashboard');
-      const result = await getTaskDashboardFunction({
-        userId,
-        date,
-        tenantId,
-        filters
-      });
-      return result.data;
-    } catch (error) {
-      console.error('Error fetching task dashboard:', error);
-      throw error;
-    }
-  }
-
-  // 🚀 QUICK ACTIONS
-  
   async quickCompleteTask(taskId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
-      // Use the more reliable completeTask function instead of quickCompleteTask
-      const completeFunction = httpsCallable(functions, 'completeTask');
-      const result = await completeFunction({ 
-        taskId, 
-        tenantId,
-        actionResult: 'Quickly completed via UI'
-      });
+      const quickCompleteTaskFunction = httpsCallable(functions, 'quickCompleteTask');
+      const result = await quickCompleteTaskFunction({ taskId, tenantId });
       const response = result.data as { success: boolean };
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: 'Task completed',
-          description: 'Task was quickly completed',
-          status: 'completed',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -209,123 +120,88 @@ export class TaskService {
     }
   }
 
-  async postponeTask(taskId: string, newDate: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
+  async deleteTask(taskId: string, tenantId: string, userId?: string): Promise<{ success: boolean }> {
     try {
-      const postponeFunction = httpsCallable(functions, 'postponeTask');
-      const result = await postponeFunction({ taskId, newDate });
+      const deleteTaskFunction = httpsCallable(functions, 'deleteTask');
+      const result = await deleteTaskFunction({ taskId, tenantId, userId });
       const response = result.data as { success: boolean };
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: 'Task postponed',
-          description: `Task postponed to ${newDate}`,
-          status: 'pending',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
-      console.error('Error postponing task:', error);
+      console.error('Error deleting task:', error);
       throw error;
     }
   }
 
-  async rescheduleTask(taskId: string, newDate: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
+  async getTasks(tenantId: string, filters: any = {}): Promise<CRMTask[]> {
     try {
-      const rescheduleFunction = httpsCallable(functions, 'rescheduleTask');
-      const result = await rescheduleFunction({ taskId, newDate });
-      const response = result.data as { success: boolean };
+      const getTasksFunction = httpsCallable(functions, 'getTasks');
+      const result = await getTasksFunction({ tenantId, filters });
+      const response = result.data as CRMTask[];
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: 'Task rescheduled',
-          description: `Task rescheduled to ${newDate}`,
-          status: 'pending',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
-      console.error('Error rescheduling task:', error);
+      console.error('Error getting tasks:', error);
       throw error;
     }
   }
 
-  async reassignTask(taskId: string, newAssignee: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
+  async getTasksForDate(tenantId: string, date: string, userId?: string, filters?: any): Promise<CRMTask[]> {
     try {
-      const reassignFunction = httpsCallable(functions, 'reassignTask');
-      const result = await reassignFunction({ taskId, newAssignee });
-      const response = result.data as { success: boolean };
+      const getTasksForDateFunction = httpsCallable(functions, 'getTasksForDate');
+      const result = await getTasksForDateFunction({ tenantId, date, userId, filters });
+      const response = result.data as CRMTask[];
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: 'Task reassigned',
-          description: `Task reassigned to ${newAssignee}`,
-          status: 'pending',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
-      console.error('Error reassigning task:', error);
+      console.error('Error getting tasks for date:', error);
       throw error;
     }
   }
 
-  // 🤖 AI TASK SUGGESTIONS
-  
-  async getAITaskSuggestions(
-    userId: string, 
-    tenantId: string,
-    filters?: { dealId?: string; companyId?: string; contactId?: string; dealStage?: string }
-  ): Promise<any[]> {
+  async getTaskDashboard(tenantId: string, userId: string, date?: string, filters?: any): Promise<TaskDashboardData> {
+    try {
+      const getTaskDashboardFunction = httpsCallable(functions, 'getTaskDashboard');
+      const result = await getTaskDashboardFunction({ tenantId, userId, date, filters });
+      const response = result.data as TaskDashboardData;
+      
+      // Activity logging temporarily disabled
+      
+      return response;
+    } catch (error) {
+      console.error('Error getting task dashboard:', error);
+      throw error;
+    }
+  }
+
+  async getAITaskSuggestions(userId: string, tenantId: string, filters?: any): Promise<any[]> {
     try {
       const getAITaskSuggestionsFunction = httpsCallable(functions, 'getAITaskSuggestions');
-      const result = await getAITaskSuggestionsFunction({
-        userId,
-        tenantId,
-        filters
-      });
-      return (result.data as any[]) || [];
+      const result = await getAITaskSuggestionsFunction({ userId, tenantId, filters });
+      const response = result.data as any[];
+      
+      // Activity logging temporarily disabled
+      
+      return response;
     } catch (error) {
-      console.error('Error fetching AI task suggestions:', error);
+      console.error('Error getting AI task suggestions:', error);
       throw error;
     }
   }
 
-  async acceptAITaskSuggestion(suggestionId: string, tenantId: string, userId: string): Promise<{ taskId: string; success: boolean }> {
+  async acceptAITaskSuggestion(suggestionId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
-      const acceptSuggestionFunction = httpsCallable(functions, 'acceptAITaskSuggestion');
-      const result = await acceptSuggestionFunction({ suggestionId });
-      const response = result.data as { taskId: string; success: boolean };
+      const acceptAITaskSuggestionFunction = httpsCallable(functions, 'acceptAITaskSuggestion');
+      const result = await acceptAITaskSuggestionFunction({ suggestionId, tenantId, userId });
+      const response = result.data as { success: boolean };
       
-      // Log activity
-      const activityService = new ActivityService(tenantId, userId);
-      await activityService.logTaskActivity(
-        'salesperson',
-        userId,
-        {
-          title: 'AI suggestion accepted',
-          description: 'AI task suggestion was accepted',
-          status: 'completed',
-          priority: 'medium'
-        }
-      );
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -334,26 +210,13 @@ export class TaskService {
     }
   }
 
-  async rejectAITaskSuggestion(suggestionId: string, reason?: string, tenantId?: string, userId?: string): Promise<{ success: boolean }> {
+  async rejectAITaskSuggestion(suggestionId: string, tenantId: string, userId: string): Promise<{ success: boolean }> {
     try {
-      const rejectSuggestionFunction = httpsCallable(functions, 'rejectAITaskSuggestion');
-      const result = await rejectSuggestionFunction({ suggestionId, reason });
+      const rejectAITaskSuggestionFunction = httpsCallable(functions, 'rejectAITaskSuggestion');
+      const result = await rejectAITaskSuggestionFunction({ suggestionId, tenantId, userId });
       const response = result.data as { success: boolean };
       
-      // Log activity if tenantId and userId are provided
-      if (tenantId && userId) {
-        const activityService = new ActivityService(tenantId, userId);
-        await activityService.logTaskActivity(
-          'salesperson',
-          userId,
-          {
-            title: 'AI suggestion rejected',
-            description: reason || 'AI task suggestion was rejected',
-            status: 'cancelled',
-            priority: 'medium'
-          }
-        );
-      }
+      // Activity logging temporarily disabled
       
       return response;
     } catch (error) {
@@ -362,492 +225,267 @@ export class TaskService {
     }
   }
 
-  // 📊 TASK ANALYTICS & REPORTING
-  
-  async getTaskAnalytics(userId: string, period: string): Promise<any> {
+  async getDealStageAISuggestions(dealId: string, tenantId: string, userId: string): Promise<any[]> {
     try {
-      const getTaskAnalyticsFunction = httpsCallable(functions, 'getTaskAnalytics');
-      const result = await getTaskAnalyticsFunction({ userId, period });
-      return result.data;
-    } catch (error) {
-      console.error('Error fetching task analytics:', error);
-      throw error;
-    }
-  }
-
-  // 🎯 TASK CAMPAIGNS
-  
-  async createTaskCampaign(campaign: Omit<any, 'id' | 'createdAt' | 'updatedAt'>): Promise<any> {
-    try {
-      const createTaskCampaignFunction = httpsCallable(functions, 'createTaskCampaign');
-      const result = await createTaskCampaignFunction({ campaign });
+      const getDealStageAISuggestionsFunction = httpsCallable(functions, 'getDealStageAISuggestions');
+      const result = await getDealStageAISuggestionsFunction({ dealId, tenantId, userId });
+      const response = result.data as any[];
       
-      return result.data as any;
+      // Activity logging temporarily disabled
+      
+      return response;
     } catch (error) {
-      console.error('Error creating task campaign:', error);
+      console.error('Error getting deal stage AI suggestions:', error);
       throw error;
     }
   }
 
-  async getTaskCampaigns(tenantId: string, userId?: string): Promise<any[]> {
-    try {
-      const getTaskCampaignsFunction = httpsCallable(functions, 'getTaskCampaigns');
-      const result = await getTaskCampaignsFunction({ tenantId, userId });
-      return result.data as any[];
-    } catch (error) {
-      console.error('Error fetching task campaigns:', error);
-      throw error;
-    }
-  }
-
-  // 📝 TASK TEMPLATES
-  
-  async createTaskTemplate(template: Omit<any, 'id' | 'createdAt' | 'updatedAt'>): Promise<any> {
-    try {
-      const createTaskTemplateFunction = httpsCallable(functions, 'createTaskTemplate');
-      const result = await createTaskTemplateFunction({ template });
-      return result.data as any;
-    } catch (error) {
-      console.error('Error creating task template:', error);
-      throw error;
-    }
-  }
-
-  async getTaskTemplates(tenantId: string): Promise<any[]> {
-    try {
-      const getTaskTemplatesFunction = httpsCallable(functions, 'getTaskTemplates');
-      const result = await getTaskTemplatesFunction({ tenantId });
-      return result.data as any[];
-    } catch (error) {
-      console.error('Error fetching task templates:', error);
-      throw error;
-    }
-  }
-
-  // 🔔 REMINDERS & NOTIFICATIONS
-  
-  async getPendingReminders(userId: string): Promise<any[]> {
-    try {
-      const getPendingRemindersFunction = httpsCallable(functions, 'getPendingReminders');
-      const result = await getPendingRemindersFunction({ userId });
-      return result.data as any[];
-    } catch (error) {
-      console.error('Error fetching pending reminders:', error);
-      throw error;
-    }
-  }
-
-  // 🎯 BATCH OPERATIONS
-  
-  async batchTaskOperation(operation: any): Promise<void> {
-    try {
-      const batchTaskOperationFunction = httpsCallable(functions, 'batchTaskOperation');
-      await batchTaskOperationFunction({ operation });
-    } catch (error) {
-      console.error('Error performing batch task operation:', error);
-      throw error;
-    }
-  }
-
-  // 📅 CALENDAR INTEGRATION
-  
-  async getCalendarView(userId: string, startDate: string, endDate: string): Promise<any[]> {
-    try {
-      const getCalendarViewFunction = httpsCallable(functions, 'getCalendarView');
-      const result = await getCalendarViewFunction({ userId, startDate, endDate });
-      return result.data as any[];
-    } catch (error) {
-      console.error('Error fetching calendar view:', error);
-      throw error;
-    }
-  }
-
-  // 🔄 REAL-TIME UPDATES
-  
-  subscribeToTaskUpdates(userId: string, tenantId: string, callback: (tasks: CRMTask[]) => void): () => void {
-    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-    const q = query(tasksRef, where('assignedTo', '==', userId));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const tasks: CRMTask[] = [];
-      snapshot.forEach((doc) => {
-        tasks.push({ id: doc.id, ...doc.data() } as CRMTask);
-      });
-      callback(tasks);
-    }, (error) => {
-      console.error('Error listening to task updates:', error);
-    });
-    
-    return unsubscribe;
-  }
-
-  subscribeToTasks(
-    userId: string, 
-    tenantId: string,
-    filters: { dealId?: string; companyId?: string; contactId?: string } = {},
-    callback: (tasks: any[]) => void
-  ): () => void {
-    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-    
-    // Build query based on filters
-    let primaryQuery;
-    
-    // Special handling for dealId: support both schemas
-    if (filters.dealId) {
-      const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
-      // Collection group fallback across any nested tasks collections
-      const cgTasks = collectionGroup(db as any, 'tasks');
-      const qByAssociations = query(tasksRef, where('associations.deals', 'array-contains', filters.dealId));
-      const qByTopLevel = query(tasksRef, where('deals', 'array-contains', filters.dealId));
-      const qCrmAssoc = query(crmTasksRef, where('associations.deals', 'array-contains', filters.dealId));
-      const qCrmTop = query(crmTasksRef, where('deals', 'array-contains', filters.dealId));
-
-      let assocTasks: any[] = [];
-      let topLevelTasks: any[] = [];
-      let crmAssocTasks: any[] = [];
-      let crmTopTasks: any[] = [];
-      let cgAssocTasks: any[] = [];
-
-      const combineAndEmit = () => {
-        const byId = new Map<string, any>();
-        [...assocTasks, ...topLevelTasks, ...crmAssocTasks, ...crmTopTasks, ...cgAssocTasks].forEach((t) => byId.set(t.id, t));
-        const tasks = Array.from(byId.values());
-        // Sort: open first by due date, then completed by completion date
-        const sortedTasks = tasks.sort((a, b) => {
-          const aIsCompleted = a.status === 'completed';
-          const bIsCompleted = b.status === 'completed';
-          if (aIsCompleted && !bIsCompleted) return 1;
-          if (!aIsCompleted && bIsCompleted) return -1;
-          if (aIsCompleted && bIsCompleted) {
-            const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-            const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-            return bDate - aDate;
-          }
-          const aDate = a.dueDate ? new Date(a.dueDate + 'T00:00:00').getTime() : 0;
-          const bDate = b.dueDate ? new Date(b.dueDate + 'T00:00:00').getTime() : 0;
-          return aDate - bDate;
-        });
-        callback(sortedTasks);
-      };
-
-      const unsubA = onSnapshot(qByAssociations, (snapshot) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔎 TaskService(deal): assoc.deals snapshot size =', snapshot.size);
-        }
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        if (process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔎 TaskService(deal): assoc.deals tasks =>', list.map((t:any) => ({
-              id: t.id,
-              title: t.title,
-              assignedTo: t.assignedTo,
-              status: t.status,
-              classification: t.classification,
-              deals: t.associations?.deals
-            })));
-          } catch {}
-        }
-        assocTasks = list;
-        combineAndEmit();
-      }, (error) => console.error('Error listening to deal-associations tasks:', error));
-
-      const unsubB = onSnapshot(qByTopLevel, (snapshot) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔎 TaskService(deal): top-level deals snapshot size =', snapshot.size);
-        }
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        if (process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔎 TaskService(deal): top-level deals tasks =>', list.map((t:any) => ({
-              id: t.id,
-              title: t.title,
-              assignedTo: t.assignedTo,
-              status: t.status,
-              classification: t.classification,
-              deals: t.deals
-            })));
-          } catch {}
-        }
-        topLevelTasks = list;
-        combineAndEmit();
-      }, (error) => console.error('Error listening to deal top-level tasks:', error));
-
-      const unsubC = onSnapshot(qCrmAssoc, (snapshot) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔎 TaskService(deal): CRM assoc.deals snapshot size =', snapshot.size);
-        }
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        if (process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔎 TaskService(deal): CRM assoc.deals tasks =>', list.map((t:any) => ({
-              id: t.id,
-              title: t.title,
-              assignedTo: t.assignedTo,
-              status: t.status,
-              classification: t.classification,
-              deals: t.associations?.deals
-            })));
-          } catch {}
-        }
-        crmAssocTasks = list;
-        combineAndEmit();
-      }, (error) => console.error('Error listening to CRM deal-associations tasks:', error));
-
-      const unsubD = onSnapshot(qCrmTop, (snapshot) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔎 TaskService(deal): CRM top-level deals snapshot size =', snapshot.size);
-        }
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        if (process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔎 TaskService(deal): CRM top-level deals tasks =>', list.map((t:any) => ({
-              id: t.id,
-              title: t.title,
-              assignedTo: t.assignedTo,
-              status: t.status,
-              classification: t.classification,
-              deals: t.deals
-            })));
-          } catch {}
-        }
-        crmTopTasks = list;
-        combineAndEmit();
-      }, (error) => console.error('Error listening to CRM deal top-level tasks:', error));
-
-      // Collection group listener (fallback)
-      const cgQuery = query(cgTasks as any,
-        where('tenantId', '==', tenantId),
-        where('associations.deals', 'array-contains', filters.dealId)
-      );
-      const unsubE = onSnapshot(cgQuery as any, (snapshot) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔎 TaskService(deal): collectionGroup assoc.deals snapshot size =', snapshot.size);
-        }
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        if (process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔎 TaskService(deal): collectionGroup assoc.deals tasks =>', list.map((t:any) => ({
-              id: t.id,
-              title: t.title,
-              assignedTo: t.assignedTo,
-              status: t.status,
-              classification: t.classification,
-              deals: t.associations?.deals
-            })));
-          } catch {}
-        }
-        cgAssocTasks = list;
-        combineAndEmit();
-      }, (error) => {
-        // Many projects disallow collectionGroup reads in rules; treat as optional
-        // and silence the noisy console error if it's a permission issue.
-        // We already have primary listeners on tenant-scoped collections.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const code = (error as any)?.code || (error as any)?.message;
-        if (code === 'permission-denied' || (typeof code === 'string' && code.includes('insufficient permissions'))) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('ℹ️ Skipping collectionGroup fallback due to security rules. This is safe.');
-          }
-          return;
-        }
-        console.error('Error listening to collectionGroup tasks:', error);
-      });
-
-      return () => {
-        unsubA();
-        unsubB();
-        unsubC();
-        unsubD();
-        unsubE();
-      };
-    } else {
-      // Salesperson dashboard: include tasks assigned to user OR where user is in associations.salespeople
-      // Build two listeners and merge results
-      const qAssigned = query(tasksRef, where('assignedTo', '==', userId));
-      const qBySalesperson = query(tasksRef, where('associations.salespeople', 'array-contains', userId));
-
-      let assignedTasks: any[] = [];
-      let salespersonTasks: any[] = [];
-
-      const emitMerged = () => {
-        const byId = new Map<string, any>();
-        [...assignedTasks, ...salespersonTasks].forEach((t) => byId.set(t.id, t));
-        const tasks = Array.from(byId.values());
-        const sortedTasks = tasks.sort((a, b) => {
-          const aIsCompleted = a.status === 'completed';
-          const bIsCompleted = b.status === 'completed';
-          if (aIsCompleted && !bIsCompleted) return 1;
-          if (!aIsCompleted && bIsCompleted) return -1;
-          if (aIsCompleted && bIsCompleted) {
-            const aDate = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-            const bDate = b.completedAt ? new Date(b.completedAt).getTime() : 0;
-            return bDate - aDate;
-          }
-          const aDate = a.dueDate ? new Date(a.dueDate + 'T00:00:00').getTime() : 0;
-          const bDate = b.dueDate ? new Date(b.dueDate + 'T00:00:00').getTime() : 0;
-          return aDate - bDate;
-        });
-        callback(sortedTasks);
-      };
-
-      const unsubAssigned = onSnapshot(qAssigned, (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        assignedTasks = list;
-        emitMerged();
-      }, (error) => console.error('Error listening to assigned tasks:', error));
-
-      const unsubSalesperson = onSnapshot(qBySalesperson, (snapshot) => {
-        const list: any[] = [];
-        snapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() }));
-        salespersonTasks = list;
-        emitMerged();
-      }, (error) => console.error('Error listening to salesperson-associated tasks:', error));
-
-      return () => {
-        unsubAssigned();
-        unsubSalesperson();
-      };
-    }
-  }
-
-  private processTasksIntoDashboard(tasks: any[], date: string): any {
-    const today = new Date(date);
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay());
-    
-    const todayTasks = tasks.filter(task => {
-      const taskDate = task.dueDate || task.scheduledDate;
-      if (!taskDate) return false;
-      const taskDateObj = new Date(taskDate + 'T00:00:00');
-      return taskDateObj.toDateString() === today.toDateString();
-    });
-    
-    const thisWeekTasks = tasks.filter(task => {
-      const taskDate = task.dueDate || task.scheduledDate;
-      if (!taskDate) return false;
-      const taskDateObj = new Date(taskDate + 'T00:00:00');
-      return taskDateObj >= startOfWeek && taskDateObj <= today;
-    });
-    
-    const completedTasks = tasks.filter(task => task.status === 'completed');
-    
-    return {
-      today: {
-        totalTasks: todayTasks.length,
-        completedTasks: todayTasks.filter(t => t.status === 'completed').length,
-        pendingTasks: todayTasks.filter(t => t.status !== 'completed').length,
-        tasks: todayTasks
-      },
-      thisWeek: {
-        totalTasks: thisWeekTasks.length,
-        completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
-        pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
-        quotaProgress: {
-          percentage: 0,
-          completed: 0,
-          target: 0
-        },
-        tasks: thisWeekTasks
-      },
-      completed: {
-        totalTasks: completedTasks.length,
-        tasks: completedTasks
-      },
-      priorities: {
-        high: tasks.filter(t => t.priority === 'high').length,
-        medium: tasks.filter(t => t.priority === 'medium').length,
-        low: tasks.filter(t => t.priority === 'low').length
-      },
-      types: {
-        email: tasks.filter(t => t.type === 'email').length,
-        phone_call: tasks.filter(t => t.type === 'phone_call').length,
-        scheduled_meeting_virtual: tasks.filter(t => t.type === 'scheduled_meeting_virtual').length,
-        research: tasks.filter(t => t.type === 'research').length,
-        custom: tasks.filter(t => t.type === 'custom').length
-      }
-    };
-  }
-
-  // 🎯 UTILITY METHODS
-  
-  getTaskStatusColor(status: string): string {
-    const statusColors = {
-      upcoming: '#87CEEB', // Light Blue
-      due: '#FFA500', // Orange
-      completed: '#32CD32', // Green
-      postponed: '#808080', // Gray
-      cancelled: '#FF0000', // Red
-      in_progress: '#FFD700', // Gold
-      draft: '#D3D3D3' // Light Gray
-    };
-    return statusColors[status as keyof typeof statusColors] || '#000000';
-  }
-
-  getTaskTypeIcon(type: string): string {
-    const typeIcons = {
-      email: '📧',
-      phone_call: '📞',
-      in_person_drop_by: '🏢',
-      scheduled_meeting_in_person: '🤝',
-      scheduled_meeting_virtual: '💻',
-      linkedin_message: '💼',
-      send_gift: '🎁',
-      custom: '📝',
-      research: '🔍',
-      proposal_preparation: '📋',
-      contract_review: '📄',
-      follow_up: '🔄',
-      check_in: '✅',
-      presentation: '📊',
-      demo: '🎬',
-      negotiation: '🤝',
-      closing: '💰',
-      administrative: '📋'
-    };
-    return typeIcons[type as keyof typeof typeIcons] || '📝';
-  }
-
-  calculateTaskUrgency(task: CRMTask): number {
-    const now = new Date();
-    const dueDate = task.dueDate ? new Date(task.dueDate) : new Date(task.scheduledDate);
-    const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
-    let urgency = 5; // Base urgency
-    
-    // Adjust based on priority
-    switch (task.priority) {
-      case 'urgent': urgency += 3; break;
-      case 'high': urgency += 2; break;
-      case 'medium': urgency += 1; break;
-      case 'low': urgency -= 1; break;
-    }
-    
-    // Adjust based on time until due
-    if (daysUntilDue < 0) urgency += 3; // Overdue
-    else if (daysUntilDue === 0) urgency += 2; // Due today
-    else if (daysUntilDue <= 1) urgency += 1; // Due tomorrow
-    
-    return Math.min(10, Math.max(1, urgency));
-  }
-
-  async generateTaskContent(taskId: string, tenantId: string, userId: string): Promise<any> {
+  async generateTaskContent(taskId: string, tenantId: string, userId: string): Promise<{ success: boolean; content: any; suggestions?: any[]; insights?: any[] }> {
     try {
       const generateTaskContentFunction = httpsCallable(functions, 'generateTaskContent');
-      const result = await generateTaskContentFunction({
-        taskId,
-        tenantId,
-        userId
-      });
-      return result.data;
+      const result = await generateTaskContentFunction({ taskId, tenantId, userId });
+      const response = result.data as { title: string; description: string };
+      
+      // Activity logging temporarily disabled
+      
+      // Convert to the format expected by components
+      return {
+        success: true,
+        content: {
+          title: response.title,
+          description: response.description
+        },
+        suggestions: [],
+        insights: []
+      };
     } catch (error) {
       console.error('Error generating task content:', error);
       throw error;
     }
   }
-} 
+
+  async createNextRepeatingTask(taskId: string, tenantId: string, userId: string): Promise<{ taskId: string; success: boolean }> {
+    try {
+      const createNextRepeatingTaskFunction = httpsCallable(functions, 'createNextRepeatingTask');
+      const result = await createNextRepeatingTaskFunction({ taskId, tenantId, userId });
+      const response = result.data as { taskId: string; success: boolean };
+      
+      // Activity logging temporarily disabled
+      
+      return response;
+    } catch (error) {
+      console.error('Error creating next repeating task:', error);
+      throw error;
+    }
+  }
+
+  // 🎯 REAL-TIME SUBSCRIPTIONS
+  
+  subscribeToTasks(
+    userId: string, 
+    tenantId: string,
+    filters: { dealId?: string; companyId?: string; contactId?: string; assignedTo?: string } = {},
+    callback: (tasks: any[]) => void
+  ): () => void {
+    console.log('🔍 Subscribing to tasks with filters:', filters);
+    
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
+    
+    const unsubscribeTasks: (() => void) | null = null;
+    const unsubscribeCrmTasks: (() => void) | null = null;
+    
+    const taskSources = new Map<string, any[]>(); // Track tasks by source to avoid duplicates
+    
+    const updateCallback = () => {
+      // Merge all task sources and remove duplicates
+      const mergedTasks = new Map<string, any>();
+      
+      taskSources.forEach((tasks, source) => {
+        tasks.forEach(task => {
+          mergedTasks.set(task.id, task);
+        });
+      });
+      
+      // Convert to array and sort by creation date (newest first)
+      const sortedTasks = Array.from(mergedTasks.values()).sort((a, b) => {
+        const aDate = a.createdAt?.toDate?.() || a.createdAt || new Date(0);
+        const bDate = b.createdAt?.toDate?.() || b.createdAt || new Date(0);
+        return bDate.getTime() - aDate.getTime();
+      });
+      
+      callback(sortedTasks);
+    };
+    
+    if (filters.dealId) {
+      // Deal page: show tasks related to this deal
+      const qByDealId = query(tasksRef, where('dealId', '==', filters.dealId));
+      const qByAssociations = query(tasksRef, where('associations.deals', 'array-contains', filters.dealId));
+      const qCrmByDealId = query(crmTasksRef, where('dealId', '==', filters.dealId));
+      const qCrmByAssociations = query(crmTasksRef, where('associations.deals', 'array-contains', filters.dealId));
+      
+      // Listen to all four queries and merge results
+      const listeners = [
+        onSnapshot(qByDealId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('dealId-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('dealAssociations-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByDealId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('dealId-crm_tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('dealAssociations-crm_tasks', tasks);
+          updateCallback();
+        })
+      ];
+      
+      return () => listeners.forEach(unsubscribe => unsubscribe());
+      
+    } else if (filters.companyId) {
+      // Company page: show tasks related to this company
+      const qByCompanyId = query(tasksRef, where('companyId', '==', filters.companyId));
+      const qByAssociations = query(tasksRef, where('associations.companies', 'array-contains', filters.companyId));
+      const qCrmByCompanyId = query(crmTasksRef, where('companyId', '==', filters.companyId));
+      const qCrmByAssociations = query(crmTasksRef, where('associations.companies', 'array-contains', filters.companyId));
+      
+      // Listen to all four queries and merge results
+      const listeners = [
+        onSnapshot(qByCompanyId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('companyId-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('companyAssociations-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByCompanyId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('companyId-crm_tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('companyAssociations-crm_tasks', tasks);
+          updateCallback();
+        })
+      ];
+      
+      return () => listeners.forEach(unsubscribe => unsubscribe());
+      
+    } else if (filters.contactId) {
+      // Contact page: show ALL tasks for this contact (regardless of assignment)
+      // This includes tasks assigned to the contact, tasks where contact is in associations, etc.
+      const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks'); // Added this line
+      const qByContactId = query(tasksRef, where('contactId', '==', filters.contactId));
+      const qByAssociations = query(tasksRef, where('associations.contacts', 'array-contains', filters.contactId));
+      const qCrmByContactId = query(crmTasksRef, where('contactId', '==', filters.contactId));
+      const qCrmByAssociations = query(crmTasksRef, where('associations.contacts', 'array-contains', filters.contactId));
+      
+      // Listen to all four queries and merge results
+      const listeners = [
+        onSnapshot(qByContactId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('contactId-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('contactAssociations-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByContactId, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('contactId-crm_tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmByAssociations, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('contactAssociations-crm_tasks', tasks);
+          updateCallback();
+        })
+      ];
+      
+      return () => listeners.forEach(unsubscribe => unsubscribe());
+      
+    } else if (filters.assignedTo) { // This handles the salesperson dashboard case
+      // Salesperson dashboard: include tasks assigned to user OR where user is in associations.salespeople
+      // Note: assignedTo can be either a string or an array, so we need to handle both cases
+      const qAssigned = query(tasksRef, where('assignedTo', '==', filters.assignedTo));
+      const qAssignedArray = query(tasksRef, where('assignedTo', 'array-contains', filters.assignedTo));
+      const qBySalesperson = query(tasksRef, where('associations.salespeople', 'array-contains', filters.assignedTo));
+      const qCrmAssigned = query(crmTasksRef, where('assignedTo', '==', filters.assignedTo));
+      const qCrmAssignedArray = query(crmTasksRef, where('assignedTo', 'array-contains', filters.assignedTo));
+      const qCrmBySalesperson = query(crmTasksRef, where('associations.salespeople', 'array-contains', filters.assignedTo));
+      
+      // Listen to all six queries and merge results
+      const listeners = [
+        onSnapshot(qAssigned, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('assigned-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qAssignedArray, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('assignedArray-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qBySalesperson, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('salespersonAssociations-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmAssigned, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('assigned-crm_tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmAssignedArray, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('assignedArray-crm_tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrmBySalesperson, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('salespersonAssociations-crm_tasks', tasks);
+          updateCallback();
+        })
+      ];
+      
+      return () => listeners.forEach(unsubscribe => unsubscribe());
+      
+    } else {
+      // Default: no specific filter, perhaps show all or handle a different default
+      const q = query(tasksRef);
+      const qCrm = query(crmTasksRef);
+      
+      const listeners = [
+        onSnapshot(q, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
+          taskSources.set('default-tasks', tasks);
+          updateCallback();
+        }),
+        onSnapshot(qCrm, (snapshot) => {
+          const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
+          taskSources.set('default-crm_tasks', tasks);
+          updateCallback();
+        })
+      ];
+      
+      return () => listeners.forEach(unsubscribe => unsubscribe());
+    }
+  }
+}
+
+// Export singleton instance
+export const taskService = TaskService.getInstance(); 

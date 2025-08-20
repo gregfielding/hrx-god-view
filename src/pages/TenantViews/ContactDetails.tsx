@@ -63,6 +63,7 @@ import {
   Add as AddIcon,
   CheckCircle as CheckCircleIcon,
   RocketLaunch as RocketLaunchIcon,
+  LocationOn as LocationIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -102,11 +103,14 @@ interface ContactData {
   tags?: string[];
   isActive?: boolean;
   notes?: string;
+  headline?: string;
   address?: string;
   city?: string;
   state?: string;
   zipcode?: string;
   country?: string;
+  formattedAddress?: string;
+  timeZone?: string;
   linkedInUrl?: string;
   twitterUrl?: string;
   facebookUrl?: string;
@@ -129,6 +133,7 @@ interface ContactData {
   // AI Enhanced Fields
   enriched?: boolean;
   enrichedAt?: any;
+  lastEnrichedAt?: any;
   professionalSummary?: string;
   inferredSeniority?: string;
   inferredIndustry?: string;
@@ -179,6 +184,12 @@ interface ContactData {
     department?: string;
     lastActiveAt?: number;
   }[];
+  // Apollo enrichment data
+  apolloEnrichment?: {
+    person?: any;
+    company?: any;
+    fetchedAt?: any;
+  };
 }
 
 interface TabPanelProps {
@@ -299,7 +310,7 @@ const ContactDetails: React.FC = () => {
   };
 
   // Calculate contact metrics
-  const calculateContactMetrics = () => {
+  const calculateContactMetrics = React.useCallback(() => {
     const associatedDeals = associationsData.entities.deals || [];
     const associatedTasks = associationsData.entities.tasks || [];
     
@@ -321,10 +332,10 @@ const ContactDetails: React.FC = () => {
       completedTasks,
       totalTasks: associatedTasks.length
     };
-  };
+  }, [associationsData.entities.deals, associationsData.entities.tasks]);
 
   // Generate contact insights
-  const generateContactInsights = () => {
+  const generateContactInsights = React.useCallback(() => {
     const insights = [];
     const associatedDeals = associationsData.entities.deals || [];
     const associatedTasks = associationsData.entities.tasks || [];
@@ -355,10 +366,10 @@ const ContactDetails: React.FC = () => {
     }
     
     return insights;
-  };
+  }, [associationsData.entities.deals, associationsData.entities.tasks, contact?.contactType]);
 
-  const metrics = calculateContactMetrics();
-  const insights = generateContactInsights();
+  const metrics = React.useMemo(() => calculateContactMetrics(), [calculateContactMetrics]);
+  const insights = React.useMemo(() => generateContactInsights(), [generateContactInsights]);
 
   // Avatar upload function
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -498,7 +509,7 @@ const ContactDetails: React.FC = () => {
   };
 
   // Load associations data
-  const loadAssociations = async () => {
+  const loadAssociations = React.useCallback(async () => {
     if (!contactId || !tenantId || !user?.uid) return;
     
     try {
@@ -519,7 +530,6 @@ const ContactDetails: React.FC = () => {
         );
         const dealsSnapshot = await getDocs(dealsQuery);
         fallbackDeals = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        console.log('Fallback deals found:', fallbackDeals.length);
       } catch (fallbackErr) {
         console.warn('Fallback deals query failed:', fallbackErr);
       }
@@ -550,7 +560,7 @@ const ContactDetails: React.FC = () => {
         error: err.message || 'Failed to load associations'
       }));
     }
-  };
+  }, [contactId, tenantId, user?.uid]);
 
   // Load salespeople (users with crm_sales: true)
   const loadSalespeople = async () => {
@@ -571,121 +581,30 @@ const ContactDetails: React.FC = () => {
     
     setLoadingActivities(true);
     try {
-      const activities: any[] = [];
+      const { loadContactActivities } = await import('../../utils/activityService');
+      const activities = await loadContactActivities(tenantId, contactId, {
+        limit: 8,
+        includeTasks: true,
+        includeEmails: true,
+        includeNotes: true,
+        includeAIActivities: false,
+        onlyCompletedTasks: true
+      });
       
-      // Load completed tasks
-      try {
-        const tasksQuery = query(
-          collection(db, 'tenants', tenantId, 'tasks'),
-          where('associations.contacts', 'array-contains', contactId),
-          where('status', '==', 'completed'),
-          orderBy('completedAt', 'desc'),
-          limit(5)
-        );
-        const tasksSnapshot = await getDocs(tasksQuery);
-        tasksSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          activities.push({
-            id: doc.id,
-            type: 'task',
-            title: data.title || 'Task completed',
-            description: data.description || '',
-            timestamp: data.completedAt?.toDate?.() || data.updatedAt?.toDate?.() || new Date(),
-            salespersonId: data.assignedTo || data.createdBy,
-            icon: 'task',
-            status: 'completed'
-          });
-        });
-      } catch (e) {
-        console.warn('Failed to load tasks:', e);
-      }
+      // Convert to the format expected by the component
+      const formattedActivities = activities.map(activity => ({
+        id: activity.id,
+        type: activity.type,
+        title: activity.title,
+        description: activity.description,
+        timestamp: activity.timestamp,
+        salespersonId: activity.salespersonId,
+        icon: activity.type === 'task' ? 'task' : activity.type === 'email' ? 'email' : 'note',
+        ...(activity.type === 'email' && { direction: activity.metadata?.direction || 'sent' }),
+        ...(activity.type === 'task' && { status: activity.metadata?.status || 'completed' })
+      }));
       
-      // Load email logs
-      try {
-        const emailsQuery = query(
-          collection(db, 'tenants', tenantId, 'email_logs'),
-          where('contactId', '==', contactId),
-          orderBy('timestamp', 'desc'),
-          limit(5)
-        );
-        const emailsSnapshot = await getDocs(emailsQuery);
-        emailsSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          activities.push({
-            id: doc.id,
-            type: 'email',
-            title: data.subject || 'Email sent',
-            description: data.snippet || '',
-            timestamp: data.timestamp?.toDate?.() || data.sentAt?.toDate?.() || new Date(),
-            salespersonId: data.userId || data.salespersonId,
-            icon: 'email',
-            direction: data.direction || 'sent'
-          });
-        });
-      } catch (e) {
-        console.warn('Failed to load emails:', e);
-      }
-      
-      // Load notes
-      try {
-        const notesQuery = query(
-          collection(db, 'tenants', tenantId, 'contact_notes'),
-          where('contactId', '==', contactId),
-          orderBy('createdAt', 'desc'),
-          limit(5)
-        );
-        const notesSnapshot = await getDocs(notesQuery);
-        notesSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          activities.push({
-            id: doc.id,
-            type: 'note',
-            title: 'Note added',
-            description: data.content || '',
-            timestamp: data.createdAt?.toDate?.() || data.updatedAt?.toDate?.() || new Date(),
-            salespersonId: data.createdBy || data.userId,
-            icon: 'note'
-          });
-        });
-      } catch (e) {
-        console.warn('Failed to load notes:', e);
-      }
-      
-      // Load AI activities - Commented out due to permissions issues
-      // AI logs are typically accessed through Cloud Functions, not direct queries
-      /*
-      try {
-        const aiQuery = query(
-          collection(db, 'tenants', tenantId, 'ai_logs'),
-          where('entityId', '==', contactId),
-          where('entityType', '==', 'contact'),
-          orderBy('timestamp', 'desc'),
-          limit(5)
-        );
-        const aiSnapshot = await getDocs(aiQuery);
-        aiSnapshot.docs.forEach(doc => {
-          const data = doc.data();
-          activities.push({
-            id: doc.id,
-            type: 'ai',
-            title: data.action || 'AI Activity',
-            description: data.reason || '',
-            timestamp: data.timestamp?.toDate?.() || new Date(),
-            salespersonId: data.userId,
-            icon: 'ai'
-          });
-        });
-      } catch (e) {
-        console.warn('Failed to load AI activities:', e);
-      }
-      */
-      
-      // Sort all activities by timestamp (most recent first) and take top 8
-      const sortedActivities = activities
-        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        .slice(0, 8);
-      
-      setRecentActivities(sortedActivities);
+      setRecentActivities(formattedActivities);
     } catch (err) {
       console.error('Error loading recent activities:', err);
       setRecentActivities([]);
@@ -974,67 +893,74 @@ const ContactDetails: React.FC = () => {
       setAiSuccess(null);
       setError('');
 
-      const functions = getFunctions();
-      const enhanceContact = httpsCallable(functions, 'enhanceContactWithAI');
-      
-      const result = await enhanceContact({
-        contactId,
-        tenantId,
-        contactData: contact
-      });
-
-      const resultData = result.data as any;
-      
-      if (resultData.success) {
-        // Reload the contact to get the enhanced data
-        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
-        let enhancedContactData: ContactData | null = null;
-        if (contactDoc.exists()) {
-          enhancedContactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
-          setContact(enhancedContactData);
-        }
+      // Use the Apollo-powered contact enrichment function
+      try {
+        const functions = getFunctions();
+        const enrichContact = httpsCallable(functions, 'enrichContactOnDemand');
         
-        // Log the AI enhancement activity
-        try {
-          const logContactEnhanced = httpsCallable(functions, 'logContactEnhanced');
-          await logContactEnhanced({
-            contactId: contactId,
-            reason: 'AI enhancement completed',
-            tenantId,
-            userId: user?.uid || '',
-            metadata: { 
-              enhancedFields: enhancedContactData ? Object.keys(enhancedContactData) : [],
-              hasProfessionalSummary: !!(enhancedContactData?.professionalSummary),
-              hasInferredData: !!(enhancedContactData?.inferredSeniority || enhancedContactData?.inferredIndustry)
-            }
-          });
-        } catch (logError) {
-          console.warn('Failed to log AI enhancement activity:', logError);
-        }
+        const result = await enrichContact({
+          tenantId,
+          contactId,
+          mode: 'full', // Use full enrichment mode for Apollo data
+          force: false
+        });
         
-        // Update LinkedIn URL and avatar if social profiles are found
-        if (enhancedContactData?.socialProfiles && enhancedContactData.socialProfiles.length > 0) {
-          const linkedInProfile = enhancedContactData.socialProfiles.find((profile: any) => profile.platform === 'LinkedIn');
-          if (linkedInProfile) {
-            // Update LinkedIn URL if not already set
-            if (!contact.linkedInUrl && linkedInProfile.url) {
-              await handleContactUpdate('linkedInUrl', linkedInProfile.url);
-            }
-            
-            // Update avatar if no avatar exists
-            if (!contact.avatar) {
-              await updateAvatarFromSocialProfile(linkedInProfile.url);
-            }
+        const resultData = result.data as any;
+        
+        if (resultData.status === 'ok') {
+          // Reload the contact to get the enhanced data
+          const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+          let enhancedContactData: ContactData | null = null;
+          if (contactDoc.exists()) {
+            enhancedContactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
+            setContact(enhancedContactData);
           }
+          
+          // Log the AI enhancement activity
+          try {
+            const logContactEnhanced = httpsCallable(functions, 'logContactEnhanced');
+            await logContactEnhanced({
+              contactId: contactId,
+              reason: 'Apollo AI enhancement completed',
+              tenantId,
+              userId: user?.uid || '',
+              metadata: { 
+                enhancedFields: enhancedContactData ? Object.keys(enhancedContactData) : [],
+                hasProfessionalSummary: !!(enhancedContactData?.professionalSummary),
+                hasInferredData: !!(enhancedContactData?.inferredSeniority || enhancedContactData?.inferredIndustry),
+                hasApolloData: !!(enhancedContactData?.apolloEnrichment)
+              }
+            });
+          } catch (logError) {
+            console.warn('Failed to log AI enhancement activity:', logError);
+          }
+          
+          setAiSuccess('Contact enhanced successfully with Apollo data! Updated professional headline, location, LinkedIn profile, and contact details.');
+        } else if (resultData.status === 'error') {
+          setError(resultData.message || 'Failed to enhance contact with Apollo data');
+        } else {
+          // Handle other status types (like 'degraded')
+          setAiSuccess(`Contact enhanced: ${resultData.message || 'Success'}`);
         }
         
-        setAiSuccess('Contact enhanced successfully with AI! Found social profiles, company information, and professional insights. LinkedIn URL and avatar updated.');
-      } else {
-        setError(resultData.message || 'Failed to enhance contact');
+      } catch (enrichError: any) {
+        console.error('Apollo enrichment failed:', enrichError);
+        
+        // Handle specific error types
+        if (enrichError.code === 'functions/unavailable') {
+          setError('Service temporarily unavailable. Please try again in a moment.');
+        } else if (enrichError.code === 'functions/deadline-exceeded') {
+          setError('Request timed out. The enhancement is still processing in the background.');
+        } else if (enrichError.message?.includes('timeout')) {
+          setError('Request timed out. The enhancement may still be processing.');
+        } else {
+          setError('Failed to enhance contact with Apollo data. Please try again.');
+        }
       }
-    } catch (err: any) {
-      console.error('Error enhancing contact:', err);
-      setError(err.message || 'Failed to enhance contact with AI');
+      
+    } catch (error) {
+      console.error('Error enhancing with AI:', error);
+      setError('Failed to enhance contact with AI. Please try again.');
     } finally {
       setAiEnhancing(false);
     }
@@ -1063,6 +989,30 @@ const ContactDetails: React.FC = () => {
       .join('')
       .toUpperCase()
       .slice(0, 2);
+  };
+
+  // Helper function to format location for display
+  const getFormattedLocation = () => {
+    // Priority: Apollo formatted address, then individual fields, then Apollo data
+    if (contact?.formattedAddress) {
+      return contact.formattedAddress;
+    }
+    
+    if (contact?.apolloEnrichment?.person?.formatted_address) {
+      return contact.apolloEnrichment.person.formatted_address;
+    }
+    
+    // Build from individual fields
+    const locationParts = [];
+    if (contact?.city) locationParts.push(contact.city);
+    if (contact?.state) locationParts.push(contact.state);
+    if (contact?.country) locationParts.push(contact.country);
+    
+    if (locationParts.length > 0) {
+      return locationParts.join(', ');
+    }
+    
+    return null;
   };
 
   // Get activity icon based on type
@@ -1205,7 +1155,6 @@ const ContactDetails: React.FC = () => {
       
       setShowLogActivityDialog(false);
       // Optionally refresh any task-related data
-      console.log('Activity logged successfully:', taskData);
       showToast('Activity logged successfully', 'success');
     } catch (error) {
       console.error('Error logging activity:', error);
@@ -1316,9 +1265,25 @@ const ContactDetails: React.FC = () => {
               </Typography>
               
               {/* Job Title */}
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" color="text.secondary"  sx={{ fontWeight: 'bold' }}>
                 {contact.jobTitle || contact.title || 'No title'}
               </Typography>
+
+              {/* Professional Headline from Apollo */}
+              {contact?.headline && (
+                <Typography 
+                  variant="body2" 
+                  color="text.secondary" 
+                  sx={{ 
+                    fontStyle: 'italic',
+                    maxWidth: '600px',
+                    lineHeight: 1.4,
+                    mb: 0.5
+                  }}
+                >
+                  {contact.headline}
+                </Typography>
+              )}
 
               {/* Company and Location Links (associations are source of truth) */}
               {company && (
@@ -1393,6 +1358,19 @@ const ContactDetails: React.FC = () => {
                     
                     return null;
                   })()}
+                </Box>
+              )}
+
+              {/* Location Information */}
+              {getFormattedLocation() && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
+                  <LocationIcon fontSize="small" color="secondary" />
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary"
+                  >
+                    {getFormattedLocation()}
+                  </Typography>
                 </Box>
               )}
               
@@ -1613,57 +1591,79 @@ const ContactDetails: React.FC = () => {
           </Box>
 
           {/* Action Buttons */}
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            {shouldShowFindContactInfoButton() && (
-              <Button
-                variant="outlined"
-                color="primary"
-                startIcon={findingContactInfo ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
-                onClick={handleFindContactInfo}
-                disabled={findingContactInfo}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              {/* {shouldShowFindContactInfoButton() && (
+                <Button
+                  variant="outlined"
+                  color="primary"
+                  startIcon={findingContactInfo ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
+                  onClick={handleFindContactInfo}
+                  disabled={findingContactInfo}
+                >
+                  {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
+                </Button>
+              )} */}
+              <Button 
+                variant="outlined" 
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddNoteDialog(true)}
+                size="small"
               >
-                {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
+                Add Note
               </Button>
+              <Button
+                variant="contained"
+                startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
+                onClick={handleAIEnhancement}
+                disabled={aiEnhancing}
+                sx={{ 
+                  bgcolor: 'primary.main',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  },
+                  '&:disabled': {
+                    bgcolor: 'grey.400'
+                  }
+                }}
+              >
+                {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<CheckCircleIcon />}
+                onClick={() => setShowLogActivityDialog(true)}
+                sx={{ 
+                  bgcolor: 'primary.main',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  }
+                }}
+              >
+                Log Activity
+              </Button>
+            </Box>
+            {contact.lastEnrichedAt && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', textAlign: 'right' }}>
+                Last updated: {(() => {
+                  try {
+                    // Handle Firestore timestamp
+                    if (contact.lastEnrichedAt.toDate) {
+                      return contact.lastEnrichedAt.toDate().toLocaleString();
+                    }
+                    // Handle string or number
+                    const date = new Date(contact.lastEnrichedAt);
+                    if (isNaN(date.getTime())) {
+                      return 'Recently';
+                    }
+                    return date.toLocaleString();
+                  } catch (error) {
+                    return 'Recently';
+                  }
+                })()}
+              </Typography>
             )}
-            <Button 
-              variant="outlined" 
-              startIcon={<AddIcon />}
-              onClick={() => setShowAddNoteDialog(true)}
-              size="small"
-            >
-              Add Note
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
-              onClick={handleAIEnhancement}
-              disabled={aiEnhancing}
-              sx={{ 
-                bgcolor: 'primary.main',
-                color: 'white',
-                '&:hover': {
-                  bgcolor: 'primary.dark'
-                },
-                '&:disabled': {
-                  bgcolor: 'grey.400'
-                }
-              }}
-            >
-              {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<CheckCircleIcon />}
-              onClick={() => setShowLogActivityDialog(true)}
-              sx={{ 
-                bgcolor: 'primary.main',
-                '&:hover': {
-                  bgcolor: 'primary.dark'
-                }
-              }}
-            >
-              Log Activity
-            </Button>
           </Box>
         </Box>
       </Box>
@@ -1729,7 +1729,7 @@ const ContactDetails: React.FC = () => {
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* AI Summary */}
-              <Card>
+              {/* <Card>
                 <CardHeader 
                   title="AI Summary" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
@@ -1745,7 +1745,148 @@ const ContactDetails: React.FC = () => {
                     </Typography>
                   )}
                 </CardContent>
-              </Card>
+              </Card> */}
+
+              {/* Professional Headline */}
+              {/* <Card>
+                <CardHeader 
+                  title="Professional Headline" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Chip 
+                      label="Apollo" 
+                      size="small" 
+                      color="primary" 
+                      variant="outlined"
+                    />
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.headline ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.4 }}>
+                      {contact.headline}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No professional headline available. Use AI Enhance to fetch from Apollo.
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card> */}
+
+              {/* Apollo Enrichment Data */}
+              {/* {contact?.apolloEnrichment && (
+                <Card>
+                  <CardHeader 
+                    title="Apollo Data" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                    action={
+                      <Chip 
+                        label="Apollo" 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                      />
+                    }
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+
+              
+                      {contact.apolloEnrichment.person?.formatted_address && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                            Location
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {contact.apolloEnrichment.person.formatted_address}
+                          </Typography>
+                        </Box>
+                      )}
+
+             
+                      {contact.apolloEnrichment.person?.linkedin_url && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                            Social Profiles
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            <MUILink href={contact.apolloEnrichment.person.linkedin_url} target="_blank" rel="noopener noreferrer">
+                              <Typography variant="body2" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <LinkedInIcon fontSize="small" />
+                                LinkedIn Profile
+                              </Typography>
+                            </MUILink>
+                            {contact.apolloEnrichment.person.twitter_url && (
+                              <MUILink href={contact.apolloEnrichment.person.twitter_url} target="_blank" rel="noopener noreferrer">
+                                <Typography variant="body2" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <TwitterIcon fontSize="small" />
+                                  Twitter Profile
+                                </Typography>
+                              </MUILink>
+                            )}
+                          </Box>
+                        </Box>
+                      )}
+                      {contact.apolloEnrichment.person?.employment_history && contact.apolloEnrichment.person.employment_history.length > 0 && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                            Recent Experience
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            {contact.apolloEnrichment.person.employment_history.slice(0, 2).map((job: any, index: number) => (
+                              <Box key={index} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {job.title} at {job.organization_name}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {job.start_date} - {job.current ? 'Present' : job.end_date || 'Unknown'}
+                                </Typography>
+                              </Box>
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+
+        
+                      {contact.apolloEnrichment.company && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                            Company Details
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            {contact.apolloEnrichment.company.industry && (
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Industry:</strong> {contact.apolloEnrichment.company.industry}
+                              </Typography>
+                            )}
+                            {contact.apolloEnrichment.company.employeeCount && (
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Employees:</strong> {contact.apolloEnrichment.company.employeeCount.toLocaleString()}
+                              </Typography>
+                            )}
+                            {contact.apolloEnrichment.company.revenueRange && (
+                              <Typography variant="body2" color="text.secondary">
+                                <strong>Revenue:</strong> {contact.apolloEnrichment.company.revenueRange}
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                      )}
+
+         
+                      <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Data provided by Apollo.io
+                          {contact.apolloEnrichment.fetchedAt && (
+                            <span> • Fetched {new Date(contact.apolloEnrichment.fetchedAt.toDate()).toLocaleDateString()}</span>
+                          )}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+              )} */}
 
               {/* Contact Details (Combined Widget) */}
               <Card>
@@ -1892,6 +2033,46 @@ const ContactDetails: React.FC = () => {
                         ))}
                       </Select>
                     </FormControl>
+
+                    {/* Contact Address Information */}
+                    {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
+                      <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                          Contact Address
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          {contact.formattedAddress && (
+                            <Typography variant="body2" color="text.secondary">
+                              {contact.formattedAddress}
+                            </Typography>
+                          )}
+                          {!contact.formattedAddress && (
+                            <>
+                              {contact.address && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {contact.address}
+                                </Typography>
+                              )}
+                              {(contact.city || contact.state || contact.country) && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {[contact.city, contact.state, contact.country].filter(Boolean).join(', ')}
+                                </Typography>
+                              )}
+                              {contact.zipcode && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {contact.zipcode}
+                                </Typography>
+                              )}
+                            </>
+                          )}
+                          {contact.timeZone && (
+                            <Typography variant="caption" color="text.secondary">
+                              Time Zone: {contact.timeZone}
+                            </Typography>
+                          )}
+                        </Box>
+                      </Box>
+                    )}
 
 
 
@@ -2161,34 +2342,14 @@ const ContactDetails: React.FC = () => {
                   action={
                     <Button size="small" disabled={rebuildingActive} onClick={async () => {
                       try {
-                        console.log('🔍 Starting rebuild for contact:', contactId, 'tenant:', tenantId);
-                        console.log('🔍 Available deals from frontend:', associationsData.entities.deals?.length || 0);
-                        console.log('🔍 Deal IDs from frontend:', associationsData.entities.deals?.map((d: any) => d.id) || []);
-                        
                         setRebuildingActive(true);
                         const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
                         
                         // Pass the deal IDs that are already loaded in the frontend
                         const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
-                        console.log('🔍 Calling function with params:', { tenantId, contactId, dealIds });
-                        
-                        // Also log the deal data to see what salespeople are in it
-                        if (associationsData.entities.deals && associationsData.entities.deals.length > 0) {
-                          const deal = associationsData.entities.deals[0];
-                          console.log('🔍 Deal data from frontend:', {
-                            id: deal.id,
-                            name: deal.name,
-                            salespersonIds: deal.salespersonIds,
-                            salespeopleIds: deal.salespeopleIds,
-                            salesOwnerId: deal.salesOwnerId,
-                            associations: deal.associations
-                          });
-                        }
                         
                         const resp: any = await fn({ tenantId, contactId, dealIds });
-                        console.log('🔍 Function response:', resp);
                         const data = resp?.data || {};
-                        console.log('🔍 Response data:', data);
                         if (data.ok) {
                           setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
                         } else if (data.error) {
@@ -2746,7 +2907,6 @@ const ContactDetails: React.FC = () => {
         }] : []}
         onNoteAdded={() => {
           // Optionally refresh notes or trigger any updates
-          console.log('Note added successfully');
         }}
       />
 
