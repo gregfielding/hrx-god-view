@@ -100,9 +100,16 @@ export const bulkEmailDomainMatching = onCall({
 
           // Apply the association if not dry run
           if (!dryRun) {
+            // Get current associations to preserve existing data
+            const currentAssociations = contactDoc.data()?.associations || {};
+            
             await contactDoc.ref.update({
-              companyId: bestMatch.id,
-              companyName: bestMatch.companyName || bestMatch.name,
+              companyId: bestMatch.id, // Legacy format
+              companyName: bestMatch.companyName || bestMatch.name, // Legacy format
+              associations: {
+                ...currentAssociations,
+                companies: [bestMatch.id] // New format
+              },
               updatedAt: new Date()
             });
             

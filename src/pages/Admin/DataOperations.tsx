@@ -72,6 +72,11 @@ const DataOperations: React.FC = () => {
   const [result, setResult] = useState<BulkOperationResult | null>(null);
   const [showResults, setShowResults] = useState(false);
   const [dryRun, setDryRun] = useState(true);
+  
+  // Gmail bulk import state
+  const [gmailImportLoading, setGmailImportLoading] = useState(false);
+  const [gmailImportResults, setGmailImportResults] = useState<any>(null);
+  const [daysBack, setDaysBack] = useState(90);
 
   const runBulkEmailDomainMatching = async () => {
     if (!tenantId) {
@@ -120,6 +125,35 @@ const DataOperations: React.FC = () => {
     }
   };
 
+  const runGmailBulkImport = async () => {
+    if (!tenantId || !currentUser?.uid) {
+      alert('No tenant ID or user ID found');
+      return;
+    }
+
+    setGmailImportLoading(true);
+    try {
+      const functions = getFunctions();
+      const bulkImportGmailEmails = httpsCallable(functions, 'bulkImportGmailEmails');
+      
+      const response = await bulkImportGmailEmails({
+        tenantId,
+        userId: currentUser.uid,
+        daysBack
+      });
+      
+      const resultData = response.data as any;
+      setGmailImportResults(resultData);
+      
+      console.log('Gmail bulk import result:', resultData);
+    } catch (error) {
+      console.error('Error running Gmail bulk import:', error);
+      alert('Error running Gmail bulk import: ' + error);
+    } finally {
+      setGmailImportLoading(false);
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" gutterBottom>
@@ -140,6 +174,70 @@ const DataOperations: React.FC = () => {
                   Bulk Email Domain Matching
                 </Typography>
               </Box>
+              
+              
+
+        {/* Gmail Bulk Import */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <EmailIcon color="primary" />
+                <Typography variant="h6">
+                  Gmail Bulk Import
+                </Typography>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Import historical Gmail emails and create activity logs for matching contacts.
+                This will process emails from the last 90 days (or custom range) and create activity logs.
+              </Typography>
+
+              <TextField
+                label="Days Back"
+                type="number"
+                value={daysBack}
+                onChange={(e) => setDaysBack(parseInt(e.target.value) || 90)}
+                sx={{ mb: 2, width: '100%' }}
+                helperText="Number of days back to import emails from"
+              />
+
+              <Button
+                variant="contained"
+                startIcon={gmailImportLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+                onClick={runGmailBulkImport}
+                disabled={gmailImportLoading}
+                fullWidth
+              >
+                {gmailImportLoading ? 'Importing...' : 'Import Gmail Emails'}
+              </Button>
+
+              {gmailImportResults && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Import Results:
+                  </Typography>
+                  <Typography variant="body2">
+                    {gmailImportResults.message}
+                  </Typography>
+                  {gmailImportResults.success && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="body2" color="success.main">
+                        ✅ Processed: {gmailImportResults.processedCount} emails
+                      </Typography>
+                      <Typography variant="body2" color="primary.main">
+                        📝 Activity logs created: {gmailImportResults.activityLogsCreated}
+                      </Typography>
+                      <Typography variant="body2" color="warning.main">
+                        ⏭️ Duplicates skipped: {gmailImportResults.duplicatesSkipped}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
               
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Automatically associate contacts with companies based on email domain matching.

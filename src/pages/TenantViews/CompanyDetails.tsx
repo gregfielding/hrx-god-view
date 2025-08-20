@@ -4707,8 +4707,8 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   
   return (
     <>
-      <Box px={3} py={4}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+      <Box px={3} pb={4}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
         <Typography variant="h6" fontWeight={700}>Contacts</Typography>
         <Button 
           variant="contained" 

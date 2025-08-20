@@ -623,16 +623,58 @@ const ContactDetails: React.FC = () => {
 
   // Handle company association
   const handleCompanyAssociation = async (companyId: string) => {
-    if (!contactId || !tenantId || !companyId) return;
+    if (!contactId || !tenantId || !companyId || !user?.uid) return;
     
     try {
-      // Update contact with company association
-      await handleContactUpdate('companyId', companyId);
-      
       // Get company name for display
       const selectedCompany = allCompanies.find(c => c.id === companyId);
-      if (selectedCompany) {
-        await handleContactUpdate('companyName', selectedCompany.companyName || selectedCompany.name);
+      
+      // Update both legacy fields and new associations format
+      const updateData: any = {
+        companyId: companyId, // Legacy format
+        companyName: selectedCompany?.companyName || selectedCompany?.name || '', // Legacy format
+        updatedAt: new Date()
+      };
+      
+      // Update associations map - ensure it exists and add company to companies array
+      const currentAssociations = contact?.associations || {};
+      const updatedAssociations = {
+        ...currentAssociations,
+        companies: [companyId] // Replace existing companies with the new one
+      };
+      
+      updateData.associations = updatedAssociations;
+      
+      // Update the contact document
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), updateData);
+      
+      // Update local state
+      setContact(prev => prev ? { 
+        ...prev, 
+        companyId: companyId,
+        companyName: selectedCompany?.companyName || selectedCompany?.name || '',
+        associations: updatedAssociations
+      } : null);
+      
+      // Log the activity
+      try {
+        const functions = getFunctions();
+        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
+        await logAIActionCallable({
+          action: 'contact_company_associated',
+          entityId: contactId,
+          entityType: 'contact',
+          reason: `Associated with company: ${selectedCompany?.companyName || selectedCompany?.name || companyId}`,
+          tenantId,
+          userId: user.uid,
+          metadata: { 
+            companyId, 
+            companyName: selectedCompany?.companyName || selectedCompany?.name || '',
+            previousCompanyId: contact?.companyId || null
+          }
+        });
+      } catch (logError) {
+        console.warn('Failed to log activity:', logError);
       }
       
       showToast(`Contact associated with ${selectedCompany?.companyName || selectedCompany?.name || 'company'}`, 'success');

@@ -940,42 +940,205 @@ export const testGmailEmailCapture = onCall({
 }); 
 
 /**
- * Helper function to extract email addresses from Gmail format
- * Handles formats like: "Name <email@domain.com>", "email@domain.com", "Name email@domain.com"
+ * One-time bulk import of Gmail emails (last 90 days)
+ * Use this to import historical emails without duplicates
  */
-function extractEmailAddress(emailString: string): string {
-  if (!emailString) return '';
-  
-  // Remove quotes if present
-  emailString = emailString.replace(/^["']|["']$/g, '');
-  
-  // Check for format: "Name <email@domain.com>"
-  const match = emailString.match(/<(.+?)>/);
-  if (match) {
-    return match[1].trim();
+export const bulkImportGmailEmails = onCall({
+  cors: true,
+  maxInstances: 1,
+  region: 'us-central1'
+}, async (request) => {
+  try {
+    const { tenantId, userId, daysBack = 90 } = request.data;
+    
+    if (!tenantId || !userId) {
+      throw new Error('Missing required fields: tenantId, userId');
+    }
+    
+    console.log(`🔄 Starting bulk Gmail import for user ${userId}, tenant ${tenantId}, last ${daysBack} days`);
+    
+    // Get user data
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+    
+    const userData = userDoc.data();
+    if (!userData?.gmailTokens) {
+      throw new Error('User not connected to Gmail');
+    }
+    
+    // Set up Gmail API
+    oauth2Client.setCredentials(userData.gmailTokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    
+    // Calculate date range
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysBack);
+    
+    console.log(`📅 Importing emails from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    
+    // Query for sent emails in the date range
+    const query = `in:sent after:${Math.floor(startDate.getTime() / 1000)} before:${Math.floor(endDate.getTime() / 1000)}`;
+    console.log(`🔍 Gmail query: ${query}`);
+    
+    const response = await gmail.users.messages.list({
+      userId: 'me',
+      q: query,
+      maxResults: 500 // Gmail API limit
+    });
+    
+    const messages = response.data.messages || [];
+    console.log(`📨 Found ${messages.length} emails to process`);
+    
+    if (messages.length === 0) {
+      return {
+        success: true,
+        processedCount: 0,
+        activityLogsCreated: 0,
+        message: 'No emails found in the specified date range'
+      };
+    }
+    
+    // Get all contacts for this tenant to check for matches
+    const contactsSnapshot = await db.collection('tenants').doc(tenantId).collection('crm_contacts').get();
+    const contacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+    
+    console.log(`👥 Found ${contacts.length} contacts to match against`);
+    
+    let processedCount = 0;
+    let activityLogsCreated = 0;
+    let duplicatesSkipped = 0;
+    
+    // Process each email
+    for (const message of messages) {
+      try {
+        // Get full message details
+        const messageDetails = await gmail.users.messages.get({
+          userId: 'me',
+          id: message.id!
+        });
+        
+        const emailData = messageDetails.data;
+        const headers = emailData.payload?.headers || [];
+        
+        // Extract email details
+        const subject = headers.find(h => h.name === 'Subject')?.value || 'No Subject';
+        const to = headers.find(h => h.name === 'To')?.value || '';
+        const from = headers.find(h => h.name === 'From')?.value || '';
+        const date = headers.find(h => h.name === 'Date')?.value || '';
+        
+        // Extract email addresses from To field
+        const emailAddresses = extractEmailAddresses(to);
+        
+        if (emailAddresses.length === 0) {
+          console.log(`⚠️ No email addresses found in To field for message ${message.id}`);
+          continue;
+        }
+        
+        // Check if this email has already been processed
+        const existingEmailLog = await db.collection('tenants').doc(tenantId)
+          .collection('email_logs')
+          .where('gmailMessageId', '==', message.id)
+          .limit(1)
+          .get();
+        
+        if (!existingEmailLog.empty) {
+          console.log(`⏭️ Skipping duplicate email ${message.id}`);
+          duplicatesSkipped++;
+          continue;
+        }
+        
+        // Find matching contacts
+        const matchingContacts = contacts.filter(contact => 
+          contact.email && emailAddresses.includes(contact.email.toLowerCase())
+        );
+        
+        if (matchingContacts.length === 0) {
+          console.log(`⚠️ No matching contacts found for email addresses: ${emailAddresses.join(', ')}`);
+          continue;
+        }
+        
+        // Create email log entry
+        const emailLog = {
+          gmailMessageId: message.id,
+          subject,
+          to,
+          from,
+          date: new Date(date),
+          emailAddresses,
+          processedAt: new Date(),
+          tenantId,
+          userId,
+          matchingContacts: matchingContacts.map(c => c.id)
+        };
+        
+        await db.collection('tenants').doc(tenantId).collection('email_logs').add(emailLog);
+        
+        // Create activity logs for each matching contact
+        for (const contact of matchingContacts) {
+          const activityLog = {
+            type: 'email',
+            title: `Email: ${subject}`,
+            description: `Email sent to ${contact.email}`,
+            timestamp: new Date(date),
+            salespersonId: userId,
+            tenantId,
+            contactId: contact.id,
+            metadata: {
+              direction: 'sent',
+              gmailMessageId: message.id,
+              subject,
+              to: contact.email
+            }
+          };
+          
+          await db.collection('tenants').doc(tenantId).collection('activity_logs').add(activityLog);
+          activityLogsCreated++;
+        }
+        
+        processedCount++;
+        
+        if (processedCount % 10 === 0) {
+          console.log(`📊 Progress: ${processedCount}/${messages.length} emails processed`);
+        }
+        
+      } catch (messageError) {
+        console.error(`❌ Error processing message ${message.id}:`, messageError);
+        // Continue with next message
+      }
+    }
+    
+    console.log(`🎉 Bulk Gmail import completed:`);
+    console.log(`   - Processed: ${processedCount} emails`);
+    console.log(`   - Activity logs created: ${activityLogsCreated}`);
+    console.log(`   - Duplicates skipped: ${duplicatesSkipped}`);
+    
+    return {
+      success: true,
+      processedCount,
+      activityLogsCreated,
+      duplicatesSkipped,
+      message: `Bulk import completed: ${processedCount} emails processed, ${activityLogsCreated} activity logs created, ${duplicatesSkipped} duplicates skipped`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in bulk Gmail import:', error);
+    return {
+      success: false,
+      message: `Bulk import failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
   }
-  
-  // Check for format: "Name email@domain.com" (no angle brackets)
-  const parts = emailString.split(' ');
-  const lastPart = parts[parts.length - 1];
-  if (lastPart.includes('@')) {
-    return lastPart.trim();
-  }
-  
-  // If no special format, return as is
-  return emailString.trim();
-}
+});
 
 /**
- * Helper function to extract all email addresses from a comma-separated list
+ * Helper function to extract email addresses from a string
  */
-function extractEmailAddresses(emailList: string): string[] {
-  if (!emailList) return [];
-  
-  return emailList
-    .split(',')
-    .map(email => extractEmailAddress(email))
-    .filter(email => email && email.includes('@'));
+function extractEmailAddresses(text: string): string[] {
+  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  const matches = text.match(emailRegex) || [];
+  return matches.map(email => email.toLowerCase());
 }
 
 /**
@@ -1036,12 +1199,12 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
       throw new Error('Unable to access Gmail. Please check your connection.');
     }
 
-    // Get recent sent messages (last 7 days for testing)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    // Get recent sent messages (last 15 minutes to avoid duplicates)
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
     const userEmail = userData?.email || userData?.gmailTokens?.email;
     
     // Use the correct query for sent emails - look in Sent folder
-    const query = `in:sent after:${Math.floor(sevenDaysAgo.getTime() / 1000)}`;
+    const query = `in:sent after:${Math.floor(fifteenMinutesAgo.getTime() / 1000)}`;
     
     console.log(`🔍 Searching for sent emails with query: "${query}"`);
     console.log(`📧 User email: ${userEmail}`);
@@ -1053,7 +1216,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
     });
 
     const messages = messagesResponse.data.messages || [];
-    console.log(`📨 Found ${messages.length} sent messages in the last 7 days`);
+    console.log(`📨 Found ${messages.length} sent messages in the last 15 minutes`);
     let processedCount = 0;
     let activityLogsCreated = 0;
 

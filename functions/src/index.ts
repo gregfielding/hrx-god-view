@@ -10274,7 +10274,8 @@ export {
   monitorGmailForContactEmails,
   testGmailEmailCapture,
   testGmailTokenValidity,
-  scheduledGmailMonitoring
+  scheduledGmailMonitoring,
+  bulkImportGmailEmails
 } from './gmailIntegration';
 
 // Google Calendar Integration Functions
