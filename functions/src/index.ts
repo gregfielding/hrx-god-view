@@ -51,6 +51,7 @@ import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders
 import { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
+import { cleanupUndefinedValues } from './cleanupUndefinedValues';
 import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
@@ -103,6 +104,9 @@ export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
 export { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp };
+
+// Data Cleanup Functions
+export { cleanupUndefinedValues };
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors

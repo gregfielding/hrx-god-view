@@ -241,7 +241,11 @@ export async function runCompanyEnrichment(
         linkedinHash: linkedin.hash,
         jobHash: jobs.hash,
         fetchedAt: admin.firestore.FieldValue.serverTimestamp(),
-        urls: { website: websiteUrl, linkedin: linkedinUrl, indeed: indeedUrl }
+        urls: { 
+          ...(websiteUrl && { website: websiteUrl }),
+          ...(linkedinUrl && { linkedin: linkedinUrl }),
+          ...(indeedUrl && { indeed: indeedUrl })
+        }
       },
       { merge: true }
     );
@@ -249,7 +253,11 @@ export async function runCompanyEnrichment(
     const hasSignal = (website.text || linkedin.text || jobs.text).length > 0;
     if (mode === 'metadata' || !hasSignal) {
       // Persist any discovered URLs in metadata mode or when signal is low
-      await companyRef.set({ lastEnrichedAt: admin.firestore.FieldValue.serverTimestamp(), metadata: { discoveredUrls: { website: websiteUrl, linkedin: linkedinUrl, indeed: indeedUrl }, signalStrength: hasSignal ? 'low' : 'none' } }, { merge: true });
+      await companyRef.set({ lastEnrichedAt: admin.firestore.FieldValue.serverTimestamp(), metadata: { discoveredUrls: { 
+        ...(websiteUrl && { website: websiteUrl }),
+        ...(linkedinUrl && { linkedin: linkedinUrl }),
+        ...(indeedUrl && { indeed: indeedUrl })
+      }, signalStrength: hasSignal ? 'low' : 'none' } }, { merge: true });
       await createCompanyAILog('companyEnrichment.metadata', companyId, 'Metadata refresh', tenantId, 'system', undefined, undefined);
       return;
     }
