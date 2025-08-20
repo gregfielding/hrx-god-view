@@ -265,6 +265,11 @@ const ContactDetails: React.FC = () => {
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showTaskDialog, setShowTaskDialog] = useState(false);
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  
+  // Company association state
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [loadingCompanies, setLoadingCompanies] = useState(false);
+  const [suggestedCompanies, setSuggestedCompanies] = useState<any[]>([]);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   
@@ -575,6 +580,71 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  // Load all companies for autocomplete
+  const loadAllCompanies = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoadingCompanies(true);
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const companiesSnapshot = await getDocs(companiesRef);
+      const companies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllCompanies(companies);
+    } catch (error) {
+      console.error('Error loading companies:', error);
+      setAllCompanies([]);
+    } finally {
+      setLoadingCompanies(false);
+    }
+  };
+
+  // Find companies by email domain
+  const findCompaniesByEmailDomain = (email: string) => {
+    if (!email || !email.includes('@')) return [];
+    
+    const domain = email.split('@')[1].toLowerCase();
+    const suggestions = allCompanies.filter(company => {
+      const companyName = (company.companyName || company.name || '').toLowerCase();
+      const companyDomain = companyName.replace(/[^a-z0-9]/g, '');
+      
+      // Check if domain matches company name pattern
+      const domainMatchesCompany = domain.includes(companyDomain) || companyDomain.includes(domain);
+      
+      // Check if company has a website that matches the domain
+      const companyWebsite = (company.website || '').toLowerCase();
+      const websiteDomain = companyWebsite.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+      const websiteMatches = websiteDomain === domain;
+      
+      return domainMatchesCompany || websiteMatches;
+    });
+    
+    return suggestions.slice(0, 5); // Limit to 5 suggestions
+  };
+
+  // Handle company association
+  const handleCompanyAssociation = async (companyId: string) => {
+    if (!contactId || !tenantId || !companyId) return;
+    
+    try {
+      // Update contact with company association
+      await handleContactUpdate('companyId', companyId);
+      
+      // Get company name for display
+      const selectedCompany = allCompanies.find(c => c.id === companyId);
+      if (selectedCompany) {
+        await handleContactUpdate('companyName', selectedCompany.companyName || selectedCompany.name);
+      }
+      
+      showToast(`Contact associated with ${selectedCompany?.companyName || selectedCompany?.name || 'company'}`, 'success');
+      
+      // Refresh associations
+      await loadAssociations();
+    } catch (error) {
+      console.error('Error associating contact with company:', error);
+      showToast('Failed to associate contact with company', 'error');
+    }
+  };
+
   // Load recent activities for the contact
   const loadRecentActivities = async () => {
     if (!contactId || !tenantId) return;
@@ -740,6 +810,7 @@ const ContactDetails: React.FC = () => {
     loadContact();
     loadSalespeople();
     loadRecentActivities();
+    loadAllCompanies();
   }, [contactId, tenantId]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -1915,12 +1986,112 @@ const ContactDetails: React.FC = () => {
                         const next = (e.target.value || '').trim();
                         if ((contact.email || '') !== next) {
                           handleContactUpdate('email', next);
+                          // Update company suggestions based on email domain
+                          if (next && next.includes('@')) {
+                            const suggestions = findCompaniesByEmailDomain(next);
+                            setSuggestedCompanies(suggestions);
+                          }
                         }
                       }}
                       fullWidth
                       size="small"
                       InputProps={{ startAdornment: <EmailIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
                     />
+                    
+                    {/* Company Association */}
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        Company Association
+                      </Typography>
+                      
+                      {/* Current Company Display */}
+                      {contact.companyName && (
+                        <Box sx={{ mb: 2, p: 1.5, bgcolor: 'primary.50', borderRadius: 1, border: '1px solid', borderColor: 'primary.200' }}>
+                          <Typography variant="body2" fontWeight="medium" color="primary.main">
+                            Currently Associated: {contact.companyName}
+                          </Typography>
+                          {contact.companyId && (
+                            <Typography variant="caption" color="text.secondary">
+                              Company ID: {contact.companyId}
+                            </Typography>
+                          )}
+                        </Box>
+                      )}
+                      
+                      {/* Company Autocomplete */}
+                      <Autocomplete
+                        options={allCompanies}
+                        getOptionLabel={(option) => option.companyName || option.name || ''}
+                        value={allCompanies.find(c => c.id === contact.companyId) || null}
+                        onChange={(event, newValue) => {
+                          if (newValue) {
+                            handleCompanyAssociation(newValue.id);
+                          }
+                        }}
+                        loading={loadingCompanies}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Associate with Company"
+                            placeholder="Search companies..."
+                            size="small"
+                            InputProps={{
+                              ...params.InputProps,
+                              startAdornment: <BusinessIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
+                              endAdornment: (
+                                <>
+                                  {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
+                                  {params.InputProps.endAdornment}
+                                </>
+                              ),
+                            }}
+                          />
+                        )}
+                        renderOption={(props, option) => (
+                          <Box component="li" {...props}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <BusinessIcon fontSize="small" color="action" />
+                              <Typography variant="body2">
+                                {option.companyName || option.name}
+                              </Typography>
+                              {option.industry && (
+                                <Chip label={option.industry} size="small" variant="outlined" />
+                              )}
+                            </Box>
+                          </Box>
+                        )}
+                      />
+                      
+                      {/* Email Domain Suggestions */}
+                      {suggestedCompanies.length > 0 && contact.email && contact.email.includes('@') && (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                            Suggested companies based on email domain ({contact.email.split('@')[1]}):
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            {suggestedCompanies.map((company) => (
+                              <Button
+                                key={company.id}
+                                variant="outlined"
+                                size="small"
+                                onClick={() => handleCompanyAssociation(company.id)}
+                                sx={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                                startIcon={<BusinessIcon fontSize="small" />}
+                              >
+                                <Box>
+                                  <Typography variant="body2" fontWeight="medium">
+                                    {company.companyName || company.name}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {company.industry || 'No industry'}
+                                  </Typography>
+                                </Box>
+                              </Button>
+                            ))}
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
                     <TextField
                       label="Phone"
                       defaultValue={contact.phone || contact.workPhone || ''}

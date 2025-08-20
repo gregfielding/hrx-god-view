@@ -52,6 +52,7 @@ import { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDe
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { cleanupUndefinedValues } from './cleanupUndefinedValues';
+import { bulkEmailDomainMatching } from './bulkEmailDomainMatching';
 import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
@@ -107,6 +108,9 @@ export { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHtt
 
 // Data Cleanup Functions
 export { cleanupUndefinedValues };
+
+// Bulk Operations
+export { bulkEmailDomainMatching };
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors
