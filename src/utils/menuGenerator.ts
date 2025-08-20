@@ -255,6 +255,12 @@ export async function generateMenuItems(
         icon: 'list_alt',
        accessRoles: ['hrx_7', 'hrx_6'],
       },
+      {
+        text: 'Data Operations',
+        to: '/admin/data-operations',
+        icon: 'data_object',
+       accessRoles: ['hrx_7', 'hrx_6'],
+      },
       // {
       //   text: 'AI Self Improvement',
       //   to: '/admin/ai-self-improvement',

@@ -417,6 +417,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Mobile App Errors': <PhoneIphoneIcon />,
       'Mobile App': <PhoneIphoneIcon />,
       'My Tenant': <BusinessIcon />,
+      'Data Operations': <SettingsIcon />,
       'Log out': <LogoutIcon />,
     };
     return {

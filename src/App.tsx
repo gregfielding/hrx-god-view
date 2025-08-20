@@ -63,6 +63,7 @@ import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 import Help from './pages/Help';
 import HelpManagement from './pages/Admin/HelpManagement';
+import DataOperations from './pages/Admin/DataOperations';
 import JobSatisfactionInsights from './pages/Admin/JobSatisfactionInsights';
 import JSIDocumentation from './pages/Admin/JSIDocumentation';
 import DailyMotivation from './pages/Admin/DailyMotivation';
@@ -346,6 +347,14 @@ function App() {
           element={
             <ProtectedRoute requiredSecurityLevel="5">
               <AILogs />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/data-operations"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <DataOperations />
             </ProtectedRoute>
           }
         />
