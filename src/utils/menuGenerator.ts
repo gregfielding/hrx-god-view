@@ -259,7 +259,7 @@ export async function generateMenuItems(
         text: 'Data Operations',
         to: '/admin/data-operations',
         icon: 'data_object',
-       accessRoles: ['hrx_7', 'hrx_6'],
+       accessRoles: ['hrx_7', 'hrx_6', 'hrx_5'],
       },
       // {
       //   text: 'AI Self Improvement',

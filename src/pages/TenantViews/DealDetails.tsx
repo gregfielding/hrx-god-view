@@ -1459,8 +1459,17 @@ const DealDetails: React.FC = () => {
               {/* Company and Location */}
               {company && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Company:</Typography>
+                  <BusinessIcon fontSize="small" color="primary" />
                   <Typography 
+                    variant="body2" 
+                    color="primary"
+                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                    onClick={() => navigate(`/crm/companies/${company.id}`)}
+                  >
+                    {company.companyName || company.name}
+                  </Typography>
+                  {/* <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Company:</Typography> */}
+                  {/* <Typography 
                     variant="body2" 
                     color="primary"
                     sx={{ 
@@ -1471,7 +1480,7 @@ const DealDetails: React.FC = () => {
                     onClick={() => navigate(`/crm/companies/${company.id}`)}
                   >
                     {company.companyName || company.name}
-                  </Typography>
+                  </Typography> */}
                   {Array.isArray((deal as any)?.associations?.locations) && (deal as any).associations.locations.length > 0 && (() => {
                     const locEntry: any = (deal as any).associations.locations.find((l: any) => typeof l === 'object') || (deal as any).associations.locations[0];
                     const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;

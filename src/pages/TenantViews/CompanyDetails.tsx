@@ -4707,8 +4707,8 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   
   return (
     <>
-      <Box px={3} pb={4}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+      <Box px={0} pb={4}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 1, px: 3 }}>
         <Typography variant="h6" fontWeight={700}>Contacts</Typography>
         <Button 
           variant="contained" 
@@ -4716,7 +4716,6 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
           onClick={() => setShowAddContactDialog(true)}
           sx={{
             height: 36,
-            borderRadius: '6px',
             textTransform: 'none',
             fontWeight: 500,
             fontSize: '0.875rem',
@@ -5405,8 +5404,8 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   
   return (
     <>
-      <Box px={3} py={4}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
+      <Box px={0} pb={3}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 1, px: 3 }}>
           <Typography variant="h6" fontWeight={700}>Opportunities ({deals.length})</Typography>
           <Button 
             variant="contained" 
@@ -5414,7 +5413,6 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
             onClick={() => setShowNewOpportunityDialog(true)}
             sx={{
               height: 36,
-              borderRadius: '6px',
               textTransform: 'none',
               fontWeight: 500,
               fontSize: '0.875rem',
