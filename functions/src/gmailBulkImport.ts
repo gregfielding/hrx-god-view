@@ -315,8 +315,12 @@ async function processGmailImportTask(task: GmailImportTask) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - daysBack);
 
-    // Search for emails in date range
-    const query = `after:${startDate.toISOString().split('T')[0]} before:${endDate.toISOString().split('T')[0]}`;
+    // Gmail search prefers epoch seconds; exclude chats to avoid non-email results
+    const afterEpoch = Math.floor(startDate.getTime() / 1000);
+    const beforeEpoch = Math.floor(endDate.getTime() / 1000);
+    const query = `after:${afterEpoch} before:${beforeEpoch} -in:chats`;
+    console.log(`Searching Gmail for user ${email} with query: "${query}"`);
+    console.log(`Date range: ${startDate.toISOString()} (${afterEpoch}) to ${endDate.toISOString()} (${beforeEpoch})`);
     
     let emailsImported = 0;
     let contactsFound = 0;
@@ -342,6 +346,12 @@ async function processGmailImportTask(task: GmailImportTask) {
 
         const messages = messagesResponse.data.messages || [];
         pageToken = messagesResponse.data.nextPageToken;
+        
+        console.log(`Found ${messages.length} messages in batch for user ${email}`);
+        if (messages.length === 0) {
+          console.log(`No more messages found for user ${email}, stopping import`);
+          break;
+        }
 
         // Process messages in batches
         for (const message of messages) {
@@ -442,30 +452,47 @@ async function processEmailMessage(gmail: any, messageId: string, tenantId: stri
 
   // Extract email addresses
   const emailAddresses = extractEmailAddresses(from + ' ' + to);
+  console.log(`Processing email ${messageId}: Found ${emailAddresses.length} email addresses:`, emailAddresses);
   
-  // Find matching contacts
+  // Find matching contacts (only existing contacts)
   let contactsFound = 0;
   for (const emailAddress of emailAddresses) {
+    // Skip if it's the user's own email address
+    if (emailAddress.toLowerCase() === userId.toLowerCase()) {
+      console.log(`Skipping user's own email address: ${emailAddress}`);
+      continue;
+    }
+
     const contactQuery = await db.collection('tenants').doc(tenantId).collection('crm_contacts')
       .where('email', '==', emailAddress)
       .limit(1)
       .get();
 
     if (!contactQuery.empty) {
+      // Contact exists - create email log entry
+      const contactId = contactQuery.docs[0].id;
       contactsFound++;
+      console.log(`Found existing contact for ${emailAddress}: ${contactId}`);
       
-      // Create email log entry
-      await db.collection('tenants').doc(tenantId).collection('email_logs').add({
-        messageId,
-        from,
-        to,
-        subject,
-        date: new Date(date),
-        contactId: contactQuery.docs[0].id,
-        userId,
-        importedAt: new Date(),
-        source: 'gmail_bulk_import',
-      });
+      try {
+        await db.collection('tenants').doc(tenantId).collection('email_logs').add({
+          messageId,
+          from,
+          to,
+          subject,
+          date: new Date(date),
+          contactId,
+          userId,
+          importedAt: new Date(),
+          source: 'gmail_bulk_import',
+          emailAddress,
+        });
+        console.log(`Created email log entry for ${emailAddress}`);
+      } catch (logError) {
+        console.error(`Failed to create email log entry for ${emailAddress}:`, logError);
+      }
+    } else {
+      console.log(`No existing contact found for ${emailAddress} - skipping`);
     }
   }
 
