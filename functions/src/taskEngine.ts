@@ -607,7 +607,7 @@ export const deleteTask = onCall({
       console.warn('⚠️ Failed to create AI log for task deletion:', aiLogError);
       console.warn('⚠️ This is likely due to permission restrictions on ai_logs collection');
       console.warn('⚠️ Task deletion completed successfully despite AI log failure');
-      // Continue with task deletion even if AI log fails
+      // Continue with task deletion even if AI log fails - don't throw the error
     }
 
     console.log(`✅ Task deleted: ${taskId}`);

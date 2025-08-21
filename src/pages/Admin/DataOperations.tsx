@@ -197,22 +197,29 @@ const DataOperations: React.FC = () => {
     setSingleUserImportResults(null);
     
     try {
-      const functions = getFunctions();
-      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-      
-      // Import for the selected user only
-      const response = await queueGmailBulkImport({
-        userIds: [selectedUserId],
-        tenantId,
-        daysBack
-      });
-      
-      const resultData = response.data as any;
+      let resultData: any;
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // Use HTTP endpoint in local dev to avoid callable CORS/URL issues
+        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userIds: [selectedUserId], tenantId, daysBack })
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        resultData = await response.json();
+      } else {
+        const functions = getFunctions();
+        const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+        const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
+        resultData = response.data as any;
+      }
       setSingleUserImportResults(resultData);
       
       console.log('Single user Gmail import queued:', resultData);
       
-      if (resultData.success && resultData.requestId) {
+      if (resultData?.success && resultData?.requestId) {
         // Start polling for status
         pollSingleUserImportStatus(resultData.requestId);
       }
@@ -355,22 +362,29 @@ const DataOperations: React.FC = () => {
 
     setGmailImportLoading(true);
     try {
-      const functions = getFunctions();
-      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-      
-      // For now, we'll import for all users in the tenant
-      // In the future, you can add user selection
-      const response = await queueGmailBulkImport({
-        tenantId,
-        daysBack
-      });
-      
-      const resultData = response.data as any;
+      let resultData: any;
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // Use HTTP endpoint in local dev to avoid callable CORS/URL issues
+        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, daysBack })
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        resultData = await response.json();
+      } else {
+        const functions = getFunctions();
+        const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+        const response = await queueGmailBulkImport({ tenantId, daysBack });
+        resultData = response.data as any;
+      }
       setGmailImportResults(resultData);
       
       console.log('Gmail bulk import queued:', resultData);
       
-      if (resultData.success && resultData.requestId) {
+      if (resultData?.success && resultData?.requestId) {
         // Start polling for status
         pollImportStatus(resultData.requestId);
       }
@@ -507,10 +521,11 @@ const DataOperations: React.FC = () => {
     setCleanupLoading(true);
     try {
       const functions = getFunctions();
-      const cleanupDuplicateEmails = httpsCallable(functions, 'cleanupDuplicateEmails');
+      const cleanupDuplicateEmailLogs = httpsCallable(functions, 'cleanupDuplicateEmailLogs');
       
-      const response = await cleanupDuplicateEmails({
-        tenantId
+      const response = await cleanupDuplicateEmailLogs({
+        tenantId,
+        userId: currentUser.uid
       });
       
       const resultData = response.data as any;

@@ -9,6 +9,7 @@
     "@mui/lab": "^5.0.0-alpha.129",
     "@mui/material": "^5.18.0",
     "@mui/system": "^5.18.0",
+    "@mui/x-date-pickers": "^8.10.2",
     "@react-google-maps/api": "^2.20.6",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",

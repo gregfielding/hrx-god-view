@@ -3,6 +3,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
 
+
 const db = getFirestore();
 
 // Gmail API configuration
@@ -1278,15 +1279,28 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
       throw new Error('Unable to access Gmail. Please check your connection.');
     }
 
-    // Get recent sent messages (last 15 minutes to avoid duplicates)
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    // Get the last processed timestamp for this user to avoid duplicates
+    const lastProcessedDoc = await db.collection('tenants').doc(tenantId)
+      .collection('gmail_processing_state')
+      .doc(userId)
+      .get();
+
+    let lastProcessedTime: Date;
+    if (lastProcessedDoc.exists) {
+      lastProcessedTime = lastProcessedDoc.data()?.lastProcessedTime?.toDate() || new Date(Date.now() - 30 * 60 * 1000); // Default to 30 minutes ago
+    } else {
+      // If no previous processing record, start from 30 minutes ago to catch recent emails
+      lastProcessedTime = new Date(Date.now() - 30 * 60 * 1000);
+    }
+
     const userEmail = userData?.email || userData?.gmailTokens?.email;
     
-    // Use the correct query for sent emails - look in Sent folder
-    const query = `in:sent after:${Math.floor(fifteenMinutesAgo.getTime() / 1000)}`;
+    // Use the last processed time to avoid duplicates
+    const query = `in:sent after:${Math.floor(lastProcessedTime.getTime() / 1000)}`;
     
     console.log(`🔍 Searching for sent emails with query: "${query}"`);
     console.log(`📧 User email: ${userEmail}`);
+    console.log(`⏰ Last processed time: ${lastProcessedTime.toISOString()}`);
 
     const messagesResponse = await gmail.users.messages.list({
       userId: 'me',
@@ -1295,25 +1309,26 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
     });
 
     const messages = messagesResponse.data.messages || [];
-    console.log(`📨 Found ${messages.length} sent messages in the last 15 minutes`);
+    console.log(`📨 Found ${messages.length} sent messages since last processing`);
+    
+    if (messages.length === 0) {
+      console.log('📭 No new messages to process');
+      return {
+        success: true,
+        processedCount: 0,
+        activityLogsCreated: 0,
+        message: 'No new messages to process'
+      };
+    }
+
     let processedCount = 0;
     let activityLogsCreated = 0;
+    let latestProcessedTime = lastProcessedTime;
 
     // Process each sent message
     for (const message of messages) {
       try {
-        // Check if this email activity has already been logged
-        const existingActivity = await db.collection('tenants').doc(tenantId)
-          .collection('activity_logs')
-          .where('gmailMessageId', '==', message.id)
-          .limit(1)
-          .get();
-
-        if (!existingActivity.empty) {
-          continue; // Skip if already logged
-        }
-
-        // Get full message details
+        // Get full message details first to get the actual email date
         const messageResponse = await gmail.users.messages.get({
           userId: 'me',
           id: message.id!
@@ -1321,14 +1336,33 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
 
         const messageData = messageResponse.data;
         const headers = messageData.payload?.headers || [];
-        
+        const date = headers.find(h => h.name === 'Date')?.value || '';
+        const emailDate = new Date(date);
+
+        // Skip if this email is older than our last processed time (extra safety check)
+        if (emailDate <= lastProcessedTime) {
+          console.log(`⏭️ Skipping message ${message.id} - older than last processed time`);
+          continue;
+        }
+
+        // Check if this email has already been processed (double-check)
+        const existingActivity = await db.collection('tenants').doc(tenantId)
+          .collection('activity_logs')
+          .where('metadata.gmailMessageId', '==', message.id)
+          .limit(1)
+          .get();
+
+        if (!existingActivity.empty) {
+          console.log(`⏭️ Skipping message ${message.id} - already processed`);
+          continue;
+        }
+
         // Extract email data
         const from = headers.find(h => h.name === 'From')?.value || '';
         const to = headers.find(h => h.name === 'To')?.value || '';
         const cc = headers.find(h => h.name === 'Cc')?.value || '';
         const bcc = headers.find(h => h.name === 'Bcc')?.value || '';
         const subject = headers.find(h => h.name === 'Subject')?.value || '';
-        const date = headers.find(h => h.name === 'Date')?.value || '';
 
         // Extract body snippet
         let bodySnippet = messageData.snippet || '';
@@ -1355,7 +1389,8 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
           cc,
           bcc,
           allRecipients,
-          contactEmails
+          contactEmails,
+          emailDate: emailDate.toISOString()
         });
         
         // Find contacts in CRM
@@ -1377,16 +1412,10 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
 
         if (contactQuery.empty) {
           console.log(`❌ No contacts found for message ${message.id}, skipping...`);
-          // Let's also check what contacts exist in the CRM to debug
-          const allContacts = await db.collection('tenants').doc(tenantId)
-            .collection('crm_contacts')
-            .limit(10)
-            .get();
-          console.log(`🔍 Available contacts in CRM (first 10):`, allContacts.docs.map(doc => ({
-            id: doc.id,
-            email: doc.data().email,
-            name: doc.data().fullName || `${doc.data().firstName || ''} ${doc.data().lastName || ''}`.trim()
-          })));
+          // Update the latest processed time even for emails without contacts
+          if (emailDate > latestProcessedTime) {
+            latestProcessedTime = emailDate;
+          }
           continue; // No contacts found, skip this email
         }
 
@@ -1426,7 +1455,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               activityType: 'email',
               title: `Email sent: ${subject}`,
               description: bodySnippet.substring(0, 200) + (bodySnippet.length > 200 ? '...' : ''),
-              timestamp: new Date(date),
+              timestamp: emailDate,
               userId,
               userName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
               metadata: {
@@ -1465,7 +1494,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               to: to.split(',').map(e => e.trim()).filter(Boolean),
               cc: cc.split(',').map(e => e.trim()).filter(Boolean),
               bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
-              timestamp: new Date(date),
+              timestamp: emailDate,
               bodySnippet: bodySnippet.substring(0, 250),
               direction: 'outbound',
               contactId: contact.id,
@@ -1522,6 +1551,11 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
           }
         }
 
+        // Update the latest processed time
+        if (emailDate > latestProcessedTime) {
+          latestProcessedTime = emailDate;
+        }
+
         processedCount++;
 
       } catch (messageError) {
@@ -1529,6 +1563,20 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
         // Continue with next message
       }
     }
+
+    // Update the processing state to track the latest processed time
+    await db.collection('tenants').doc(tenantId)
+      .collection('gmail_processing_state')
+      .doc(userId)
+      .set({
+        lastProcessedTime: latestProcessedTime,
+        lastProcessedAt: new Date(),
+        userId,
+        tenantId
+      }, { merge: true });
+
+    console.log(`📊 Processing summary: ${processedCount} emails processed, ${activityLogsCreated} activity logs created`);
+    console.log(`⏰ Updated last processed time to: ${latestProcessedTime.toISOString()}`);
 
     return {
       success: true,
@@ -1612,5 +1660,264 @@ export const scheduledGmailMonitoring = onSchedule({
     
   } catch (error) {
     console.error('❌ Error in scheduled Gmail monitoring:', error);
+  }
+});
+
+/**
+ * Cleanup function to remove duplicate email activity logs
+ * This should be run once to clean up any duplicates created before the fix
+ */
+export const cleanupDuplicateEmailLogs = onCall({
+  cors: true,
+  maxInstances: 1,
+  region: 'us-central1',
+  memory: '512MiB',
+  timeoutSeconds: 300
+}, async (request) => {
+  try {
+    const { tenantId, userId, maxRuntimeMs = 45000 } = request.data as any;
+
+    if (!tenantId) {
+      throw new Error('Missing required field: tenantId');
+    }
+
+    console.log(`🧹 Starting cleanup of duplicate email logs for tenant ${tenantId}${userId ? ` and user ${userId}` : ''}`);
+
+    let totalRemoved = 0;
+    let activityRemoved = 0;
+    let emailRemoved = 0;
+    const startTime = Date.now();
+    let hasMore = false;
+
+    // Clean up duplicate activity logs - enhanced approach
+    try {
+      console.log('🔍 Checking for duplicate activity logs...');
+      const activityLogsRef = db.collection('tenants').doc(tenantId).collection('activity_logs');
+      const activityQuery = activityLogsRef.where('activityType', '==', 'email');
+
+      const activitySnapshot = await activityQuery.get();
+      console.log(`📊 Found ${activitySnapshot.docs.length} total activity logs`);
+      
+      const messageIdGroups = new Map<string, any[]>();
+      const timestampGroups = new Map<string, any[]>();
+
+      // Group activity logs by gmailMessageId and timestamp
+      activitySnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const messageId = data.metadata?.gmailMessageId;
+        const timestamp = data.timestamp;
+        const description = data.description || '';
+        
+        // Group by messageId (existing logic)
+        if (messageId) {
+          if (!messageIdGroups.has(messageId)) {
+            messageIdGroups.set(messageId, []);
+          }
+          messageIdGroups.get(messageId)!.push({ id: doc.id, ...data });
+        }
+        
+        // Group by timestamp + description (new logic for timestamp-based duplicates)
+        if (timestamp && description) {
+          const timeKey = `${timestamp}_${description.substring(0, 50)}`; // Use first 50 chars of description
+          if (!timestampGroups.has(timeKey)) {
+            timestampGroups.set(timeKey, []);
+          }
+          timestampGroups.get(timeKey)!.push({ id: doc.id, ...data });
+        }
+      });
+
+      console.log(`📊 Found ${messageIdGroups.size} unique message IDs and ${timestampGroups.size} unique timestamp groups in activity logs`);
+
+      // Remove messageId-based duplicates
+      for (const [messageId, logs] of messageIdGroups) {
+        if (logs.length > 1) {
+          console.log(`🗑️ Found ${logs.length} duplicate activity logs for message ${messageId}`);
+          
+          // Sort by creation time and keep the oldest one
+          logs.sort((a, b) => {
+            const aTime = a.createdAt?.toDate?.()?.getTime() || a.createdAt?.getTime() || 0;
+            const bTime = b.createdAt?.toDate?.()?.getTime() || b.createdAt?.getTime() || 0;
+            return aTime - bTime;
+          });
+          
+          // Remove all but the first one
+          for (let i = 1; i < logs.length; i++) {
+            await db.collection('tenants').doc(tenantId).collection('activity_logs').doc(logs[i].id).delete();
+            activityRemoved++;
+            totalRemoved++;
+          }
+        }
+      }
+      
+      // Remove timestamp-based duplicates
+      for (const [timeKey, logs] of timestampGroups) {
+        if (logs.length > 1) {
+          const [timestamp, description] = timeKey.split('_', 2);
+          console.log(`🗑️ Found ${logs.length} timestamp-based duplicate activity logs for "${description}" at ${timestamp}`);
+          
+          // Sort by creation time and keep the oldest one
+          logs.sort((a, b) => {
+            const aTime = a.createdAt?.toDate?.()?.getTime() || a.createdAt?.getTime() || 0;
+            const bTime = b.createdAt?.toDate?.()?.getTime() || b.createdAt?.getTime() || 0;
+            return aTime - bTime;
+          });
+          
+          // Remove all but the first one
+          for (let i = 1; i < logs.length; i++) {
+            await db.collection('tenants').doc(tenantId).collection('activity_logs').doc(logs[i].id).delete();
+            activityRemoved++;
+            totalRemoved++;
+          }
+        }
+      }
+      // cooperative time slicing for activity logs
+      if (Date.now() - startTime > maxRuntimeMs) {
+        hasMore = true;
+      }
+    } catch (activityError) {
+      console.error('❌ Error cleaning up activity logs:', activityError);
+    }
+
+    // Clean up duplicate email logs - memory-efficient approach
+    try {
+      console.log('🔍 Checking for duplicate email logs...');
+      const emailLogsRef = db.collection('tenants').doc(tenantId).collection('email_logs');
+      
+      // Process in batches to avoid memory issues. Some historical docs use different field names,
+      // so we run up to three passes ordered by createdAt, date, then timestamp.
+      const orderFields = ['createdAt', 'date', 'timestamp'] as const;
+      const batchSize = 100;
+      let totalProcessed = 0;
+
+      for (const orderField of orderFields) {
+        let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+        let hasMore = true;
+        let passProcessed = 0;
+
+        while (hasMore) {
+          try {
+            let q = emailLogsRef.orderBy(orderField as any, 'asc').limit(batchSize);
+            if (lastDoc) q = q.startAfter(lastDoc);
+            const emailSnapshot = await q.get();
+            console.log(`📊 [${orderField}] Processing batch of ${emailSnapshot.docs.length} email logs (total processed: ${totalProcessed})`);
+
+            if (emailSnapshot.empty) {
+              hasMore = false;
+              break;
+            }
+
+            // Process this batch - enhanced duplicate detection with normalization
+            const emailMessageIdGroups = new Map<string, any[]>();
+            const emailTimestampGroups = new Map<string, any[]>();
+
+            emailSnapshot.docs.forEach(doc => {
+              const data = doc.data() as any;
+              const messageId = data.gmailMessageId || data.messageId;
+
+              // Normalize timestamp
+              const ts: Date = (data.date?.toDate?.() || data.timestamp?.toDate?.() || data.createdAt?.toDate?.() || data.processedAt?.toDate?.() || new Date(0)) as Date;
+
+              // Normalize recipients
+              let recipients: string[] = [];
+              if (Array.isArray(data.to)) recipients = data.to as string[];
+              else if (typeof data.to === 'string') recipients = extractEmailAddresses(data.to);
+              else if (Array.isArray(data.emailAddresses)) recipients = (data.emailAddresses as string[]);
+              else if (typeof data.recipient === 'string') recipients = extractEmailAddresses(data.recipient);
+              const recipientKey = recipients.map(r => r.toLowerCase().trim()).sort().join(',');
+
+              if (messageId) {
+                if (!emailMessageIdGroups.has(messageId)) emailMessageIdGroups.set(messageId, []);
+                emailMessageIdGroups.get(messageId)!.push({ id: doc.id, ...data, __ts: ts });
+              }
+
+              if (ts && recipientKey) {
+                const timeKey = `${ts.getTime()}_${recipientKey}`;
+                if (!emailTimestampGroups.has(timeKey)) emailTimestampGroups.set(timeKey, []);
+                emailTimestampGroups.get(timeKey)!.push({ id: doc.id, ...data, __ts: ts });
+              }
+            });
+
+            const sortByOldest = (a: any, b: any) => {
+              const aTime = a.createdAt?.toDate?.()?.getTime?.() || a.__ts?.getTime?.() || 0;
+              const bTime = b.createdAt?.toDate?.()?.getTime?.() || b.__ts?.getTime?.() || 0;
+              return aTime - bTime;
+            };
+
+            // Remove messageId-based duplicates
+            for (const [msgId, logs] of emailMessageIdGroups) {
+              if (logs.length > 1) {
+                console.log(`🗑️ Found ${logs.length} duplicate email logs for message ${msgId} in current batch`);
+                logs.sort(sortByOldest);
+                for (let i = 1; i < logs.length; i++) {
+                  await db.collection('tenants').doc(tenantId).collection('email_logs').doc(logs[i].id).delete();
+                  emailRemoved++; totalRemoved++;
+                }
+              }
+            }
+
+            // Remove timestamp-based duplicates
+            for (const [timeKey, logs] of emailTimestampGroups) {
+              if (logs.length > 1) {
+                console.log(`🗑️ Found ${logs.length} timestamp-based duplicate email logs for key ${timeKey} in current batch`);
+                logs.sort(sortByOldest);
+                for (let i = 1; i < logs.length; i++) {
+                  await db.collection('tenants').doc(tenantId).collection('email_logs').doc(logs[i].id).delete();
+                  emailRemoved++; totalRemoved++;
+                }
+              }
+            }
+
+            lastDoc = emailSnapshot.docs[emailSnapshot.docs.length - 1];
+            totalProcessed += emailSnapshot.docs.length;
+            passProcessed += emailSnapshot.docs.length;
+
+            if (emailSnapshot.docs.length < batchSize) hasMore = false;
+            await new Promise(resolve => setTimeout(resolve, 25));
+
+            // time slice guard
+            if (Date.now() - startTime > maxRuntimeMs) {
+              hasMore = false;
+              hasMore = false;
+              // signal we have more to do in next call
+              // outer scope
+              // @ts-ignore
+              arguments; // noop to keep linter happy for block
+            }
+
+          } catch (passError: any) {
+            console.warn(`⚠️ Skipping pass ordered by ${orderField}:`, passError?.message || passError);
+            hasMore = false;
+          }
+        }
+
+        console.log(`📊 Completed pass ordered by ${orderField}: processed ${passProcessed} docs`);
+        if (Date.now() - startTime > maxRuntimeMs) {
+          hasMore = true;
+          break;
+        }
+      }
+      
+      console.log(`📊 Completed processing ${totalProcessed} email logs in batches`);
+    } catch (emailError) {
+      console.error('❌ Error cleaning up email logs:', emailError);
+    }
+
+    console.log(`✅ Cleanup completed slice: ${totalRemoved} duplicate logs removed (${activityRemoved} activity logs, ${emailRemoved} email logs). hasMore=${hasMore}`);
+
+    return {
+      success: true,
+      totalRemoved,
+      activityRemoved,
+      emailRemoved,
+      hasMore,
+      message: `Removed ${totalRemoved} duplicate logs this run (${activityRemoved} activity logs, ${emailRemoved} email logs)`
+    };
+
+  } catch (error) {
+    console.error('❌ Error cleaning up duplicate email logs:', error);
+    return {
+      success: false,
+      message: `Failed to cleanup duplicates: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
   }
 });

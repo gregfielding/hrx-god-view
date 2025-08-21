@@ -330,21 +330,33 @@ export class TaskService {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('dealId-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to deal tasks (dealId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('dealAssociations-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to deal tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByDealId, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('dealId-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM deal tasks (dealId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('dealAssociations-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM deal tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         })
       ];
       
@@ -363,21 +375,33 @@ export class TaskService {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('companyId-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to company tasks (companyId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('companyAssociations-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to company tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByCompanyId, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('companyId-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM company tasks (companyId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('companyAssociations-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM company tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         })
       ];
       
@@ -398,21 +422,33 @@ export class TaskService {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('contactId-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to contact tasks (contactId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('contactAssociations-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to contact tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByContactId, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('contactId-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM contact tasks (contactId):', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmByAssociations, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('contactAssociations-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM contact tasks (associations):', error);
+          // Continue with other listeners even if this one fails
         })
       ];
       
@@ -434,31 +470,49 @@ export class TaskService {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('assigned-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to assigned tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qAssignedArray, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('assignedArray-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to assigned array tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qBySalesperson, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('salespersonAssociations-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to salesperson association tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmAssigned, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('assigned-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM assigned tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmAssignedArray, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('assignedArray-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM assigned array tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrmBySalesperson, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('salespersonAssociations-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to CRM salesperson association tasks:', error);
+          // Continue with other listeners even if this one fails
         })
       ];
       
@@ -474,11 +528,17 @@ export class TaskService {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'tasks' }));
           taskSources.set('default-tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to default tasks:', error);
+          // Continue with other listeners even if this one fails
         }),
         onSnapshot(qCrm, (snapshot) => {
           const tasks = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, source: 'crm_tasks' }));
           taskSources.set('default-crm_tasks', tasks);
           updateCallback();
+        }, (error) => {
+          console.warn('⚠️ Error listening to default CRM tasks:', error);
+          // Continue with other listeners even if this one fails
         })
       ];
       

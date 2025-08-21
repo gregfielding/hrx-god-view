@@ -30,7 +30,7 @@ import { functions , db } from '../firebase';
 interface DecisionMaker {
   name: string;
   title: string;
-  linkedinUrl: string;
+  linkedInUrl: string;
   snippet: string;
   relevance: number;
 }
@@ -155,7 +155,7 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         title: decisionMaker.title, // Also save as title for compatibility
         companyId: companyId,
         companyName: companyName,
-        linkedinUrl: decisionMaker.linkedinUrl,
+        linkedInUrl: decisionMaker.linkedInUrl,
         email: extractedEmail, // Save extracted email if found
         phone: extractedPhone, // Save extracted phone if found
         workPhone: extractedPhone, // Also save as workPhone for compatibility
@@ -167,7 +167,7 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
 
 Relevance Score: ${decisionMaker.relevance}%
 Title: ${decisionMaker.title}
-LinkedIn: ${decisionMaker.linkedinUrl}
+LinkedIn: ${decisionMaker.linkedInUrl}
 Snippet: ${decisionMaker.snippet}
 
 Generated on: ${new Date().toLocaleString()}`,
@@ -211,7 +211,7 @@ Generated on: ${new Date().toLocaleString()}`,
       console.log('📋 Contact data saved:', {
         name: decisionMaker.name,
         title: decisionMaker.title,
-        linkedinUrl: decisionMaker.linkedinUrl,
+        linkedInUrl: decisionMaker.linkedInUrl,
         email: extractedEmail || 'Not found in snippet',
         phone: extractedPhone || 'Not found in snippet',
         relevance: decisionMaker.relevance
@@ -220,7 +220,7 @@ Generated on: ${new Date().toLocaleString()}`,
       // Debug: Log the full contact data to verify LinkedIn URL is saved
       console.log('🔗 Full contact data with LinkedIn URL:', {
         ...contactData,
-        linkedinUrl: contactData.linkedinUrl // Explicitly log LinkedIn URL
+        linkedInUrl: contactData.linkedInUrl // Explicitly log LinkedIn URL
       });
       
       // Create detailed success message
@@ -386,7 +386,7 @@ Generated on: ${new Date().toLocaleString()}`,
                       size="small"
                       variant="outlined"
                       startIcon={<OpenInNewIcon />}
-                      onClick={() => window.open(decisionMaker.linkedinUrl, '_blank')}
+                      onClick={() => window.open(decisionMaker.linkedInUrl, '_blank')}
                     >
                       View Profile
                     </Button>

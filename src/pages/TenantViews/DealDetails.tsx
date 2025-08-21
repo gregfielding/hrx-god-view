@@ -44,6 +44,7 @@ import {
   AttachMoney as AttachMoneyIcon,
   Event as EventIcon,
   Business as BusinessIcon,
+  Group as GroupIcon,
   Add as AddIcon,
   Close as CloseIcon,
   SmartToy as AIIcon,
@@ -1457,7 +1458,7 @@ const DealDetails: React.FC = () => {
               {(() => {
                 const revenueRange = calculateExpectedRevenueRange();
                 return revenueRange.hasData ? (
-                  <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ mt: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
                     <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
                       ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
@@ -1481,7 +1482,7 @@ const DealDetails: React.FC = () => {
                 }}
               >
                 {/* Stage */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
                   <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Stage:</Typography>
                   <StageChip stage={deal.stage} size="small" useCustomColors={true} />
                 </Box>
@@ -1492,7 +1493,7 @@ const DealDetails: React.FC = () => {
                   const expectedCloseDate = qualData?.expectedCloseDate;
                   return expectedCloseDate ? (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Close:</Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Est. Close:</Typography>
                       <Typography variant="body2" color="text.primary">
                         {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
                       </Typography>
@@ -1521,63 +1522,94 @@ const DealDetails: React.FC = () => {
                   >
                     {company.companyName || company.name}
                   </Typography>
-                  {/* <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Company:</Typography> */}
-                  {/* <Typography 
-                    variant="body2" 
-                    color="primary"
-                    sx={{ 
-                      cursor: 'pointer',
-                      textDecoration: 'underline',
-                      '&:hover': { color: 'primary.dark' }
-                    }}
-                    onClick={() => navigate(`/crm/companies/${company.id}`)}
-                  >
-                    {company.companyName || company.name}
-                  </Typography> */}
-                  {Array.isArray((deal as any)?.associations?.locations) && (deal as any).associations.locations.length > 0 && (() => {
-                    const locEntry: any = (deal as any).associations.locations.find((l: any) => typeof l === 'object') || (deal as any).associations.locations[0];
+                  {(() => {
+                    const locations = (deal as any)?.associations?.locations || [];
+                    if (!Array.isArray(locations) || locations.length === 0) return null;
+                    const locEntry: any = locations.find((l: any) => typeof l === 'object') || locations[0];
                     const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;
-                    const locationName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
-                    if (!locationId || !locationName) return null;
+                    const assocName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
+                    const displayName = assocName || locationData?.name || locationData?.nickname || '';
+                    if (!locationId || !displayName) return null;
                     return (
-                    <>
-                      <Typography variant="body2" color="text.secondary">/</Typography>
-                      <Typography 
-                        variant="body2" 
-                        color="primary"
-                        sx={{ 
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
-                          '&:hover': { color: 'primary.dark' }
-                        }}
-                        onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
-                      >
-                        {locationName}
-                      </Typography>
-                    </>
+                      <>
+                        <Typography variant="body2" color="text.secondary">/</Typography>
+                        <Typography 
+                          variant="body2" 
+                          color="primary"
+                          sx={{ 
+                            cursor: 'pointer',
+                            textDecoration: 'underline',
+                            '&:hover': { color: 'primary.dark' }
+                          }}
+                          onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
+                        >
+                          {displayName}
+                        </Typography>
+                      </>
                     );
                   })()}
                 </Box>
               )}
 
+              {/* Associated Contacts inline */}
+              {Array.isArray(associatedContacts) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
+                  <GroupIcon fontSize="small" color="primary" />
+                  {/* <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, mr: 0.25 }}>Contacts:</Typography> */}
+                  {associatedContacts.length > 0 ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                      {associatedContacts.slice(0, 10).map((contact: any, index: number) => (
+                        <Box key={contact.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <MUILink
+                            underline="hover"
+                            color="primary"
+                            href={`/crm/contacts/${contact.id}`}
+                            onClick={(e) => { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); }}
+                          >
+                            <Typography variant="body2" color="primary">
+                              {(contact.fullName || contact.name || 'Contact')}
+                            </Typography>
+                          </MUILink>
+                          {index < Math.min(associatedContacts.length, 10) - 1 && (
+                            <Typography variant="body2" color="text.secondary">•</Typography>
+                          )}
+                        </Box>
+                      ))}
+                      {/* {associatedContacts.length > 3 && (
+                        <Typography variant="body2" color="text.secondary">+{associatedContacts.length - 5} more</Typography>
+                      )} */}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">None</Typography>
+                  )}
+                </Box>
+              )}
+
+              {/* Associated Salespeople inline */}
+              {Array.isArray(associatedSalespeople) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
+                  <PersonIcon fontSize="small" color="primary" />
+                  {associatedSalespeople.length > 0 ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                      {associatedSalespeople.slice(0, 10).map((sp: any, index: number) => (
+                        <Box key={sp.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Typography variant="body2" color="text.primary">
+                            {sp.displayName || sp.fullName || sp.name || sp.email || 'Salesperson'}
+                          </Typography>
+                          {index < Math.min(associatedSalespeople.length, 10) - 1 && (
+                            <Typography variant="body2" color="text.secondary">•</Typography>
+                          )}
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">None</Typography>
+                  )}
+                </Box>
+              )}
+
                               {/* Deal Health Indicators */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
-                  {/* Deal Health */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Health:</Typography>
-                    <Chip
-                      label={deal.stage === 'closed_won' ? 'Won' : deal.stage === 'closed_lost' ? 'Lost' : 'Active'}
-                      size="small"
-                      sx={{
-                        bgcolor: deal.stage === 'closed_won' ? 'success.light' : deal.stage === 'closed_lost' ? 'error.light' : 'info.light',
-                        color: deal.stage === 'closed_won' ? 'success.dark' : deal.stage === 'closed_lost' ? 'error.dark' : 'info.dark',
-                        fontWeight: 500,
-                        fontSize: '0.75rem',
-                        my: 0.5
-                      }}
-                    />
-                  </Box>
-                  
                   {/* Deal Priority */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>

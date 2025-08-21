@@ -57,7 +57,8 @@ import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firesto
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
 import { enrichContactOnDemand } from './contactEnrichment';
-import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp } from './gmailBulkImport';
+import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
+import { getEmailLogBody } from './emailLogs';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -101,7 +102,8 @@ export { rebuildDealAssociations, rebuildEntityReverseIndex };
 export { logContactEnhanced };
 
 // Gmail Bulk Import Functions
-export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp };
+export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker };
+export { getEmailLogBody };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
@@ -10279,6 +10281,7 @@ export {
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
+  cleanupDuplicateEmailLogs,
   bulkImportGmailEmails
 } from './gmailIntegration';
 

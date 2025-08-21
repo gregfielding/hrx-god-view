@@ -4,6 +4,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { google } from 'googleapis';
 import { defineString } from 'firebase-functions/params';
+import { getFunctions as getAdminFunctions } from 'firebase-admin/functions';
 // Cloud Tasks will be handled via HTTP endpoints
 
 const db = getFirestore();
@@ -17,11 +18,11 @@ const redirectUri = defineString('GOOGLE_REDIRECT_URI');
 // Configuration
 const GMAIL_IMPORT_CONFIG = {
   DAYS_BACK: 90,
-  MAX_EMAILS_PER_USER: 500, // Reduced limit per user to prevent timeouts
-  BATCH_SIZE: 25, // Smaller batch size for faster processing
+  MAX_EMAILS_PER_USER: 5000, // Increased limit per user per request
+  BATCH_SIZE: 100, // Larger batch to reduce list overhead
   RETRY_ATTEMPTS: 3,
   TASK_TIMEOUT_SECONDS: 540, // 9 minutes
-  RATE_LIMIT_DELAY_MS: 500, // Reduced delay for faster processing
+  RATE_LIMIT_DELAY_MS: 50, // Faster per-message pacing; adjust if rate limits hit
   MAX_PROCESSING_TIME_MS: 480000, // 8 minutes max processing time
 };
 
@@ -133,79 +134,32 @@ export const queueGmailBulkImport = onCall({
     // Save progress to Firestore
     await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).set(progress);
 
-    // Process users asynchronously to avoid timeouts
-    console.log(`Processing ${usersToProcess.length} users asynchronously`);
-    
-    // Update progress status to in_progress immediately
+    // Mark status to in_progress immediately
     await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
       status: 'in_progress',
       lastUpdate: new Date(),
     });
 
-    // Track completion status
-    let completedCount = 0;
-    let failedCount = 0;
-
-    // Process users asynchronously (don't await to avoid timeout)
+    // Enqueue background tasks per user using Functions Task Queues to avoid timeouts
+    const taskQueue = getAdminFunctions().taskQueue('processGmailImportWorker');
     for (let i = 0; i < usersToProcess.length; i++) {
       const user = usersToProcess[i];
-      const task: GmailImportTask = {
+      try {
+        await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
+          inProgressUsers: FieldValue.arrayUnion(user.userId),
+          lastUpdate: new Date(),
+        });
+      } catch {}
+      await taskQueue.enqueue({
         userId: user.userId,
         email: user.email,
         tenantId,
         daysBack,
         requestId,
         taskIndex: i,
-      };
-
-      // Process asynchronously without awaiting
-      processGmailImportTask(task)
-        .then(() => {
-          completedCount++;
-          console.log(`Successfully processed user ${user.email} (${completedCount}/${usersToProcess.length})`);
-          
-          // Update completion count
-          db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
-            completedUsers: completedCount,
-            lastUpdate: new Date(),
-          }).catch(updateError => {
-            console.error('Error updating completion count:', updateError);
-          });
-
-          // Check if all users are done
-          if (completedCount + failedCount === usersToProcess.length) {
-            const finalStatus = failedCount === usersToProcess.length ? 'failed' : 'completed';
-            db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
-              status: finalStatus,
-              lastUpdate: new Date(),
-            }).catch(updateError => {
-              console.error('Error updating final status:', updateError);
-            });
-          }
-        })
-        .catch(error => {
-          failedCount++;
-          console.error(`Failed to process user ${user.email}:`, error);
-          
-          // Update progress with error asynchronously
-          db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
-            failedUsers: FieldValue.arrayUnion(user.userId),
-            lastUpdate: new Date(),
-          }).catch(updateError => {
-            console.error('Error updating progress:', updateError);
-          });
-
-          // Check if all users are done
-          if (completedCount + failedCount === usersToProcess.length) {
-            const finalStatus = failedCount === usersToProcess.length ? 'failed' : 'completed';
-            db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
-              status: finalStatus,
-              lastUpdate: new Date(),
-            }).catch(updateError => {
-              console.error('Error updating final status:', updateError);
-            });
-          }
-        });
+        pageToken: null,
+        emailsImportedSoFar: 0,
+      });
     }
 
     return {
@@ -226,8 +180,12 @@ export const queueGmailBulkImport = onCall({
   }
 });
 
-// Helper function to process one user's emails
-async function processGmailImportTask(task: GmailImportTask) {
+// Background task worker (resumable) to process one user's emails without timeouts
+export const processGmailImportWorker = onTaskDispatched({
+  retryConfig: { maxAttempts: 5 },
+  rateLimits: { maxConcurrentDispatches: 5 }
+}, async (taskRequest) => {
+  const task = taskRequest.data as GmailImportTask & { pageToken?: string; emailsImportedSoFar?: number };
   const { userId, email, tenantId, daysBack, requestId } = task;
 
   console.log(`Starting Gmail import for user ${email} (${userId})`);
@@ -322,17 +280,22 @@ async function processGmailImportTask(task: GmailImportTask) {
     console.log(`Searching Gmail for user ${email} with query: "${query}"`);
     console.log(`Date range: ${startDate.toISOString()} (${afterEpoch}) to ${endDate.toISOString()} (${beforeEpoch})`);
     
-    let emailsImported = 0;
+    let emailsImported = task.emailsImportedSoFar || 0;
     let contactsFound = 0;
     let errors: string[] = [];
-    let pageToken: string | undefined;
+    let pageToken: string | undefined = task.pageToken as any;
     const startTime = Date.now();
 
     do {
       // Check if we're approaching the timeout
       if (Date.now() - startTime > GMAIL_IMPORT_CONFIG.MAX_PROCESSING_TIME_MS) {
         console.log(`Processing timeout reached for user ${email}, stopping at ${emailsImported} emails`);
-        break;
+        // Enqueue continuation with the next page token (if any)
+        if (pageToken) {
+          const taskQueue = getAdminFunctions().taskQueue('processGmailImportWorker');
+          await taskQueue.enqueue({ ...task, pageToken, emailsImportedSoFar: emailsImported });
+        }
+        return; // End this dispatch
       }
 
       try {
@@ -358,11 +321,14 @@ async function processGmailImportTask(task: GmailImportTask) {
           // Check timeout before processing each message
           if (Date.now() - startTime > GMAIL_IMPORT_CONFIG.MAX_PROCESSING_TIME_MS) {
             console.log(`Processing timeout reached during message processing for user ${email}`);
-            break;
+            // Enqueue continuation since we hit time budget
+            const taskQueue = getAdminFunctions().taskQueue('processGmailImportWorker');
+            await taskQueue.enqueue({ ...task, pageToken, emailsImportedSoFar: emailsImported });
+            return;
           }
 
           try {
-            const result = await processEmailMessage(gmail, message.id!, tenantId, userId);
+            const result = await processEmailMessage(gmail, message.id!, tenantId, userId, email);
             emailsImported++;
             contactsFound += result.contactsFound;
             
@@ -404,6 +370,7 @@ async function processGmailImportTask(task: GmailImportTask) {
         }
         
         errors.push(`Message list error: ${error.message}`);
+        // On error, stop and do not chain more to avoid loops
         break;
       }
 
@@ -433,10 +400,16 @@ async function processGmailImportTask(task: GmailImportTask) {
 
     throw error;
   }
-}
+});
 
 // Helper function to process individual email message
-async function processEmailMessage(gmail: any, messageId: string, tenantId: string, userId: string) {
+async function processEmailMessage(
+  gmail: any,
+  messageId: string,
+  tenantId: string,
+  userId: string,
+  userEmail: string
+) {
   const message = await gmail.users.messages.get({
     userId: 'me',
     id: messageId,
@@ -475,14 +448,21 @@ async function processEmailMessage(gmail: any, messageId: string, tenantId: stri
       console.log(`Found existing contact for ${emailAddress}: ${contactId}`);
       
       try {
+        const messageDate = new Date(date);
+        const direction = from.toLowerCase().includes(userEmail.toLowerCase()) ? 'sent' : 'received';
         await db.collection('tenants').doc(tenantId).collection('email_logs').add({
           messageId,
+          gmailMessageId: messageId,
           from,
           to,
           subject,
-          date: new Date(date),
+          date: messageDate,
+          timestamp: messageDate,
           contactId,
+          matchingContacts: [contactId],
           userId,
+          salespersonId: userId,
+          direction,
           importedAt: new Date(),
           source: 'gmail_bulk_import',
           emailAddress,
@@ -569,11 +549,17 @@ export const getGmailImportProgressHttp = onRequest({
   memory: '256MiB',
   maxInstances: 2,
 }, async (req, res) => {
+  const requestOrigin = (req.headers.origin as string) || '';
+  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
+  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
-    res.set('Access-Control-Allow-Origin', 'http://localhost:3000');
+    res.set('Access-Control-Allow-Origin', corsOrigin);
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Max-Age', '3600');
+    res.set('Vary', 'Origin');
     res.status(204).send('');
     return;
   }
@@ -593,13 +579,147 @@ export const getGmailImportProgressHttp = onRequest({
       return;
     }
 
-    res.set('Access-Control-Allow-Origin', 'http://localhost:3000');
+    res.set('Access-Control-Allow-Origin', corsOrigin);
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Vary', 'Origin');
     res.json(progressDoc.data());
   } catch (error) {
     console.error('Error in getGmailImportProgressHttp:', error);
-    res.set('Access-Control-Allow-Origin', 'http://localhost:3000');
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.set('Vary', 'Origin');
     res.status(500).json({ error: error.message });
+  }
+});
+
+// HTTP wrapper for queueing Gmail imports to support localhost development without callable CORS issues
+export const queueGmailBulkImportHttp = onRequest({
+  cors: true,
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  maxInstances: 2,
+}, async (req, res) => {
+  const requestOrigin = (req.headers.origin as string) || '';
+  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
+  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Max-Age', '3600');
+    res.set('Vary', 'Origin');
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    const { userIds, emailAddresses, tenantId, daysBack = GMAIL_IMPORT_CONFIG.DAYS_BACK } = (req.body || {}) as Partial<GmailImportRequest>;
+
+    if (!tenantId) {
+      res.status(400).json({ success: false, message: 'tenantId is required' });
+      return;
+    }
+
+    if (!userIds && !emailAddresses) {
+      res.status(400).json({ success: false, message: 'Either userIds or emailAddresses must be provided' });
+      return;
+    }
+
+    const requestId = `gmail_import_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const usersToProcess: Array<{ userId: string; email: string }> = [];
+
+    if (userIds) {
+      for (const userId of userIds) {
+        try {
+          const userRecord = await auth.getUser(userId);
+          if (userRecord.email) {
+            usersToProcess.push({ userId, email: userRecord.email });
+          }
+        } catch (error) {
+          console.error(`Failed to get user ${userId}:`, error);
+        }
+      }
+    }
+
+    if (emailAddresses) {
+      for (const email of emailAddresses) {
+        try {
+          const userRecord = await auth.getUserByEmail(email);
+          if (userRecord.uid) {
+            usersToProcess.push({ userId: userRecord.uid, email });
+          }
+        } catch (error) {
+          console.error(`Failed to get user by email ${email}:`, error);
+        }
+      }
+    }
+
+    if (usersToProcess.length === 0) {
+      res.status(400).json({ success: false, message: 'No valid users found to process' });
+      return;
+    }
+
+    // Initialize progress tracking
+    const progress: ImportProgress = {
+      requestId,
+      tenantId,
+      totalUsers: usersToProcess.length,
+      completedUsers: 0,
+      failedUsers: [],
+      inProgressUsers: [],
+      startTime: new Date(),
+      lastUpdate: new Date(),
+      status: 'pending',
+      results: {},
+    };
+
+    // Save progress to Firestore
+    await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).set(progress);
+
+    // Update progress status to in_progress immediately
+    await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
+      status: 'in_progress',
+      lastUpdate: new Date(),
+    });
+
+    const taskQueue = getAdminFunctions().taskQueue('processGmailImportWorker');
+    for (let i = 0; i < usersToProcess.length; i++) {
+      const user = usersToProcess[i];
+      try {
+        await db.collection('tenants').doc(tenantId).collection('gmail_imports').doc(requestId).update({
+          inProgressUsers: FieldValue.arrayUnion(user.userId),
+          lastUpdate: new Date(),
+        });
+      } catch {}
+      await taskQueue.enqueue({
+        userId: user.userId,
+        email: user.email,
+        tenantId,
+        daysBack,
+        requestId,
+        taskIndex: i,
+        pageToken: null,
+        emailsImportedSoFar: 0,
+      });
+    }
+
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Vary', 'Origin');
+    res.json({
+      success: true,
+      requestId,
+      totalUsers: usersToProcess.length,
+      message: `Queued Gmail import for ${usersToProcess.length} users`,
+    });
+  } catch (error: any) {
+    console.error('Error in queueGmailBulkImportHttp:', error);
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.set('Vary', 'Origin');
+    res.status(500).json({ success: false, message: error.message || 'Internal error' });
   }
 });

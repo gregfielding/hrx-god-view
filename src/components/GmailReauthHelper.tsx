@@ -153,9 +153,11 @@ const GmailReauthHelper: React.FC<GmailReauthHelperProps> = ({ tenantId }) => {
                     <ErrorIcon color="warning" />
                   </ListItemIcon>
                   <ListItemText
+                    primaryTypographyProps={{ component: 'div' }}
+                    secondaryTypographyProps={{ component: 'div' }}
                     primary={
-                      <Box display="flex" alignItems="center" gap={1}>
-                        <Typography variant="body1" fontWeight="medium">
+                      <Box component="span" display="inline-flex" alignItems="center" gap={1}>
+                        <Typography variant="body1" fontWeight="medium" component="span">
                           {userWithIssue.displayName || userWithIssue.email}
                         </Typography>
                         <Chip 
@@ -167,12 +169,12 @@ const GmailReauthHelper: React.FC<GmailReauthHelperProps> = ({ tenantId }) => {
                       </Box>
                     }
                     secondary={
-                      <Box>
-                        <Typography variant="body2" color="text.secondary">
+                      <Box component="span">
+                        <Typography variant="body2" color="text.secondary" component="span">
                           {userWithIssue.email}
                         </Typography>
                         {userWithIssue.gmailAuthError && (
-                          <Typography variant="caption" color="error">
+                          <Typography variant="caption" color="error" component="div">
                             Error: {userWithIssue.gmailAuthError}
                           </Typography>
                         )}

@@ -110,6 +110,7 @@ import PipelineFunnel from '../../components/PipelineFunnel';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
 import UserAppointmentsDashboard from '../../components/UserAppointmentsDashboard';
+import CalendarWidget from '../../components/CalendarWidget';
 
 
 
@@ -2669,7 +2670,89 @@ const ContactsTab: React.FC<{
     return contacts.length;
   }, [contacts]);
 
-  // Filter contacts based on the selected filter and company filter
+  // Sorting state
+  const [sortField, setSortField] = useState<string>('fullName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Handle sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Get sortable value for a contact and field
+  const getSortableValue = (contact: any, field: string) => {
+    switch (field) {
+      case 'fullName':
+        return (contact.fullName || contact.name || '').toLowerCase();
+      case 'jobTitle':
+        return (contact.jobTitle || contact.title || '').toLowerCase();
+      case 'email':
+        return (contact.email || '').toLowerCase();
+      case 'company':
+        return (() => {
+          // First check for direct companyName field (most reliable)
+          if (contact.companyName) {
+            return contact.companyName.toLowerCase();
+          }
+          
+          // Second check for legacy companyId field
+          if (contact.companyId) {
+            const company = companies.find(c => c.id === contact.companyId);
+            if (company) {
+              return (company.companyName || company.name || '').toLowerCase();
+            }
+          }
+          
+          // Third check for associations.companies array
+          const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+          const primaryCompanyId = assocCompanies[0];
+          const company = companies.find(c => c.id === primaryCompanyId);
+          return (company?.companyName || company?.name || '').toLowerCase();
+        })();
+      case 'location':
+        return (() => {
+          // First check for legacy locationId field
+          if (contact.locationId) {
+            const location = locations.find(loc => loc.id === contact.locationId);
+            if (location) {
+              const locationName = location.name || location.nickname || 'Unknown Location';
+              const cityState = [location.city, location.state].filter(Boolean).join(', ');
+              return cityState ? `${locationName} (${cityState})` : locationName;
+            }
+            // If locationId exists but location not found, show locationName if available
+            if (contact.locationName) {
+              return contact.locationName.toLowerCase();
+            }
+          }
+          
+          // Fallback to associations.locations array
+          const assocLocs = (contact.associations?.locations || []) as any[];
+          const obj = assocLocs.find(l => typeof l === 'object');
+          const locName = obj?.snapshot?.name || obj?.name;
+          if (locName) return locName.toLowerCase();
+          
+          // Final fallback to contact city/state
+          if (contact.city && contact.state) return `${contact.city}, ${contact.state}`.toLowerCase();
+          return '';
+        })();
+      case 'lastActivity': {
+        const activity = lastActivities[contact.id];
+        if (!activity) return new Date(0);
+        const timestamp = activity.timestamp || activity;
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        return date.getTime();
+      }
+      default:
+        return '';
+    }
+  };
+
+  // Filter and sort contacts
   const filteredContacts = React.useMemo(() => {
     let filtered = contacts;
     
@@ -2681,8 +2764,18 @@ const ContactsTab: React.FC<{
       });
     }
     
+    // Sort the filtered contacts
+    filtered.sort((a, b) => {
+      const aValue = getSortableValue(a, sortField);
+      const bValue = getSortableValue(b, sortField);
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
     return filtered;
-  }, [contacts, selectedCompanyFilter]);
+  }, [contacts, selectedCompanyFilter, sortField, sortDirection, companies, locations, lastActivities]);
 
   // Load all companies for the filter dropdown
   const loadAllCompanies = React.useCallback(async () => {
@@ -3012,7 +3105,20 @@ const ContactsTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Name
+                <TableSortLabel
+                  active={sortField === 'fullName'}
+                  direction={sortField === 'fullName' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('fullName')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Name
+                </TableSortLabel>
               </TableCell>
               <TableCell sx={{ 
                 width: 150,
@@ -3024,7 +3130,20 @@ const ContactsTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Job Title
+                <TableSortLabel
+                  active={sortField === 'jobTitle'}
+                  direction={sortField === 'jobTitle' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('jobTitle')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Job Title
+                </TableSortLabel>
               </TableCell>
               <TableCell sx={{ 
                 width: 200,
@@ -3048,7 +3167,20 @@ const ContactsTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Company
+                <TableSortLabel
+                  active={sortField === 'company'}
+                  direction={sortField === 'company' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('company')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Company
+                </TableSortLabel>
               </TableCell>
               
               <TableCell sx={{ 
@@ -3073,7 +3205,20 @@ const ContactsTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Last Activity
+                <TableSortLabel
+                  active={sortField === 'lastActivity'}
+                  direction={sortField === 'lastActivity' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('lastActivity')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Last Activity
+                </TableSortLabel>
               </TableCell>
 
             </TableRow>
@@ -3339,8 +3484,129 @@ const CompaniesTab: React.FC<{
     // We need to pass this information up to the parent component
   }, [companyFilter]);
 
-  // Since filtering is now handled at the database level, we just use the companies as-is
-  const filteredCompanies = companies;
+  // Sorting state
+  const [sortField, setSortField] = useState<string>('companyName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Handle sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Get sortable value for a company and field
+  const getSortableValue = (company: any, field: string) => {
+    switch (field) {
+      case 'companyName':
+        return (company.companyName || company.name || '').toLowerCase();
+      case 'contacts':
+        return getCompanyContacts(company.id).length;
+      case 'deals':
+        return getCompanyDeals(company.id).length;
+      case 'pipelineValue': {
+        const pipeline = getCompanyPipelineValue(company);
+        return pipeline.totalLow + pipeline.totalHigh;
+      }
+      case 'closedValue': {
+        const closed = getCompanyClosedValue(company);
+        return closed.totalValue;
+      }
+      case 'accountOwner':
+        return getCompanyAccountOwner(company).toLowerCase();
+      default:
+        return '';
+    }
+  };
+
+  // Filter and sort companies
+  const filteredCompanies = React.useMemo(() => {
+    let filtered = companies;
+    
+    // Apply search filter if search term exists
+    if (search.trim()) {
+      const searchLower = search.toLowerCase().trim();
+      filtered = filtered.filter(company => {
+        const companyName = (company.companyName || company.name || '').toLowerCase();
+        const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+        const city = (company.city || '').toLowerCase();
+        const industry = (company.industry || '').toLowerCase();
+        
+        return companyName.includes(searchLower) ||
+               companyUrl.includes(searchLower) ||
+               city.includes(searchLower) ||
+               industry.includes(searchLower);
+      });
+    }
+    
+    // Sort the filtered companies
+    filtered.sort((a, b) => {
+      const aValue = getSortableValue(a, sortField);
+      const bValue = getSortableValue(b, sortField);
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    return filtered;
+  }, [companies, search, sortField, sortDirection]);
+
+  // Helper function to get account owner for sorting
+  const getCompanyAccountOwner = (company: any) => {
+    // Get associated salespeople for this company using the associations system
+    const salespeople = new Set<string>();
+    
+    // Check if company has associations data
+    if (company.associations && company.associations.salespeople) {
+      // If associations are already loaded in the company object
+      company.associations.salespeople.forEach((salesperson: any) => {
+        if (salesperson.name) {
+          salespeople.add(salesperson.name);
+        } else if (typeof salesperson === 'string') {
+          salespeople.add(getSalespersonName(salesperson));
+        }
+      });
+    }
+    
+    // Also check for legacy fields
+    if (company.salesOwnerId) {
+      salespeople.add(getSalespersonName(company.salesOwnerId));
+    }
+    if (company.accountOwnerId) {
+      salespeople.add(getSalespersonName(company.accountOwnerId));
+    }
+    if (company.salesOwnerName) {
+      salespeople.add(company.salesOwnerName);
+    }
+    if (company.accountOwner) {
+      salespeople.add(company.accountOwner);
+    }
+    
+    // Check deals for additional salespeople
+    const companyDeals = getCompanyDeals(company.id);
+    companyDeals.forEach(deal => {
+      if (deal.owner) {
+        salespeople.add(getSalespersonName(deal.owner));
+      }
+    });
+    
+    const salespeopleList = Array.from(salespeople);
+    
+    if (salespeopleList.length === 0) {
+      return '-';
+    }
+    
+    const primarySalesperson = salespeopleList[0];
+    const displayName = primarySalesperson.includes('@') 
+      ? primarySalesperson.split('@')[0] 
+      : `${primarySalesperson.split(' ')[0]} ${primarySalesperson.split(' ')[1]?.[0] || ''}.`;
+    
+    return displayName;
+  };
 
   // Helper function to get avatar background color - softer pastel palette
   const getAvatarColor = (name: string) => {
@@ -3703,7 +3969,20 @@ const CompaniesTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Company Name
+                <TableSortLabel
+                  active={sortField === 'companyName'}
+                  direction={sortField === 'companyName' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('companyName')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Company Name
+                </TableSortLabel>
               </TableCell>
               <TableCell sx={{ 
                 fontSize: '0.75rem',
@@ -4170,6 +4449,22 @@ const CompaniesTab: React.FC<{
   // Salesperson filter state
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
 
+  // Helpers to normalize salesperson identity/display for dropdown + filtering
+  const getSalespersonKey = (sp: any): string => {
+    return sp?.id || sp?.uid || sp?.userId || sp?.userID || sp?.docId || sp?.email || '';
+  };
+  const getSalespersonDisplay = (sp: any): string => {
+    const fullName = [sp?.firstName, sp?.lastName].filter(Boolean).join(' ').trim();
+    return (
+      sp?.name ||
+      sp?.displayName ||
+      (fullName || '') ||
+      sp?.email ||
+      sp?.username ||
+      getSalespersonKey(sp)
+    );
+  };
+
   // Helper function to get avatar background color - softer pastel palette
   const getAvatarColor = (name: string) => {
     const colors = [
@@ -4395,10 +4690,24 @@ const CompaniesTab: React.FC<{
     // Apply salesperson filter
     if (selectedSalesperson !== 'all') {
       filtered = filtered.filter(deal => {
-        if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
-          return deal.associations.salespeople.includes(selectedSalesperson);
-        }
-        return false;
+        const arr = (deal.associations?.salespeople || []) as any[];
+        const matchAssoc = arr.some((sp: any) => {
+          if (typeof sp === 'string') return sp === selectedSalesperson;
+          return (
+            sp?.id === selectedSalesperson ||
+            sp?.uid === selectedSalesperson ||
+            sp?.userId === selectedSalesperson ||
+            sp?.userID === selectedSalesperson ||
+            sp?.docId === selectedSalesperson ||
+            sp?.email === selectedSalesperson
+          );
+        });
+        // Fallback to legacy owner fields just in case
+        const matchLegacy =
+          deal.owner === selectedSalesperson ||
+          deal.salesOwnerId === selectedSalesperson ||
+          deal.accountOwnerId === selectedSalesperson;
+        return matchAssoc || matchLegacy;
       });
     }
     
@@ -4564,7 +4873,7 @@ const CompaniesTab: React.FC<{
           </ToggleButtonGroup>
           
           {/* Salesperson Filter */}
-          <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+          <FormControl size="small" sx={{ minWidth: 220, height: 36 }}>
             <InputLabel sx={{ fontSize: '0.875rem' }}>Salesperson</InputLabel>
             <Select
               value={selectedSalesperson}
@@ -4584,11 +4893,15 @@ const CompaniesTab: React.FC<{
               }}
             >
               <MenuItem value="all">All Salespeople</MenuItem>
-              {salesTeam.map((salesperson) => (
-                <MenuItem key={salesperson.id} value={salesperson.id}>
-                  {salesperson.name || salesperson.displayName || salesperson.id}
-                </MenuItem>
-              ))}
+              {salesTeam.map((salesperson) => {
+                const key = getSalespersonKey(salesperson);
+                const label = getSalespersonDisplay(salesperson);
+                return (
+                  <MenuItem key={key} value={key}>
+                    {label}
+                  </MenuItem>
+                );
+              })}
             </Select>
           </FormControl>
           
@@ -5485,10 +5798,10 @@ const SalesDashboard: React.FC<{
 
 
 
-      {/* 3-Column Layout */}
-      <Grid container spacing={3}>
-        {/* Left Column - Todos & Pipeline Overview */}
+      {/* Calendar Widget - Spans Center and Right Columns */}
+      <Grid container spacing={3} sx={{ mb: 3 }}>
         <Grid item xs={12} md={4}>
+          {/* Left Column - Todos & Key Metrics */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
             {/* Todos Widget */}
             <Card>
@@ -5527,90 +5840,6 @@ const SalesDashboard: React.FC<{
                 </Box>
               </CardContent>
             </Card>
-
-            {/* Appointments Widget */}
-            <Card>
-              <CardHeader 
-                title="Appointments" 
-                action={
-                  <IconButton 
-                    size="small" 
-                    title="Schedule meeting"
-                    onClick={() => {
-                      // This will open the appointment creation dialog
-                      // For now, we'll navigate to the tasks tab
-                      navigate('/crm?tab=tasks');
-                    }}
-                  >
-                    <AddIcon />
-                  </IconButton>
-                }
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ p: 0 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <UserAppointmentsDashboard
-                    userId={currentUser?.uid || ''}
-                    tenantId={tenantId}
-                    preloadedContacts={memoizedContacts}
-                    preloadedSalespeople={memoizedEmptyArray}
-                    preloadedCompanies={memoizedAllCompanies}
-                    preloadedDeals={memoizedMyDeals}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-
-          </Box>
-        </Grid>
-
-        {/* Center Column - Main Dashboard Content */}
-        <Grid item xs={12} md={5}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {/* Sales Coach Widget */}
-            <Card>
-              <CardHeader 
-                title="Sales Coach" 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                action={
-                  <IconButton 
-                    size="small" 
-                    title="Start new conversation"
-                    onClick={() => {
-                      // This will trigger a new conversation in the SalesCoach component
-                      const event = new CustomEvent('startNewSalesCoachConversation', {
-                        detail: { entityId: 'dashboard' }
-                      });
-                      window.dispatchEvent(event);
-                    }}
-                  >
-                    <AddIcon />
-                  </IconButton>
-                }
-                sx={{ pb: 1 }}
-              />
-              <CardContent sx={{ p: 0, pt: 0 }}>
-                <Box sx={{ height: 600 }}>
-                  <SalesCoach 
-                    entityType="deal"
-                    entityId="dashboard"
-                    entityName="Sales Dashboard"
-                    tenantId={tenantId}
-                    contactCompany=""
-                    contactTitle=""
-                    associations={{}}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-
-
-          </Box>
-        </Grid>
-
-        {/* Right Column - Key Metrics & Quick Actions */}
-        <Grid item xs={12} md={3}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
             {/* Key Metrics */}
             <Card>
@@ -5672,59 +5901,21 @@ const SalesDashboard: React.FC<{
                 )}
               </CardContent>
             </Card>
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader 
-                title="Quick Actions" 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ p: 2 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <Button 
-                    variant="outlined" 
-                    size="small" 
-                    fullWidth 
-                    sx={{ justifyContent: 'flex-start' }}
-                    onClick={() => navigate('/crm?tab=contacts')}
-                  >
-                    Add New Contact
-                  </Button>
-                  <Button 
-                    variant="outlined" 
-                    size="small" 
-                    fullWidth 
-                    sx={{ justifyContent: 'flex-start' }}
-                    onClick={() => navigate('/crm?tab=companies')}
-                  >
-                    Add New Company
-                  </Button>
-                  <Button 
-                    variant="outlined" 
-                    size="small" 
-                    fullWidth 
-                    sx={{ justifyContent: 'flex-start' }}
-                    onClick={() => navigate('/crm?tab=deals')}
-                  >
-                    Create Opportunity
-                  </Button>
-                  <Button 
-                    variant="outlined" 
-                    size="small" 
-                    fullWidth 
-                    sx={{ justifyContent: 'flex-start' }}
-                    onClick={() => navigate('/crm?tab=tasks')}
-                  >
-                    Create Task
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
-
-
           </Box>
         </Grid>
+        <Grid item xs={12} md={8}>
+          <CalendarWidget
+            userId={currentUser?.uid || ''}
+            tenantId={tenantId}
+            preloadedContacts={memoizedContacts}
+            preloadedSalespeople={memoizedEmptyArray}
+            preloadedCompanies={memoizedAllCompanies}
+            preloadedDeals={memoizedMyDeals}
+          />
+        </Grid>
       </Grid>
+
+      {/* Sales Coach temporarily hidden */}
 
 
     </Box>

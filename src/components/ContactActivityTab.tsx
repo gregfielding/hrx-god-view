@@ -24,6 +24,9 @@ import {
 import { Timeline as TimelineIcon } from '@mui/icons-material';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 
 // Types for contact activity items
 type ContactActivityItem = {
@@ -56,6 +59,9 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
   const [items, setItems] = useState<ContactActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedContent, setExpandedContent] = useState<{ [id: string]: { bodyHtml?: string; bodySnippet?: string } }>({});
+  const [expanding, setExpanding] = useState<boolean>(false);
   // Filters
   const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'email' | 'note'>('all');
   const [startDate, setStartDate] = useState<string>('');
@@ -117,6 +123,30 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const handleRowClick = async (it: ContactActivityItem) => {
+    if (expandedId === it.id) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(it.id);
+    // Only fetch email bodies
+    if (it.type !== 'email') return;
+    if (expandedContent[it.id]) return; // already loaded
+    try {
+      setExpanding(true);
+      const functions = getFunctions();
+      const getEmailLogBody = httpsCallable(functions, 'getEmailLogBody');
+      // activity id is shaped like email_<docId>
+      const emailLogId = it.id.replace(/^email_/, '');
+      const resp: any = await getEmailLogBody({ tenantId, emailLogId });
+      setExpandedContent(prev => ({ ...prev, [it.id]: { bodyHtml: resp?.data?.bodyHtml, bodySnippet: resp?.data?.bodySnippet } }));
+    } catch (e) {
+      console.warn('Failed to load email body', e);
+    } finally {
+      setExpanding(false);
+    }
+  };
 
   return (
     <Box>
@@ -223,18 +253,19 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     }}>
                       When
                     </TableCell>
+                    <TableCell />
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
+                    <>
                     <TableRow 
                       key={it.id}
+                      onClick={() => handleRowClick(it)}
                       sx={{
                         height: '48px',
                         cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: '#F9FAFB'
-                        }
+                        '&:hover': { backgroundColor: '#F9FAFB' }
                       }}
                     >
                       <TableCell sx={{ py: 1 }}>
@@ -282,7 +313,34 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                           {it.timestamp?.toLocaleString?.()}
                         </Typography>
                       </TableCell>
+                      <TableCell width={48} align="right">
+                        {expandedId === it.id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                      </TableCell>
                     </TableRow>
+                    {expandedId === it.id && (
+                      <TableRow>
+                        <TableCell colSpan={5} sx={{ bgcolor: '#FAFAFA' }}>
+                          {it.type === 'email' ? (
+                            <Box sx={{ p: 2 }}>
+                              {expanding && !expandedContent[it.id] ? (
+                                <Box display="flex" justifyContent="center"><CircularProgress size={20} /></Box>
+                              ) : expandedContent[it.id]?.bodyHtml ? (
+                                <Box sx={{ border: '1px solid #E5E7EB', borderRadius: 1, p: 2 }} dangerouslySetInnerHTML={{ __html: expandedContent[it.id].bodyHtml as string }} />
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  {expandedContent[it.id]?.bodySnippet || 'No content available'}
+                                </Typography>
+                              )}
+                            </Box>
+                          ) : (
+                            <Box sx={{ p: 2 }}>
+                              <Typography variant="body2" color="text.secondary">No additional details</Typography>
+                            </Box>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </>
                   ))}
                 </TableBody>
               </Table>

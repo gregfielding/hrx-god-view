@@ -3023,11 +3023,11 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     <Typography variant="subtitle1">{stage.label}</Typography>
                   </Box>
                   <Box sx={{ ml: 'auto', display: 'flex', gap: 1, alignItems: 'center' }}>
-                    <Chip
+                    {/* <Chip
                       label={status === 'completed' ? 'Completed' : status === 'active' ? 'In Progress' : 'Not Started'}
                       color={status === 'completed' ? 'success' : status === 'active' ? 'warning' : 'default'}
                       size="small"
-                    />
+                    /> */}
                     {status === 'active' && (
                       <Chip
                         label="Mark as Complete"
