@@ -259,7 +259,56 @@ async function processGmailImportTask(task: GmailImportTask) {
     );
     oauth2Client.setCredentials(userData.gmailTokens);
 
+    // Add token refresh error handler
+    oauth2Client.on('tokens', async (tokens) => {
+      if (tokens.refresh_token) {
+        // Update the user's tokens in Firestore
+        try {
+          await db.collection('users').doc(userId).update({
+            gmailTokens: {
+              ...userData.gmailTokens,
+              refresh_token: tokens.refresh_token,
+              access_token: tokens.access_token,
+              expiry_date: tokens.expiry_date
+            }
+          });
+          console.log(`Updated tokens for user ${email}`);
+        } catch (updateError) {
+          console.error(`Failed to update tokens for user ${email}:`, updateError);
+        }
+      }
+    });
+
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Test Gmail API access before starting import
+    try {
+      console.log(`Testing Gmail API access for user ${email}...`);
+      await gmail.users.getProfile({ userId: 'me' });
+      console.log(`Gmail API access confirmed for user ${email}`);
+    } catch (authError) {
+      console.error(`Gmail API access test failed for user ${email}:`, authError);
+      
+      if (authError.message?.includes('invalid_grant') || authError.response?.data?.error === 'invalid_grant') {
+        const errorMessage = 'Gmail access token has expired. User needs to re-authenticate with Gmail.';
+        
+        // Mark user as needing re-authentication
+        try {
+          await db.collection('users').doc(userId).update({
+            gmailTokens: null, // Clear expired tokens
+            gmailAuthNeeded: true, // Flag for re-authentication
+            gmailAuthError: errorMessage
+          });
+          console.log(`Marked user ${email} as needing Gmail re-authentication`);
+        } catch (updateError) {
+          console.error(`Failed to update user auth status for ${email}:`, updateError);
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      throw authError;
+    }
 
     // Calculate date range
     const endDate = new Date();
@@ -322,6 +371,28 @@ async function processGmailImportTask(task: GmailImportTask) {
 
       } catch (error) {
         console.error('Error fetching messages:', error);
+        
+        // Handle specific OAuth2 errors
+        if (error.message?.includes('invalid_grant') || error.response?.data?.error === 'invalid_grant') {
+          const errorMessage = 'Gmail access token has expired. User needs to re-authenticate with Gmail.';
+          console.error(`OAuth2 error for user ${email}:`, errorMessage);
+          errors.push(errorMessage);
+          
+          // Mark user as needing re-authentication
+          try {
+            await db.collection('users').doc(userId).update({
+              gmailTokens: null, // Clear expired tokens
+              gmailAuthNeeded: true, // Flag for re-authentication
+              gmailAuthError: errorMessage
+            });
+            console.log(`Marked user ${email} as needing Gmail re-authentication`);
+          } catch (updateError) {
+            console.error(`Failed to update user auth status for ${email}:`, updateError);
+          }
+          
+          break; // Stop processing for this user
+        }
+        
         errors.push(`Message list error: ${error.message}`);
         break;
       }

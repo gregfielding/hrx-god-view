@@ -45,6 +45,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../contexts/AuthContext';
 import GmailBulkImport from '../../components/GmailBulkImport';
+import GmailReauthHelper from '../../components/GmailReauthHelper';
 
 interface MatchingResult {
   contactId: string;
@@ -269,10 +270,17 @@ const DataOperations: React.FC = () => {
             const totalEmails = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.emailsImported || 0), 0);
             const totalContacts = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.contactsFound || 0), 0);
             
+            // Check for specific error types in the results
+            const hasAuthErrors = Object.values(progressData.results || {}).some((result: any) => 
+              result.errors?.some((error: string) => error.includes('Gmail access token has expired'))
+            );
+            
             setSingleUserImportResults(prev => ({
               ...prev,
               message: progressData.status === 'completed' 
                 ? `✅ Import completed: ${totalEmails} emails processed, ${totalContacts} contacts found`
+                : hasAuthErrors
+                ? `❌ Import failed: Gmail access tokens have expired. Users need to re-authenticate.`
                 : `❌ Import failed: ${progressData.failedUsers?.length || 0} users failed`
             }));
           }
@@ -572,6 +580,11 @@ const DataOperations: React.FC = () => {
       </Typography>
 
       <Grid container spacing={3}>
+        {/* Gmail Authentication Issues Helper */}
+        <Grid item xs={12}>
+          <GmailReauthHelper tenantId={tenantId} />
+        </Grid>
+
         {/* Single User Gmail Import */}
         <Grid item xs={12} md={6}>
           <Card>
