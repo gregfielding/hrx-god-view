@@ -1487,6 +1487,33 @@ const DealDetails: React.FC = () => {
                   <StageChip stage={deal.stage} size="small" useCustomColors={true} />
                 </Box>
 
+                {/* Status - Show Won/Lost when Closing stage is complete */}
+                {(() => {
+                  const closingData = stageData?.closedWon;
+                  const isClosingComplete = deal.stage === 'onboarding' || deal.stage === 'liveAccount' || deal.stage === 'dormant';
+                  const closingStatus = closingData?.status;
+                  
+                  if (isClosingComplete && closingStatus) {
+                    return (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
+                        <Chip
+                          label={closingStatus === 'won' ? 'Won' : 'Lost'}
+                          size="small"
+                          sx={{
+                            bgcolor: closingStatus === 'won' ? 'success.light' : 'error.light',
+                            color: closingStatus === 'won' ? 'success.dark' : 'error.dark',
+                            fontWeight: 500,
+                            fontSize: '0.75rem',
+                            height: 20
+                          }}
+                        />
+                      </Box>
+                    );
+                  }
+                  return null;
+                })()}
+
                 {/* Close Date */}
                 {(() => {
                   const qualData = stageData?.qualification;
@@ -2234,6 +2261,7 @@ const DealDetails: React.FC = () => {
           stageData={stageData || {}}
           onStageDataChange={handleStageDataChange}
           onStageAdvance={handleStageAdvance}
+          onStageIncomplete={handleMarkStageIncomplete}
           associatedContacts={associatedContacts}
         />
       </TabPanel>

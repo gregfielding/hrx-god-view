@@ -86,7 +86,6 @@ interface DealStageData {
   negotiation?: NegotiationData;
   verbalAgreement?: VerbalAgreementData;
   closedWon?: ClosedWonData;
-  closedLost?: ClosedLostData;
   onboarding?: OnboardingData;
   liveAccount?: LiveAccountData;
   dormant?: DormantData;
@@ -221,15 +220,24 @@ interface VerbalAgreementData {
   notes?: string;
 }
 
-interface ClosedWonData {
-  signedContractFile?: File | null;
-  signedContractUrl?: string;
-  dateSigned?: string;
-  expirationDate?: string;
-  rateSheetOnFile?: boolean;
-  msaSigned?: boolean;
-  notes?: string;
-}
+ interface ClosedWonData {
+   status?: 'won' | 'lost';
+   signedContractFile?: File | null;
+   signedContractUrl?: string;
+   dateSigned?: string;
+   expirationDate?: string;
+   rateSheetOnFile?: boolean;
+   msaSigned?: boolean;
+   notes?: string;
+   // Lost deal fields
+   lostReason?: string;
+   competitor?: string;
+   lostTo?: string;
+   priceDifference?: number;
+   decisionMaker?: string;
+   feedback?: string;
+   lessonsLearned?: string;
+ }
 
 interface OnboardingData {
   onboardingStartDate?: string;
@@ -237,6 +245,7 @@ interface OnboardingData {
   recruitingIntroduced?: boolean;
   checklistGenerated?: boolean;
   convertedToJobOrder?: boolean;
+  insuranceSubmitted?: boolean;
   notes?: string;
 }
 
@@ -276,21 +285,7 @@ const TextField = (props: any) => {
   );
 };
 
-interface ClosedLostData {
-  lostReason?: 'price' | 'timing' | 'competitor' | 'no_need' | 'internal_decision' | 'other';
-  competitor?: string;
-  priceDifference?: number;
-  lostTo?: string;
-  decisionMaker?: string;
-  feedback?: string;
-  lessonsLearned?: string;
-  createFollowUpCampaign?: boolean;
-  followUpTimeline?: '30_days' | '60_days' | '90_days' | '6_months' | '1_year' | 'custom';
-  customFollowUpDate?: string;
-  followUpStrategy?: string;
-  assignedTo?: string; // salesperson ID for follow-up
-  notes?: string;
-}
+
 
 interface DealStageFormsProps {
   dealId: string;
@@ -311,8 +306,7 @@ const STAGES = [
   { key: 'proposalReview', label: 'Proposal Review', icon: <RateReviewIcon /> },
   { key: 'negotiation', label: 'Negotiation', icon: <GavelIcon /> },
   { key: 'verbalAgreement', label: 'Verbal Agreement', icon: <HandshakeIcon /> },
-  { key: 'closedWon', label: 'Closed / Won', icon: <CheckIcon /> },
-  { key: 'closedLost', label: 'Closed / Lost', icon: <CancelIcon /> },
+  { key: 'closedWon', label: 'Closing', icon: <CheckIcon /> },
   { key: 'onboarding', label: 'Onboarding', icon: <AssignmentIcon /> },
   { key: 'liveAccount', label: 'Live Account', icon: <PlayArrowIcon /> },
   { key: 'dormant', label: 'Dormant', icon: <BedtimeIcon /> }
@@ -769,6 +763,36 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 />
               </Grid>
             </Grid>
+
+            <FormControl fullWidth sx={{ mt: 3 }}>
+              <InputLabel>Satisfaction Level With Current Staffing Agencies</InputLabel>
+              <Select
+                value={data.satisfactionLevel || ''}
+                label="Satisfaction Level"
+                onChange={(e) => handleStageDataChange('discovery', 'satisfactionLevel', e.target.value)}
+              >
+                <MenuItem value="very_happy">Very Happy</MenuItem>
+                <MenuItem value="somewhat">Somewhat Satisfied</MenuItem>
+                <MenuItem value="frustrated">Frustrated</MenuItem>
+              </Select>
+            </FormControl>
+
+             {/* Current Struggles - Chip Input */}
+             <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Current Struggles
+              </Typography>
+              <TextField
+                placeholder="Describe challenges (3-5 bullets or sentences)"
+                size="small"
+                multiline
+                rows={3}
+                fullWidth
+                value={(data as any).struggles || ''}
+                onChange={(e) => handleStageDataChange('discovery', 'struggles', e.target.value)}
+                helperText="Free text. Example: turnover, absenteeism, skills gap, scheduling, quality"
+              />
+            </Box>
             
             {/* Job Titles Needed - Chip Input */}
             <Box sx={{ mt: 2 }}>
@@ -822,18 +846,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               />
             </Box>
             
-            <FormControl fullWidth sx={{ mt: 2 }}>
-              <InputLabel>Satisfaction Level</InputLabel>
-              <Select
-                value={data.satisfactionLevel || ''}
-                label="Satisfaction Level"
-                onChange={(e) => handleStageDataChange('discovery', 'satisfactionLevel', e.target.value)}
-              >
-                <MenuItem value="very_happy">Very Happy</MenuItem>
-                <MenuItem value="somewhat">Somewhat Satisfied</MenuItem>
-                <MenuItem value="frustrated">Frustrated</MenuItem>
-              </Select>
-            </FormControl>
+            
 
             {/* Shifts Needed - Chip Input */}
             <Box sx={{ mt: 2 }}>
@@ -887,59 +900,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               />
             </Box>
 
-            {/* Current Struggles - Chip Input */}
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Current Struggles
-              </Typography>
-              <Autocomplete
-                multiple
-                freeSolo
-                options={[]}
-                value={data.struggles || []}
-                onChange={(_, newValue) => {
-                  handleStageDataChange('discovery', 'struggles', newValue);
-                }}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => {
-                    const { key, ...chipProps } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={String(key)}
-                        variant="outlined"
-                        label={option}
-                        {...chipProps}
-                        size="small"
-                      />
-                    );
-                  })
-                }
-                renderInput={(params) => (
-                  <TextField
-                    {...(params as any)}
-                    placeholder="Type struggles and press Enter or comma"
-                    size="small"
-                    multiline
-                    rows={2}
-                    helperText="What challenges are they facing? Separate with commas or press Enter"
-                  />
-                )}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ',') {
-                    event.preventDefault();
-                    const input = event.target as HTMLInputElement;
-                    const value = input.value.trim();
-                    if (value) {
-                      const currentStruggles = data.struggles || [];
-                      if (!currentStruggles.includes(value)) {
-                        handleStageDataChange('discovery', 'struggles', [...currentStruggles, value]);
-                      }
-                      input.value = '';
-                    }
-                  }
-                }}
-              />
-            </Box>
+           
 
             <FormControlLabel
               control={
@@ -968,55 +929,59 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Divider sx={{ my: 3 }} />
 
-        <FormControl component="fieldset" sx={{ mb: 3 }}>
-          <FormLabel component="legend">Have they used staffing agencies before?</FormLabel>
-          <RadioGroup
-            value={data.hasUsedBefore ?? ''}
-            onChange={(e) => handleStageDataChange('discovery', 'hasUsedBefore', e.target.value === 'true')}
-          >
-            <FormControlLabel value="true" control={<Radio />} label="Yes" />
-            <FormControlLabel value="false" control={<Radio />} label="No" />
-          </RadioGroup>
-        </FormControl>
+        {data.usesAgencies === false && (
+          <>
+            <FormControl component="fieldset" sx={{ mb: 3 }}>
+              <FormLabel component="legend">Have they used staffing agencies before?</FormLabel>
+              <RadioGroup
+                value={data.hasUsedBefore ?? ''}
+                onChange={(e) => handleStageDataChange('discovery', 'hasUsedBefore', e.target.value === 'true')}
+              >
+                <FormControlLabel value="true" control={<Radio />} label="Yes" />
+                <FormControlLabel value="false" control={<Radio />} label="No" />
+              </RadioGroup>
+            </FormControl>
 
-        {data.hasUsedBefore === true && (
-          <Box sx={{ ml: 2, mb: 3 }}>
-            <TextField
-              label="When did they last use an agency?"
-              value={data.lastUsed || ''}
-              onChange={(e) => handleStageDataChange('discovery', 'lastUsed', e.target.value)}
-              fullWidth
-              size="small"
-              sx={{ mb: 2 }}
-              helperText="Approximate timeframe"
-            />
-            
-            <TextField
-              label="Why did they stop?"
-              value={data.reasonStopped || ''}
-              onChange={(e) => handleStageDataChange('discovery', 'reasonStopped', e.target.value)}
-              fullWidth
-              multiline
-              rows={2}
-              size="small"
-              sx={{ mb: 2 }}
-              helperText="What led to them stopping use of staffing agencies?"
-            />
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={data.openToUsingAgain || false}
-                  onChange={(e) => handleStageDataChange('discovery', 'openToUsingAgain', e.target.checked)}
+            {data.hasUsedBefore === true && (
+              <Box sx={{ ml: 2, mb: 3 }}>
+                <TextField
+                  label="When did they last use an agency?"
+                  value={data.lastUsed || ''}
+                  onChange={(e) => handleStageDataChange('discovery', 'lastUsed', e.target.value)}
+                  fullWidth
+                  size="small"
+                  sx={{ mb: 2 }}
+                  helperText="Approximate timeframe"
                 />
-              }
-              label="Open to using an agency again"
-              sx={{ mb: 2 }}
-            />
-          </Box>
+                
+                <TextField
+                  label="Why did they stop?"
+                  value={data.reasonStopped || ''}
+                  onChange={(e) => handleStageDataChange('discovery', 'reasonStopped', e.target.value)}
+                  fullWidth
+                  multiline
+                  rows={2}
+                  size="small"
+                  sx={{ mb: 2 }}
+                  helperText="What led to them stopping use of staffing agencies?"
+                />
+
+                {/* <FormControlLabel
+                  control={
+                    <Switch
+                      checked={data.openToUsingAgain || false}
+                      onChange={(e) => handleStageDataChange('discovery', 'openToUsingAgain', e.target.checked)}
+                    />
+                  }
+                  label="Open to using an agency again"
+                  sx={{ mb: 2 }}
+                /> */}
+              </Box>
+            )}
+          </>
         )}
 
-        {data.hasUsedBefore === false && (
+        {/* {data.hasUsedBefore === false && (
           <Box sx={{ ml: 2 }}>
             <FormControlLabel
               control={
@@ -1038,9 +1003,9 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               label="Open to using an agency"
             />
           </Box>
-        )}
+        )} */}
 
-        <Divider sx={{ my: 3 }} />
+        {/* <Divider sx={{ my: 3 }} />
 
         <FormControlLabel
           control={
@@ -1051,7 +1016,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           }
           label="No current interest in staffing services"
           sx={{ mb: 2 }}
-        />
+        /> */}
 
         {data.noInterest && (
           <Box sx={{ ml: 2, mb: 3 }}>
@@ -1522,174 +1487,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     );
   };
 
-  const renderClosedLostForm = () => {
-    const data = stageData.closedLost || {};
-    
-    return (
-      <Box sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>Closed Lost Analysis</Typography>
-        
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          This deal has been marked as lost. Please provide details to help improve future opportunities and determine if follow-up is needed.
-        </Alert>
 
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel>Primary Reason for Loss</InputLabel>
-          <Select
-            value={data.lostReason || ''}
-            label="Primary Reason for Loss"
-            onChange={(e) => handleStageDataChange('closedLost', 'lostReason', e.target.value)}
-          >
-            <MenuItem value="price">Price/Competitive Pricing</MenuItem>
-            <MenuItem value="timing">Timing/Not Ready</MenuItem>
-            <MenuItem value="competitor">Lost to Competitor</MenuItem>
-            <MenuItem value="no_need">No Longer Need</MenuItem>
-            <MenuItem value="internal_decision">Internal Decision</MenuItem>
-            <MenuItem value="other">Other</MenuItem>
-          </Select>
-        </FormControl>
-
-        {data.lostReason === 'competitor' && (
-          <Box sx={{ ml: 2, mb: 3 }}>
-            <TextField
-              label="Competitor Name"
-              value={data.competitor || ''}
-              onChange={(e) => handleStageDataChange('closedLost', 'competitor', e.target.value)}
-              fullWidth
-              size="small"
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              label="What did they offer?"
-              value={data.lostTo || ''}
-              onChange={(e) => handleStageDataChange('closedLost', 'lostTo', e.target.value)}
-              fullWidth
-              multiline
-              rows={2}
-              size="small"
-            />
-          </Box>
-        )}
-
-        {data.lostReason === 'price' && (
-          <Box sx={{ ml: 2, mb: 3 }}>
-            <TextField
-              label="Price Difference ($)"
-              type="number"
-              value={data.priceDifference || ''}
-              onChange={(e) => handleStageDataChange('closedLost', 'priceDifference', parseFloat(e.target.value))}
-              fullWidth
-              size="small"
-              sx={{ mb: 2 }}
-            />
-          </Box>
-        )}
-
-        <TextField
-          label="Decision Maker"
-          value={data.decisionMaker || ''}
-          onChange={(e) => handleStageDataChange('closedLost', 'decisionMaker', e.target.value)}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label="Customer Feedback"
-          value={data.feedback || ''}
-          onChange={(e) => handleStageDataChange('closedLost', 'feedback', e.target.value)}
-          fullWidth
-          multiline
-          rows={3}
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="What did the customer say about why they chose not to proceed?"
-        />
-
-        <TextField
-          label="Lessons Learned"
-          value={data.lessonsLearned || ''}
-          onChange={(e) => handleStageDataChange('closedLost', 'lessonsLearned', e.target.value)}
-          fullWidth
-          multiline
-          rows={3}
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="What could we have done differently?"
-        />
-
-        <Divider sx={{ my: 3 }} />
-
-        <Typography variant="h6" gutterBottom>Follow-up Campaign</Typography>
-        
-        <FormControlLabel
-          control={
-            <Switch
-              checked={data.createFollowUpCampaign || false}
-              onChange={(e) => handleStageDataChange('closedLost', 'createFollowUpCampaign', e.target.checked)}
-            />
-          }
-          label="Create follow-up task campaign"
-          sx={{ mb: 2 }}
-        />
-
-        {data.createFollowUpCampaign && (
-          <Box sx={{ ml: 2, mb: 3 }}>
-            <FormControl fullWidth sx={{ mb: 2 }}>
-              <InputLabel>Follow-up Timeline</InputLabel>
-              <Select
-                value={data.followUpTimeline || ''}
-                label="Follow-up Timeline"
-                onChange={(e) => handleStageDataChange('closedLost', 'followUpTimeline', e.target.value)}
-              >
-                <MenuItem value="30_days">30 days</MenuItem>
-                <MenuItem value="60_days">60 days</MenuItem>
-                <MenuItem value="90_days">90 days</MenuItem>
-                <MenuItem value="6_months">6 months</MenuItem>
-                <MenuItem value="1_year">1 year</MenuItem>
-                <MenuItem value="custom">Custom date</MenuItem>
-              </Select>
-            </FormControl>
-
-            {data.followUpTimeline === 'custom' && (
-              <TextField
-                label="Custom Follow-up Date"
-                type="date"
-                value={data.customFollowUpDate || ''}
-                onChange={(e) => handleStageDataChange('closedLost', 'customFollowUpDate', e.target.value)}
-                fullWidth
-                size="small"
-                sx={{ mb: 2 }}
-              />
-            )}
-
-            <TextField
-              label="Follow-up Strategy"
-              value={data.followUpStrategy || ''}
-              onChange={(e) => handleStageDataChange('closedLost', 'followUpStrategy', e.target.value)}
-              fullWidth
-              multiline
-              rows={3}
-              size="small"
-              sx={{ mb: 2 }}
-              helperText="Describe the approach for re-engaging this prospect"
-            />
-          </Box>
-        )}
-
-        <TextField
-          label="Additional Notes"
-          value={data.notes || ''}
-          onBlur={(e) => handleStageDataChange('closedLost', 'notes', e.target.value)}
-          fullWidth
-          multiline
-          rows={2}
-          size="small"
-          sx={{ mb: 2 }}
-        />
-      </Box>
-    );
-  };
 
   const renderScopingForm = () => {
     const data = stageData.scoping || {};
@@ -2783,16 +2581,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           helperText="Enter approvals that are still needed, separated by commas"
         />
 
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.insuranceSubmitted || false}
-              onChange={(e) => handleStageDataChange('verbalAgreement', 'insuranceSubmitted', e.target.checked)}
-            />
-          }
-          label="Insurance Submitted"
-          sx={{ mb: 3 }}
-        />
+        {/* Moved Insurance Submitted checkbox to Onboarding stage */}
 
         <Divider sx={{ my: 3 }} />
 
@@ -2825,108 +2614,219 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
     return (
       <Box sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>Closed / Won</Typography>
+        <Typography variant="h6" gutterBottom>Closing</Typography>
         <Typography color="text.secondary" sx={{ mb: 3 }}>
           Document the signed contract and important dates.
         </Typography>
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Signed Contract</Typography>
-        
-        <Box sx={{ mb: 3 }}>
-          <input
-            accept=".pdf,.doc,.docx"
-            style={{ display: 'none' }}
-            id="signed-contract-upload"
-            type="file"
-            onChange={handleFileUpload}
-          />
-          <label htmlFor="signed-contract-upload">
-            <Button
-              variant="outlined"
-              component="span"
-              startIcon={<CloudUploadIcon />}
+        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+          <InputLabel>Closing Status</InputLabel>
+          <Select
+            value={data.status || ''}
+            onChange={(e) => handleStageDataChange('closedWon', 'status', e.target.value)}
+            label="Closing Status"
+          >
+            <MenuItem value="won">Won</MenuItem>
+            <MenuItem value="lost">Lost</MenuItem>
+          </Select>
+        </FormControl>
+
+        {data.status === 'won' && (
+          <>
+            <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Signed Contract</Typography>
+            
+            <Box sx={{ mb: 3 }}>
+              <input
+                accept=".pdf,.doc,.docx"
+                style={{ display: 'none' }}
+                id="signed-contract-upload"
+                type="file"
+                onChange={handleFileUpload}
+              />
+              <label htmlFor="signed-contract-upload">
+                <Button
+                  variant="outlined"
+                  component="span"
+                  startIcon={<CloudUploadIcon />}
+                  sx={{ mb: 2 }}
+                >
+                  Upload Signed Contract
+                </Button>
+              </label>
+              
+              {data.signedContractFile && (
+                <Box sx={{ mt: 1 }}>
+                  <Chip
+                    label={data.signedContractFile.name}
+                    onDelete={() => handleStageDataChange('closedWon', 'signedContractFile', null)}
+                    color="primary"
+                    variant="outlined"
+                  />
+                </Box>
+              )}
+              
+              {data.signedContractUrl && !data.signedContractFile && (
+                <Box sx={{ mt: 1 }}>
+                  <Chip
+                    label="Contract uploaded"
+                    color="success"
+                    variant="outlined"
+                  />
+                </Box>
+              )}
+            </Box>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Date Signed"
+                  type="date"
+                  value={data.dateSigned || ''}
+                  onChange={(e) => handleStageDataChange('closedWon', 'dateSigned', e.target.value)}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{
+                    shrink: true,
+                  }}
+                  helperText="When was the contract signed?"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Expiration Date"
+                  type="date"
+                  value={data.expirationDate || ''}
+                  onChange={(e) => handleStageDataChange('closedWon', 'expirationDate', e.target.value)}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{
+                    shrink: true,
+                  }}
+                  helperText="When does the contract expire?"
+                />
+              </Grid>
+            </Grid>
+
+            {/* <FormControlLabel
+              control={
+                <Checkbox
+                  checked={data.rateSheetOnFile || false}
+                  onChange={(e) => handleStageDataChange('closedWon', 'rateSheetOnFile', e.target.checked)}
+                />
+              }
+              label="Rate Sheet On File"
               sx={{ mb: 2 }}
-            >
-              Upload Signed Contract
-            </Button>
-          </label>
-          
-          {data.signedContractFile && (
-            <Box sx={{ mt: 1 }}>
-              <Chip
-                label={data.signedContractFile.name}
-                onDelete={() => handleStageDataChange('closedWon', 'signedContractFile', null)}
-                color="primary"
-                variant="outlined"
-              />
-            </Box>
-          )}
-          
-          {data.signedContractUrl && !data.signedContractFile && (
-            <Box sx={{ mt: 1 }}>
-              <Chip
-                label="Contract uploaded"
-                color="success"
-                variant="outlined"
-              />
-            </Box>
-          )}
-        </Box>
+            />
 
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={6}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={data.msaSigned || false}
+                  onChange={(e) => handleStageDataChange('closedWon', 'msaSigned', e.target.checked)}
+                />
+              }
+              label="MSA Signed"
+              sx={{ mb: 3 }}
+            /> */}
+
+            <Divider sx={{ my: 3 }} />
+          </>
+        )}
+
+        {data.status === 'lost' && (
+          <>
+            <Alert severity="warning" sx={{ mb: 3 }}>
+              This deal has been marked as lost. Please provide details to help improve future opportunities and determine if follow-up is needed.
+            </Alert>
+
+            <FormControl fullWidth sx={{ mb: 3 }}>
+              <InputLabel>Primary Reason for Loss</InputLabel>
+              <Select
+                value={data.lostReason || ''}
+                label="Primary Reason for Loss"
+                onChange={(e) => handleStageDataChange('closedWon', 'lostReason', e.target.value)}
+              >
+                <MenuItem value="price">Price/Competitive Pricing</MenuItem>
+                <MenuItem value="timing">Timing/Not Ready</MenuItem>
+                <MenuItem value="competitor">Lost to Competitor</MenuItem>
+                <MenuItem value="no_need">No Longer Need</MenuItem>
+                <MenuItem value="internal_decision">Internal Decision</MenuItem>
+                <MenuItem value="other">Other</MenuItem>
+              </Select>
+            </FormControl>
+
+            {data.lostReason === 'competitor' && (
+              <Box sx={{ ml: 2, mb: 3 }}>
+                <TextField
+                  label="Competitor Name"
+                  value={data.competitor || ''}
+                  onChange={(e) => handleStageDataChange('closedWon', 'competitor', e.target.value)}
+                  fullWidth
+                  size="small"
+                  sx={{ mb: 2 }}
+                />
+                <TextField
+                  label="What did they offer?"
+                  value={data.lostTo || ''}
+                  onChange={(e) => handleStageDataChange('closedWon', 'lostTo', e.target.value)}
+                  fullWidth
+                  multiline
+                  rows={2}
+                  size="small"
+                />
+              </Box>
+            )}
+
+            {data.lostReason === 'price' && (
+              <Box sx={{ ml: 2, mb: 3 }}>
+                <TextField
+                  label="Price Difference ($)"
+                  type="number"
+                  value={data.priceDifference || ''}
+                  onChange={(e) => handleStageDataChange('closedWon', 'priceDifference', parseFloat(e.target.value))}
+                  fullWidth
+                  size="small"
+                  sx={{ mb: 2 }}
+                />
+              </Box>
+            )}
+
             <TextField
-              label="Date Signed"
-              type="date"
-              value={data.dateSigned || ''}
-              onChange={(e) => handleStageDataChange('closedWon', 'dateSigned', e.target.value)}
+              label="Decision Maker"
+              value={data.decisionMaker || ''}
+              onChange={(e) => handleStageDataChange('closedWon', 'decisionMaker', e.target.value)}
               fullWidth
               size="small"
-              InputLabelProps={{
-                shrink: true,
-              }}
-              helperText="When was the contract signed?"
+              sx={{ mb: 2 }}
             />
-          </Grid>
-          <Grid item xs={12} md={6}>
+
             <TextField
-              label="Expiration Date"
-              type="date"
-              value={data.expirationDate || ''}
-              onChange={(e) => handleStageDataChange('closedWon', 'expirationDate', e.target.value)}
+              label="Customer Feedback"
+              value={data.feedback || ''}
+              onChange={(e) => handleStageDataChange('closedWon', 'feedback', e.target.value)}
               fullWidth
+              multiline
+              rows={3}
               size="small"
-              InputLabelProps={{
-                shrink: true,
-              }}
-              helperText="When does the contract expire?"
+              sx={{ mb: 2 }}
+              helperText="What did the customer say about why they chose not to proceed?"
             />
-          </Grid>
-        </Grid>
 
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.rateSheetOnFile || false}
-              onChange={(e) => handleStageDataChange('closedWon', 'rateSheetOnFile', e.target.checked)}
+            <TextField
+              label="Lessons Learned"
+              value={data.lessonsLearned || ''}
+              onChange={(e) => handleStageDataChange('closedWon', 'lessonsLearned', e.target.value)}
+              fullWidth
+              multiline
+              rows={3}
+              size="small"
+              sx={{ mb: 2 }}
+              helperText="What could we have done differently?"
             />
-          }
-          label="Rate Sheet On File"
-          sx={{ mb: 2 }}
-        />
 
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.msaSigned || false}
-              onChange={(e) => handleStageDataChange('closedWon', 'msaSigned', e.target.checked)}
-            />
-          }
-          label="MSA Signed"
-          sx={{ mb: 3 }}
-        />
-
-        <Divider sx={{ my: 3 }} />
+            <Divider sx={{ my: 3 }} />
+          </>
+        )}
 
         <Typography variant="h6" gutterBottom>Additional Notes</Typography>
         <TextField
@@ -2938,6 +2838,81 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           rows={3}
           size="small"
           helperText="Add any additional comments or observations about the closed deal"
+        />
+      </Box>
+    );
+  };
+
+  const renderOnboardingForm = () => {
+    const data = (stageData.onboarding || {}) as OnboardingData;
+    return (
+      <Box sx={{ p: 2 }}>
+        <Typography variant="h6" gutterBottom>Onboarding Plan</Typography>
+
+        <TextField
+          label="Onboarding Start Date"
+          type="date"
+          value={data.onboardingStartDate || ''}
+          onChange={(e) => handleStageDataChange('onboarding', 'onboardingStartDate', e.target.value)}
+          fullWidth
+          size="small"
+          sx={{ mb: 2 }}
+          InputLabelProps={{ shrink: true }}
+        />
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={data.recruitingIntroduced || false}
+              onChange={(e) => handleStageDataChange('onboarding', 'recruitingIntroduced', e.target.checked)}
+            />
+          }
+          label="Recruiting team introduced"
+          sx={{ mb: 1 }}
+        />
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={data.checklistGenerated || false}
+              onChange={(e) => handleStageDataChange('onboarding', 'checklistGenerated', e.target.checked)}
+            />
+          }
+          label="Onboarding checklist generated"
+          sx={{ mb: 1 }}
+        />
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={data.convertedToJobOrder || false}
+              onChange={(e) => handleStageDataChange('onboarding', 'convertedToJobOrder', e.target.checked)}
+            />
+          }
+          label="Converted to Job Order"
+          sx={{ mb: 1 }}
+        />
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={data.insuranceSubmitted || false}
+              onChange={(e) => handleStageDataChange('onboarding', 'insuranceSubmitted', e.target.checked)}
+            />
+          }
+          label="Insurance Submitted"
+          sx={{ mb: 2 }}
+        />
+
+        <TextField
+          label="Onboarding Notes"
+          value={data.notes || ''}
+          onBlur={(e) => handleStageDataChange('onboarding', 'notes', e.target.value)}
+          fullWidth
+          multiline
+          rows={3}
+          size="small"
+          helperText="Add any additional onboarding notes"
         />
       </Box>
     );
@@ -2959,10 +2934,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         return renderNegotiationForm();
       case 'verbalAgreement':
         return renderVerbalAgreementForm();
+      case 'onboarding':
+        return renderOnboardingForm();
       case 'closedWon':
         return renderClosedWonForm();
-      case 'closedLost':
-        return renderClosedLostForm();
       case 'dormant':
         return renderDormantForm();
       default:
@@ -3046,18 +3021,18 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                       />
                     )}
                     {status === 'completed' && onStageIncomplete && (
-                      <IconButton
-                        size="small"
-                        color="warning"
+                      <Chip
+                        label="Revert"
                         onClick={(e) => {
                           e.stopPropagation();
                           onStageIncomplete(stage.key);
                         }}
-                        sx={{ ml: 1 }}
-                        title="Mark as incomplete"
-                      >
-                        <UndoIcon fontSize="small" />
-                      </IconButton>
+                        color="warning"
+                        size="small"
+                        clickable
+                        icon={<UndoIcon fontSize="small" />}
+                        sx={{ ml: 1, mr: 1.5, cursor: 'pointer' }}
+                      />
                     )}
                   </Box>
                 </Box>

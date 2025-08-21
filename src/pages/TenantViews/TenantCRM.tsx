@@ -309,10 +309,11 @@ const TenantCRM: React.FC = () => {
 
         // Note: we already validated via subcollection above; no further filtering needed here
 
-        const limitedData = companiesData.slice(0, companiesPageSize);
+        // When filtering by state, return full results (no pagination cap)
+        const resultData = companiesData;
         if (companiesLoadSeq.current !== mySeq) return;
-        setCompanies(prev => append ? [...prev, ...limitedData] : limitedData);
-        setCompaniesHasMore(companiesData.length > companiesPageSize);
+        setCompanies(prev => append ? [...prev, ...resultData] : resultData);
+        setCompaniesHasMore(false);
         setCompaniesLastDoc(null);
         setCompaniesLoading(false);
         return;
