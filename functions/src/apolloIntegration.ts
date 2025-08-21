@@ -151,7 +151,7 @@ export const onCompanyCreatedApollo = onDocumentCreated({ document: 'tenants/{te
     const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${companyId}`);
     await companyRef.set(
       {
-        firmographics: { apollo: info },
+        firmographics: { apollo: pruneUndefinedDeep(info) },
         metadata: { apolloFetchedAt: admin.firestore.FieldValue.serverTimestamp() },
       },
       { merge: true }
@@ -315,7 +315,7 @@ export const getFirmographics = onCall({ secrets: [APOLLO_API_KEY] }, async (req
 
     // Optional: keep simplified summary for compatibility
     if (apolloSummary) {
-      setAtPath(update, 'firmographics.apollo', apolloSummary);
+      setAtPath(update, 'firmographics.apollo', pruneUndefinedDeep(apolloSummary));
     }
 
     // Final sanitize to remove undefined
@@ -424,7 +424,7 @@ export const getFirmographicsByDomain = onCall({ secrets: [APOLLO_API_KEY] }, as
     setAtPath(update, 'integrations.apollo.lastSyncedAt', admin.firestore.Timestamp.now());
     setAtPath(update, 'integrations.apollo.signalStrength', 'verified');
     setAtPath(update, 'integrations.apollo.source', 'apollo.organizations/enrich');
-    if (apolloSummary) setAtPath(update, 'firmographics.apollo', apolloSummary);
+    if (apolloSummary) setAtPath(update, 'firmographics.apollo', pruneUndefinedDeep(apolloSummary));
 
     const finalUpdate = pruneUndefinedDeep(update);
     await companyRef.set(finalUpdate, { merge: true });

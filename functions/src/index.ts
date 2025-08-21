@@ -24,7 +24,7 @@ import { discoverCompanyLocations } from './discoverCompanyLocations';
 import { discoverCompanyUrls } from './discoverCompanyUrls';
 import { getSalespeople } from './getSalespeople';
 import { scrapeIndeedJobs } from './scrapeIndeedJobs';
-import { getCompanyLocations } from './getCompanyLocations';
+
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
 import { triggerAINoteReview, triggerAINoteReviewHttp } from './triggerAINoteReview';
@@ -57,6 +57,7 @@ import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firesto
 import { logContactEnhanced } from './activityLogCallables';
 import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
 import { enrichContactOnDemand } from './contactEnrichment';
+import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp } from './gmailBulkImport';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -98,6 +99,9 @@ export {
 export { associationsIntegrityReport, associationsIntegrityNightly };
 export { rebuildDealAssociations, rebuildEntityReverseIndex };
 export { logContactEnhanced };
+
+// Gmail Bulk Import Functions
+export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
@@ -10278,6 +10282,13 @@ export {
   bulkImportGmailEmails
 } from './gmailIntegration';
 
+// Gmail Bulk Import System
+export { initiateBulkGmailImport, getBulkImportStatus } from './gmailBulkImportSystem';
+
+// Data Operations Functions
+export { cleanupDuplicateEmails } from './cleanupDuplicateEmails';
+export { clearAllEmails } from './clearAllEmails';
+
 // Google Calendar Integration Functions
 export {
   getCalendarAuthUrl,
@@ -10327,7 +10338,7 @@ export { fixPendingUser } from './fixPendingUser';
 export { scrapeIndeedJobs };
 
 // Company Data Functions
-export { getCompanyLocations };
+// getCompanyLocations removed - locations are subcollection, no function needed
 // (deduped) associationsIntegrityReport export is declared above
 
 // Location Association Functions

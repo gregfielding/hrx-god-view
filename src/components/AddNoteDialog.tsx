@@ -286,7 +286,7 @@ const AddNoteDialog: React.FC<AddNoteDialogProps> = ({
           disabled={!noteContent.trim() || aiProcessing}
           size="large"
         >
-          {aiProcessing ? 'Processing with AI...' : 'Submit'}
+          {aiProcessing ? 'Submit' : 'Submit'}
         </Button>
       </DialogActions>
     </Dialog>

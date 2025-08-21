@@ -1,0 +1,21 @@
+🚨 ACTUALLY DELETED FUNCTIONS THAT NEED SAFE REWRITING:
+=======================================================
+✅ firestoreCompanySnapShotFanout - DELETED, NEEDS SAFE REWRITING
+✅ updateActiveSalespeopleOnDeal - DELETED, NEEDS SAFE REWRITING
+✅ onCompanyLocationUpdated - DELETED, NEEDS SAFE REWRITING
+✅ onDealUpdated - DELETED, NEEDS SAFE REWRITING
+✅ firestorelogAILogCreated - DELETED, NEEDS SAFE REWRITING
+✅ syncApolloHeadquartersLocation - DELETED, NEEDS SAFE REWRITING
+✅ getCompanyLocations - DELETED, NEEDS SAFE REWRITING
+✅ getSalespeopleForTenant - DELETED, NEEDS SAFE REWRITING
+✅ dealCoachAnalyzeCallable - DELETED, NEEDS SAFE REWRITING
+✅ getCalendarStatus - DELETED, NEEDS SAFE REWRITING
+✅ listCalendarEvents - DELETED, NEEDS SAFE REWRITING
+✅ getGmailStatus - DELETED, NEEDS SAFE REWRITING
+✅ createCalendarEvent - DELETED, NEEDS SAFE REWRITING
+
+📊 SUMMARY:
+===========
+Functions you actually deleted: 13
+Functions still deployed: 0
+Total functions checked: 13

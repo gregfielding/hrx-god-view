@@ -40,6 +40,18 @@ interface ContactActivityTabProps {
   tenantId: string;
 }
 
+const getActivityTypeColor = (type: string): string => {
+  const colors: { [key: string]: string } = {
+    task: '#10B981',      // Green for completed tasks
+    note: '#3B82F6',      // Blue for notes
+    email: '#F59E0B',     // Orange for emails
+    call: '#8B5CF6',      // Purple for calls
+    meeting: '#EC4899',   // Pink for meetings
+    ai_activity: '#6366F1' // Indigo for AI activities
+  };
+  return colors[type] || '#6B7280'; // Gray fallback
+};
+
 const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenantId }) => {
   const [items, setItems] = useState<ContactActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -155,23 +167,121 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
               <Typography variant="caption" color="text.secondary">Completed tasks and emails will appear here.</Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
+            <TableContainer 
+              component={Paper} 
+              variant="outlined"
+              sx={{
+                overflowX: 'auto',
+                borderRadius: '8px',
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              }}
+            >
+              <Table sx={{ minWidth: 1000 }}>
                 <TableHead>
-                  <TableRow>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Title</TableCell>
-                    <TableCell>Description</TableCell>
-                    <TableCell>When</TableCell>
+                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Type
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Title
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Description
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      When
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
-                    <TableRow key={it.id}>
-                      <TableCell><Chip size="small" label={it.type} /></TableCell>
-                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
-                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
-                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
+                    <TableRow 
+                      key={it.id}
+                      sx={{
+                        height: '48px',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          backgroundColor: '#F9FAFB'
+                        }
+                      }}
+                    >
+                      <TableCell sx={{ py: 1 }}>
+                        <Chip 
+                          size="small" 
+                          label={it.type} 
+                          sx={{
+                            fontSize: '0.75rem',
+                            height: 24,
+                            fontWeight: 600,
+                            backgroundColor: getActivityTypeColor(it.type),
+                            color: 'white'
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ py: 1, px: 2 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#111827",
+                          fontSize: '0.875rem',
+                          fontWeight: 500
+                        }}>
+                          {it.title}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem',
+                          maxWidth: 420,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {it.description}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem'
+                        }}>
+                          {it.timestamp?.toLocaleString?.()}
+                        </Typography>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

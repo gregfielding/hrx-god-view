@@ -891,6 +891,9 @@ const ContactDetails: React.FC = () => {
         processedValue = ensureUrlProtocol(value);
       }
 
+      // Clean undefined values from the processed value (especially important for Apollo enrichment data)
+      processedValue = removeUndefinedValues(processedValue);
+
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), { 
         [field]: processedValue,
         updatedAt: new Date()
@@ -924,6 +927,30 @@ const ContactDetails: React.FC = () => {
       console.error('Error updating contact:', err);
       setError('Failed to update contact. Please try again.');
     }
+  };
+
+  // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
+  const removeUndefinedValues = (obj: any): any => {
+    if (obj === null || obj === undefined) {
+      return null;
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
+    }
+    
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const cleanedValue = removeUndefinedValues(value);
+        if (cleanedValue !== null) {
+          cleaned[key] = cleanedValue;
+        }
+      }
+      return cleaned;
+    }
+    
+    return obj;
   };
 
   const ensureUrlProtocol = (url: string): string => {
@@ -1026,6 +1053,110 @@ const ContactDetails: React.FC = () => {
           let enhancedContactData: ContactData | null = null;
           if (contactDoc.exists()) {
             enhancedContactData = { id: contactDoc.id, ...contactDoc.data() } as ContactData;
+            
+            // Update contact fields with Apollo data if available
+            if (enhancedContactData.apolloEnrichment?.person) {
+              const apolloPerson = enhancedContactData.apolloEnrichment.person;
+              
+              // Debug: Log the Apollo person data
+              console.log('🔍 Apollo Person Data:', apolloPerson);
+              console.log('🔍 Available Apollo fields:', {
+                photo_url: apolloPerson.photo_url,
+                linkedin_url: apolloPerson.linkedin_url,
+                email: apolloPerson.email,
+                email_status: apolloPerson.email_status,
+                headline: apolloPerson.headline,
+                twitter_url: apolloPerson.twitter_url,
+                facebook_url: apolloPerson.facebook_url,
+                seniority: apolloPerson.seniority,
+                formatted_address: apolloPerson.formatted_address,
+                title: apolloPerson.title,
+                city: apolloPerson.city,
+                state: apolloPerson.state,
+                country: apolloPerson.country,
+                time_zone: apolloPerson.time_zone
+              });
+              
+              const updates: any = {};
+              
+              // Update avatar from photo_url
+              if (apolloPerson.photo_url) {
+                updates.avatar = apolloPerson.photo_url;
+              }
+              
+              // Update LinkedIn URL
+              if (apolloPerson.linkedin_url) {
+                updates.linkedInUrl = apolloPerson.linkedin_url;
+              }
+              
+              // Update email if verified
+              if (apolloPerson.email && apolloPerson.email_status === 'verified') {
+                updates.email = apolloPerson.email;
+              }
+              
+              // Update headline
+              if (apolloPerson.headline) {
+                updates.headline = apolloPerson.headline;
+              }
+              
+              // Update Twitter URL
+              if (apolloPerson.twitter_url) {
+                updates.twitterUrl = apolloPerson.twitter_url;
+              }
+              
+              // Update Facebook URL
+              if (apolloPerson.facebook_url) {
+                updates.facebookUrl = apolloPerson.facebook_url;
+              }
+              
+              // Update inferred seniority
+              if (apolloPerson.seniority) {
+                updates.inferredSeniority = apolloPerson.seniority;
+              }
+              
+              // Update location fields
+              if (apolloPerson.formatted_address) {
+                updates.formattedAddress = apolloPerson.formatted_address;
+              }
+              if (apolloPerson.city) {
+                updates.city = apolloPerson.city;
+              }
+              if (apolloPerson.state) {
+                updates.state = apolloPerson.state;
+              }
+              if (apolloPerson.country) {
+                updates.country = apolloPerson.country;
+              }
+              if (apolloPerson.time_zone) {
+                updates.timeZone = apolloPerson.time_zone;
+              }
+              
+              // Update job title
+              if (apolloPerson.title) {
+                updates.jobTitle = apolloPerson.title;
+                updates.title = apolloPerson.title;
+              }
+              
+              // Apply updates if any
+              if (Object.keys(updates).length > 0) {
+                console.log('🔧 Applying Apollo updates:', updates);
+                try {
+                  await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+                    ...updates,
+                    updatedAt: new Date()
+                  });
+                  
+                  // Update local state
+                  enhancedContactData = { ...enhancedContactData, ...updates };
+                  console.log('✅ Successfully updated contact with Apollo data:', updates);
+                } catch (updateError) {
+                  console.error('❌ Error updating contact with Apollo data:', updateError);
+                }
+              } else {
+                console.log('ℹ️ No Apollo updates to apply - all fields already have data or Apollo data is missing');
+              }
+            }
+            
             setContact(enhancedContactData);
           }
           
@@ -1048,7 +1179,23 @@ const ContactDetails: React.FC = () => {
             console.warn('Failed to log AI enhancement activity:', logError);
           }
           
-          setAiSuccess('Contact enhanced successfully with Apollo data! Updated professional headline, location, LinkedIn profile, and contact details.');
+          // Count the number of fields that were updated
+          const updatedFields = enhancedContactData?.apolloEnrichment?.person ? [
+            enhancedContactData.apolloEnrichment.person.photo_url ? 'avatar' : null,
+            enhancedContactData.apolloEnrichment.person.linkedin_url ? 'LinkedIn profile' : null,
+            enhancedContactData.apolloEnrichment.person.email && enhancedContactData.apolloEnrichment.person.email_status === 'verified' ? 'email' : null,
+            enhancedContactData.apolloEnrichment.person.headline ? 'professional headline' : null,
+            enhancedContactData.apolloEnrichment.person.twitter_url ? 'Twitter profile' : null,
+            enhancedContactData.apolloEnrichment.person.facebook_url ? 'Facebook profile' : null,
+            enhancedContactData.apolloEnrichment.person.seniority ? 'seniority level' : null,
+            enhancedContactData.apolloEnrichment.person.formatted_address ? 'location' : null,
+            enhancedContactData.apolloEnrichment.person.title ? 'job title' : null
+          ].filter(Boolean) : [];
+          
+          const fieldCount = updatedFields.length;
+          const fieldList = updatedFields.join(', ');
+          
+          setAiSuccess(`Contact enhanced successfully with Apollo data! ${fieldCount > 0 ? `Updated: ${fieldList}` : 'No new fields to update'}.`);
         } else if (resultData.status === 'error') {
           setError(resultData.message || 'Failed to enhance contact with Apollo data');
         } else {
@@ -1282,7 +1429,15 @@ const ContactDetails: React.FC = () => {
       {/* Breadcrumbs */}
       <Box sx={{ mb: 2 }}>
         <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/contacts" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=contacts'); }}>
+          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
+            CRM
+          </MUILink>
+          {company && (
+            <MUILink underline="hover" color="inherit" href={`/crm/companies/${company.id}`} onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${company.id}`); }}>
+              {company.companyName || company.name}
+            </MUILink>
+          )}
+          <MUILink underline="hover" color="inherit" href="/contacts" onClick={(e) => { e.preventDefault(); navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts'); }}>
             Contacts
           </MUILink>
           <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>

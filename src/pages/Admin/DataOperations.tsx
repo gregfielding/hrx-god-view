@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -24,7 +24,11 @@ import {
   Card,
   CardContent,
   CardActions,
-  TextField
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import {
   Business as BusinessIcon,
@@ -34,10 +38,13 @@ import {
   CheckCircle as CheckCircleIcon,
   ExpandMore as ExpandMoreIcon,
   PlayArrow as PlayArrowIcon,
-  Visibility as VisibilityIcon
+  Visibility as VisibilityIcon,
+  DeleteSweep as DeleteSweepIcon,
+  Person as PersonIcon
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../contexts/AuthContext';
+import GmailBulkImport from '../../components/GmailBulkImport';
 
 interface MatchingResult {
   contactId: string;
@@ -67,6 +74,16 @@ interface BulkOperationResult {
   message: string;
 }
 
+interface TenantUser {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  gmailConnected?: boolean;
+  gmailTokens?: any;
+}
+
 const DataOperations: React.FC = () => {
   const { tenantId, currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -78,6 +95,49 @@ const DataOperations: React.FC = () => {
   const [gmailImportLoading, setGmailImportLoading] = useState(false);
   const [gmailImportResults, setGmailImportResults] = useState<any>(null);
   const [daysBack, setDaysBack] = useState(90);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupResults, setCleanupResults] = useState<any>(null);
+  const [clearAllLoading, setClearAllLoading] = useState(false);
+  const [clearAllResults, setClearAllResults] = useState<any>(null);
+
+  // Single user import state
+  const [users, setUsers] = useState<TenantUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [singleUserImportLoading, setSingleUserImportLoading] = useState(false);
+  const [singleUserImportResults, setSingleUserImportResults] = useState<any>(null);
+
+  // Load users for the tenant
+  useEffect(() => {
+    if (tenantId) {
+      loadUsers();
+    }
+  }, [tenantId]);
+
+  const loadUsers = async () => {
+    if (!tenantId) return;
+    
+    setUsersLoading(true);
+    try {
+      const functions = getFunctions();
+      const getUsersByTenant = httpsCallable(functions, 'getUsersByTenant');
+      
+      const response = await getUsersByTenant({ tenantId });
+      const data = response.data as { users: TenantUser[], count: number };
+      
+      // Filter for users with Gmail connected
+      const gmailUsers = data.users.filter(user => 
+        user.gmailConnected || user.gmailTokens?.access_token
+      );
+      
+      setUsers(gmailUsers);
+      console.log(`Found ${gmailUsers.length} users with Gmail connected`);
+    } catch (error) {
+      console.error('Error loading users:', error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
 
   const runBulkEmailDomainMatching = async () => {
     if (!tenantId) {
@@ -126,33 +186,380 @@ const DataOperations: React.FC = () => {
     }
   };
 
+  const runSingleUserGmailImport = async () => {
+    if (!tenantId || !selectedUserId) {
+      alert('Please select a user to import emails for');
+      return;
+    }
+
+    setSingleUserImportLoading(true);
+    setSingleUserImportResults(null);
+    
+    try {
+      const functions = getFunctions();
+      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+      
+      // Import for the selected user only
+      const response = await queueGmailBulkImport({
+        userIds: [selectedUserId],
+        tenantId,
+        daysBack
+      });
+      
+      const resultData = response.data as any;
+      setSingleUserImportResults(resultData);
+      
+      console.log('Single user Gmail import queued:', resultData);
+      
+      if (resultData.success && resultData.requestId) {
+        // Start polling for status
+        pollSingleUserImportStatus(resultData.requestId);
+      }
+    } catch (error) {
+      console.error('Error running single user Gmail import:', error);
+      alert('Error running Gmail import: ' + error);
+    } finally {
+      setSingleUserImportLoading(false);
+    }
+  };
+
+  const pollSingleUserImportStatus = async (requestId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        let progressData: any;
+        
+        // Use HTTP function for localhost development to avoid CORS issues
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ requestId, tenantId })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          progressData = await response.json();
+        } else {
+          // Use callable function for production
+          const functions = getFunctions();
+          const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+          const response = await getGmailImportProgress({ requestId, tenantId });
+          progressData = response.data as any;
+        }
+        
+        if (progressData) {
+          // Update results with current status
+          setSingleUserImportResults({
+            success: true,
+            message: `Processing: ${progressData.completedUsers}/${progressData.totalUsers} users completed`,
+            requestId,
+            totalUsers: progressData.totalUsers,
+            completedUsers: progressData.completedUsers,
+            status: progressData.status,
+            results: progressData.results || {}
+          });
+          
+          // Stop polling if job is complete
+          if (progressData.status === 'completed' || progressData.status === 'failed') {
+            clearInterval(pollInterval);
+            const totalEmails = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.emailsImported || 0), 0);
+            const totalContacts = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.contactsFound || 0), 0);
+            
+            setSingleUserImportResults(prev => ({
+              ...prev,
+              message: progressData.status === 'completed' 
+                ? `✅ Import completed: ${totalEmails} emails processed, ${totalContacts} contacts found`
+                : `❌ Import failed: ${progressData.failedUsers?.length || 0} users failed`
+            }));
+          }
+        }
+              } catch (error) {
+          console.error('Error polling import status:', error);
+          
+          // If it's a CORS error and we're using HTTP function, try the callable function as fallback
+          if (window.location.hostname === 'localhost' && error.message?.includes('CORS')) {
+            console.log('CORS error detected, trying callable function as fallback...');
+            try {
+              const functions = getFunctions();
+              const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+              const response = await getGmailImportProgress({ requestId, tenantId });
+              const progressData = response.data as any;
+              
+              if (progressData) {
+                // Update results with current status
+                setSingleUserImportResults({
+                  success: true,
+                  message: `Processing: ${progressData.completedUsers}/${progressData.totalUsers} users completed`,
+                  requestId,
+                  totalUsers: progressData.totalUsers,
+                  completedUsers: progressData.completedUsers,
+                  status: progressData.status,
+                  results: progressData.results || {}
+                });
+                
+                // Stop polling if job is complete
+                if (progressData.status === 'completed' || progressData.status === 'failed') {
+                  clearInterval(pollInterval);
+                  const totalEmails = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.emailsImported || 0), 0);
+                  const totalContacts = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.contactsFound || 0), 0);
+                  
+                  setSingleUserImportResults(prev => ({
+                    ...prev,
+                    message: progressData.status === 'completed' 
+                      ? `✅ Import completed: ${totalEmails} emails processed, ${totalContacts} contacts found`
+                      : `❌ Import failed: ${progressData.failedUsers?.length || 0} users failed`
+                  }));
+                }
+              }
+            } catch (fallbackError) {
+              console.error('Fallback callable function also failed:', fallbackError);
+              clearInterval(pollInterval);
+              setSingleUserImportResults(prev => ({
+                ...prev,
+                message: '❌ Failed to check import status. Please refresh the page to check manually.'
+              }));
+            }
+          } else {
+            clearInterval(pollInterval);
+            setSingleUserImportResults(prev => ({
+              ...prev,
+              message: '❌ Failed to check import status. Please refresh the page to check manually.'
+            }));
+          }
+        }
+    }, 5000); // Poll every 5 seconds
+    
+    // Stop polling after 30 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+    }, 30 * 60 * 1000);
+  };
+
   const runGmailBulkImport = async () => {
-    if (!tenantId || !currentUser?.uid) {
-      alert('No tenant ID or user ID found');
+    if (!tenantId) {
+      alert('No tenant ID found');
       return;
     }
 
     setGmailImportLoading(true);
     try {
       const functions = getFunctions();
-      const bulkImportGmailEmails = httpsCallable(functions, 'bulkImportGmailEmails');
+      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
       
-      const response = await bulkImportGmailEmails({
+      // For now, we'll import for all users in the tenant
+      // In the future, you can add user selection
+      const response = await queueGmailBulkImport({
         tenantId,
-        userId: currentUser.uid,
         daysBack
       });
       
       const resultData = response.data as any;
       setGmailImportResults(resultData);
       
-      console.log('Gmail bulk import result:', resultData);
+      console.log('Gmail bulk import queued:', resultData);
+      
+      if (resultData.success && resultData.requestId) {
+        // Start polling for status
+        pollImportStatus(resultData.requestId);
+      }
     } catch (error) {
       console.error('Error running Gmail bulk import:', error);
       alert('Error running Gmail bulk import: ' + error);
     } finally {
       setGmailImportLoading(false);
     }
+  };
+
+  const pollImportStatus = async (requestId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        let progressData: any;
+        
+        // Use HTTP function for localhost development to avoid CORS issues
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ requestId, tenantId })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          progressData = await response.json();
+        } else {
+          // Use callable function for production
+          const functions = getFunctions();
+          const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+          const response = await getGmailImportProgress({ requestId, tenantId });
+          progressData = response.data as any;
+        }
+        
+        if (progressData) {
+          // Update results with current status
+          setGmailImportResults({
+            success: true,
+            message: `Processing: ${progressData.completedUsers}/${progressData.totalUsers} users completed`,
+            requestId,
+            totalUsers: progressData.totalUsers,
+            completedUsers: progressData.completedUsers,
+            status: progressData.status,
+            results: progressData.results || {}
+          });
+          
+          // Stop polling if job is complete
+          if (progressData.status === 'completed' || progressData.status === 'failed') {
+            clearInterval(pollInterval);
+            const totalEmails = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.emailsImported || 0), 0);
+            const totalContacts = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.contactsFound || 0), 0);
+            
+            setGmailImportResults(prev => ({
+              ...prev,
+              message: progressData.status === 'completed' 
+                ? `✅ Import completed: ${totalEmails} emails processed, ${totalContacts} contacts found`
+                : `❌ Import failed: ${progressData.failedUsers?.length || 0} users failed`
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error polling import status:', error);
+        
+        // If it's a CORS error and we're using HTTP function, try the callable function as fallback
+        if (window.location.hostname === 'localhost' && error.message?.includes('CORS')) {
+          console.log('CORS error detected, trying callable function as fallback...');
+          try {
+            const functions = getFunctions();
+            const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+            const response = await getGmailImportProgress({ requestId, tenantId });
+            const progressData = response.data as any;
+            
+            if (progressData) {
+              // Update results with current status
+              setGmailImportResults({
+                success: true,
+                message: `Processing: ${progressData.completedUsers}/${progressData.totalUsers} users completed`,
+                requestId,
+                totalUsers: progressData.totalUsers,
+                completedUsers: progressData.completedUsers,
+                status: progressData.status,
+                results: progressData.results || {}
+              });
+              
+              // Stop polling if job is complete
+              if (progressData.status === 'completed' || progressData.status === 'failed') {
+                clearInterval(pollInterval);
+                const totalEmails = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.emailsImported || 0), 0);
+                const totalContacts = Object.values(progressData.results || {}).reduce((sum: any, result: any) => sum + (result.contactsFound || 0), 0);
+                
+                setGmailImportResults(prev => ({
+                  ...prev,
+                  message: progressData.status === 'completed' 
+                    ? `✅ Import completed: ${totalEmails} emails processed, ${totalContacts} contacts found`
+                    : `❌ Import failed: ${progressData.failedUsers?.length || 0} users failed`
+                }));
+              }
+            }
+          } catch (fallbackError) {
+            console.error('Fallback callable function also failed:', fallbackError);
+            clearInterval(pollInterval);
+            setGmailImportResults(prev => ({
+              ...prev,
+              message: '❌ Failed to check import status. Please refresh the page to check manually.'
+            }));
+          }
+        } else {
+          clearInterval(pollInterval);
+          setGmailImportResults(prev => ({
+            ...prev,
+            message: '❌ Failed to check import status. Please refresh the page to check manually.'
+          }));
+        }
+      }
+    }, 5000); // Poll every 5 seconds
+    
+    // Stop polling after 30 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+    }, 30 * 60 * 1000);
+  };
+
+  const runCleanupDuplicateEmails = async () => {
+    if (!tenantId || !currentUser?.uid) {
+      alert('No tenant ID or user ID found');
+      return;
+    }
+
+    setCleanupLoading(true);
+    try {
+      const functions = getFunctions();
+      const cleanupDuplicateEmails = httpsCallable(functions, 'cleanupDuplicateEmails');
+      
+      const response = await cleanupDuplicateEmails({
+        tenantId
+      });
+      
+      const resultData = response.data as any;
+      setCleanupResults(resultData);
+      
+      console.log('Duplicate cleanup result:', resultData);
+    } catch (error) {
+      console.error('Error cleaning up duplicate emails:', error);
+      alert('Error cleaning up duplicate emails: ' + error);
+    } finally {
+      setCleanupLoading(false);
+    }
+  };
+
+  const runClearAllEmails = async () => {
+    if (!tenantId || !currentUser?.uid) {
+      alert('No tenant ID or user ID found');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      '⚠️ WARNING: This will delete ALL email logs and activity logs from the system. ' +
+      'This action cannot be undone. Are you sure you want to proceed?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setClearAllLoading(true);
+    try {
+      const functions = getFunctions();
+      const clearAllEmails = httpsCallable(functions, 'clearAllEmails');
+      
+      const response = await clearAllEmails({
+        tenantId
+      });
+      
+      const resultData = response.data as any;
+      setClearAllResults(resultData);
+      
+      console.log('Clear all emails result:', resultData);
+    } catch (error) {
+      console.error('Error clearing all emails:', error);
+      alert('Error clearing all emails: ' + error);
+    } finally {
+      setClearAllLoading(false);
+    }
+  };
+
+  const getSelectedUserDisplayName = () => {
+    const user = users.find(u => u.id === selectedUserId);
+    if (!user) return '';
+    
+    if (user.displayName) return user.displayName;
+    if (user.firstName && user.lastName) return `${user.firstName} ${user.lastName}`;
+    return user.email;
   };
 
   return (
@@ -165,34 +572,39 @@ const DataOperations: React.FC = () => {
       </Typography>
 
       <Grid container spacing={3}>
-        {/* Bulk Email Domain Matching */}
+        {/* Single User Gmail Import */}
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <EmailIcon color="primary" />
+                <PersonIcon color="primary" />
                 <Typography variant="h6">
-                  Bulk Email Domain Matching
-                </Typography>
-              </Box>
-              
-              
-
-        {/* Gmail Bulk Import */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <EmailIcon color="primary" />
-                <Typography variant="h6">
-                  Gmail Bulk Import
+                  Single User Gmail Import
                 </Typography>
               </Box>
               
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Import historical Gmail emails and create activity logs for matching contacts.
-                This will process emails from the last 90 days (or custom range) and create activity logs.
+                Import historical Gmail emails for a single user. This is safer than bulk imports and allows you to process users one at a time.
               </Typography>
+
+              <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                <InputLabel>Select User</InputLabel>
+                <Select
+                  value={selectedUserId}
+                  label="Select User"
+                  onChange={(e) => setSelectedUserId(e.target.value)}
+                  disabled={usersLoading}
+                >
+                  <MenuItem value="">
+                    <em>Select a user with Gmail connected</em>
+                  </MenuItem>
+                  {users.map((user) => (
+                    <MenuItem key={user.id} value={user.id}>
+                      {user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
 
               <TextField
                 label="Days Back"
@@ -205,33 +617,54 @@ const DataOperations: React.FC = () => {
 
               <Button
                 variant="contained"
-                startIcon={gmailImportLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
-                onClick={runGmailBulkImport}
-                disabled={gmailImportLoading}
+                startIcon={singleUserImportLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+                onClick={runSingleUserGmailImport}
+                disabled={singleUserImportLoading || !selectedUserId}
                 fullWidth
               >
-                {gmailImportLoading ? 'Importing...' : 'Import Gmail Emails'}
+                {singleUserImportLoading ? 'Importing...' : `Import for ${getSelectedUserDisplayName() || 'Selected User'}`}
               </Button>
 
-              {gmailImportResults && (
+              {singleUserImportResults && (
                 <Box sx={{ mt: 2 }}>
                   <Typography variant="subtitle2" gutterBottom>
                     Import Results:
                   </Typography>
                   <Typography variant="body2">
-                    {gmailImportResults.message}
+                    {singleUserImportResults.message}
                   </Typography>
-                  {gmailImportResults.success && (
+                  {singleUserImportResults.success && (
                     <Box sx={{ mt: 1 }}>
                       <Typography variant="body2" color="success.main">
-                        ✅ Processed: {gmailImportResults.processedCount} emails
+                        ✅ Status: {singleUserImportResults.status}
                       </Typography>
                       <Typography variant="body2" color="primary.main">
-                        📝 Activity logs created: {gmailImportResults.activityLogsCreated}
+                        👤 User: {getSelectedUserDisplayName()}
                       </Typography>
-                      <Typography variant="body2" color="warning.main">
-                        ⏭️ Duplicates skipped: {gmailImportResults.duplicatesSkipped}
-                      </Typography>
+                      
+                      {/* User Results Breakdown */}
+                      {singleUserImportResults.results && Object.keys(singleUserImportResults.results).length > 0 && (
+                        <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Import Details:
+                          </Typography>
+                          {Object.entries(singleUserImportResults.results).map(([userId, result]: [string, any], index: number) => (
+                            <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {getSelectedUserDisplayName()}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {result.emailsImported} emails • {result.contactsFound} contacts found
+                              </Typography>
+                              {result.errors && result.errors.length > 0 && (
+                                <Typography variant="caption" color="error.main" display="block">
+                                  {result.errors.length} errors
+                                </Typography>
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      )}
                     </Box>
                   )}
                 </Box>
@@ -239,6 +672,17 @@ const DataOperations: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
+
+        {/* Bulk Email Domain Matching */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <BusinessIcon color="primary" />
+                <Typography variant="h6">
+                  Bulk Email Domain Matching
+                </Typography>
+              </Box>
               
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Automatically associate contacts with companies based on email domain matching.
@@ -278,6 +722,88 @@ const DataOperations: React.FC = () => {
                   </Button>
                 )}
               </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Gmail Bulk Import (Legacy) */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <EmailIcon color="primary" />
+                <Typography variant="h6">
+                  Gmail Bulk Import (All Users)
+                </Typography>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                ⚠️ LEGACY: Import historical Gmail emails for ALL users in the tenant. Use Single User Import above for safer processing.
+              </Typography>
+
+              <TextField
+                label="Days Back"
+                type="number"
+                value={daysBack}
+                onChange={(e) => setDaysBack(parseInt(e.target.value) || 90)}
+                sx={{ mb: 2, width: '100%' }}
+                helperText="Number of days back to import emails from"
+              />
+
+              <Button
+                variant="outlined"
+                startIcon={gmailImportLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+                onClick={runGmailBulkImport}
+                disabled={gmailImportLoading}
+                fullWidth
+              >
+                {gmailImportLoading ? 'Importing...' : 'Import Gmail Emails (All Users)'}
+              </Button>
+
+              {gmailImportResults && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Import Results:
+                  </Typography>
+                  <Typography variant="body2">
+                    {gmailImportResults.message}
+                  </Typography>
+                  {gmailImportResults.success && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="body2" color="success.main">
+                        ✅ Status: {gmailImportResults.status}
+                      </Typography>
+                      <Typography variant="body2" color="primary.main">
+                        👥 Users: {gmailImportResults.completedUsers}/{gmailImportResults.totalUsers} completed
+                      </Typography>
+                      
+                      {/* User Results Breakdown */}
+                      {gmailImportResults.results && Object.keys(gmailImportResults.results).length > 0 && (
+                        <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                          <Typography variant="subtitle2" gutterBottom>
+                            User Breakdown:
+                          </Typography>
+                          {Object.entries(gmailImportResults.results).map(([userId, result]: [string, any], index: number) => (
+                            <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                User {userId}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {result.emailsImported} emails • {result.contactsFound} contacts found
+                              </Typography>
+                              {result.errors && result.errors.length > 0 && (
+                                <Typography variant="caption" color="error.main" display="block">
+                                  {result.errors.length} errors
+                                </Typography>
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -331,6 +857,128 @@ const DataOperations: React.FC = () => {
             </Card>
           </Grid>
         )}
+
+        {/* Cleanup Duplicate Emails */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <DeleteSweepIcon color="primary" />
+                <Typography variant="h6">
+                  Cleanup Duplicate Emails
+                </Typography>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Remove duplicate email logs based on Gmail message ID. This will keep only the most recent version of each email.
+              </Typography>
+
+              <Button
+                variant="contained"
+                color="warning"
+                startIcon={cleanupLoading ? <CircularProgress size={20} /> : <DeleteSweepIcon />}
+                onClick={runCleanupDuplicateEmails}
+                disabled={cleanupLoading}
+                fullWidth
+              >
+                {cleanupLoading ? 'Cleaning...' : 'Cleanup Duplicate Emails'}
+              </Button>
+
+              {cleanupResults && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Cleanup Results:
+                  </Typography>
+                  <Typography variant="body2">
+                    {cleanupResults.message}
+                  </Typography>
+                  {cleanupResults.success && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="body2" color="success.main">
+                        ✅ Removed: {cleanupResults.duplicatesRemoved} total duplicates
+                      </Typography>
+                      {cleanupResults.emailDuplicatesRemoved > 0 && (
+                        <Typography variant="body2" color="warning.main">
+                          📧 Email duplicates: {cleanupResults.emailDuplicatesRemoved}
+                        </Typography>
+                      )}
+                      {cleanupResults.activityDuplicatesRemoved > 0 && (
+                        <Typography variant="body2" color="warning.main">
+                          📋 Activity duplicates: {cleanupResults.activityDuplicatesRemoved}
+                        </Typography>
+                      )}
+                      <Typography variant="body2" color="text.secondary">
+                        📊 Total emails: {cleanupResults.totalEmails}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        📋 Total activities: {cleanupResults.totalActivities}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        📈 Remaining emails: {cleanupResults.remainingEmails}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        📈 Remaining activities: {cleanupResults.remainingActivities}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* Clear All Emails */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <DeleteSweepIcon color="error" />
+                <Typography variant="h6">
+                  Clear All Emails
+                </Typography>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                ⚠️ DANGER: This will delete ALL email logs and activity logs from the system. Use this before bulk imports to start fresh.
+              </Typography>
+
+              <Button
+                variant="contained"
+                color="error"
+                startIcon={clearAllLoading ? <CircularProgress size={20} /> : <DeleteSweepIcon />}
+                onClick={runClearAllEmails}
+                disabled={clearAllLoading}
+                sx={{ mb: 2 }}
+              >
+                {clearAllLoading ? 'Clearing...' : 'Clear All Emails'}
+              </Button>
+
+              {clearAllResults && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Clear Results:
+                  </Typography>
+                  <Typography variant="body2">
+                    {clearAllResults.message}
+                  </Typography>
+                  {clearAllResults.success && (
+                    <Box sx={{ mt: 1 }}>
+                      <Typography variant="body2" color="success.main">
+                        ✅ Total deleted: {clearAllResults.totalDeleted}
+                      </Typography>
+                      <Typography variant="body2" color="warning.main">
+                        📧 Emails deleted: {clearAllResults.emailsDeleted}
+                      </Typography>
+                      <Typography variant="body2" color="warning.main">
+                        📋 Activities deleted: {clearAllResults.activitiesDeleted}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
       </Grid>
 
       {/* Results Dialog */}

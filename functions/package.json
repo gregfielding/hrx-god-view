@@ -22,6 +22,7 @@
   },
   "main": "lib/index.js",
   "dependencies": {
+    "@google-cloud/tasks": "^6.2.0",
     "@sendgrid/mail": "^8.1.5",
     "@types/cors": "^2.8.19",
     "busboy": "^1.6.0",

@@ -946,60 +946,39 @@ export const testGmailEmailCapture = onCall({
 export const bulkImportGmailEmails = onCall({
   cors: true,
   maxInstances: 1,
-  region: 'us-central1'
+  region: 'us-central1',
+  timeoutSeconds: 540
 }, async (request) => {
   try {
-    const { tenantId, userId, daysBack = 90 } = request.data;
+    const { tenantId, daysBack = 30 } = request.data;
     
-    if (!tenantId || !userId) {
-      throw new Error('Missing required fields: tenantId, userId');
+    if (!tenantId) {
+      throw new Error('Missing required field: tenantId');
     }
     
-    console.log(`🔄 Starting bulk Gmail import for user ${userId}, tenant ${tenantId}, last ${daysBack} days`);
+    console.log(`🔄 Starting bulk Gmail import for ALL users in tenant ${tenantId}, last ${daysBack} days`);
     
-    // Get user data
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      throw new Error('User not found');
-    }
+    // Get all users in this tenant with Gmail connected
+    const usersSnapshot = await db.collection('users')
+      .where('gmailConnected', '==', true)
+      .get();
     
-    const userData = userDoc.data();
-    if (!userData?.gmailTokens) {
-      throw new Error('User not connected to Gmail');
-    }
-    
-    // Set up Gmail API
-    oauth2Client.setCredentials(userData.gmailTokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    
-    // Calculate date range
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - daysBack);
-    
-    console.log(`📅 Importing emails from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-    
-    // Query for sent emails in the date range
-    const query = `in:sent after:${Math.floor(startDate.getTime() / 1000)} before:${Math.floor(endDate.getTime() / 1000)}`;
-    console.log(`🔍 Gmail query: ${query}`);
-    
-    const response = await gmail.users.messages.list({
-      userId: 'me',
-      q: query,
-      maxResults: 500 // Gmail API limit
-    });
-    
-    const messages = response.data.messages || [];
-    console.log(`📨 Found ${messages.length} emails to process`);
-    
-    if (messages.length === 0) {
+    if (usersSnapshot.empty) {
       return {
         success: true,
         processedCount: 0,
         activityLogsCreated: 0,
-        message: 'No emails found in the specified date range'
+        duplicatesSkipped: 0,
+        message: 'No users with Gmail connected found in this tenant',
+        headers: {
+          'Access-Control-Allow-Origin': 'https://hrxone.com',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        }
       };
     }
+    
+    console.log(`👥 Found ${usersSnapshot.docs.length} users with Gmail connected`);
     
     // Get all contacts for this tenant to check for matches
     const contactsSnapshot = await db.collection('tenants').doc(tenantId).collection('crm_contacts').get();
@@ -1007,9 +986,72 @@ export const bulkImportGmailEmails = onCall({
     
     console.log(`👥 Found ${contacts.length} contacts to match against`);
     
-    let processedCount = 0;
-    let activityLogsCreated = 0;
-    let duplicatesSkipped = 0;
+    let totalProcessedCount = 0;
+    let totalActivityLogsCreated = 0;
+    let totalDuplicatesSkipped = 0;
+    const userResults: any[] = [];
+    
+    // Process each user (limit to first 3 users to avoid timeouts)
+    const maxUsers = 3;
+    const usersToProcess = usersSnapshot.docs.slice(0, maxUsers);
+    
+    for (const userDoc of usersToProcess) {
+      try {
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+        
+        // Verify this user belongs to the specified tenant
+        const userTenantId = userData.tenantId || userData.defaultTenantId;
+        if (userTenantId !== tenantId) {
+          console.log(`⚠️ User ${userId} belongs to tenant ${userTenantId}, skipping (requested tenant: ${tenantId})`);
+          continue;
+        }
+        
+        if (!userData?.gmailTokens) {
+          console.log(`⚠️ User ${userId} has no Gmail tokens, skipping`);
+          continue;
+        }
+        
+        console.log(`📧 Processing user ${userId} (${userData.email || 'unknown email'})`);
+        
+        // Set up Gmail API for this user
+        oauth2Client.setCredentials(userData.gmailTokens);
+        const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+        
+        // Calculate date range
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - daysBack);
+        
+        console.log(`📅 Importing emails from ${startDate.toISOString()} to ${endDate.toISOString()} for user ${userId}`);
+        
+        // Query for sent emails in the date range - limit to 100 messages per user to avoid timeouts
+        const query = `in:sent after:${Math.floor(startDate.getTime() / 1000)} before:${Math.floor(endDate.getTime() / 1000)}`;
+        
+        const response = await gmail.users.messages.list({
+          userId: 'me',
+          q: query,
+          maxResults: 100 // Reduced from 500 to avoid timeouts
+        });
+        
+        const messages = response.data.messages || [];
+        console.log(`📨 Found ${messages.length} emails for user ${userId}`);
+        
+        if (messages.length === 0) {
+          userResults.push({
+            userId,
+            userEmail: userData.email,
+            processedCount: 0,
+            activityLogsCreated: 0,
+            duplicatesSkipped: 0,
+            message: 'No emails found'
+          });
+          continue;
+        }
+        
+        let userProcessedCount = 0;
+        let userActivityLogsCreated = 0;
+        let userDuplicatesSkipped = 0;
     
     // Process each email
     for (const message of messages) {
@@ -1046,7 +1088,7 @@ export const bulkImportGmailEmails = onCall({
         
         if (!existingEmailLog.empty) {
           console.log(`⏭️ Skipping duplicate email ${message.id}`);
-          duplicatesSkipped++;
+          userDuplicatesSkipped++;
           continue;
         }
         
@@ -1055,12 +1097,7 @@ export const bulkImportGmailEmails = onCall({
           contact.email && emailAddresses.includes(contact.email.toLowerCase())
         );
         
-        if (matchingContacts.length === 0) {
-          console.log(`⚠️ No matching contacts found for email addresses: ${emailAddresses.join(', ')}`);
-          continue;
-        }
-        
-        // Create email log entry
+        // Create email log entry for ALL emails (not just matching ones)
         const emailLog = {
           gmailMessageId: message.id,
           subject,
@@ -1076,58 +1113,100 @@ export const bulkImportGmailEmails = onCall({
         
         await db.collection('tenants').doc(tenantId).collection('email_logs').add(emailLog);
         
-        // Create activity logs for each matching contact
-        for (const contact of matchingContacts) {
-          const activityLog = {
-            type: 'email',
-            title: `Email: ${subject}`,
-            description: `Email sent to ${contact.email}`,
-            timestamp: new Date(date),
-            salespersonId: userId,
-            tenantId,
-            contactId: contact.id,
-            metadata: {
-              direction: 'sent',
-              gmailMessageId: message.id,
-              subject,
-              to: contact.email
-            }
-          };
-          
-          await db.collection('tenants').doc(tenantId).collection('activity_logs').add(activityLog);
-          activityLogsCreated++;
+        // Only create activity logs for matching contacts
+        if (matchingContacts.length > 0) {
+          for (const contact of matchingContacts) {
+            const activityLog = {
+              type: 'email',
+              title: `Email: ${subject}`,
+              description: `Email sent to ${contact.email}`,
+              timestamp: new Date(date),
+              salespersonId: userId,
+              tenantId,
+              contactId: contact.id,
+              metadata: {
+                direction: 'sent',
+                gmailMessageId: message.id,
+                subject,
+                to: contact.email
+              }
+            };
+            
+            await db.collection('tenants').doc(tenantId).collection('activity_logs').add(activityLog);
+            userActivityLogsCreated++;
+          }
+        } else {
+          console.log(`📧 Email processed but no matching contacts: ${emailAddresses.join(', ')}`);
         }
         
-        processedCount++;
+        userProcessedCount++;
         
-        if (processedCount % 10 === 0) {
-          console.log(`📊 Progress: ${processedCount}/${messages.length} emails processed`);
+        if (userProcessedCount % 10 === 0) {
+          console.log(`📊 Progress for user ${userId}: ${userProcessedCount}/${messages.length} emails processed`);
         }
         
       } catch (messageError) {
-        console.error(`❌ Error processing message ${message.id}:`, messageError);
+        console.error(`Error processing message ${message.id}:`, messageError);
         // Continue with next message
       }
     }
     
-    console.log(`🎉 Bulk Gmail import completed:`);
-    console.log(`   - Processed: ${processedCount} emails`);
-    console.log(`   - Activity logs created: ${activityLogsCreated}`);
-    console.log(`   - Duplicates skipped: ${duplicatesSkipped}`);
+    console.log(`✅ User ${userId}: ${userProcessedCount} emails processed, ${userActivityLogsCreated} activity logs created, ${userDuplicatesSkipped} duplicates skipped`);
     
-    return {
-      success: true,
-      processedCount,
-      activityLogsCreated,
-      duplicatesSkipped,
-      message: `Bulk import completed: ${processedCount} emails processed, ${activityLogsCreated} activity logs created, ${duplicatesSkipped} duplicates skipped`
-    };
+    // Add user results
+    userResults.push({
+      userId,
+      userEmail: userData.email,
+      processedCount: userProcessedCount,
+      activityLogsCreated: userActivityLogsCreated,
+      duplicatesSkipped: userDuplicatesSkipped,
+      message: 'Success'
+    });
+    
+    // Add to totals
+    totalProcessedCount += userProcessedCount;
+    totalActivityLogsCreated += userActivityLogsCreated;
+    totalDuplicatesSkipped += userDuplicatesSkipped;
+    
+  } catch (userError) {
+    console.error(`❌ Error processing user ${userDoc.id}:`, userError);
+    userResults.push({
+      userId: userDoc.id,
+      userEmail: userDoc.data()?.email || 'unknown',
+      processedCount: 0,
+      activityLogsCreated: 0,
+      duplicatesSkipped: 0,
+      message: `Error: ${userError instanceof Error ? userError.message : 'Unknown error'}`
+    });
+  }
+}
+
+console.log(`🎉 Bulk import completed: ${totalProcessedCount} total emails processed, ${totalActivityLogsCreated} total activity logs created, ${totalDuplicatesSkipped} total duplicates skipped`);
+
+return {
+  success: true,
+  processedCount: totalProcessedCount,
+  activityLogsCreated: totalActivityLogsCreated,
+  duplicatesSkipped: totalDuplicatesSkipped,
+  userResults,
+  message: `Bulk import completed: ${totalProcessedCount} emails processed, ${totalActivityLogsCreated} activity logs created, ${totalDuplicatesSkipped} duplicates skipped`,
+  headers: {
+    'Access-Control-Allow-Origin': 'https://hrxone.com',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  }
+};
     
   } catch (error) {
     console.error('❌ Error in bulk Gmail import:', error);
     return {
       success: false,
-      message: `Bulk import failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      message: `Bulk import failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://hrxone.com',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      }
     };
   }
 });

@@ -140,21 +140,45 @@ async function computeActiveSalespeople(tenantId: string, companyId: string): Pr
     console.warn('Tasks scan failed for active salespeople', (e as Error).message);
   }
 
-  // Emails (best-effort): look for email_logs referencing this company
+  // Emails: look for email_logs sent to contacts associated with this company
   try {
     const emailsRef = db.collection('tenants').doc(tenantId).collection('email_logs');
-    const emailSnap = await emailsRef.where('companyId', '==', companyId).limit(100).get();
-    emailSnap.docs.forEach((d) => {
-      const data: any = d.data() || {};
-      const sid = data.userId || data.salespersonId || data.senderId;
-      if (sid) {
-        activeIds.add(sid);
-        const ts = data.timestamp?.toMillis?.() || data.sentAt?.toMillis?.() || Date.now();
-        lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
+    
+    // Get all contacts associated with this company
+    const contactsRef = db.collection('tenants').doc(tenantId).collection('crm_contacts');
+    const contactsSnap = await contactsRef.where('companyId', '==', companyId).get();
+    const contactIds = contactsSnap.docs.map(doc => doc.id);
+    
+    // Also check contacts via associations
+    const assocContactsSnap = await contactsRef.where('associations.companies', 'array-contains', companyId).get();
+    const assocContactIds = assocContactsSnap.docs.map(doc => doc.id);
+    
+    const allContactIds = [...contactIds, ...assocContactIds];
+    
+    if (allContactIds.length > 0) {
+      // Query emails for each contact in batches
+      const chunks: string[][] = [];
+      for (let i = 0; i < allContactIds.length; i += 10) {
+        chunks.push(allContactIds.slice(i, i + 10));
       }
-    });
+      
+      for (const batchIds of chunks) {
+        const emailSnap = await emailsRef.where('matchingContacts', 'array-contains-any', batchIds).limit(100).get();
+        emailSnap.docs.forEach((d) => {
+          const data: any = d.data() || {};
+          const sid = data.userId || data.salespersonId || data.senderId;
+          if (sid) {
+            activeIds.add(sid);
+            const ts = data.date?.toMillis?.() || data.processedAt?.toMillis?.() || data.timestamp?.toMillis?.() || data.sentAt?.toMillis?.() || Date.now();
+            lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
+          }
+        });
+      }
+      
+      console.log(`📧 Found emails for ${allContactIds.length} contacts associated with company ${companyId}`);
+    }
   } catch (e) {
-    // email_logs may not exist; ignore
+    console.warn('Email logs scan failed for company active salespeople:', (e as Error).message);
   }
 
   // Build snapshot map
@@ -293,7 +317,7 @@ async function computeContactActiveSalespeople(tenantId: string, contactId: stri
   // Emails: look for email_logs referencing this contact
   try {
     const emailsRef = db.collection('tenants').doc(tenantId).collection('email_logs');
-    const emailSnap = await emailsRef.where('contactId', '==', contactId).limit(100).get();
+    const emailSnap = await emailsRef.where('matchingContacts', 'array-contains', contactId).limit(100).get();
     
     emailSnap.docs.forEach((d) => {
       const data: any = d.data() || {};
@@ -301,13 +325,15 @@ async function computeContactActiveSalespeople(tenantId: string, contactId: stri
       if (sid) {
         if (typeof sid === 'string' && !Array.isArray(sid)) {
           activeIds.add(sid);
-          const ts = data.timestamp?.toMillis?.() || data.sentAt?.toMillis?.() || Date.now();
+          const ts = data.date?.toMillis?.() || data.processedAt?.toMillis?.() || data.timestamp?.toMillis?.() || data.sentAt?.toMillis?.() || Date.now();
           lastActiveMap[sid] = Math.max(lastActiveMap[sid] || 0, ts);
         }
       }
     });
+    
+    console.log(`📧 Found ${emailSnap.docs.length} email logs for contact ${contactId}`);
   } catch (e) {
-    // email_logs may not exist; ignore
+    console.warn('Email logs scan failed for contact active salespeople:', (e as Error).message);
   }
 
   // Build snapshot map
@@ -359,34 +385,51 @@ export const rebuildContactActiveSalespeople = onCall({ cors: true }, async (req
 });
 
 // Batch rebuild for all companies in a tenant (or all tenants if none provided)
-export const rebuildAllCompanyActiveSalespeople = onCall({ cors: true, timeoutSeconds: 540 }, async (request) => {
-  const inputTenantId: string | undefined = request.data?.tenantId;
-  try {
-    const tenantIds: string[] = [];
-    if (inputTenantId) {
-      tenantIds.push(inputTenantId);
-    } else {
-      const tenantsSnap = await db.collection('tenants').get();
-      tenantsSnap.docs.forEach((d) => tenantIds.push(d.id));
-    }
+export const rebuildAllCompanyActiveSalespeople = onCall(async (request) => {
+  const { tenantIds } = request.data;
+  if (!tenantIds || !Array.isArray(tenantIds)) {
+    return { ok: false, error: 'tenantIds array required' };
+  }
 
+  try {
     let companiesProcessed = 0;
     let totalUpdated = 0;
+    const MAX_COMPANIES_PER_TENANT = 1000; // Add safety limit
+    const MAX_TOTAL_COMPANIES = 5000; // Add global safety limit
 
     for (const tenantId of tenantIds) {
       let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+      let companiesInTenant = 0;
+      
       // Page through companies to avoid timeouts/memory spikes
       while (true) {
+        // Add safety checks to prevent infinite loops
+        if (companiesInTenant >= MAX_COMPANIES_PER_TENANT) {
+          console.log(`⚠️ Safety limit reached for tenant ${tenantId}: ${companiesInTenant} companies`);
+          break;
+        }
+        
+        if (companiesProcessed >= MAX_TOTAL_COMPANIES) {
+          console.log(`⚠️ Global safety limit reached: ${companiesProcessed} total companies`);
+          break;
+        }
+
         let q = db.collection('tenants').doc(tenantId).collection('crm_companies').orderBy(admin.firestore.FieldPath.documentId()).limit(200) as FirebaseFirestore.Query;
         if (lastDoc) q = q.startAfter(lastDoc);
         const snap = await q.get();
-        if (snap.empty) break;
+        
+        if (snap.empty) {
+          console.log(`✅ Completed processing tenant ${tenantId}: ${companiesInTenant} companies`);
+          break;
+        }
+        
         for (const d of snap.docs) {
           const companyId = d.id;
           const map = await computeActiveSalespeople(tenantId, companyId);
           Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
           await db.doc(`tenants/${tenantId}/crm_companies/${companyId}`).set({ activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           companiesProcessed += 1;
+          companiesInTenant += 1;
           totalUpdated += Object.keys(map).length;
         }
         lastDoc = snap.docs[snap.docs.length - 1];

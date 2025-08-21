@@ -222,6 +222,8 @@ const DealDetails: React.FC = () => {
   const [dealCoachKey, setDealCoachKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [tasksDashboardKey, setTasksDashboardKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [loadingSalespeople, setLoadingSalespeople] = useState(false);
+  const [locationData, setLocationData] = useState<any>(null);
+  const [loadingLocation, setLoadingLocation] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const foundationalDataLoadedRef = useRef(false);
   const secondaryDataLoadedRef = useRef<string | null>(null);
@@ -575,6 +577,34 @@ const DealDetails: React.FC = () => {
     } catch (err) {
       console.error('Error loading associated salespeople:', err);
       setAssociatedSalespeople([]);
+    }
+  };
+
+  // Load location data from database when not available in associations
+  const loadLocationData = async (locationId: string, companyId: string) => {
+    if (!locationId || !companyId || !tenantId) return;
+    
+    try {
+      setLoadingLocation(true);
+      console.log(`🔍 Loading location data for ID: ${locationId} in company: ${companyId}`);
+      
+      // Try to load location from company subcollection
+      const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+      const locationDoc = await getDoc(locationRef);
+      
+      if (locationDoc.exists()) {
+        const locationData = { id: locationDoc.id, ...locationDoc.data() };
+        console.log('✅ Location data loaded:', locationData);
+        setLocationData(locationData);
+      } else {
+        console.log('❌ Location not found in company subcollection');
+        setLocationData(null);
+      }
+    } catch (error) {
+      console.error('❌ Error loading location data:', error);
+      setLocationData(null);
+    } finally {
+      setLoadingLocation(false);
     }
   };
 
@@ -1299,6 +1329,26 @@ const DealDetails: React.FC = () => {
     }
   }, [deal, aiComponentsLoaded]);
 
+  // Load location data when needed
+  useEffect(() => {
+    if (!deal || !company || locationData || loadingLocation) return;
+    
+    const locations = (deal as any)?.associations?.locations || [];
+    if (locations.length === 0) return;
+    
+    const locationEntry = locations[0];
+    const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+    const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
+    const locationNickname = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.nickname || locationEntry.nickname || '');
+    const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
+    
+    // Only load if we have incomplete location data
+    if ((!locationNickname || !locationAddress || locationName === 'Unknown Location') && locationId) {
+      console.log('🔍 Loading location data from database via useEffect...');
+      loadLocationData(locationId, company.id);
+    }
+  }, [deal?.associations?.locations, company?.id, locationData, loadingLocation]);
+
 
 
   if (associationsLoading) {
@@ -1364,6 +1414,9 @@ const DealDetails: React.FC = () => {
       {/* Breadcrumbs */}
       <Box sx={{ mb: 2 }}>
         <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
+            CRM
+          </MUILink>
           <MUILink underline="hover" color="inherit" href="/opportunities" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=opportunities'); }}>
             Opportunities
           </MUILink>
@@ -1958,7 +2011,7 @@ const DealDetails: React.FC = () => {
                     </Box>
                   ) : (
                     <Box sx={{ textAlign: 'center', py: 3 }}>
-                      <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                      {/* <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
                         No salespeople assigned
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -1968,12 +2021,11 @@ const DealDetails: React.FC = () => {
                         variant="outlined" 
                         size="small"
                         onClick={() => {
-                          // TODO: Open assign salespeople dialog
                           console.log('Assign salespeople to deal');
                         }}
                       >
                         Assign Salespeople
-                      </Button>
+                      </Button> */}
                     </Box>
                   )}
                 </SectionCard>
@@ -2024,7 +2076,7 @@ const DealDetails: React.FC = () => {
                     </Box>
                   ) : (
                     <Box sx={{ textAlign: 'center', py: 3 }}>
-                      <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                      {/* <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
                         No contacts yet
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -2039,7 +2091,7 @@ const DealDetails: React.FC = () => {
                         }}
                       >
                         Add Contact
-                      </Button>
+                      </Button> */}
                     </Box>
                   )}
                 </SectionCard>
@@ -2070,63 +2122,67 @@ const DealDetails: React.FC = () => {
                     if (hasLocations) {
                       // Get the first location (assuming primary location)
                       const locationEntry = locations[0];
+                      
                       const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
                       const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
+                      const locationNickname = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.nickname || locationEntry.nickname || '');
                       const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
+                      
+                      // Location data loading is handled by useEffect hook to prevent infinite re-renders
+                      
+                      // Use database location data if available, otherwise use association data
+                      const displayName = locationData?.nickname || locationData?.name || locationNickname || locationName;
+                      const displayAddress = locationData?.address || locationAddress;
                       
                       return (
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          <Box
-                            sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                            onClick={() => {
-                              if (company && locationId) {
-                                navigate(`/crm/companies/${company.id}/locations/${locationId}`);
-                              }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => { 
-                              if (e.key === 'Enter' || e.key === ' ') { 
-                                e.preventDefault(); 
+                          {loadingLocation ? (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                              <CircularProgress size={16} />
+                              <Typography variant="body2" color="text.secondary">
+                                Loading location...
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Box
+                              sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                              onClick={() => {
                                 if (company && locationId) {
                                   navigate(`/crm/companies/${company.id}/locations/${locationId}`);
                                 }
-                              } 
-                            }}
-                          >
-                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
-                              <BusinessIcon sx={{ fontSize: 16 }} />
-                            </Avatar>
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {locationName}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {locationAddress || 'No address'}
-                              </Typography>
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => { 
+                                if (e.key === 'Enter' || e.key === ' ') { 
+                                  e.preventDefault(); 
+                                  if (company && locationId) {
+                                    navigate(`/crm/companies/${company.id}/locations/${locationId}`);
+                                  }
+                                } 
+                              }}
+                            >
+                              <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                                <BusinessIcon sx={{ fontSize: 16 }} />
+                              </Avatar>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {displayName}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {displayAddress || 'No address'}
+                                </Typography>
+                              </Box>
                             </Box>
-                          </Box>
+                          )}
                         </Box>
                       );
                     } else {
                       return (
                         <Box sx={{ textAlign: 'center', py: 3 }}>
-                          <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                          <Typography variant="body2" color="text.secondary">
                             No location assigned
                           </Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            Add a location to this deal
-                          </Typography>
-                          <Button 
-                            variant="outlined" 
-                            size="small"
-                            onClick={() => {
-                              // TODO: Open add location dialog or navigate to company locations
-                              console.log('Add location to deal');
-                            }}
-                          >
-                            Add Location
-                          </Button>
                         </Box>
                       );
                     }

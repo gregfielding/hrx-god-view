@@ -102,6 +102,16 @@ type LocationActivityItem = {
   metadata?: any;
 };
 
+const getActivityTypeColor = (type: string): string => {
+  const colors: { [key: string]: string } = {
+    task: '#10B981',      // Green for completed tasks
+    note: '#3B82F6',      // Blue for notes
+    deal_stage: '#8B5CF6', // Purple for deal stages
+    email: '#F59E0B'      // Orange for emails
+  };
+  return colors[type] || '#6B7280'; // Gray fallback
+};
+
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -641,25 +651,133 @@ const LocationActivityTab: React.FC<{ location: LocationData; tenantId: string; 
               <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
+            <TableContainer 
+              component={Paper} 
+              variant="outlined"
+              sx={{
+                overflowX: 'auto',
+                borderRadius: '8px',
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              }}
+            >
+              <Table sx={{ minWidth: 1000 }}>
                 <TableHead>
-                  <TableRow>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Title</TableCell>
-                    <TableCell>Description</TableCell>
-                    <TableCell>When</TableCell>
-                    <TableCell align="right">Link</TableCell>
+                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Type
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Title
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Description
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      When
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }} align="right">
+                      Link
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
-                    <TableRow key={it.id}>
-                      <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
-                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
-                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
-                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
-                      <TableCell align="right">
+                    <TableRow 
+                      key={it.id}
+                      sx={{
+                        height: '48px',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          backgroundColor: '#F9FAFB'
+                        }
+                      }}
+                    >
+                      <TableCell sx={{ py: 1 }}>
+                        <Chip 
+                          size="small" 
+                          label={it.type.replace('_', ' ')} 
+                          sx={{
+                            fontSize: '0.75rem',
+                            height: 24,
+                            fontWeight: 600,
+                            backgroundColor: getActivityTypeColor(it.type),
+                            color: 'white'
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ py: 1, px: 2 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#111827",
+                          fontSize: '0.875rem',
+                          fontWeight: 500
+                        }}>
+                          {it.title}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem',
+                          maxWidth: 420,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {it.description}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem'
+                        }}>
+                          {it.timestamp?.toLocaleString?.()}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }} align="right">
                         <LinkForActivity it={it} tenantId={tenantId} companyId={companyId!} />
                       </TableCell>
                     </TableRow>
@@ -911,6 +1029,9 @@ const LocationDetails: React.FC = () => {
       {/* Breadcrumbs */}
       <Box sx={{ mb: 2 }}>
         <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
+            CRM
+          </MUILink>
           <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
             Companies
           </MUILink>
@@ -1241,13 +1362,21 @@ const LocationDetails: React.FC = () => {
                       label="Type"
                       onChange={(e) => handleFieldChange('type', e.target.value)}
                     >
-                      <MenuItem value="Headquarters">Headquarters</MenuItem>
                       <MenuItem value="Office">Office</MenuItem>
                       <MenuItem value="Warehouse">Warehouse</MenuItem>
-                      <MenuItem value="Factory">Factory</MenuItem>
-                      <MenuItem value="Store">Store</MenuItem>
-                      <MenuItem value="Branch">Branch</MenuItem>
+                      <MenuItem value="Plant">Plant</MenuItem>
+                      <MenuItem value="Distribution Center">Distribution Center</MenuItem>
                       <MenuItem value="Manufacturing">Manufacturing</MenuItem>
+                      <MenuItem value="Retail">Retail</MenuItem>
+                      <MenuItem value="Branch">Branch</MenuItem>
+                      <MenuItem value="Headquarters">Headquarters</MenuItem>
+                      <MenuItem value="Data Center">Data Center</MenuItem>
+                      <MenuItem value="Call Center">Call Center</MenuItem>
+                      <MenuItem value="Research & Development">Research & Development</MenuItem>
+                      <MenuItem value="Training Center">Training Center</MenuItem>
+                      <MenuItem value="Service Center">Service Center</MenuItem>
+                      <MenuItem value="Showroom">Showroom</MenuItem>
+                      <MenuItem value="Storage Facility">Storage Facility</MenuItem>
                     </Select>
                   </FormControl>
                   

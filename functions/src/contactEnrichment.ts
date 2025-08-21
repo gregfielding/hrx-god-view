@@ -6,6 +6,30 @@ import { createContactAILog } from './utils/aiLogging';
 import { getApolloKey } from './utils/secrets';
 import { apolloContactEnrichment, apolloCompanyByDomain, ApolloContactEnrichment } from './utils/apollo';
 
+// Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
+function removeUndefinedValues(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return null;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
+  }
+  
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = removeUndefinedValues(value);
+      if (cleanedValue !== null) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+    return cleaned;
+  }
+  
+  return obj;
+}
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -108,11 +132,42 @@ export async function runContactEnrichment(
           }
         }
         
+        // Add organization name if we have company info (helps with matching)
+        if (contactCompany) {
+          enrichmentParams.organization_name = contactCompany;
+        }
+        
         // Add domain if we have company info (helps with matching)
         if (contactCompany) {
           // Extract domain from company name for better matching
           const domain = contactCompany.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
           enrichmentParams.domain = domain;
+        }
+        
+        // Add job title if available
+        if (contact.jobTitle || contact.title) {
+          enrichmentParams.title = contact.jobTitle || contact.title;
+        }
+        
+        // Add phone number if available
+        if (contact.phone || contact.workPhone || contact.mobilePhone) {
+          enrichmentParams.phone = contact.phone || contact.workPhone || contact.mobilePhone;
+        }
+        
+        // Add LinkedIn URL if available
+        if (contact.linkedInUrl) {
+          enrichmentParams.linkedin_url = contact.linkedInUrl;
+        }
+        
+        // Add location information if available
+        if (contact.city) {
+          enrichmentParams.city = contact.city;
+        }
+        if (contact.state) {
+          enrichmentParams.state = contact.state;
+        }
+        if (contact.country) {
+          enrichmentParams.country = contact.country;
         }
         
         // Don't reveal personal emails/phone by default to save credits
@@ -153,10 +208,10 @@ export async function runContactEnrichment(
   const model = 'apollo-only';
   const usage = { prompt: 0, completion: 0, total: 0 };
 
-  // Prepare Apollo data for storage
+  // Prepare Apollo data for storage - clean undefined values before saving to Firestore
   const apolloEnrichment = apolloData ? {
-    person: apolloData,
-    company: apolloCompanyData,
+    person: removeUndefinedValues(apolloData),
+    company: apolloCompanyData ? removeUndefinedValues(apolloCompanyData) : null,
     fetchedAt: admin.firestore.FieldValue.serverTimestamp()
   } : null;
 
@@ -181,16 +236,35 @@ export async function runContactEnrichment(
     if (apolloData.linkedin_url) {
       apolloUpdates.linkedInUrl = apolloData.linkedin_url;
     }
+    if (apolloData.twitter_url) {
+      apolloUpdates.twitterUrl = apolloData.twitter_url;
+    }
+    if (apolloData.facebook_url) {
+      apolloUpdates.facebookUrl = apolloData.facebook_url;
+    }
+    if (apolloData.github_url) {
+      apolloUpdates.githubUrl = apolloData.github_url;
+    }
+    // Avatar logic: exactly like companies - save LinkedIn URL to avatar field
     if (apolloData.photo_url) {
       apolloUpdates.avatar = apolloData.photo_url;
+      console.log('✅ Using Apollo photo_url as avatar:', apolloData.photo_url);
+    } else if (apolloData.linkedin_url) {
+      apolloUpdates.avatar = apolloData.linkedin_url;
+      console.log('✅ Using Apollo linkedin_url as avatar:', apolloData.linkedin_url);
     }
-    if (apolloData.title) {
-      apolloUpdates.jobTitle = apolloData.title;
-    }
-    
     // Map professional headline to dedicated field
     if (apolloData.headline) {
       apolloUpdates.headline = apolloData.headline;
+    }
+    
+    // Map title to both jobTitle and headline if headline is not available
+    if (apolloData.title) {
+      apolloUpdates.jobTitle = apolloData.title;
+      // If no headline is available, use the title as a headline
+      if (!apolloData.headline) {
+        apolloUpdates.headline = apolloData.title;
+      }
     }
     
     // Map location data
@@ -308,7 +382,7 @@ export async function runContactEnrichment(
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 
-  // Upsert latest snapshot and bookkeeping
+  // Upsert latest snapshot and bookkeeping - clean undefined values before saving
   await contactRef.set(
     {
       aiEnrichment: parsed,
@@ -317,7 +391,7 @@ export async function runContactEnrichment(
       lastEnrichedAt: admin.firestore.FieldValue.serverTimestamp(),
       enriched: true,
       enrichedAt: admin.firestore.FieldValue.serverTimestamp(),
-      ...apolloUpdates
+      ...removeUndefinedValues(apolloUpdates)
     },
     { merge: true }
   );
@@ -334,6 +408,8 @@ export async function runContactEnrichment(
   
   console.log(`Contact enrichment completed for ${contactName}`);
 }
+
+
 
 export const enrichContactOnDemand = onCall({ 
   secrets: [APOLLO_API_KEY],

@@ -272,30 +272,56 @@ export class AutoDevAssistant {
     const monitoringDuration = 60 * 60 * 1000; // 1 hour
     const checkInterval = 60 * 1000; // 1 minute
     const startTime = Date.now();
+    let monitoringInterval: NodeJS.Timeout | null = null;
 
-    const monitoring = setInterval(async () => {
-      try {
-        const metrics = await this.getProductionMetrics();
-        
-        // Check if rollback is needed
-        if (this.shouldRollback(metrics)) {
-          await this.rollbackDeployment(fix, deploymentId);
-          clearInterval(monitoring);
-          return;
+    try {
+      monitoringInterval = setInterval(async () => {
+        try {
+          const metrics = await this.getProductionMetrics();
+          
+          // Check if rollback is needed
+          if (this.shouldRollback(metrics)) {
+            await this.rollbackDeployment(fix, deploymentId);
+            if (monitoringInterval) {
+              clearInterval(monitoringInterval);
+              monitoringInterval = null;
+            }
+            return;
+          }
+
+          // Stop monitoring after 1 hour
+          if (Date.now() - startTime > monitoringDuration) {
+            await this.updateFixStatus(fix.id, 'completed');
+            if (monitoringInterval) {
+              clearInterval(monitoringInterval);
+              monitoringInterval = null;
+            }
+            return;
+          }
+
+        } catch (error) {
+          console.error('Monitoring error:', error);
+          // Continue monitoring even if there's an error, but log it
         }
+      }, checkInterval);
 
-        // Stop monitoring after 1 hour
-        if (Date.now() - startTime > monitoringDuration) {
-          await this.updateFixStatus(fix.id, 'completed');
-          clearInterval(monitoring);
-          return;
+      // Set a maximum timeout to ensure the interval is cleared
+      setTimeout(() => {
+        if (monitoringInterval) {
+          console.log('🛑 Force clearing monitoring interval after maximum duration');
+          clearInterval(monitoringInterval);
+          monitoringInterval = null;
         }
+      }, monitoringDuration + 60000); // 1 hour + 1 minute buffer
 
-      } catch (error) {
-        console.error('Monitoring error:', error);
-        // Continue monitoring even if there's an error
+    } catch (error) {
+      console.error('Error starting production monitoring:', error);
+      if (monitoringInterval) {
+        clearInterval(monitoringInterval);
+        monitoringInterval = null;
       }
-    }, checkInterval);
+      throw error;
+    }
   }
 
   /**

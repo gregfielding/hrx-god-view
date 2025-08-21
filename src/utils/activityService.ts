@@ -156,8 +156,8 @@ export async function loadContactActivities(
       const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
       const emailsQuery = query(
         emailsRef,
-        where('contactId', '==', contactId),
-        orderBy('timestamp', 'desc'),
+        where('matchingContacts', 'array-contains', contactId),
+        orderBy('date', 'desc'),
         limit(limitCount)
       );
       const emailsSnapshot = await getDocs(emailsQuery);
@@ -168,14 +168,15 @@ export async function loadContactActivities(
           id: `email_${doc.id}`,
           type: 'email',
           title: `Email: ${data.subject || '(no subject)'}`,
-          description: data.bodySnippet || data.snippet || '',
-          timestamp: data.timestamp?.toDate?.() || data.sentAt?.toDate?.() || new Date(),
+          description: `Email sent to ${data.to || 'recipients'}`,
+          timestamp: data.date?.toDate?.() || data.timestamp?.toDate?.() || new Date(),
           salespersonId: data.userId || data.salespersonId,
           metadata: { 
             from: data.from, 
             to: data.to, 
-            direction: data.direction,
-            subject: data.subject
+            direction: 'sent',
+            subject: data.subject,
+            gmailMessageId: data.gmailMessageId
           },
           source: 'email_logs'
         });

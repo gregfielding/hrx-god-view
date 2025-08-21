@@ -18,6 +18,30 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+// Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
+function removeUndefinedValues(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return null;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
+  }
+  
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = removeUndefinedValues(value);
+      if (cleanedValue !== null) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+    return cleaned;
+  }
+  
+  return obj;
+}
+
 type Mode = 'full' | 'metadata' | 'apollo-only';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
@@ -420,7 +444,7 @@ export async function runCompanyEnrichment(
         // Persist Apollo firmographics snapshot (non-blocking)
         if (aCompany) {
           console.log('Apollo company data received:', JSON.stringify(aCompany, null, 2));
-          await companyRef.set({ firmographics: { apollo: aCompany }, metadata: { apolloFetchedAt: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
+          await companyRef.set({ firmographics: { apollo: removeUndefinedValues(aCompany) }, metadata: { apolloFetchedAt: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
           
           // Map Apollo data to company fields
           const apolloUpdates: any = {};

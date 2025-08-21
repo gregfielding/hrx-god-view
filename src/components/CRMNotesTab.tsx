@@ -226,18 +226,19 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   return (
     <Box sx={{ px: 0, py: 0 }}>
       {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px:3 }}>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px: 3 }}>
         <Typography variant="h6" fontWeight={700}>
-          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : 'Company'} Notes History ({notes.length})
+          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : 'Company'} Notes History ({notes.length})
         </Typography>
-
       </Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px:3 }}>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px: 3 }}>
         {entityType === 'location' 
           ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
+          : entityType === 'deal'
+          ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
           : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
       </Typography>
-      <Divider sx={{ my: 0 }} />
+      <Divider sx={{ my: 2 }} />
 
       {/* Add Note Button */}
       {/* <Box sx={{ mb: 3, textAlign: 'center' }}>
@@ -247,15 +248,8 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
       </Box> */}
 
       {/* Notes History */}
-      <Card>
-        {/* <CardHeader 
-          title={
-            <Box display="flex" alignItems="center" gap={1}>
-              <Typography variant="h6">Notes History ({notes.length})</Typography>
-            </Box>
-          }
-        /> */}
-        <CardContent>
+      <Card sx={{ p: 0, m: 0 }}>
+        <CardContent sx={{ p: 0, m: 0 }}>
           {loading ? (
             <Box display="flex" justifyContent="center" p={3}>
               <Typography>Loading notes...</Typography>
@@ -267,117 +261,174 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
               </Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table>
+            <TableContainer 
+              component={Paper} 
+              variant="outlined"
+              sx={{
+                overflowX: 'auto',
+                borderRadius: '8px',
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              }}
+            >
+              <Table sx={{ minWidth: 1200 }}>
                 <TableHead>
-                  <TableRow>
-                    <TableCell>Content</TableCell>
-                    {/* <TableCell>Category</TableCell> */}
-                    {/* <TableCell>Priority</TableCell> */}
-                    <TableCell>Author</TableCell>
-                    <TableCell>Date</TableCell>
-                    <TableCell>Actions</TableCell>
+                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Content
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Author
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Date
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {notes.map((note) => (
-                    <TableRow key={note.id}>
-                      <TableCell>
-                        <Typography variant="body2">
+                    <TableRow 
+                      key={note.id}
+                      onClick={() => setViewNoteDialog({ open: true, note })}
+                      sx={{
+                        height: '48px',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          backgroundColor: '#F9FAFB'
+                        }
+                      }}
+                    >
+                      <TableCell sx={{ py: 1, px: 2 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#111827",
+                          fontSize: '0.9375rem',
+                          fontWeight: 600,
+                          mb: 1
+                        }}>
                           {truncateText(note.content)}
                         </Typography>
                         {note.tags && note.tags.length > 0 && (
-                          <Box mt={1}>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
                             {note.tags.map((tag) => (
                               <Chip
                                 key={tag}
                                 label={tag}
                                 size="small"
                                 variant="outlined"
-                                sx={{ mr: 0.5, mb: 0.5 }}
+                                sx={{
+                                  fontSize: '0.75rem',
+                                  height: 20,
+                                  '& .MuiChip-label': {
+                                    px: 1
+                                  }
+                                }}
                               />
                             ))}
                           </Box>
                         )}
                         {note.files && note.files.length > 0 && (
-                          <Box mt={1}>
+                          <Box sx={{ display: 'flex', gap: 0.5, mb: 1 }}>
                             <Chip
                               label={`${note.files.length} file(s)`}
                               size="small"
                               variant="outlined"
+                              sx={{
+                                fontSize: '0.75rem',
+                                height: 20,
+                                '& .MuiChip-label': {
+                                  px: 1
+                                }
+                              }}
                             />
                           </Box>
                         )}
                         {note.aiInsights && (
-                          <Box mt={1}>
+                          <Box sx={{ display: 'flex', gap: 0.5, mb: 1 }}>
                             <Chip
                               label="AI Insights Available"
                               size="small"
                               color="primary"
                               variant="outlined"
+                              sx={{
+                                fontSize: '0.75rem',
+                                height: 20,
+                                '& .MuiChip-label': {
+                                  px: 1
+                                }
+                              }}
                             />
                           </Box>
                         )}
                         {note.source && note.source !== entityType && (
-                          <Box mt={1}>
+                          <Box sx={{ display: 'flex', gap: 0.5 }}>
                             <Chip
                               label={`From ${note.source}`}
                               size="small"
                               color="secondary"
                               variant="outlined"
+                              sx={{
+                                fontSize: '0.75rem',
+                                height: 20,
+                                '& .MuiChip-label': {
+                                  px: 1
+                                }
+                              }}
                             />
                           </Box>
                         )}
                       </TableCell>
-                      {/* <TableCell>
-                        <Chip
-                          label={note.category}
-                          color={getCategoryColor(note.category)}
-                          size="small"
-                        />
-                      </TableCell> */}
-                      {/* <TableCell>
-                        <Chip
-                          label={note.priority}
-                          color={getPriorityColor(note.priority)}
-                          size="small"
-                        />
-                      </TableCell> */}
-                      <TableCell>
+                      <TableCell sx={{ py: 1 }}>
                         <Box display="flex" alignItems="center" gap={1}>
-                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                          <Avatar sx={{ 
+                            width: 32, 
+                            height: 32, 
+                            fontSize: '12px',
+                            fontWeight: 600
+                          }}>
                             {note.authorName.charAt(0).toUpperCase()}
                           </Avatar>
-                          <Typography variant="body2">
+                          <Typography sx={{
+                            variant: "body2",
+                            color: "#374151",
+                            fontSize: '0.875rem',
+                            fontWeight: 500
+                          }}>
                             {note.authorName}
                           </Typography>
                         </Box>
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem'
+                        }}>
                           {formatDate(note.timestamp)}
                         </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Box display="flex" gap={0.5}>
-                          <Tooltip title="View Details">
-                            <IconButton
-                              size="small"
-                              onClick={() => setViewNoteDialog({ open: true, note })}
-                            >
-                              <ViewIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete">
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() => handleDeleteNote(note.id)}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Box>
                       </TableCell>
                     </TableRow>
                   ))}

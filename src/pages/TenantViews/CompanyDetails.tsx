@@ -223,6 +223,77 @@ const findFacebookUrl = async (companyName: string): Promise<string> => {
   return '';
 };
 
+// Avatar color system for contacts
+const avatarColors = [
+  '#F3F4F6', // Light gray
+  '#FEF3C7', // Light yellow
+  '#DBEAFE', // Light blue
+  '#D1FAE5', // Light green
+  '#FCE7F3', // Light pink
+  '#EDE9FE', // Light purple
+  '#FEE2E2', // Light red
+  '#FEF5E7'  // Light orange
+];
+
+const avatarTextColors = [
+  '#6B7280', // Gray
+  '#92400E', // Amber
+  '#1E40AF', // Blue
+  '#065F46', // Green
+  '#BE185D', // Pink
+  '#5B21B6', // Purple
+  '#DC2626', // Red
+  '#EA580C'  // Orange
+];
+
+const getInitials = (name: string) => {
+  return name
+    .split(' ')
+    .map(word => word.charAt(0))
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+};
+
+const getAvatarColor = (name: string) => {
+  const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const colorIndex = hash % avatarColors.length;
+  return {
+    backgroundColor: avatarColors[colorIndex],
+    color: avatarTextColors[colorIndex]
+  };
+};
+
+const formatPhoneNumber = (phone: string): string => {
+  // Remove all non-digit characters
+  const cleaned = phone.replace(/\D/g, '');
+  
+  // Handle different phone number formats
+  if (cleaned.length === 10) {
+    // US format: (XXX) XXX-XXXX
+    return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`;
+  } else if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    // US format with country code: 1 (XXX) XXX-XXXX
+    return `1 (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7)}`;
+  } else if (cleaned.length === 7) {
+    // Local format: XXX-XXXX
+    return `${cleaned.slice(0, 3)}-${cleaned.slice(3)}`;
+  } else {
+    // Return original if it doesn't match expected formats
+    return phone;
+  }
+};
+
+const getActivityTypeColor = (type: string): string => {
+  const colors: { [key: string]: string } = {
+    task: '#10B981',      // Green for completed tasks
+    note: '#3B82F6',      // Blue for notes
+    deal_stage: '#8B5CF6', // Purple for deal stages
+    email: '#F59E0B'      // Orange for emails
+  };
+  return colors[type] || '#6B7280'; // Gray fallback
+};
+
 const CompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
   const { tenantId, currentUser } = useAuth();
@@ -790,6 +861,9 @@ const CompanyDetails: React.FC = () => {
       {/* Breadcrumbs */}
       <Box sx={{ mb: 2 }}>
         <Breadcrumbs aria-label="breadcrumb">
+          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
+            CRM
+          </MUILink>
           <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
             Companies
           </MUILink>
@@ -1881,26 +1955,147 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
             <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
           </Box>
         ) : (
-          <TableContainer component={Paper} variant="outlined">
-            <Table size="small">
+          <TableContainer 
+            component={Paper} 
+            variant="outlined"
+            sx={{
+              overflowX: 'auto',
+              borderRadius: '8px',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Table sx={{ minWidth: 1000 }}>
               <TableHead>
-                <TableRow>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Title</TableCell>
-                  <TableCell>Description</TableCell>
-                  <TableCell>When</TableCell>
-                  <TableCell align="right">Link</TableCell>
+                <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Type
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Title
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Description
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    When
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5,
+                    textAlign: 'right'
+                  }}>
+                    Link
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {pageItems.map((it) => (
-                  <TableRow key={it.id}>
-                    <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
-                    <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
-                    <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
-                    <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
-                    <TableCell align="right">
-                      <LinkForActivity it={it} tenantId={tenantId} />
+                  <TableRow 
+                    key={it.id}
+                    onClick={() => {
+                      // Handle click to navigate to the appropriate page
+                      const linkElement = document.querySelector(`[data-activity-link="${it.id}"]`) as HTMLElement;
+                      if (linkElement) {
+                        linkElement.click();
+                      }
+                    }}
+                    sx={{
+                      height: '48px',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: '#F9FAFB'
+                      }
+                    }}
+                  >
+                    <TableCell sx={{ py: 1 }}>
+                      <Chip 
+                        size="small" 
+                        label={it.type.replace('_', ' ')} 
+                        sx={{
+                          fontSize: '0.75rem',
+                          height: 24,
+                          fontWeight: 600,
+                          backgroundColor: getActivityTypeColor(it.type),
+                          color: 'white'
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ py: 1, px: 2 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem',
+                        fontWeight: 500
+                      }}>
+                        {it.title}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#6B7280",
+                        fontSize: '0.875rem',
+                        maxWidth: 420,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {it.description}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#6B7280",
+                        fontSize: '0.875rem'
+                      }}>
+                        {it.timestamp?.toLocaleString?.()}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1, textAlign: 'right' }}>
+                      <Box 
+                        data-activity-link={it.id}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <LinkForActivity it={it} tenantId={tenantId} />
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -3917,21 +4112,11 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
         // Clean up any duplicate headquarters first
         await cleanupDuplicateHeadquarters();
         
-        // Try Firebase Function first (more reliable)
-        try {
-          const getCompanyLocations = httpsCallable(functions, 'getCompanyLocations');
-          const result = await getCompanyLocations({ tenantId, companyId: company.id });
-          const data = result.data as { locations: any[] };
-          setLocations(data.locations || []);
-        } catch (functionError) {
-          console.log('Firebase Function failed, falling back to direct Firestore access');
-          
-          // Fallback to direct Firestore access
-          const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
-          const locationsSnap = await getDocs(locationsRef);
-          const locationsData = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setLocations(locationsData);
-        }
+        // Direct Firestore access (locations are subcollection)
+        const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
+        const locationsSnap = await getDocs(locationsRef);
+        const locationsData = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setLocations(locationsData);
       } catch (err) {
         console.error('Error loading locations:', err);
         setError('Failed to load locations');
@@ -4114,7 +4299,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
       {/* Header with AI Discovery Button */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3 }}>
         <Typography variant="h6" fontWeight={700}>
-          Company Locations ({locations.length})
+          Company Locations
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           {/* <Button
@@ -4405,82 +4590,199 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
 
       {/* Locations Table */}
       {locations.length > 0 ? (
-        <Box px={3} py={4}>
-          <TableContainer component={Paper} variant="outlined">
-            <Table>
+        <Box px={0} pb={3}>
+          <TableContainer 
+            component={Paper} 
+            variant="outlined"
+            sx={{
+              overflowX: 'auto',
+              borderRadius: '8px',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Table sx={{ minWidth: 1200 }}>
               <TableHead>
-                <TableRow>
-                  <TableCell>Location Name</TableCell>
-                  <TableCell>Address</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Division</TableCell>
-                  <TableCell>Contacts</TableCell>
-                  <TableCell>Deals</TableCell>
-                  <TableCell>Salespeople</TableCell>
-                  <TableCell>Actions</TableCell>
+                <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Location Name
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Address
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Type
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Division
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Contacts
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Deals
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Salespeople
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {locations.map((location) => (
-                  <TableRow key={location.id}>
-                    <TableCell>
-                      <Typography variant="subtitle2" fontWeight="bold">
+                  <TableRow 
+                    key={location.id}
+                    onClick={() => handleViewLocation(location)}
+                    sx={{
+                      height: '48px',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: '#F9FAFB'
+                      }
+                    }}
+                  >
+                    <TableCell sx={{ py: 1, px: 2 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        fontWeight: 600,
+                        color: "#111827",
+                        fontSize: '0.9375rem'
+                      }}>
                         {location.name}
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem'
+                      }}>
                         {location.address}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#6B7280",
+                        fontSize: '0.875rem'
+                      }}>
                         {location.city}, {location.state} {location.zipCode}
                       </Typography>
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ py: 1 }}>
                       <Chip 
                         label={location.type} 
                         size="small" 
                         color="primary"
+                        sx={{
+                          fontSize: '0.75rem',
+                          fontWeight: 500
+                        }}
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ py: 1 }}>
                       {location.division ? (
                         <Chip 
                           label={location.division} 
                           size="small" 
                           color="secondary"
                           variant="outlined"
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 500
+                          }}
                         />
                       ) : (
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#9CA3AF",
+                          fontSize: '0.875rem'
+                        }}>
                           -
                         </Typography>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#374151",
+                        fontSize: '0.875rem',
+                        fontWeight: 500
+                      }}>
                         {location.contactCount || 0}
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#374151",
+                        fontSize: '0.875rem',
+                        fontWeight: 500
+                      }}>
                         {location.dealCount || 0}
                       </Typography>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#374151",
+                        fontSize: '0.875rem',
+                        fontWeight: 500
+                      }}>
                         {location.salespersonCount || 0}
                       </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<Visibility />}
-                        onClick={() => handleViewLocation(location)}
-                      >
-                        View
-                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -4548,10 +4850,11 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   const loadLocations = async () => {
     try {
       setLoading(true);
-      const getCompanyLocations = httpsCallable(functions, 'getCompanyLocations');
-      const result = await getCompanyLocations({ tenantId, companyId: company.id });
-      const data = result.data as { locations: any[] };
-      setCompanyLocations(data.locations || []);
+      // Direct Firestore access (locations are subcollection)
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
+      const locationsSnap = await getDocs(locationsRef);
+      const locationsData = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCompanyLocations(locationsData);
     } catch (err) {
       console.error('Error loading locations:', err);
       setError('Failed to load locations');
@@ -4812,23 +5115,13 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 }}>
                   LinkedIn
                 </TableCell>
-                <TableCell sx={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Actions
-                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {contacts.slice(0, 10).map((contact: any) => (
                 <TableRow 
                   key={contact.id}
+                  onClick={() => navigate(`/crm/contacts/${contact.id}`)}
                   sx={{
                     height: '48px',
                     cursor: 'pointer',
@@ -4838,14 +5131,28 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                   }}
                 >
                   <TableCell sx={{ py: 1, px: 2 }}>
-                    <Typography sx={{
-                      variant: "body2",
-                      fontWeight: 600,
-                      color: "#111827",
-                      fontSize: '0.9375rem'
-                    }}>
-                      {contact.fullName || contact.name}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Avatar
+                        src={contact.avatar}
+                        sx={{
+                          width: 32,
+                          height: 32,
+                          fontWeight: 600,
+                          fontSize: '12px',
+                          ...getAvatarColor(contact.fullName || contact.name || 'Unknown')
+                        }}
+                      >
+                        {getInitials(contact.fullName || contact.name || 'Unknown')}
+                      </Avatar>
+                      <Typography sx={{
+                        variant: "body2",
+                        fontWeight: 600,
+                        color: "#111827",
+                        fontSize: '0.9375rem'
+                      }}>
+                        {contact.fullName || contact.name}
+                      </Typography>
+                    </Box>
                   </TableCell>
                   <TableCell sx={{ py: 1 }}>
                     <Typography sx={{
@@ -4871,88 +5178,55 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                       color: "#6B7280",
                       fontSize: '0.875rem'
                     }}>
-                      {contact.phone}
+                      {contact.phone ? formatPhoneNumber(contact.phone) : '-'}
                     </Typography>
                   </TableCell>
                   <TableCell sx={{ py: 1 }}>
-                    <FormControl size="small" sx={{ minWidth: 150 }}>
-                      <Select
-                        value={contact.locationId || ''}
-                        onChange={(e) => handleLocationChange(contact.id, e.target.value || null)}
-                        displayEmpty
-                        sx={{
-                          height: 36,
-                          '& .MuiOutlinedInput-root': {
-                            height: 36,
-                            borderRadius: '6px',
-                            backgroundColor: 'white',
-                            fontSize: '0.875rem',
-                            '& fieldset': {
-                              borderColor: '#E5E7EB',
-                            },
-                            '&:hover fieldset': {
-                              borderColor: '#D1D5DB',
-                            },
-                          }
-                        }}
-                      >
-                        <MenuItem value="">
-                          <em>No location</em>
-                        </MenuItem>
-                        {companyLocations.map((location) => (
-                          <MenuItem key={location.id} value={location.id}>
-                            {location.name}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    {contact.linkedinUrl ? (
-                      <IconButton
-                        size="small"
-                        onClick={() => window.open(contact.linkedinUrl, '_blank')}
-                        color="primary"
-                        title="Open LinkedIn Profile"
-                        sx={{ fontSize: 16, color: '#9CA3AF' }}
-                      >
-                        <LinkedInIcon />
-                      </IconButton>
-                    ) : (
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#9CA3AF",
-                        fontSize: '0.875rem'
-                      }}>
-                        No LinkedIn
-                      </Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<Visibility />}
-                      onClick={() => navigate(`/crm/contacts/${contact.id}`)}
-                      sx={{
-                        height: 36,
-                        borderRadius: '6px',
-                        textTransform: 'none',
-                        fontWeight: 500,
-                        fontSize: '0.875rem',
-                        px: 2.5,
-                        py: 0.75,
-                        borderColor: '#E5E7EB',
-                        color: '#6B7280',
-                        '&:hover': {
-                          backgroundColor: '#F3F4F6',
-                          borderColor: '#D1D5DB'
+                    <Typography sx={{
+                      variant: "body2",
+                      color: "#6B7280",
+                      fontSize: '0.875rem'
+                    }}>
+                      {(() => {
+                        if (contact.locationId) {
+                          const location = companyLocations.find(loc => loc.id === contact.locationId);
+                          return location?.nickname || location?.name || 'Unknown Location';
                         }
-                      }}
-                    >
-                      View
-                    </Button>
+                        return 'No location';
+                      })()}
+                    </Typography>
                   </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    {(() => {
+                      // Check multiple possible LinkedIn field names
+                      const linkedinUrl = contact.linkedinUrl || contact.linkedin || contact.linkedInUrl || contact.linkedIn;
+                      
+                      if (linkedinUrl) {
+                        return (
+                          <IconButton
+                            size="small"
+                            onClick={() => window.open(linkedinUrl, '_blank')}
+                            color="primary"
+                            title="Open LinkedIn Profile"
+                            sx={{ fontSize: 16, color: '#0077B5' }}
+                          >
+                            <LinkedInIcon />
+                          </IconButton>
+                        );
+                      } else {
+                        return (
+                          <Typography sx={{
+                            variant: "body2",
+                            color: "#9CA3AF",
+                            fontSize: '0.875rem'
+                          }}>
+                            No LinkedIn
+                          </Typography>
+                        );
+                      }
+                    })()}
+                  </TableCell>
+
                 </TableRow>
               ))}
             </TableBody>
@@ -5249,10 +5523,11 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   const loadLocations = async () => {
     try {
       setLoading(true);
-      const getCompanyLocations = httpsCallable(functions, 'getCompanyLocations');
-      const result = await getCompanyLocations({ tenantId, companyId: company.id });
-      const data = result.data as { locations: any[] };
-      setCompanyLocations(data.locations || []);
+      // Direct Firestore access (locations are subcollection)
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
+      const locationsSnap = await getDocs(locationsRef);
+      const locationsData = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCompanyLocations(locationsData);
     } catch (err) {
       console.error('Error loading locations:', err);
       setError('Failed to load locations');
@@ -5281,10 +5556,11 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   const loadCompanyLocationsForDialog = async (companyId: string) => {
     try {
       setLoadingLocations(true);
-      const getCompanyLocations = httpsCallable(functions, 'getCompanyLocations');
-      const result = await getCompanyLocations({ tenantId, companyId });
-      const data = result.data as { locations: any[] };
-      setCompanyLocations(data.locations || []);
+      // Direct Firestore access (locations are subcollection)
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
+      const locationsSnap = await getDocs(locationsRef);
+      const locationsData = locationsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setCompanyLocations(locationsData);
     } catch (err) {
       console.error('Error loading company locations:', err);
       setCompanyLocations([]);
@@ -5406,7 +5682,7 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
     <>
       <Box px={0} pb={3}>
         <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 1, px: 3 }}>
-          <Typography variant="h6" fontWeight={700}>Opportunities ({deals.length})</Typography>
+          <Typography variant="h6" fontWeight={700}>Opportunities</Typography>
           <Button 
             variant="contained" 
             startIcon={<AddIcon />} 
@@ -5461,7 +5737,8 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
                     borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
+                    py: 1.5,
+                    width: 'auto'
                   }}>
                     Stage
                   </TableCell>
@@ -5486,17 +5763,6 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                     borderBottom: '1px solid #E5E7EB',
                     py: 1.5
                   }}>
-                    Probability
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
                     Close Date
                   </TableCell>
                   <TableCell sx={{
@@ -5510,23 +5776,13 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                   }}>
                     Location
                   </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Actions
-                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {deals.slice(0, 10).map((deal: any) => (
                   <TableRow 
                     key={deal.id}
+                    onClick={() => navigate(`/crm/deals/${deal.id}`)}
                     sx={{
                       height: '48px',
                       cursor: 'pointer',
@@ -5538,21 +5794,15 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                     <TableCell sx={{ py: 1, px: 2 }}>
                       <Typography
                         sx={{ 
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
                           fontWeight: 600,
                           color: "#111827",
-                          fontSize: '0.9375rem',
-                          '&:hover': {
-                            color: '#0B63C5'
-                          }
+                          fontSize: '0.9375rem'
                         }}
-                        onClick={() => navigate(`/crm/deals/${deal.id}`)}
                       >
                         {deal.name}
                       </Typography>
                     </TableCell>
-                    <TableCell sx={{ py: 1 }}>
+                    <TableCell sx={{ py: 1, width: 'auto' }}>
                       <Chip 
                         label={deal.stage || 'Unknown Stage'} 
                         size="small" 
@@ -5582,19 +5832,6 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <Chip 
-                        label={`${deal.probability || 0}%`} 
-                        size="small" 
-                        sx={{
-                          backgroundColor: deal.probability > 50 ? '#10B981' : '#6B7280',
-                          color: 'white',
-                          fontWeight: 600,
-                          fontSize: '0.75rem',
-                          height: 24
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ py: 1 }}>
                       <Typography sx={{
                         variant: "body2",
                         color: "#6B7280",
@@ -5615,65 +5852,23 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <FormControl size="small" sx={{ minWidth: 150 }}>
-                        <Select
-                          value={(() => {
-                            const locs = (deal.associations?.locations || []) as any[];
-                            const first = locs.find(l => typeof l === 'object') || locs[0];
-                            return typeof first === 'string' ? first : (first?.id || '');
-                          })()}
-                          onChange={(e) => handleLocationChange(deal.id, e.target.value || null)}
-                          displayEmpty
-                          sx={{
-                            height: 36,
-                            '& .MuiOutlinedInput-root': {
-                              height: 36,
-                              borderRadius: '6px',
-                              backgroundColor: 'white',
-                              fontSize: '0.875rem',
-                              '& fieldset': {
-                                borderColor: '#E5E7EB',
-                              },
-                              '&:hover fieldset': {
-                                borderColor: '#D1D5DB',
-                              },
-                            }
-                          }}
-                        >
-                          <MenuItem value="">
-                            <em>No location</em>
-                          </MenuItem>
-                          {companyLocations.map((location) => (
-                            <MenuItem key={location.id} value={location.id}>
-                              {location.name}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </TableCell>
-                    <TableCell sx={{ py: 1 }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => navigate(`/crm/deals/${deal.id}`)}
-                        sx={{
-                          height: 36,
-                          borderRadius: '6px',
-                          textTransform: 'none',
-                          fontWeight: 500,
-                          fontSize: '0.875rem',
-                          px: 2.5,
-                          py: 0.75,
-                          borderColor: '#E5E7EB',
-                          color: '#6B7280',
-                          '&:hover': {
-                            backgroundColor: '#F3F4F6',
-                            borderColor: '#D1D5DB'
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#6B7280",
+                        fontSize: '0.875rem'
+                      }}>
+                        {(() => {
+                          const locs = (deal.associations?.locations || []) as any[];
+                          const first = locs.find(l => typeof l === 'object') || locs[0];
+                          const locationId = typeof first === 'string' ? first : (first?.id || '');
+                          
+                          if (locationId) {
+                            const location = companyLocations.find(loc => loc.id === locationId);
+                            return location?.nickname || location?.name || 'Unknown Location';
                           }
-                        }}
-                      >
-                        View
-                      </Button>
+                          return 'No location';
+                        })()}
+                      </Typography>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -42,6 +42,16 @@ interface DealActivityTabProps {
   tenantId: string;
 }
 
+const getActivityTypeColor = (type: string): string => {
+  const colors: { [key: string]: string } = {
+    task: '#10B981',      // Green for completed tasks
+    note: '#3B82F6',      // Blue for notes
+    deal_stage: '#8B5CF6', // Purple for deal stages
+    email: '#F59E0B'      // Orange for emails
+  };
+  return colors[type] || '#6B7280'; // Gray fallback
+};
+
 const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => {
   const [items, setItems] = useState<DealActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -201,9 +211,10 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
 
   return (
     <Box>
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
+      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 2, px: 3 }}>
         <Box display="flex" alignItems="center" gap={1}>
-          <TimelineIcon /><Typography variant="h6">Deal Activity</Typography>
+          <TimelineIcon />
+          <Typography variant="h6" fontWeight={700}>Deal Activity</Typography>
         </Box>
         {/* Filters */}
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -239,7 +250,7 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
         </Box>
       </Box>
       <Card>
-        <CardContent>
+        <CardContent sx={{ p: 0 }}>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           {loading ? (
             <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
@@ -249,23 +260,121 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
               <Typography variant="caption" color="text.secondary">Completed tasks, notes, deal stage changes, and emails will appear here.</Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
+            <TableContainer 
+              component={Paper} 
+              variant="outlined"
+              sx={{
+                overflowX: 'auto',
+                borderRadius: '8px',
+                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              }}
+            >
+              <Table sx={{ minWidth: 1400 }}>
                 <TableHead>
-                  <TableRow>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Title</TableCell>
-                    <TableCell>Description</TableCell>
-                    <TableCell>When</TableCell>
+                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Type
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Title
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Description
+                    </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      When
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
-                    <TableRow key={it.id}>
-                      <TableCell><Chip size="small" label={it.type.replace('_', ' ')} /></TableCell>
-                      <TableCell><Typography variant="body2">{it.title}</Typography></TableCell>
-                      <TableCell><Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>{it.description}</Typography></TableCell>
-                      <TableCell><Typography variant="caption" color="text.secondary">{it.timestamp?.toLocaleString?.()}</Typography></TableCell>
+                    <TableRow 
+                      key={it.id}
+                      sx={{
+                        height: '48px',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          backgroundColor: '#F9FAFB'
+                        }
+                      }}
+                    >
+                      <TableCell sx={{ py: 1 }}>
+                        <Chip 
+                          size="small" 
+                          label={it.type.replace('_', ' ')} 
+                          sx={{
+                            fontSize: '0.75rem',
+                            height: 24,
+                            fontWeight: 600,
+                            backgroundColor: getActivityTypeColor(it.type),
+                            color: 'white'
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ py: 1, px: 2 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#111827",
+                          fontSize: '0.9375rem',
+                          fontWeight: 600
+                        }}>
+                          {it.title}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem',
+                          maxWidth: 420,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {it.description}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#6B7280",
+                          fontSize: '0.875rem'
+                        }}>
+                          {it.timestamp?.toLocaleString?.()}
+                        </Typography>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

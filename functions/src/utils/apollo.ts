@@ -203,6 +203,13 @@ export async function apolloContactEnrichment(params: {
   last_name?: string; 
   name?: string;
   domain?: string;
+  organization_name?: string;
+  title?: string;
+  phone?: string;
+  linkedin_url?: string;
+  city?: string;
+  state?: string;
+  country?: string;
   reveal_personal_emails?: boolean;
   reveal_phone_number?: boolean;
 }, apiKey: string): Promise<ApolloContactEnrichment | null> {
@@ -232,6 +239,37 @@ export async function apolloContactEnrichment(params: {
     // Add domain if available (helps with matching)
     if (params.domain) {
       queryParams.append('domain', params.domain);
+    }
+    
+    // Add organization name if available
+    if (params.organization_name) {
+      queryParams.append('organization_name', params.organization_name);
+    }
+    
+    // Add job title if available
+    if (params.title) {
+      queryParams.append('title', params.title);
+    }
+    
+    // Add phone number if available
+    if (params.phone) {
+      queryParams.append('phone', params.phone);
+    }
+    
+    // Add LinkedIn URL if available
+    if (params.linkedin_url) {
+      queryParams.append('linkedin_url', params.linkedin_url);
+    }
+    
+    // Add location information if available
+    if (params.city) {
+      queryParams.append('city', params.city);
+    }
+    if (params.state) {
+      queryParams.append('state', params.state);
+    }
+    if (params.country) {
+      queryParams.append('country', params.country);
     }
     
     // Add reveal options
