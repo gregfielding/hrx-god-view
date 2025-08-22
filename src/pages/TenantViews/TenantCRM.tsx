@@ -5988,13 +5988,7 @@ const PipelineTab: React.FC<{
             <ToggleButton value="bubble">Bubble</ToggleButton>
           </ToggleButtonGroup>
 
-          {viewMode === 'bubble' && (
-            <ToggleButtonGroup size="small" exclusive value={bubbleColorMode} onChange={(e, v) => v && setBubbleColorMode(v)}>
-              <ToggleButton value="stage">Color: Stage</ToggleButton>
-              <ToggleButton value="owner">Color: Owner</ToggleButton>
-              <ToggleButton value="health">Color: AI Health</ToggleButton>
-            </ToggleButtonGroup>
-          )}
+          {/* Color mode toggle removed - always using stage-based coloring */}
 
           {/* Stage multi-select via chips */}
           <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
@@ -6086,7 +6080,7 @@ const PipelineTab: React.FC<{
             owners={[...new Set((deals || []).map((d: any) => d.owner))]
               .filter(Boolean)
               .map((id: string) => ({ id, name: id }))}
-            colorMode={bubbleColorMode}
+            colorMode="stage"
             onDealClick={(dealId) => {
               // Navigate to deal details
               navigate(`/crm/deals/${dealId}`);
