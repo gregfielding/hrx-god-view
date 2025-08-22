@@ -151,6 +151,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     });
     
     console.log('PipelineBubbleChart: StageIndexMap with variations:', map);
+    console.log('PipelineBubbleChart: Available stages:', stages);
     return map;
   }, [stages]);
 
@@ -182,19 +183,34 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           color = getStageColor(deal.stage);
       }
 
-      // Calculate stage index with better matching logic
+      // Simplified stage mapping - try direct match first, then fallback to first stage
       let stageIdx = stageIndexMap[deal.stage];
+      
+      // If no direct match, try to find the best matching stage
       if (!stageIdx) {
-        // Try to find a matching stage by checking if the deal stage contains any pipeline stage name
-        const matchingStage = stages.find(stage => 
-          deal.stage.toLowerCase().includes(stage.toLowerCase()) ||
-          stage.toLowerCase().includes(deal.stage.toLowerCase())
-        );
-        stageIdx = matchingStage ? stageIndexMap[matchingStage] : 1;
+        const dealStageLower = deal.stage.toLowerCase();
         
-        // If still no match, try to find by partial matching
-        if (!stageIdx || stageIdx === 1) {
-          const dealStageLower = deal.stage.toLowerCase();
+        // Try exact match with stages
+        const exactMatch = stages.find(stage => 
+          stage.toLowerCase() === dealStageLower
+        );
+        if (exactMatch) {
+          stageIdx = stageIndexMap[exactMatch];
+        }
+        
+        // If still no match, try partial matching with stages
+        if (!stageIdx) {
+          const partialMatch = stages.find(stage => 
+            dealStageLower.includes(stage.toLowerCase()) ||
+            stage.toLowerCase().includes(dealStageLower)
+          );
+          if (partialMatch) {
+            stageIdx = stageIndexMap[partialMatch];
+          }
+        }
+        
+        // If still no match, try variations mapping
+        if (!stageIdx) {
           for (const [variation, standardStage] of Object.entries(stageVariations)) {
             if (dealStageLower.includes(variation) || variation.includes(dealStageLower)) {
               const mappedStage = stageIndexMap[standardStage];
@@ -204,10 +220,11 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
               }
             }
           }
-          // If still no match, default to first stage
-          if (!stageIdx) {
-            stageIdx = 1;
-          }
+        }
+        
+        // Final fallback to first stage
+        if (!stageIdx) {
+          stageIdx = 1;
         }
       }
       
