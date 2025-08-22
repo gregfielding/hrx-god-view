@@ -87,28 +87,46 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const [sizeMode, setSizeMode] = React.useState<'value' | 'uniform'>('value');
 
   // Create stage index mapping for X-axis
+  // Define stage variations for mapping
+  const stageVariations: Record<string, string> = {
+    // Exact matches
+    'discovery': 'Discovery',
+    'qualification': 'Qualification', 
+    'scoping': 'Scoping',
+    'proposal drafted': 'Proposal Drafted',
+    'proposal review': 'Proposal Review',
+    'negotiation': 'Negotiation',
+    'onboarding': 'Onboarding',
+    'dormant': 'Dormant',
+    
+    // Common variations
+    'proposal': 'Proposal Drafted',
+    'closed won': 'Onboarding',
+    'closed lost': 'Dormant',
+    'new': 'Discovery',
+    'qualified': 'Qualification',
+    'qualifying': 'Qualification',
+    'scope': 'Scoping',
+    'review': 'Proposal Review',
+    'negotiating': 'Negotiation',
+    'onboard': 'Onboarding',
+    'closed': 'Onboarding',
+    'lost': 'Dormant',
+    'won': 'Onboarding',
+    
+    // FreshSales variations
+    'lead': 'Discovery',
+    'opportunity': 'Qualification',
+    'proposal sent': 'Proposal Drafted',
+    'proposal submitted': 'Proposal Drafted',
+    'in negotiation': 'Negotiation'
+  };
+
   const stageIndexMap = React.useMemo(() => {
     const map: Record<string, number> = {};
     stages.forEach((stage, index) => {
       map[stage] = index + 1;
     });
-    
-    // Add common stage name variations
-    const stageVariations: Record<string, string> = {
-      'discovery': 'Discovery',
-      'qualification': 'Qualification', 
-      'scoping': 'Scoping',
-      'proposal': 'Proposal Drafted',
-      'proposal review': 'Proposal Review',
-      'negotiation': 'Negotiation',
-      'onboarding': 'Onboarding',
-      'dormant': 'Dormant',
-      'closed won': 'Onboarding',
-      'closed lost': 'Dormant',
-      'new': 'Discovery',
-      'qualified': 'Qualification',
-      'proposal drafted': 'Proposal Drafted'
-    };
     
     // Add variations to the map
     Object.entries(stageVariations).forEach(([variation, standardStage]) => {
@@ -158,6 +176,24 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           stage.toLowerCase().includes(deal.stage.toLowerCase())
         );
         stageIdx = matchingStage ? stageIndexMap[matchingStage] : 1;
+        
+        // If still no match, try to find by partial matching
+        if (!stageIdx || stageIdx === 1) {
+          const dealStageLower = deal.stage.toLowerCase();
+          for (const [variation, standardStage] of Object.entries(stageVariations)) {
+            if (dealStageLower.includes(variation) || variation.includes(dealStageLower)) {
+              const mappedStage = stageIndexMap[standardStage];
+              if (mappedStage) {
+                stageIdx = mappedStage;
+                break;
+              }
+            }
+          }
+          // If still no match, default to first stage
+          if (!stageIdx) {
+            stageIdx = 1;
+          }
+        }
       }
       
       // Debug logging for stage mapping
