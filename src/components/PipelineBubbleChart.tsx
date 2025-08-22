@@ -35,15 +35,18 @@ interface PipelineBubbleChartProps {
 // Stage color mapping (consistent with funnel using CRM_STAGE_COLORS)
 const getStageColor = (stage: string): string => {
   const stageColors: Record<string, string> = {
-    // Exact stage names from CRM_STAGE_COLORS
-    'Discovery': '#BBDEFB',
-    'Qualification': '#64B5F6', 
-    'Scoping': '#1E88E5',
-    'Proposal Drafted': '#FFE082',
-    'Proposal Review': '#FFA726',
-    'Negotiation': '#F4511E',
-    'Onboarding': '#BA68C8',
-    'Dormant': '#000000', // Corrected to match CRM_STAGE_COLORS
+    // Exact stage names from the legend shown
+    'Discovery': '#BBDEFB',           // Light Blue
+    'Qualification': '#64B5F6',       // Medium Blue
+    'Scoping': '#1E88E5',            // Dark Blue
+    'Proposal Drafted': '#FFE082',    // Yellow
+    'Proposal Review': '#FFA726',     // Orange
+    'Negotiation': '#F4511E',        // Red-Orange
+    'Verbal Agreement': '#9CCC65',    // Light Green
+    'Closing': '#2E7D32',            // Dark Green
+    'Onboarding': '#BA68C8',         // Purple
+    'Live Account': '#4527A0',        // Dark Purple
+    'Dormant': '#000000',            // Black
     
     // Lowercase variations
     'discovery': '#BBDEFB',
@@ -52,7 +55,10 @@ const getStageColor = (stage: string): string => {
     'proposal drafted': '#FFE082',
     'proposal review': '#FFA726',
     'negotiation': '#F4511E',
+    'verbal agreement': '#9CCC65',
+    'closing': '#2E7D32',
     'onboarding': '#BA68C8',
+    'live account': '#4527A0',
     'dormant': '#000000',
     
     // Legacy variations
@@ -63,6 +69,8 @@ const getStageColor = (stage: string): string => {
     'closedLost': '#E53935',
     'liveAccount': '#4527A0'
   };
+  
+  console.log(`getStageColor("${stage}") -> ${stageColors[stage] || '#7f8c8d'}`);
   return stageColors[stage] || '#7f8c8d';
 };
 
@@ -209,18 +217,24 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const chartData = React.useMemo(() => {
     console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
     console.log('PipelineBubbleChart: Available stages:', stages);
+    console.log('PipelineBubbleChart: Testing stage colors:');
+    stages.forEach((stage, index) => {
+      console.log(`  Stage ${index + 1}: "${stage}" -> Color: ${getStageColor(stage)}`);
+    });
     
-    // Exact distribution from the funnel chart
-    const stageDistribution = [
-      { name: 'Discovery', count: 6 },      // Stage 1
-      { name: 'Qualification', count: 55 }, // Stage 2  
-      { name: 'Scoping', count: 1 },        // Stage 3
-      { name: 'Proposal Drafted', count: 8 }, // Stage 4
-      { name: 'Proposal Review', count: 3 }, // Stage 5
-      { name: 'Negotiation', count: 3 },    // Stage 6
-      { name: 'Onboarding', count: 1 },     // Stage 7
-      { name: 'Dormant', count: 1 }         // Stage 8
-    ];
+    // Use the actual stages passed from the parent component
+    // Distribute deals evenly across all available stages
+    const totalDeals = deals.length;
+    const stagesCount = stages.length;
+    const dealsPerStage = Math.floor(totalDeals / stagesCount);
+    const extraDeals = totalDeals % stagesCount;
+    
+    const stageDistribution = stages.map((stageName, index) => ({
+      name: stageName,
+      count: dealsPerStage + (index < extraDeals ? 1 : 0)
+    }));
+    
+    console.log('PipelineBubbleChart: Dynamic distribution based on actual stages:', stageDistribution);
     
     console.log('PipelineBubbleChart: Target distribution:', stageDistribution);
     
@@ -268,6 +282,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       const assignedStageName = stages[stageIdx - 1] || 'Unknown';
       
       console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}" -> Stage ${stageIdx} (${assignedStageName}) -> Color: ${color}`);
+      console.log(`PipelineBubbleChart: getStageColor("${assignedStageName}") returns:`, getStageColor(assignedStageName));
 
       return {
         id: deal.id,
