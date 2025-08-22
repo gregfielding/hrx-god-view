@@ -6064,7 +6064,10 @@ const PipelineTab: React.FC<{
       <Box sx={{ mb: 3 }}>
         {viewMode === 'funnel' ? (
           <PipelineFunnel 
-            deals={filteredDeals}
+            deals={filteredDeals.map((deal: any) => ({
+              ...deal,
+              estimatedRevenue: getDealValueForPipeline(deal) // Use calculated value
+            }))}
             onStageClick={handleStageClick}
           />
         ) : (
