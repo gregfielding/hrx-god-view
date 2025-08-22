@@ -46,6 +46,16 @@ export interface ApolloPerson {
   phone?: string;
   verifiedEmail?: boolean;
   linkedinUrl?: string;
+  organization?: {
+    id?: string;
+    name?: string;
+    domain?: string;
+    industry?: string;
+    employeeCount?: number;
+    location?: string;
+    websiteUrl?: string;
+    linkedinUrl?: string;
+  } | null;
 }
 
 export interface ApolloEmploymentHistory {
@@ -73,6 +83,8 @@ export interface ApolloContactEnrichment {
   extrapolated_email_confidence?: number;
   headline?: string;
   email?: string;
+  phone?: string; // Add phone field
+  phone_number?: string; // Alternative phone field name
   organization_id?: string;
   employment_history?: ApolloEmploymentHistory[];
   street_address?: string;
@@ -160,7 +172,7 @@ export async function apolloCompanyByDomain(domain: string, apiKey: string): Pro
   }
 }
 
-export async function apolloPeopleSearch(params: { domain?: string; companyId?: string; titles?: string[]; departments?: string[]; seniorities?: string[]; limit?: number }, apiKey: string): Promise<ApolloPerson[]> {
+export async function apolloPeopleSearch(params: { domain?: string; companyId?: string; titles?: string[]; departments?: string[]; seniorities?: string[]; limit?: number; locations?: string[] }, apiKey: string): Promise<ApolloPerson[]> {
   try {
     const url = 'https://api.apollo.io/api/v1/people/search';
     const query: any = {
@@ -171,6 +183,19 @@ export async function apolloPeopleSearch(params: { domain?: string; companyId?: 
       person_seniorities: params.seniorities,
       page: 1,
       per_page: Math.min(params.limit || 10, 25),
+      // Enable email and phone revelation
+      reveal_personal_emails: true,
+      reveal_phone_number: true,
+      // Request more data per contact
+      include_phone_numbers: true,
+      include_email_addresses: true,
+      include_organization_data: true,
+      // Add location filtering if available
+      ...(params.locations && params.locations.length > 0 && {
+        q_organization_locations: params.locations,
+        q_organization_cities: params.locations, // Try both location parameters
+        q_organization_states: params.locations
+      }),
     };
     const resp = await fetch(url, { method: 'POST', headers: authHeader(apiKey), body: JSON.stringify(query) });
     if (!resp.ok) {
@@ -180,18 +205,103 @@ export async function apolloPeopleSearch(params: { domain?: string; companyId?: 
       return [];
     }
     const json: any = await resp.json();
+    console.log('🔍 Apollo People Search API response:', JSON.stringify(json, null, 2));
+    
     const people: any[] = json?.people || [];
-    return people.map((p) => ({
-      id: p.id,
-      name: [p.first_name, p.last_name].filter(Boolean).join(' '),
-      title: p.title,
-      seniority: p.seniority,
-      department: p.department,
-      email: p.email,
-      phone: p.phone_number,
-      verifiedEmail: Boolean(p.email_status && p.email_status !== 'unverified'),
-      linkedinUrl: p.linkedin_url,
-    }));
+    console.log(`📊 Processing ${people.length} people from Apollo`);
+    
+    // Much less aggressive filtering - prioritize quantity over perfect contact info
+    const filteredPeople = people.filter((p) => {
+      const hasRealEmail = p.email && 
+        p.email !== 'email_not_unlocked@domain.com' && 
+        p.email !== 'email_not_unlocked@company.com' &&
+        p.email_status !== 'unverified';
+      
+      const hasPhone = p.phone_number && p.phone_number.trim() !== '';
+      const hasLinkedIn = p.linkedin_url && p.linkedin_url.trim() !== '';
+      const hasGoodCompany = p.organization && p.organization.name && p.organization.name !== 'Unknown';
+      
+      // Check if location matches (if location filter is applied)
+      const locationMatches = !params.locations || params.locations.length === 0 || 
+        (p.organization && (
+          params.locations.some(loc => 
+            (p.organization.city && p.organization.city.toLowerCase().includes(loc.toLowerCase())) ||
+            (p.organization.state && p.organization.state.toLowerCase().includes(loc.toLowerCase())) ||
+            (p.organization.location && p.organization.location.toLowerCase().includes(loc.toLowerCase()))
+          )
+        ));
+      
+      // Keep contacts with: real email OR phone OR (good company data AND LinkedIn URL)
+      // AND location matches (if location filter is applied)
+      const shouldKeep = (hasRealEmail || hasPhone || (hasGoodCompany && hasLinkedIn)) && locationMatches;
+      
+      if (!shouldKeep) {
+        console.log(`❌ Filtered out ${p.first_name} ${p.last_name}: no real email, phone, or (good company + LinkedIn)`);
+      }
+      
+      return shouldKeep;
+    });
+    
+    // If we still don't have enough, include more with any company data
+    if (filteredPeople.length < Math.min(params.limit || 10, 8)) {
+      console.log(`⚠️ Only ${filteredPeople.length} contacts after filtering. Including more...`);
+      
+      const additionalPeople = people.filter((p) => {
+        const hasRealEmail = p.email && 
+          p.email !== 'email_not_unlocked@domain.com' && 
+          p.email !== 'email_not_unlocked@company.com' &&
+          p.email_status !== 'unverified';
+        
+        const hasPhone = p.phone_number && p.phone_number.trim() !== '';
+        const hasLinkedIn = p.linkedin_url && p.linkedin_url.trim() !== '';
+        const hasGoodCompany = p.organization && p.organization.name && p.organization.name !== 'Unknown';
+        
+        // Include if we have company data AND LinkedIn URL
+        return !hasRealEmail && !hasPhone && hasGoodCompany && hasLinkedIn;
+      }).slice(0, Math.min(params.limit || 10, 8) - filteredPeople.length);
+      
+      filteredPeople.push(...additionalPeople);
+      console.log(`📈 Added ${additionalPeople.length} additional contacts`);
+    }
+    
+    console.log(`📊 Filtered from ${people.length} to ${filteredPeople.length} contacts with real contact info`);
+    
+    return filteredPeople.map((p, index) => {
+      console.log(`👤 Processing person ${index + 1}:`, {
+        name: [p.first_name, p.last_name].filter(Boolean).join(' '),
+        title: p.title,
+        email: p.email,
+        email_status: p.email_status,
+        phone: p.phone_number,
+        company: p.organization?.name,
+        organization: p.organization
+      });
+      
+      return {
+        id: p.id,
+        name: [p.first_name, p.last_name].filter(Boolean).join(' '),
+        title: p.title,
+        seniority: p.seniority,
+        department: p.department,
+        email: p.email,
+        phone: p.phone_number,
+        verifiedEmail: Boolean(p.email_status && p.email_status !== 'unverified'),
+        linkedinUrl: p.linkedin_url,
+        // Add company information from organization field
+        organization: p.organization ? {
+          id: p.organization.id,
+          name: p.organization.name,
+          domain: p.organization.primary_domain || p.organization.website_url,
+          industry: p.organization.industry,
+          employeeCount: p.organization.estimated_num_employees,
+          location: p.organization.city && p.organization.state ? 
+            `${p.organization.city}, ${p.organization.state}` : 
+            p.organization.city || p.organization.state,
+          websiteUrl: p.organization.website_url,
+          linkedinUrl: p.organization.linkedin_url
+        } : null
+      };
+    });
   } catch {
     return [];
   }

@@ -44,6 +44,7 @@ import {
   FormControlLabel,
   CircularProgress,
   InputAdornment,
+  Tooltip,
 } from '@mui/material';
 import {
   collection,
@@ -88,6 +89,8 @@ import {
   Dashboard as DashboardIcon,
   FilterAlt as FilterAltIcon,
   MoreVert as MoreVertIcon,
+  FileDownload as FileDownloadIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -107,10 +110,12 @@ import GoogleIntegration from '../../components/GoogleIntegration';
 import StageChip from '../../components/StageChip';
 import UserTasksDashboard from '../../components/UserTasksDashboard';
 import PipelineFunnel from '../../components/PipelineFunnel';
+import PipelineBubbleChart from '../../components/PipelineBubbleChart';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
 import UserAppointmentsDashboard from '../../components/UserAppointmentsDashboard';
 import CalendarWidget from '../../components/CalendarWidget';
+import ProspectingHub from './ProspectingHub';
 
 
 
@@ -119,19 +124,31 @@ const TenantCRM: React.FC = () => {
   const { cacheState, updateCacheState, hasCachedState } = useCRMCache();
   const navigate = useNavigate();
   
-  // State for tabs - use cached state if available
-  const [searchParams] = useSearchParams();
+  // State for tabs - use URL params with fallback to cached state
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tabValue, setTabValue] = useState(() => {
-    // Use cached state if available, otherwise use URL params
+    // First try to get from URL params
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      const tabMap: Record<string, number> = {
+        'dashboard': 0,
+        'contacts': 1,
+        'companies': 2,
+        'opportunities': 3,
+        'pipeline': 4,
+        'prospect': 5,
+        'reports': 9,
+        'kpi-management': 7,
+        'kpi-dashboard': 8
+      };
+      return tabMap[tabParam] ?? 0;
+    }
+    
+    // Fallback to cached state if available
     if (hasCachedState) {
       return cacheState.activeTab;
     }
     
-    const tabParam = searchParams.get('tab');
-    if (tabParam === 'companies') return 2;
-    if (tabParam === 'contacts') return 1;
-    if (tabParam === 'deals' || tabParam === 'opportunities') return 3;
-    if (tabParam === 'tasks') return 0;
     return 0;
   });
   
@@ -1032,6 +1049,48 @@ const TenantCRM: React.FC = () => {
     return () => clearTimeout(timeoutId);
   }, [search, tenantId, loadCompanies, loadContacts]);
 
+  // Handle URL parameter changes (for browser back/forward navigation)
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam) {
+      const tabMap: Record<string, number> = {
+        'dashboard': 0,
+        'contacts': 1,
+        'companies': 2,
+        'opportunities': 3,
+        'pipeline': 4,
+        'prospect': 5,
+        'reports': 9,
+        'kpi-management': 7,
+        'kpi-dashboard': 8
+      };
+      const newTabValue = tabMap[tabParam] ?? 0;
+      if (newTabValue !== tabValue) {
+        setTabValue(newTabValue);
+        updateCacheState({ activeTab: newTabValue });
+      }
+    } else {
+      // If no tab parameter in URL, set the current tab in URL
+      const tabMap: Record<number, string> = {
+        0: 'dashboard',
+        1: 'contacts',
+        2: 'companies',
+        3: 'opportunities',
+        4: 'pipeline',
+        5: 'prospect',
+        9: 'reports',
+        7: 'kpi-management',
+        8: 'kpi-dashboard'
+      };
+      const tabName = tabMap[tabValue];
+      if (tabName) {
+        const newSearchParams = new URLSearchParams(searchParams);
+        newSearchParams.set('tab', tabName);
+        setSearchParams(newSearchParams);
+      }
+    }
+  }, [searchParams, tabValue, updateCacheState, setSearchParams]);
+
   // Load initial data for dashboard metrics
   useEffect(() => {
     if (tenantId && currentUser?.uid) {
@@ -1042,6 +1101,11 @@ const TenantCRM: React.FC = () => {
   // Real-time listeners for CRM data
   useEffect(() => {
     if (!tenantId) {
+      return;
+    }
+
+    // When on Prospecting tab, skip real-time listeners to avoid unnecessary reads
+    if (tabValue === 5) {
       return;
     }
 
@@ -1061,53 +1125,80 @@ const TenantCRM: React.FC = () => {
       const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setDeals(dealsData);
       setAllDeals(dealsData); // Also update allDeals for metrics calculation
+    }, (error) => {
+      console.error('Error listening to deals:', error);
+      // Set empty data on error to prevent UI issues
+      setDeals([]);
+      setAllDeals([]);
     });
 
     // Listen for pipeline stages
     const stagesRef = collection(db, 'tenants', tenantId, 'crm_pipeline_stages');
-    const stagesUnsubscribe = onSnapshot(stagesRef, (snapshot) => {
-      const stagesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setPipelineStages(stagesData.sort((a: any, b: any) => (a.order || 0) - (b.order || 0)));
-    });
+    const stagesUnsubscribe = onSnapshot(
+      stagesRef,
+      (snapshot) => {
+        const stagesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        setPipelineStages(stagesData.sort((a: any, b: any) => (a.order || 0) - (b.order || 0)));
+      },
+      (error) => {
+        console.error('Error listening to pipeline stages:', error);
+        setPipelineStages([]);
+      }
+    );
 
     // Listen for tasks from both collections
     const crmTasksRef = collection(db, 'tenants', tenantId, 'crm_tasks');
     const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
     
     // Listen for CRM tasks
-    const crmTasksUnsubscribe = onSnapshot(crmTasksRef, (snapshot) => {
-      const crmTasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      // Filter CRM tasks to show only those assigned to the current user
-      const userCrmTasks = crmTasksData.filter((task: any) => {
-        // Show tasks assigned to the current user
-        if (task.assignedTo === currentUser?.uid) {
-          return true;
-        }
-        // Show tasks associated with deals owned by the current user
-        if (task.relatedTo?.type === 'deal' && task.relatedTo?.id) {
-          const deal = deals.find(d => d.id === task.relatedTo.id);
-          if (deal && deal.owner === currentUser?.uid) {
+    const crmTasksUnsubscribe = onSnapshot(
+      crmTasksRef,
+      (snapshot) => {
+        const crmTasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        // Filter CRM tasks to show only those assigned to the current user
+        const userCrmTasks = crmTasksData.filter((task: any) => {
+          // Show tasks assigned to the current user
+          if (task.assignedTo === currentUser?.uid) {
             return true;
           }
-        }
-        return false;
-      });
-      
-      // Store CRM tasks in state and update combined tasks
-      setCrmTasks(userCrmTasks);
-      setTasks([...userCrmTasks, ...regularTasks]);
-    });
+          // Show tasks associated with deals owned by the current user
+          if (task.relatedTo?.type === 'deal' && task.relatedTo?.id) {
+            const deal = deals.find(d => d.id === task.relatedTo.id);
+            if (deal && deal.owner === currentUser?.uid) {
+              return true;
+            }
+          }
+          return false;
+        });
+        
+        // Store CRM tasks in state and update combined tasks
+        setCrmTasks(userCrmTasks);
+        setTasks([...userCrmTasks, ...regularTasks]);
+      },
+      (error) => {
+        console.error('Error listening to CRM tasks:', error);
+        setCrmTasks([]);
+        setTasks([...regularTasks]);
+      }
+    );
     
     // Listen for regular tasks
-    const tasksUnsubscribe = onSnapshot(tasksRef, (snapshot) => {
-      const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      // Filter tasks to show only those assigned to the current user
-      const userTasks = tasksData.filter((task: any) => task.assignedTo === currentUser?.uid);
-      
-      // Store regular tasks in state and update combined tasks
-      setRegularTasks(userTasks);
-      setTasks([...crmTasks, ...userTasks]);
-    });
+    const tasksUnsubscribe = onSnapshot(
+      tasksRef,
+      (snapshot) => {
+        const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+        // Filter tasks to show only those assigned to the current user
+        const userTasks = tasksData.filter((task: any) => task.assignedTo === currentUser?.uid);
+        
+        // Store regular tasks in state and update combined tasks
+        setRegularTasks(userTasks);
+        setTasks([...crmTasks, ...userTasks]);
+      },
+      (error) => {
+        console.error('Error listening to regular tasks:', error);
+        setRegularTasks([]);
+      }
+    );
 
     return () => {
       dealsUnsubscribe();
@@ -1115,13 +1206,33 @@ const TenantCRM: React.FC = () => {
       crmTasksUnsubscribe();
       tasksUnsubscribe();
     };
-  }, [tenantId, companyFilter, contactFilter, dealFilter]); // Add filter states as dependencies
+  }, [tenantId, companyFilter, contactFilter, dealFilter, tabValue]); // include tabValue to refresh/cleanup when switching tabs
 
   // Remove the separate useEffects for filter changes - they're now handled in the main useEffect above
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
     updateCacheState({ activeTab: newValue });
+    
+    // Update URL with the new tab
+    const tabMap: Record<number, string> = {
+      0: 'dashboard',
+      1: 'contacts',
+      2: 'companies',
+      3: 'opportunities',
+      4: 'pipeline',
+      5: 'prospect',
+      9: 'reports',
+      7: 'kpi-management',
+      8: 'kpi-dashboard'
+    };
+    
+    const tabName = tabMap[newValue];
+    if (tabName) {
+      const newSearchParams = new URLSearchParams(searchParams);
+      newSearchParams.set('tab', tabName);
+      setSearchParams(newSearchParams);
+    }
   };
 
   const handleAddNew = (type: 'contact' | 'company' | 'deal' | 'task') => {
@@ -1602,6 +1713,58 @@ const TenantCRM: React.FC = () => {
               />
             )}
           </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer',
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 5)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 5 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 5 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 5 ? 1 : 0
+              }}
+            >
+              Prospect
+            </Typography>
+            {tabValue === 5 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
         </Box>
       </Box>
 
@@ -1687,9 +1850,15 @@ const TenantCRM: React.FC = () => {
           deals={deals}
           companies={companies}
           pipelineStages={pipelineStages}
-          filters={filters}
+          salesTeam={salesTeam}
+          currentUser={currentUser}
+          filters={{...filters, currentUserId: currentUser?.uid}}
           onFiltersChange={setFilters}
         />
+      )}
+      
+      {tabValue === 5 && (
+        <ProspectingHub />
       )}
       
       {tabValue === 9 && (
@@ -4815,11 +4984,12 @@ const CompaniesTab: React.FC<{
   return (
     <Box>
       {/* Header with search and actions */}
-      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
           Opportunities ({filteredDeals.length})
         </Typography>
-      </Box> */}
+
+      </Box>
 
       {/* Filter & Toolbar Area - Consolidated with card background */}
       <Box sx={{ 
@@ -5129,7 +5299,13 @@ const CompaniesTab: React.FC<{
               <TableRow 
                 key={deal.id} 
                 hover
-                onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (deal.id) {
+                      navigate(`/crm/deals/${deal.id}`);
+                    }
+                  }}
                 sx={{ 
                   height: '48px',
                   cursor: 'pointer',
@@ -5467,11 +5643,67 @@ const PipelineTab: React.FC<{
   deals: any[];
   companies: any[];
   pipelineStages: any[];
+  salesTeam: any[];
+  currentUser: any;
   filters: any;
   onFiltersChange: (filters: any) => void;
-}> = ({ deals, companies, pipelineStages, filters, onFiltersChange }) => {
-  const [selectedStage, setSelectedStage] = React.useState<string | undefined>();
+}> = ({ deals, companies, pipelineStages, salesTeam, currentUser, filters, onFiltersChange }) => {
+  const navigate = useNavigate();
+  // Stage selection disabled - chart should not filter by stage clicks
   const [filteredDeals, setFilteredDeals] = React.useState<any[]>(deals);
+  const [viewMode, setViewMode] = React.useState<'funnel' | 'bubble'>('funnel');
+  const [bubbleColorMode, setBubbleColorMode] = React.useState<'owner' | 'health'>('owner');
+  
+  // Column visibility state
+  const [visibleColumns, setVisibleColumns] = React.useState<string[]>([
+    'deal', 'company', 'owner', 'stage', 'value', 'probability', 'aiHealth', 'lastActivity'
+  ]);
+  
+  // Column definitions
+  const allColumns = [
+    { key: 'deal', label: 'Deal' },
+    { key: 'company', label: 'Company' },
+    { key: 'owner', label: 'Owner' },
+    { key: 'stage', label: 'Stage' },
+    { key: 'value', label: 'Value' },
+    { key: 'valueRange', label: 'Value Range' },
+    { key: 'probability', label: 'Probability' },
+    { key: 'aiHealth', label: 'AI Health' },
+    { key: 'lastActivity', label: 'Last Activity' }
+  ];
+  
+  // Helper function to get stage config for colors
+  const getStageConfig = (stageKey: string) => {
+    const configs: Record<string, { color: string }> = {
+      'discovery': { color: '#BBDEFB' },
+      'qualification': { color: '#64B5F6' },
+      'scoping': { color: '#1E88E5' },
+      'proposalDrafted': { color: '#FFE082' },
+      'proposalReview': { color: '#FFA726' },
+      'negotiation': { color: '#F4511E' },
+      'verbalAgreement': { color: '#9CCC65' },
+      'closedWon': { color: '#2E7D32' },
+      'closedLost': { color: '#E53935' },
+      'onboarding': { color: '#BA68C8' },
+      'liveAccount': { color: '#4527A0' },
+      'dormant': { color: '#424242' }
+    };
+    return configs[stageKey] || { color: '#7f8c8d' };
+  };
+  
+  // Helper function to get deal value range
+  const getDealValueRange = (deal: any): string => {
+    const value = toNumber(deal.estimatedRevenue);
+    if (value === 0) return 'N/A';
+    
+    // Simple range calculation based on value
+    if (value < 50000) return '$0 - $50K';
+    if (value < 100000) return '$50K - $100K';
+    if (value < 250000) return '$100K - $250K';
+    if (value < 500000) return '$250K - $500K';
+    if (value < 1000000) return '$500K - $1M';
+    return '$1M+';
+  };
 
   const getDealsByStage = (stageName: string) => {
     return deals.filter(deal => deal.stage === stageName);
@@ -5481,25 +5713,114 @@ const PipelineTab: React.FC<{
     return stageDeals.reduce((sum, deal) => sum + (Number(deal.estimatedRevenue) || 0), 0);
   };
 
-  // Handle stage selection from funnel
+  // Handle stage selection from funnel (disabled - chart should not filter)
   const handleStageClick = (stage: string) => {
-    if (selectedStage === stage) {
-      setSelectedStage(undefined);
-      setFilteredDeals(deals);
-    } else {
-      setSelectedStage(stage);
-      setFilteredDeals(deals.filter(deal => deal.stage === stage));
-    }
+    // Disabled - funnel chart should not filter by stage
+    // Only salesperson filter should affect the chart
+    console.log('Stage clicked:', stage, '- filtering disabled');
   };
 
-  // Update filtered deals when deals change
-  React.useEffect(() => {
-    if (selectedStage) {
-      setFilteredDeals(deals.filter(deal => deal.stage === selectedStage));
-    } else {
-      setFilteredDeals(deals);
+  // Helper: parse currency-ish to number
+  const toNumber = (v: any) => {
+    if (typeof v === 'number') return v;
+    if (!v) return 0;
+    const n = Number(String(v).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // Helper: deal last activity/updated timestamp
+  const getDealUpdatedAt = (deal: any): Date | undefined => {
+    const d = deal.updatedAt || deal.lastActivityAt || deal.createdAt;
+    if (!d) return undefined;
+    return d.toDate ? d.toDate() : new Date(d);
+  };
+
+  // Apply filters (stage filtering disabled - only salesperson filter affects chart)
+  const applyFilters = React.useCallback(() => {
+    let data = [...deals];
+    // Stage filter disabled - funnel chart should not filter by stage clicks
+    // Only salesperson filter should affect the chart display
+    // Owner - Filter by salespeople in associations.salespeople array
+    if (filters?.owner === 'me' && filters?.currentUserId) {
+      data = data.filter((d) => {
+        const salespeople = d.associations?.salespeople || [];
+        return salespeople.some((sp: any) => sp.id === filters.currentUserId);
+      });
+    } else if (filters?.owner && filters.owner !== 'all') {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Filtering by salesperson ID:', filters.owner);
+        console.log('🔍 Sample deal associations:', data[0]?.associations);
+      }
+      
+      data = data.filter((d) => {
+        const salespeople = d.associations?.salespeople || [];
+        const hasSalesperson = salespeople.some((sp: any) => sp.id === filters.owner);
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 Deal salespeople:', salespeople.map((sp: any) => sp.id), 'Looking for:', filters.owner, 'Found:', hasSalesperson);
+        }
+        
+        return hasSalesperson;
+      });
     }
-  }, [deals, selectedStage]);
+    // Industry (by primary company)
+    if (filters?.industry && filters.industry !== 'all') {
+      data = data.filter((d) => {
+        const cid = getDealPrimaryCompanyId(d as any);
+        const c = companies.find((x: any) => x.id === cid);
+        const industry = (c?.industry || c?.primaryIndustry || '').toString().toLowerCase();
+        return industry.includes(String(filters.industry).toLowerCase());
+      });
+    }
+    // Deal size
+    const minVal = toNumber(filters?.sizeMin);
+    const maxVal = toNumber(filters?.sizeMax) || Number.MAX_SAFE_INTEGER;
+    if (minVal > 0 || (filters?.sizeMax && maxVal < Number.MAX_SAFE_INTEGER)) {
+      data = data.filter((d) => {
+        const val = toNumber(d.estimatedRevenue);
+        return val >= minVal && val <= maxVal;
+      });
+    }
+    // Deal age (days since updated)
+    const ageDays = Number(filters?.ageDays || 0);
+    if (ageDays > 0) {
+      const cutoff = Date.now() - ageDays * 24 * 60 * 60 * 1000;
+      data = data.filter((d) => {
+        const ts = getDealUpdatedAt(d)?.getTime() || 0;
+        return ts >= cutoff;
+      });
+    }
+    setFilteredDeals(data);
+  }, [deals, companies, filters]);
+
+  // Update filtered deals whenever inputs change
+  React.useEffect(() => {
+    applyFilters();
+  }, [applyFilters]);
+
+  // AI Health heuristic + probability calculation
+  const getStageProbability = (deal: any): number => {
+    const stage = pipelineStages.find((s: any) => s.name === deal.stage);
+    const base = typeof stage?.probability === 'number' ? stage.probability : (typeof deal.probability === 'number' ? deal.probability : 50);
+    return Math.max(0, Math.min(100, base));
+  };
+
+  const getDealProbability = (deal: any): number => {
+    // If deal has explicit probability, use weighted with stage probability
+    const stageProb = getStageProbability(deal);
+    const dealProb = typeof deal.probability === 'number' ? deal.probability : stageProb;
+    // Combine: simple average for now (can refine with recency weighting)
+    return Math.round((stageProb + dealProb) / 2);
+  };
+
+  const getDealHealth = (deal: any): 'green' | 'yellow' | 'red' => {
+    const prob = getDealProbability(deal);
+    const updated = getDealUpdatedAt(deal)?.getTime() || 0;
+    const days = updated ? Math.floor((Date.now() - updated) / (24 * 60 * 60 * 1000)) : 999;
+    if (days <= 7 && prob >= 50) return 'green';
+    if (days <= 14 && prob >= 30) return 'yellow';
+    return 'red';
+  };
 
   return (
     <Box>
@@ -5507,50 +5828,167 @@ const PipelineTab: React.FC<{
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Typography variant="h6">Sales Pipeline</Typography>
-          {selectedStage && (
-            <Chip 
-              label={`Filtered: ${selectedStage.charAt(0).toUpperCase() + selectedStage.slice(1).replace(/([A-Z])/g, ' $1')}`}
-              color="primary"
-              onDelete={() => handleStageClick(selectedStage)}
-              size="small"
-            />
-          )}
+          {/* Stage filtering disabled - chart should not filter by stage clicks */}
         </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          {/* Debug info */}
+          {process.env.NODE_ENV === 'development' && (
+            <Typography variant="caption" color="text.secondary">
+              Sales Team: {salesTeam.length} members | Filter: {filters?.owner || 'all'} | Deals: {filteredDeals.length}
+            </Typography>
+          )}
+          
+          {/* Owner filter */}
+          <FormControl size="small" sx={{ minWidth: 150 }}>
             <InputLabel>Owner</InputLabel>
             <Select
-              value={filters.owner}
+              value={filters?.owner || 'all'}
               onChange={(e) => onFiltersChange({ ...filters, owner: e.target.value })}
               label="Owner"
             >
               <MenuItem value="all">All Owners</MenuItem>
               <MenuItem value="me">My Deals</MenuItem>
+              {(() => {
+                const crmSalesMembers = salesTeam.filter((member: any) => 
+                  member.crm_sales === true || member.role === 'sales' || member.sales === true
+                );
+                
+                // If no CRM sales members found, show all team members
+                const membersToShow = crmSalesMembers.length > 0 ? crmSalesMembers : salesTeam;
+                
+                // If still no members, show a placeholder
+                if (membersToShow.length === 0) {
+                  return (
+                    <MenuItem value="no-members" disabled>
+                      No team members found
+                    </MenuItem>
+                  );
+                }
+                
+                if (process.env.NODE_ENV === 'development') {
+                  console.log('🔍 Sales team members:', salesTeam.length);
+                  console.log('🔍 CRM sales members:', crmSalesMembers.length);
+                  console.log('🔍 Members to show:', membersToShow.length);
+                }
+                
+                return membersToShow.map((member: any) => {
+                  const displayName = member.firstName && member.lastName 
+                    ? `${member.firstName} ${member.lastName}`
+                    : member.name || member.displayName || member.email || `Member ${member.id}`;
+                  
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('🔍 Member:', { id: member.id, displayName, uid: member.uid });
+                  }
+                  
+                  return (
+                    <MenuItem key={member.id} value={member.uid || member.id}>
+                      {displayName}
+                    </MenuItem>
+                  );
+                });
+              })()}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Industry</InputLabel>
-            <Select
-              value={filters.industry}
-              onChange={(e) => onFiltersChange({ ...filters, industry: e.target.value })}
-              label="Industry"
-            >
-              <MenuItem value="all">All Industries</MenuItem>
-              <MenuItem value="warehouse">Warehouse</MenuItem>
-              <MenuItem value="events">Events</MenuItem>
-              <MenuItem value="cannabis">Cannabis</MenuItem>
-            </Select>
-          </FormControl>
+          
+          {/* View toggle */}
+          <ToggleButtonGroup size="small" exclusive value={viewMode} onChange={(e, v) => v && setViewMode(v)}>
+            <ToggleButton value="funnel">Funnel</ToggleButton>
+            <ToggleButton value="bubble">Bubble</ToggleButton>
+          </ToggleButtonGroup>
+
+          {viewMode === 'bubble' && (
+            <ToggleButtonGroup size="small" exclusive value={bubbleColorMode} onChange={(e, v) => v && setBubbleColorMode(v)}>
+              <ToggleButton value="owner">Color: Owner</ToggleButton>
+              <ToggleButton value="health">Color: AI Health</ToggleButton>
+            </ToggleButtonGroup>
+          )}
+
+          {/* Stage multi-select via chips */}
+          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+            {pipelineStages.map((s: any) => {
+              const active = ((filters?.stages as string[]) || []).includes(s.name);
+              return (
+                <Chip
+                  key={s.id || s.name}
+                  size="small"
+                  color={active ? 'primary' : 'default'}
+                  label={s.name}
+                  onClick={() => {
+                    const cur = new Set<string>(((filters?.stages as string[]) || []));
+                    if (cur.has(s.name)) cur.delete(s.name); else cur.add(s.name);
+                    onFiltersChange({ ...filters, stages: Array.from(cur) });
+                  }}
+                />
+              );
+            })}
+          </Box>
         </Box>
       </Box>
 
-      {/* Pipeline Funnel */}
+      {/* Insights Bar */}
+      <Box sx={{
+        mb: 2,
+        p: 1.5,
+        borderRadius: 1,
+        background: 'linear-gradient(90deg, rgba(11,99,197,0.1) 0%, rgba(16,185,129,0.1) 100%)',
+        border: '1px solid #E5E7EB',
+        display: 'flex',
+        gap: 2,
+        flexWrap: 'wrap'
+      }}>
+        {(() => {
+          const totalDeals = filteredDeals.length;
+          const totalValue = filteredDeals.reduce((s, d) => s + toNumber(d.estimatedRevenue), 0);
+          const byStage = pipelineStages.map((s: any) => ({
+            name: s.name,
+            count: filteredDeals.filter((d) => d.stage === s.name).length,
+            value: filteredDeals.filter((d) => d.stage === s.name).reduce((sum, d) => sum + toNumber(d.estimatedRevenue), 0)
+          }));
+          const top = byStage.sort((a, b) => b.value - a.value)[0];
+          const atRisk = filteredDeals.filter((d) => getDealHealth(d) !== 'green').length;
+          const ownerTotals = filteredDeals.reduce((m: Record<string, number>, d: any) => {
+            const key = d.owner || 'Unassigned';
+            m[key] = (m[key] || 0) + toNumber(d.estimatedRevenue);
+            return m;
+          }, {});
+          const topOwner = Object.entries(ownerTotals).sort((a, b) => (Number(b[1]) - Number(a[1])))[0];
+          return (
+            <>
+              <Typography variant="body2"><strong>{totalDeals}</strong> deals worth <strong>${totalValue.toLocaleString()}</strong></Typography>
+              {top && (
+                <Typography variant="body2">Top stage: <strong>{top.name}</strong> ({top.count} deals, ${top.value.toLocaleString()})</Typography>
+              )}
+              <Typography variant="body2">At risk: <strong>{atRisk}</strong> deals</Typography>
+              {topOwner && (
+                <Typography variant="body2">Top owner: <strong>{topOwner[0]}</strong> (${Number(topOwner[1]).toLocaleString()})</Typography>
+              )}
+            </>
+          );
+        })()}
+      </Box>
+
+      {/* Visualization */}
       <Box sx={{ mb: 3 }}>
-        <PipelineFunnel 
-          deals={deals}
-          onStageClick={handleStageClick}
-          selectedStage={selectedStage}
-        />
+        {viewMode === 'funnel' ? (
+          <PipelineFunnel 
+            deals={filteredDeals}
+            onStageClick={handleStageClick}
+          />
+        ) : (
+          <PipelineBubbleChart
+            deals={deals}
+            stages={pipelineStages.map((s: any) => s.name)}
+            owners={[...new Set((deals || []).map((d: any) => d.owner))]
+              .filter(Boolean)
+              .map((id: string) => ({ id, name: id }))}
+            colorMode={bubbleColorMode}
+            onDealClick={(dealId) => {
+              // Future: open sidebar; for now we just filter to the deal's stage
+              const deal = deals.find((d: any) => d.id === dealId);
+              if (deal?.stage) handleStageClick(deal.stage);
+            }}
+          />
+        )}
       </Box>
 
       {/* Pipeline Board */}
@@ -5608,6 +6046,254 @@ const PipelineTab: React.FC<{
             </Card>
           );
         })}
+      </Box>
+
+      {/* Enhanced Synchronized Table */}
+      <Box sx={{ mt: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle2" fontWeight={700}>Deals ({filteredDeals.length})</Typography>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            {/* Column visibility toggle */}
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Columns</InputLabel>
+              <Select
+                multiple
+                value={visibleColumns}
+                onChange={(e) => setVisibleColumns(e.target.value as string[])}
+                label="Columns"
+                renderValue={(selected) => `${selected.length} columns`}
+              >
+                {allColumns.map((col) => (
+                  <MenuItem key={col.key} value={col.key}>
+                    <Checkbox checked={visibleColumns.indexOf(col.key) > -1} />
+                    <ListItemText primary={col.label} />
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<FileDownloadIcon />}
+              onClick={() => {
+                const headers = visibleColumns.map(col => allColumns.find(c => c.key === col)?.label || col);
+                const rows = filteredDeals.map((d) => {
+                  const cid = getDealPrimaryCompanyId(d as any);
+                  const c = companies.find((x: any) => x.id === cid);
+                  const val = toNumber(d.estimatedRevenue);
+                  const dt = getDealUpdatedAt(d);
+                  const health = getDealHealth(d);
+                  const prob = getDealProbability(d);
+                  
+                  return visibleColumns.map(col => {
+                    switch (col) {
+                      case 'deal': return d.name;
+                      case 'company': return c?.companyName || c?.name || '';
+                      case 'owner': return d.owner || '';
+                      case 'stage': return d.stage;
+                      case 'value': return val;
+                      case 'valueRange': return getDealValueRange(d);
+                      case 'probability': return prob;
+                      case 'aiHealth': return health;
+                      case 'lastActivity': return dt ? dt.toISOString() : '';
+                      default: return '';
+                    }
+                  });
+                });
+                const csv = [headers.join(','), ...rows.map(r => r.map((v) => `"${String(v).replace(/"/g,'""')}"`).join(','))].join('\n');
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pipeline_deals_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >Export CSV</Button>
+          </Box>
+        </Box>
+        
+        <Table size="small" sx={{ borderRadius: 1, overflow: 'hidden', boxShadow: 1 }}>
+          <TableHead>
+            <TableRow sx={{ backgroundColor: 'grey.50' }}>
+              {visibleColumns.includes('deal') && <TableCell>Deal</TableCell>}
+              {visibleColumns.includes('company') && <TableCell>Company</TableCell>}
+              {visibleColumns.includes('owner') && <TableCell>Owner</TableCell>}
+              {visibleColumns.includes('stage') && <TableCell>Stage</TableCell>}
+              {visibleColumns.includes('value') && <TableCell align="right">Value</TableCell>}
+              {visibleColumns.includes('valueRange') && <TableCell align="right">Value Range</TableCell>}
+              {visibleColumns.includes('probability') && <TableCell align="right">Probability</TableCell>}
+              {visibleColumns.includes('aiHealth') && <TableCell>AI Health</TableCell>}
+              {visibleColumns.includes('lastActivity') && <TableCell>Last Activity</TableCell>}
+              <TableCell align="center">Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {filteredDeals.map((d) => {
+              const cid = getDealPrimaryCompanyId(d as any);
+              const c = companies.find((x: any) => x.id === cid);
+              const health = getDealHealth(d);
+              const updated = getDealUpdatedAt(d);
+              const prob = getDealProbability(d);
+              
+              return (
+                <TableRow 
+                  key={d.id} 
+                  hover 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (d.id) {
+                      navigate(`/crm/deals/${d.id}`);
+                    }
+                  }}
+                  sx={{ 
+                    cursor: 'pointer',
+                    '&:hover': { backgroundColor: 'action.hover' } 
+                  }}
+                >
+                  {visibleColumns.includes('deal') && (
+                    <TableCell sx={{ fontWeight: 500 }}>{d.name}</TableCell>
+                  )}
+                  {visibleColumns.includes('company') && (
+                    <TableCell>{c?.companyName || c?.name || '-'}</TableCell>
+                  )}
+                  {visibleColumns.includes('owner') && (
+                    <TableCell>{d.owner || '-'}</TableCell>
+                  )}
+                  {visibleColumns.includes('stage') && (
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={d.stage}
+                        sx={{ 
+                          backgroundColor: getStageConfig(d.stage)?.color || 'grey.300',
+                          color: 'white',
+                          fontWeight: 500
+                        }}
+                      />
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('value') && (
+                    <TableCell align="right" sx={{ fontWeight: 500 }}>
+                      ${toNumber(d.estimatedRevenue).toLocaleString()}
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('valueRange') && (
+                    <TableCell align="right">
+                      <Typography variant="body2" color="text.secondary">
+                        {getDealValueRange(d)}
+                      </Typography>
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('probability') && (
+                    <TableCell align="right">
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                          {prob}%
+                        </Typography>
+                        <Box
+                          sx={{
+                            width: 40,
+                            height: 4,
+                            borderRadius: 2,
+                            backgroundColor: 'grey.200',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          <Box
+                            sx={{
+                              width: `${prob}%`,
+                              height: '100%',
+                              background: prob >= 75 ? 'linear-gradient(90deg, #4CAF50, #66BB6A)' :
+                                         prob >= 50 ? 'linear-gradient(90deg, #FF9800, #FFB74D)' :
+                                         'linear-gradient(90deg, #F44336, #EF5350)'
+                            }}
+                          />
+                        </Box>
+                      </Box>
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('aiHealth') && (
+                    <TableCell>
+                      <Tooltip
+                        title={
+                          <Box>
+                            <Typography variant="body2" fontWeight="bold">
+                              AI Health Assessment
+                            </Typography>
+                            <Typography variant="body2">
+                              {health === 'green' ? '✅ Deal is healthy and progressing well' :
+                               health === 'yellow' ? '⚠️ Deal needs attention - consider follow-up' :
+                               '❌ Deal may be stalled - requires immediate action'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Based on probability ({prob}%) and recent activity
+                            </Typography>
+                          </Box>
+                        }
+                        arrow
+                      >
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Box
+                            sx={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: '50%',
+                              backgroundColor: health === 'green' ? '#4CAF50' : 
+                                              health === 'yellow' ? '#FF9800' : '#F44336',
+                              animation: health === 'yellow' ? 'pulse 2s infinite' : 'none'
+                            }}
+                          />
+                          <Chip
+                            size="small"
+                            label={health === 'green' ? 'Healthy' : health === 'yellow' ? 'At Risk' : 'Stalled'}
+                            color={health === 'green' ? 'success' : health === 'yellow' ? 'warning' : 'error'}
+                            sx={{ fontWeight: 500 }}
+                          />
+                        </Box>
+                      </Tooltip>
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('lastActivity') && (
+                    <TableCell>
+                      {updated ? (
+                        <Tooltip title={updated.toLocaleString()}>
+                          <Typography variant="body2">
+                            {updated.toLocaleDateString()}
+                          </Typography>
+                        </Tooltip>
+                      ) : (
+                        '-'
+                      )}
+                    </TableCell>
+                  )}
+                  <TableCell align="center">
+                    <Tooltip title="Copy deal info to clipboard">
+                      <IconButton
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent row click when clicking the button
+                          const dealInfo = `Deal: ${d.name}
+Company: ${c?.companyName || c?.name || 'N/A'}
+Owner: ${d.owner || 'Unassigned'}
+Stage: ${d.stage}
+Value: $${toNumber(d.estimatedRevenue).toLocaleString()}
+Probability: ${prob}%
+AI Health: ${health === 'green' ? 'Healthy' : health === 'yellow' ? 'At Risk' : 'Stalled'}`;
+                          navigator.clipboard.writeText(dealInfo);
+                        }}
+                      >
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </Box>
     </Box>
   );

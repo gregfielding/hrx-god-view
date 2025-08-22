@@ -155,6 +155,10 @@ const KPIDashboard: React.FC<KPIDashboardProps> = ({ tenantId, salespersonId }) 
       (snapshot) => {
         const activitiesData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as KPIActivity));
         setActivities(activitiesData);
+      },
+      (error) => {
+        console.error('Error listening to KPI activities:', error);
+        setActivities([]);
       }
     );
 
@@ -164,6 +168,10 @@ const KPIDashboard: React.FC<KPIDashboardProps> = ({ tenantId, salespersonId }) 
       (snapshot) => {
         const suggestionsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as KPITaskSuggestion));
         setTaskSuggestions(suggestionsData);
+      },
+      (error) => {
+        console.error('Error listening to KPI task suggestions:', error);
+        setTaskSuggestions([]);
       }
     );
 

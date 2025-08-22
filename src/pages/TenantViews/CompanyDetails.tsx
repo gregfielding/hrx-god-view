@@ -4427,6 +4427,10 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                   <MenuItem value="Service Center">Service Center</MenuItem>
                   <MenuItem value="Showroom">Showroom</MenuItem>
                   <MenuItem value="Storage Facility">Storage Facility</MenuItem>
+                  <MenuItem value="Hotel">Hotel</MenuItem>
+                  <MenuItem value="Medical Clinic">Medical Clinic</MenuItem>
+                  <MenuItem value="Hospital">Hospital</MenuItem>
+                  <MenuItem value="Retirement Home">Retirement Home</MenuItem>
                 </TextField>
               </Grid>
               {company.divisions && company.divisions.length > 0 && (

@@ -59,6 +59,7 @@ import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getE
 import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
+import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -10432,4 +10433,7 @@ export {
   logAssociationAdded,
   logAssociationRemoved
 } from './autoActivityLogger';
+
+// Prospecting Functions
+export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList };
 

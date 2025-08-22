@@ -223,6 +223,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           const filtered = prev.filter(e => e.type !== 'crm_appointment');
           return [...filtered, ...crmEvents];
         });
+      }, (error) => {
+        console.info('📅 CRM appointments not accessible (permission-denied):', error.code);
       });
 
       unsubscribeFunctions.push(unsubscribe);
@@ -300,6 +302,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           const filtered = prev.filter(e => e.type !== 'google_calendar');
           return [...filtered, ...syncedEvents];
         });
+      }, (error) => {
+        console.info('📅 Calendar activities not accessible (permission-denied):', error.code);
       });
 
       unsubscribeFunctions.push(unsubscribe);

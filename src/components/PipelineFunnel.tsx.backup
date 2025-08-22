@@ -1,0 +1,651 @@
+import React from 'react';
+import {
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Tooltip,
+  useTheme,
+  useMediaQuery,
+  ToggleButton,
+  ToggleButtonGroup,
+  Chip,
+  keyframes
+} from '@mui/material';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import SearchIcon from '@mui/icons-material/Search';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import DescriptionIcon from '@mui/icons-material/Description';
+import RateReviewIcon from '@mui/icons-material/RateReview';
+import GavelIcon from '@mui/icons-material/Gavel';
+import HandshakeIcon from '@mui/icons-material/Handshake';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import AccountCircleIcon from '@mui/icons-material/AccountCircle';
+import BlockIcon from '@mui/icons-material/Block';
+
+import { CRM_STAGE_COLORS } from '../utils/crmStageColors';
+
+// Animation keyframes
+const pulseAnimation = keyframes`
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+`;
+
+const flowAnimation = keyframes`
+  0% { transform: translateY(0px); opacity: 0.8; }
+  50% { transform: translateY(-2px); opacity: 1; }
+  100% { transform: translateY(0px); opacity: 0.8; }
+`;
+
+interface Stage {
+  id: string;
+  label: string;
+  count: number;
+  value: number;
+  color: string;
+  gradient: string;
+  icon: React.ReactNode;
+  dropOff?: number;
+}
+
+interface PipelineFunnelProps {
+  deals: any[];
+  onStageClick?: (stage: string) => void;
+  selectedStage?: string;
+}
+
+// Stage configuration with enhanced colors, gradients, and icons
+const getStageConfig = (stageKey: string): { color: string; gradient: string; icon: React.ReactNode } => {
+  const baseColor = CRM_STAGE_COLORS[stageKey]?.hex || '#7f8c8d';
+  
+  const configs: Record<string, { color: string; gradient: string; icon: React.ReactNode }> = {
+    'discovery': {
+      color: '#BBDEFB',
+      gradient: 'linear-gradient(135deg, #BBDEFB 0%, #90CAF9 100%)',
+      icon: <SearchIcon />
+    },
+    'qualification': {
+      color: '#64B5F6',
+      gradient: 'linear-gradient(135deg, #64B5F6 0%, #42A5F5 100%)',
+      icon: <AssignmentIcon />
+    },
+    'scoping': {
+      color: '#1E88E5',
+      gradient: 'linear-gradient(135deg, #1E88E5 0%, #1976D2 100%)',
+      icon: <AssignmentIcon />
+    },
+    'proposalDrafted': {
+      color: '#FFE082',
+      gradient: 'linear-gradient(135deg, #FFE082 0%, #FFD54F 100%)',
+      icon: <DescriptionIcon />
+    },
+    'proposalReview': {
+      color: '#FFA726',
+      gradient: 'linear-gradient(135deg, #FFA726 0%, #FF9800 100%)',
+      icon: <RateReviewIcon />
+    },
+    'negotiation': {
+      color: '#F4511E',
+      gradient: 'linear-gradient(135deg, #F4511E 0%, #E64A19 100%)',
+      icon: <GavelIcon />
+    },
+    'verbalAgreement': {
+      color: '#9CCC65',
+      gradient: 'linear-gradient(135deg, #9CCC65 0%, #8BC34A 100%)',
+      icon: <HandshakeIcon />
+    },
+    'closedWon': {
+      color: '#2E7D32',
+      gradient: 'linear-gradient(135deg, #2E7D32 0%, #1B5E20 100%)',
+      icon: <CheckCircleIcon />
+    },
+    'closedLost': {
+      color: '#E53935',
+      gradient: 'linear-gradient(135deg, #E53935 0%, #D32F2F 100%)',
+      icon: <CancelIcon />
+    },
+    'onboarding': {
+      color: '#BA68C8',
+      gradient: 'linear-gradient(135deg, #BA68C8 0%, #AB47BC 100%)',
+      icon: <PersonAddIcon />
+    },
+    'liveAccount': {
+      color: '#4527A0',
+      gradient: 'linear-gradient(135deg, #4527A0 0%, #311B92 100%)',
+      icon: <AccountCircleIcon />
+    },
+    'dormant': {
+      color: '#424242',
+      gradient: 'linear-gradient(135deg, #424242 0%, #212121 100%)',
+      icon: <BlockIcon />
+    }
+  };
+  
+  return configs[stageKey] || {
+    color: baseColor,
+    gradient: `linear-gradient(135deg, ${baseColor} 0%, ${baseColor} 100%)`,
+    icon: <AssignmentIcon />
+  };
+};
+
+const PipelineFunnel: React.FC<PipelineFunnelProps> = ({ 
+  deals, 
+  onStageClick, 
+  selectedStage 
+}) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const [viewMode, setViewMode] = React.useState<'count' | 'value'>('count');
+
+  // Helper function to extract deal value, using high end of ranges
+  const getDealValue = (deal: any): number => {
+    // First check if we have qualification stage data for calculated ranges
+    if (deal.stageData?.qualification) {
+      const qualData = deal.stageData.qualification;
+      const payRate = qualData.expectedAveragePayRate || 16;
+      const markup = qualData.expectedAverageMarkup || 40;
+      const timeline = qualData.staffPlacementTimeline;
+
+      if (timeline) {
+        // Calculate bill rate: pay rate + markup
+        const billRate = payRate * (1 + markup / 100);
+        
+        // Annual hours per employee (2080 full-time hours)
+        const annualHoursPerEmployee = 2080;
+        
+        // Calculate annual revenue per employee
+        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+        
+        // Get starting and 180-day numbers
+        const startingCount = timeline.starting || 0;
+        const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+        
+        if (startingCount > 0 || after180DaysCount > 0) {
+          // Use the high end of the range (after180DaysCount)
+          return annualRevenuePerEmployee * after180DaysCount;
+        }
+      }
+    }
+
+    // Check for estimatedRevenue field
+    if (deal.estimatedRevenue) {
+      const value = deal.estimatedRevenue;
+      
+      // If it's a string that looks like a range (e.g., "$87,360 - $218,400")
+      if (typeof value === 'string' && value.includes('-')) {
+        const match = value.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/);
+        if (match) {
+          const high = parseInt(match[2].replace(/,/g, ''));
+          return high;
+        }
+      }
+      
+      // If it's a simple number
+      const numericValue = Number(value);
+      if (!isNaN(numericValue)) {
+        return numericValue;
+      }
+    }
+
+    // Check for expectedAnnualRevenueRange field
+    if (deal.expectedAnnualRevenueRange) {
+      const range = deal.expectedAnnualRevenueRange;
+      if (typeof range === 'string' && range.includes('-')) {
+        const match = range.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/);
+        if (match) {
+          const high = parseInt(match[2].replace(/,/g, ''));
+          return high;
+        }
+      }
+    }
+
+    return 0;
+  };
+
+  // Calculate stage data with enhanced styling
+  const calculateStageData = (): Stage[] => {
+    const stageMap = new Map<string, { count: number; value: number }>();
+    
+    // Group deals by stage
+    deals.forEach(deal => {
+      const stage = deal.stage || 'qualification';
+      const value = getDealValue(deal);
+      
+      if (!stageMap.has(stage)) {
+        stageMap.set(stage, { count: 0, value: 0 });
+      }
+      
+      const current = stageMap.get(stage)!;
+      current.count += 1;
+      current.value += value;
+    });
+
+    // Convert to array and sort by typical pipeline order
+    const stageOrder = [
+      'discovery',
+      'qualification', 
+      'scoping',
+      'proposalDrafted',
+      'proposalReview',
+      'negotiation',
+      'verbalAgreement',
+      'closedWon',
+      'closedLost',
+      'onboarding',
+      'liveAccount',
+      'dormant'
+    ];
+
+    const stages: Stage[] = [];
+    let previousCount = 0;
+
+    stageOrder.forEach(stageKey => {
+      const stageData = stageMap.get(stageKey);
+      if (stageData && stageData.count > 0) {
+        const config = getStageConfig(stageKey);
+        const dropOff = previousCount > 0 ? 
+          Math.round(((previousCount - stageData.count) / previousCount) * 100) : 0;
+        
+        stages.push({
+          id: stageKey,
+          label: stageKey.charAt(0).toUpperCase() + stageKey.slice(1).replace(/([A-Z])/g, ' $1'),
+          count: stageData.count,
+          value: stageData.value,
+          color: config.color,
+          gradient: config.gradient,
+          icon: config.icon,
+          dropOff
+        });
+        
+        previousCount = stageData.count;
+      }
+    });
+
+    return stages;
+  };
+
+  const stages = calculateStageData();
+  const maxCount = Math.max(...stages.map(s => s.count), 1);
+  const maxValue = Math.max(...stages.map(s => s.value), 1);
+
+  const formatCurrency = (value: number) => {
+    if (value >= 1000000) {
+      return `$${(value / 1000000).toFixed(1)}M`;
+    } else if (value >= 1000) {
+      return `$${(value / 1000).toFixed(0)}K`;
+    } else {
+      return `$${value.toLocaleString()}`;
+    }
+  };
+
+  // Calculate dynamic height based on view mode
+  const getBarHeight = (stage: Stage) => {
+    const metric = viewMode === 'count' ? stage.count : stage.value;
+    const maxMetric = viewMode === 'count' ? maxCount : maxValue;
+    const maxHeight = 280; // Maximum height in pixels
+    const minHeight = 60; // Minimum height for visibility
+    
+    // Calculate height as percentage of max, with 120% of max as the ceiling
+    const heightPercent = (metric / (maxMetric * 1.2)) * 100;
+    const height = Math.max(Math.min((heightPercent / 100) * maxHeight, maxHeight), minHeight);
+    
+    return height;
+  };
+
+  const renderMobileFunnel = () => (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {stages.map((stage, index) => {
+        const isSelected = selectedStage === stage.id;
+        const height = getBarHeight(stage);
+        
+        return (
+          <Tooltip
+            key={stage.id}
+            title={
+              <Box>
+                <Typography variant="body2" fontWeight="bold">
+                  {stage.label}
+                </Typography>
+                <Typography variant="body2">
+                  {stage.count} Deals
+                </Typography>
+                <Typography variant="body2">
+                  {formatCurrency(stage.value)}
+                </Typography>
+                {stage.dropOff !== undefined && stage.dropOff > 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    ↓{stage.dropOff}% from previous stage
+                  </Typography>
+                )}
+              </Box>
+            }
+            arrow
+          >
+            <Card
+              sx={{
+                cursor: onStageClick ? 'pointer' : 'default',
+                border: isSelected ? `2px solid ${theme.palette.primary.main}` : 'none',
+                background: stage.gradient,
+                color: '#FFFFFF',
+                transition: 'all 0.3s ease-in-out',
+                borderRadius: 2,
+                boxShadow: theme.shadows[2],
+                animation: `${pulseAnimation} 3s ease-in-out infinite`,
+                '&:hover': {
+                  transform: 'translateX(4px) scale(1.02)',
+                  boxShadow: theme.shadows[8],
+                  animation: 'none'
+                }
+              }}
+              onClick={() => onStageClick?.(stage.id)}
+            >
+              <CardContent sx={{ p: 2, pb: '16px !important' }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      width: 32,
+                      height: 32,
+                      borderRadius: '50%',
+                      backgroundColor: 'rgba(255,255,255,0.2)',
+                      backdropFilter: 'blur(10px)'
+                    }}>
+                      {React.cloneElement(stage.icon as React.ReactElement, { 
+                        sx: { fontSize: 18, color: '#FFFFFF' } 
+                      })}
+                    </Box>
+                    <Box>
+                      <Typography variant="h6" fontWeight="bold" sx={{ mb: 0.5 }}>
+                        {stage.label}
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.9, fontWeight: 'bold' }}>
+                        {stage.count} Deals
+                      </Typography>
+                      <Typography variant="body2" sx={{ opacity: 0.9, fontWeight: 'bold' }}>
+                        {formatCurrency(stage.value)}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ textAlign: 'right' }}>
+                    {stage.dropOff !== undefined && stage.dropOff > 0 && (
+                      <Typography 
+                        variant="caption" 
+                        sx={{ 
+                          opacity: 0.8,
+                          display: 'block',
+                          mb: 0.5,
+                          fontStyle: 'italic',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        ↓{stage.dropOff}% from previous
+                      </Typography>
+                    )}
+                    <Typography variant="h6" fontWeight="bold">
+                      {Math.round(widthPercent)}%
+                    </Typography>
+                  </Box>
+                </Box>
+                
+                {/* Progress bar with funnel shape */}
+                <Box 
+                  sx={{ 
+                    mt: 1,
+                    height: 6,
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                    position: 'relative'
+                  }}
+                >
+                                  <Box
+                  sx={{
+                    height: `${height}px`,
+                    width: '100%',
+                    background: 'linear-gradient(90deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.7) 100%)',
+                    transition: 'height 0.3s ease-in-out',
+                    borderRadius: 3
+                  }}
+                />
+                </Box>
+              </CardContent>
+            </Card>
+          </Tooltip>
+        );
+      })}
+    </Box>
+  );
+
+  const renderDesktopFunnel = () => (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: 300 }}>
+      {/* Y-axis label and max value */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, px: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+          {viewMode === 'count' ? 'Number of Deals' : 'Deal Value ($)'}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          Max: {viewMode === 'count' ? maxCount : formatCurrency(maxValue)}
+        </Typography>
+      </Box>
+      
+      {/* Funnel bars */}
+      <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1, flex: 1, position: 'relative' }}>
+      {stages.map((stage, index) => {
+        const height = getBarHeight(stage);
+        const isSelected = selectedStage === stage.id;
+        
+        return (
+          <Tooltip
+            key={stage.id}
+            title={
+              <Box>
+                <Typography variant="body2" fontWeight="bold">
+                  {stage.label}
+                </Typography>
+                <Typography variant="body2">
+                  {stage.count} Deals
+                </Typography>
+                <Typography variant="body2">
+                  {formatCurrency(stage.value)}
+                </Typography>
+                {stage.dropOff !== undefined && stage.dropOff > 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    ↓{stage.dropOff}% from previous stage
+                  </Typography>
+                )}
+              </Box>
+            }
+            arrow
+          >
+            <Box
+              sx={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                cursor: onStageClick ? 'pointer' : 'default',
+                transition: 'all 0.3s ease-in-out',
+                '&:hover': {
+                  transform: 'translateY(-8px) scale(1.05)',
+                  zIndex: 10
+                }
+              }}
+              onClick={() => onStageClick?.(stage.id)}
+            >
+              {/* Funnel bar with enhanced styling */}
+              <Box
+                sx={{
+                  width: '100%',
+                  height: `${height}px`,
+                  background: stage.gradient,
+                  borderRadius: '12px 12px 0 0',
+                  border: isSelected ? `3px solid ${theme.palette.primary.main}` : 'none',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'flex-end',
+                  p: 1,
+                  minHeight: 60,
+                  minWidth: 100,
+                  position: 'relative',
+                  boxShadow: theme.shadows[4],
+                  animation: `${pulseAnimation} 4s ease-in-out infinite`,
+                  animationDelay: `${index * 0.3}s`,
+                  '&:hover': {
+                    animation: 'none',
+                    boxShadow: theme.shadows[12]
+                  }
+                }}
+              >
+                {/* Stage icon */}
+                <Box sx={{ 
+                  position: 'absolute', 
+                  top: 8, 
+                  left: '50%', 
+                  transform: 'translateX(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 24,
+                  height: 24,
+                  borderRadius: '50%',
+                  backgroundColor: 'rgba(255,255,255,0.2)',
+                  backdropFilter: 'blur(10px)'
+                }}>
+                  {React.cloneElement(stage.icon as React.ReactElement, { 
+                    sx: { fontSize: 14, color: '#FFFFFF' } 
+                  })}
+                </Box>
+                
+                <Typography 
+                  variant="caption" 
+                  sx={{ 
+                    color: '#FFFFFF',
+                    fontWeight: 'bold',
+                    textAlign: 'center',
+                    fontSize: '0.8rem',
+                    mb: 0.5
+                  }}
+                >
+                  {stage.count}
+                </Typography>
+                <Typography 
+                  variant="caption" 
+                  sx={{ 
+                    color: '#FFFFFF',
+                    textAlign: 'center',
+                    fontSize: '0.7rem',
+                    opacity: 0.9,
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {formatCurrency(stage.value)}
+                </Typography>
+                {stage.dropOff !== undefined && stage.dropOff > 0 && (
+                  <Typography 
+                    variant="caption" 
+                    sx={{ 
+                      color: '#FFFFFF',
+                      textAlign: 'center',
+                      fontSize: '0.6rem',
+                      opacity: 0.8,
+                      fontStyle: 'italic',
+                      fontWeight: 'bold'
+                    }}
+                  >
+                    ↓{stage.dropOff}%
+                  </Typography>
+                )}
+              </Box>
+              
+              {/* Stage label */}
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  mt: 1,
+                  textAlign: 'center',
+                  fontWeight: 'bold',
+                  fontSize: '0.8rem',
+                  color: 'text.secondary'
+                }}
+              >
+                {stage.label}
+              </Typography>
+            </Box>
+          </Tooltip>
+        );
+      })}
+    </Box>
+  );
+
+  if (stages.length === 0) {
+    return (
+      <Card sx={{ p: 3, textAlign: 'center' }}>
+        <Typography variant="h6" color="text.secondary">
+          No deals found in pipeline
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Create your first opportunity to see the funnel visualization
+        </Typography>
+      </Card>
+    );
+  }
+
+  return (
+    <Card sx={{ p: 2, borderRadius: 2, boxShadow: theme.shadows[2] }}>
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="h6" fontWeight="bold">
+            Pipeline Funnel
+          </Typography>
+          
+          {/* View Mode Toggle */}
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={(e, newMode) => newMode && setViewMode(newMode)}
+            size="small"
+            sx={{ 
+              '& .MuiToggleButton-root': {
+                fontSize: '0.75rem',
+                px: 1.5
+              }
+            }}
+          >
+            <ToggleButton value="count">Count</ToggleButton>
+            <ToggleButton value="value">Value</ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+        
+        <Typography variant="body2" color="text.secondary">
+          {deals.length} total deals • {formatCurrency(stages.reduce((sum, s) => sum + s.value, 0))} total value
+        </Typography>
+        
+        {/* View Mode Indicator */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            Viewing by: <strong>{viewMode === 'count' ? 'Deal Count' : 'Deal Value'}</strong>
+          </Typography>
+          {onStageClick && (
+            <Chip 
+              icon={<FilterListIcon />} 
+              label="Click stages to filter" 
+              size="small" 
+              variant="outlined"
+              sx={{ fontSize: '0.7rem' }}
+            />
+          )}
+        </Box>
+      </Box>
+      
+      {isMobile ? renderMobileFunnel() : renderDesktopFunnel()}
+    </Card>
+  );
+};
+
+export default PipelineFunnel; 

@@ -2,6 +2,27 @@ import * as admin from 'firebase-admin';
 
 const db = admin.firestore();
 
+// Recursively remove undefined values from objects/arrays to satisfy Firestore rules
+function sanitizeForFirestore(input: any): any {
+  if (input === undefined) return undefined; // caller should delete keys with undefined
+  if (input === null) return null;
+  if (Array.isArray(input)) {
+    return input.map((item) => sanitizeForFirestore(item)).filter((v) => v !== undefined);
+  }
+  if (typeof input === 'object') {
+    // Do not attempt to sanitize Firestore FieldValue sentinels
+    const isFieldValue = typeof (input as any)._methodName === 'string' && (input as any)._methodName.length > 0;
+    if (isFieldValue) return input;
+    const out: any = {};
+    Object.keys(input).forEach((key) => {
+      const val = sanitizeForFirestore((input as any)[key]);
+      if (val !== undefined) out[key] = val;
+    });
+    return out;
+  }
+  return input;
+}
+
 /**
  * AI Logging Utility - Creates AI logs for processing by the AI engine
  * This function is used by various AI engines to log their activities
@@ -36,7 +57,7 @@ export const logAIAction = async (logData: {
   try {
     const logId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const aiLogData = {
+    const aiLogDataRaw = {
       eventType: logData.eventType,
       targetType: logData.targetType,
       targetId: logData.targetId,
@@ -71,6 +92,9 @@ export const logAIAction = async (logData: {
       cacheHit: logData.cacheHit ?? false,
       requestId: logData.requestId || ''
     };
+
+    // Sanitize to remove undefined values while preserving serverTimestamp sentinel
+    const aiLogData = sanitizeForFirestore(aiLogDataRaw);
 
     await db.collection('ai_logs').doc(logId).set(aiLogData);
     

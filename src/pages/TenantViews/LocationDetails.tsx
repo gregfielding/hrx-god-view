@@ -1377,6 +1377,10 @@ const LocationDetails: React.FC = () => {
                       <MenuItem value="Service Center">Service Center</MenuItem>
                       <MenuItem value="Showroom">Showroom</MenuItem>
                       <MenuItem value="Storage Facility">Storage Facility</MenuItem>
+                      <MenuItem value="Hotel">Hotel</MenuItem>
+                      <MenuItem value="Medical Clinic">Medical Clinic</MenuItem>
+                      <MenuItem value="Hospital">Hospital</MenuItem>
+                      <MenuItem value="Retirement Home">Retirement Home</MenuItem>
                     </Select>
                   </FormControl>
                   

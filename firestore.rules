@@ -342,6 +342,36 @@ service cloud.firestore {
         allow read, write, create, update, delete: if isAuthenticated() && isHighSecurityLevel(); // Admin override
       }
       
+      // --- PROSPECTING COLLECTIONS ---
+      match /prospecting_runs/{runId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.createdByUid == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.createdByUid == request.auth.uid || isTenantAdmin(tenantId));
+        // Allow Cloud Functions to write (they use admin SDK)
+        allow write: if false; // Cloud Functions use admin SDK, so they bypass security rules
+      }
+      
+      match /prospecting_saved_searches/{searchId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.createdByUid == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.createdByUid == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
+      match /email_templates/{templateId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow update: if isAuthenticated() && (resource.data.ownerUid == request.auth.uid || isTenantAdmin(tenantId));
+        allow delete: if isAuthenticated() && (resource.data.ownerUid == request.auth.uid || isTenantAdmin(tenantId));
+      }
+      
       // Tasks collection (for task management system)
       match /tasks/{taskId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -951,13 +981,6 @@ service cloud.firestore {
     function isHighSecurityLevel() {
       let user = getUser();
       return user.securityLevel == "6" || user.securityLevel == "7";
-    }
-    // AI chat threads
-    match /ai_chats/{threadId} {
-      allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
-      match /messages/{messageId} {
-        allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
-      }
     }
   }
 }

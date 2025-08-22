@@ -1,5 +1,4 @@
 import * as admin from 'firebase-admin';
-import { defineSecret } from 'firebase-functions/params';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -66,12 +65,11 @@ export async function getClearbitKey(tenantId?: string): Promise<string | undefi
 
 // Apollo key resolver
 export async function getApolloKey(tenantId?: string): Promise<string | undefined> {
-  // Prefer Cloud Functions Secret first (APOLLO_API_KEY)
-  const APOLLO = defineSecret('APOLLO_API_KEY');
-  const secretVal = (APOLLO.value() as string | undefined) || process.env.APOLLO_API_KEY;
-  if (secretVal) {
+  // Prefer environment variable first (set via Functions config or .env)
+  const envVal = process.env.APOLLO_API_KEY as string | undefined;
+  if (envVal) {
     // Sanitize to avoid illegal header characters (remove whitespace and any non ASCII token chars)
-    const cleaned = String(secretVal)
+    const cleaned = String(envVal)
       .replace(/[\r\n\t ]+/g, '')
       .replace(/[^A-Za-z0-9_.-]/g, '');
     return cleaned;

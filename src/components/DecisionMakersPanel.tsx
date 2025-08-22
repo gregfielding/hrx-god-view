@@ -30,7 +30,7 @@ import { functions , db } from '../firebase';
 interface DecisionMaker {
   name: string;
   title: string;
-  linkedInUrl: string;
+  linkedinUrl: string; // Changed from linkedInUrl to match API response
   snippet: string;
   relevance: number;
 }
@@ -67,6 +67,15 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
       const data = result.data as { success: boolean; decisionMakers: DecisionMaker[]; totalFound: number; message?: string };
       
       if (data.success) {
+        console.log('Decision makers data received:', data.decisionMakers);
+        // Debug: Log LinkedIn URLs
+        data.decisionMakers?.forEach((dm: DecisionMaker, index: number) => {
+          console.log(`Decision Maker ${index + 1}:`, {
+            name: dm.name,
+            linkedinUrl: dm.linkedinUrl,
+            hasLinkedInUrl: !!dm.linkedinUrl
+          });
+        });
         setDecisionMakers(data.decisionMakers || []);
         setLastUpdated(new Date());
       } else {
@@ -96,6 +105,15 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         const data = await resp.json();
         
         if (data.success) {
+          console.log('Decision makers data received (HTTP):', data.decisionMakers);
+          // Debug: Log LinkedIn URLs
+                  data.decisionMakers?.forEach((dm: DecisionMaker, index: number) => {
+          console.log(`Decision Maker ${index + 1} (HTTP):`, {
+            name: dm.name,
+            linkedinUrl: dm.linkedinUrl,
+            hasLinkedInUrl: !!dm.linkedinUrl
+          });
+        });
           setDecisionMakers(data.decisionMakers || []);
           setLastUpdated(new Date());
         } else {
@@ -155,7 +173,7 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         title: decisionMaker.title, // Also save as title for compatibility
         companyId: companyId,
         companyName: companyName,
-        linkedInUrl: decisionMaker.linkedInUrl,
+        linkedInUrl: decisionMaker.linkedinUrl,
         email: extractedEmail, // Save extracted email if found
         phone: extractedPhone, // Save extracted phone if found
         workPhone: extractedPhone, // Also save as workPhone for compatibility
@@ -167,7 +185,7 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
 
 Relevance Score: ${decisionMaker.relevance}%
 Title: ${decisionMaker.title}
-LinkedIn: ${decisionMaker.linkedInUrl}
+LinkedIn: ${decisionMaker.linkedinUrl}
 Snippet: ${decisionMaker.snippet}
 
 Generated on: ${new Date().toLocaleString()}`,
@@ -211,7 +229,7 @@ Generated on: ${new Date().toLocaleString()}`,
       console.log('📋 Contact data saved:', {
         name: decisionMaker.name,
         title: decisionMaker.title,
-        linkedInUrl: decisionMaker.linkedInUrl,
+        linkedInUrl: decisionMaker.linkedinUrl,
         email: extractedEmail || 'Not found in snippet',
         phone: extractedPhone || 'Not found in snippet',
         relevance: decisionMaker.relevance
@@ -346,13 +364,22 @@ Generated on: ${new Date().toLocaleString()}`,
                     
                     return (
                       <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Chip
-                          label="LinkedIn"
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                          icon={<LinkedInIcon />}
-                        />
+                        {decisionMaker.linkedinUrl ? (
+                          <Chip
+                            label="LinkedIn"
+                            size="small"
+                            color="primary"
+                            variant="outlined"
+                            icon={<LinkedInIcon />}
+                          />
+                        ) : (
+                          <Chip
+                            label="No LinkedIn"
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                          />
+                        )}
                         {emailMatch && (
                           <Chip
                             label="Email Found"
@@ -386,7 +413,21 @@ Generated on: ${new Date().toLocaleString()}`,
                       size="small"
                       variant="outlined"
                       startIcon={<OpenInNewIcon />}
-                      onClick={() => window.open(decisionMaker.linkedInUrl, '_blank')}
+                      onClick={() => {
+                        if (decisionMaker.linkedinUrl) {
+                          // Ensure the URL has the proper protocol
+                          let url = decisionMaker.linkedinUrl;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          console.log('Opening LinkedIn URL:', url);
+                          window.open(url, '_blank', 'noopener,noreferrer');
+                        } else {
+                          console.error('No LinkedIn URL available for:', decisionMaker.name);
+                          setErrorMessage(`No LinkedIn URL available for ${decisionMaker.name}`);
+                        }
+                      }}
+                      disabled={!decisionMaker.linkedinUrl}
                     >
                       View Profile
                     </Button>
