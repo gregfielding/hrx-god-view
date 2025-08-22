@@ -217,72 +217,19 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const chartData = React.useMemo(() => {
     console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
     console.log('PipelineBubbleChart: Available stages:', stages);
-    console.log('PipelineBubbleChart: Testing stage colors:');
-    stages.forEach((stage, index) => {
-      console.log(`  Stage ${index + 1}: "${stage}" -> Color: ${getStageColor(stage)}`);
-    });
-    
-    // Use the actual stages passed from the parent component
-    // Distribute deals evenly across all available stages
-    const totalDeals = deals.length;
-    const stagesCount = stages.length;
-    const dealsPerStage = Math.floor(totalDeals / stagesCount);
-    const extraDeals = totalDeals % stagesCount;
-    
-    const stageDistribution = stages.map((stageName, index) => ({
-      name: stageName,
-      count: dealsPerStage + (index < extraDeals ? 1 : 0)
-    }));
-    
-    console.log('PipelineBubbleChart: Dynamic distribution based on actual stages:', stageDistribution);
-    
-    console.log('PipelineBubbleChart: Target distribution:', stageDistribution);
-    
-    // Create array of stage assignments based on distribution
-    const stageAssignments: number[] = [];
-    stageDistribution.forEach((stage, index) => {
-      const stageIndex = index + 1; // Stages are 1-indexed
-      for (let i = 0; i < stage.count; i++) {
-        stageAssignments.push(stageIndex);
-      }
-    });
-    
-    console.log('PipelineBubbleChart: Stage assignments array:', stageAssignments);
-    console.log('PipelineBubbleChart: Total assignments:', stageAssignments.length);
     
     const transformedData = deals.map((deal, dealIndex) => {
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
       
-      // Determine color based on mode
-      let color: string;
-      switch (colorMode) {
-        case 'stage': {
-          // Use the stage we're assigning to, not the original deal stage
-          const assignedStageIndex = stageAssignments[dealIndex % stageAssignments.length] - 1;
-          const assignedStageName = stages[assignedStageIndex] || 'Discovery';
-          color = getStageColor(assignedStageName);
-          break;
-        }
-        case 'owner':
-          color = ownerColor(deal.owner);
-          break;
-        case 'health':
-          color = healthColor(probability);
-          break;
-        default: {
-          const defaultStageIndex = stageAssignments[dealIndex % stageAssignments.length] - 1;
-          const defaultStageName = stages[defaultStageIndex] || 'Discovery';
-          color = getStageColor(defaultStageName);
-        }
-      }
-
-      // Assign stage based on position in deals array and distribution
-      const stageIdx = stageAssignments[dealIndex % stageAssignments.length];
-      const assignedStageName = stages[stageIdx - 1] || 'Unknown';
+      // Simple distribution: spread deals evenly across stages
+      const stageIdx = (dealIndex % stages.length) + 1;
+      const assignedStageName = stages[stageIdx - 1] || stages[0] || 'Unknown';
+      
+      // Get color for the assigned stage
+      const color = getStageColor(assignedStageName);
       
       console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}" -> Stage ${stageIdx} (${assignedStageName}) -> Color: ${color}`);
-      console.log(`PipelineBubbleChart: getStageColor("${assignedStageName}") returns:`, getStageColor(assignedStageName));
 
       return {
         id: deal.id,
@@ -300,14 +247,11 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       };
     });
     
-    // Log final distribution
-    const finalDistribution = transformedData.reduce((acc, item) => {
+    console.log('PipelineBubbleChart: Final chart data:', transformedData.length, 'items');
+    console.log('PipelineBubbleChart: Stage distribution:', transformedData.reduce((acc, item) => {
       acc[item.stageIdx] = (acc[item.stageIdx] || 0) + 1;
       return acc;
-    }, {} as Record<number, number>);
-    
-    console.log('PipelineBubbleChart: Final stage distribution:', finalDistribution);
-    console.log('PipelineBubbleChart: Final chart data:', transformedData.length, 'items');
+    }, {} as Record<number, number>));
     
     return transformedData;
   }, [deals, stages, colorMode]);
