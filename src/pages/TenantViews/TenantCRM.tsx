@@ -5652,7 +5652,7 @@ const PipelineTab: React.FC<{
   // Stage selection disabled - chart should not filter by stage clicks
   const [filteredDeals, setFilteredDeals] = React.useState<any[]>(deals);
   const [viewMode, setViewMode] = React.useState<'funnel' | 'bubble'>('funnel');
-  const [bubbleColorMode, setBubbleColorMode] = React.useState<'owner' | 'health'>('owner');
+  const [bubbleColorMode, setBubbleColorMode] = React.useState<'stage' | 'owner' | 'health'>('stage');
   
   // Column visibility state
   const [visibleColumns, setVisibleColumns] = React.useState<string[]>([
@@ -5898,6 +5898,7 @@ const PipelineTab: React.FC<{
 
           {viewMode === 'bubble' && (
             <ToggleButtonGroup size="small" exclusive value={bubbleColorMode} onChange={(e, v) => v && setBubbleColorMode(v)}>
+              <ToggleButton value="stage">Color: Stage</ToggleButton>
               <ToggleButton value="owner">Color: Owner</ToggleButton>
               <ToggleButton value="health">Color: AI Health</ToggleButton>
             </ToggleButtonGroup>
@@ -5976,16 +5977,23 @@ const PipelineTab: React.FC<{
           />
         ) : (
           <PipelineBubbleChart
-            deals={deals}
+            deals={deals.map((deal: any) => {
+              const primaryId = getDealPrimaryCompanyId(deal);
+              const company = companies.find((c: any) => c.id === primaryId);
+              return {
+                ...deal,
+                companyName: company?.companyName || company?.name || '',
+                aiHealth: getDealHealth(deal)
+              };
+            })}
             stages={pipelineStages.map((s: any) => s.name)}
             owners={[...new Set((deals || []).map((d: any) => d.owner))]
               .filter(Boolean)
               .map((id: string) => ({ id, name: id }))}
             colorMode={bubbleColorMode}
             onDealClick={(dealId) => {
-              // Future: open sidebar; for now we just filter to the deal's stage
-              const deal = deals.find((d: any) => d.id === dealId);
-              if (deal?.stage) handleStageClick(deal.stage);
+              // Navigate to deal details
+              navigate(`/crm/deals/${dealId}`);
             }}
           />
         )}
