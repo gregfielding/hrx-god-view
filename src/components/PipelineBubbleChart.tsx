@@ -231,7 +231,6 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     
     let currentStageIndex = 1;
     let dealsInCurrentStage = 0;
-    const maxDealsInStage = stageDistribution[stages[currentStageIndex - 1] || 'Discovery'] || 1;
     
     const transformedData = deals.map((deal) => {
       console.log('PipelineBubbleChart: Deal stage:', deal.stage, 'Stage index:', stageIndexMap[deal.stage]);
@@ -254,11 +253,14 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           color = getStageColor(deal.stage);
       }
 
-      // Simple stage distribution based on funnel chart data
-      const stageIdx = currentStageIndex;
-      const mappingMethod = 'funnel_distribution';
+      // Get current stage name and max deals for this stage
+      const currentStageName = stages[currentStageIndex - 1];
+      const maxDealsInStage = stageDistribution[currentStageName] || 1;
       
-      console.log(`PipelineBubbleChart: Processing deal "${deal.name}" with stage "${deal.stage}" - assigning to stage ${stageIdx} (${stages[stageIdx - 1] || 'unknown'})`);
+      // Assign deal to current stage
+      const stageIdx = currentStageIndex;
+      
+      console.log(`PipelineBubbleChart: Processing deal "${deal.name}" with stage "${deal.stage}" - assigning to stage ${stageIdx} (${currentStageName})`);
       
       // Move to next stage if we've filled the current stage
       dealsInCurrentStage++;
