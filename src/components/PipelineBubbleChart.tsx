@@ -102,9 +102,9 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const [sizeMode, setSizeMode] = React.useState<'value' | 'uniform'>('value');
 
   // Create stage index mapping for X-axis
-  // Define stage variations for mapping - expanded to handle more variations
+  // Define stage variations for mapping - comprehensive mapping for all possible stage names
   const stageVariations: Record<string, string> = {
-    // Exact matches
+    // Exact matches with funnel chart stages
     'discovery': 'Discovery',
     'qualification': 'Qualification', 
     'scoping': 'Scoping',
@@ -114,36 +114,77 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     'onboarding': 'Onboarding',
     'dormant': 'Dormant',
     
-    // Common variations
-    'proposal': 'Proposal Drafted',
-    'closed won': 'Onboarding',
-    'closed lost': 'Dormant',
+    // Discovery stage variations
     'new': 'Discovery',
+    'lead': 'Discovery',
+    'leads': 'Discovery',
+    'new lead': 'Discovery',
+    'prospect': 'Discovery',
+    'prospecting': 'Discovery',
+    'initial': 'Discovery',
+    'contact': 'Discovery',
+    'first contact': 'Discovery',
+    'initial contact': 'Discovery',
+    
+    // Qualification stage variations
     'qualified': 'Qualification',
     'qualifying': 'Qualification',
-    'scope': 'Scoping',
-    'review': 'Proposal Review',
-    'negotiating': 'Negotiation',
-    'onboard': 'Onboarding',
-    'closed': 'Onboarding',
-    'lost': 'Dormant',
-    'won': 'Onboarding',
-    
-    // FreshSales variations
-    'lead': 'Discovery',
+    'qualify': 'Qualification',
+    'meeting': 'Qualification',
+    'meeting scheduled': 'Qualification',
+    'demo': 'Qualification',
+    'presentation': 'Qualification',
     'opportunity': 'Qualification',
+    
+    // Scoping stage variations
+    'scope': 'Scoping',
+    'analysis': 'Scoping',
+    'needs': 'Scoping',
+    'needs analysis': 'Scoping',
+    'requirements': 'Scoping',
+    'solution': 'Scoping',
+    
+    // Proposal Drafted stage variations
+    'proposal': 'Proposal Drafted',
     'proposal sent': 'Proposal Drafted',
     'proposal submitted': 'Proposal Drafted',
+    'draft': 'Proposal Drafted',
+    'drafted': 'Proposal Drafted',
+    'quote': 'Proposal Drafted',
+    'quoted': 'Proposal Drafted',
+    'sent': 'Proposal Drafted',
+    'submitted': 'Proposal Drafted',
+    
+    // Proposal Review stage variations
+    'review': 'Proposal Review',
+    'reviewing': 'Proposal Review',
+    'pending': 'Proposal Review',
+    
+    // Negotiation stage variations
+    'negotiating': 'Negotiation',
+    'negotiate': 'Negotiation',
+    'contract': 'Negotiation',
+    'contract sent': 'Negotiation',
+    'legal': 'Negotiation',
     'in negotiation': 'Negotiation',
     
-    // Additional variations that might exist in the data
-    'prospecting': 'Discovery',
-    'initial contact': 'Discovery',
-    'meeting scheduled': 'Qualification',
-    'needs analysis': 'Scoping',
-    'contract sent': 'Negotiation',
+    // Onboarding stage variations
+    'onboard': 'Onboarding',
+    'close': 'Onboarding',
+    'closing': 'Onboarding',
+    'won': 'Onboarding',
+    'closed': 'Onboarding',
+    'closed won': 'Onboarding',
+    'signed': 'Onboarding',
+    'implementation': 'Onboarding',
+    
+    // Dormant stage variations
+    'lost': 'Dormant',
+    'closed lost': 'Dormant',
     'dead': 'Dormant',
-    'disqualified': 'Dormant'
+    'disqualified': 'Dormant',
+    'no opportunity': 'Dormant',
+    'not interested': 'Dormant'
   };
 
   const stageIndexMap = React.useMemo(() => {
@@ -473,6 +514,10 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
               domain={[0.5, stages.length + 0.5]}
               axisLine={true}
               tickLine={true}
+              label={{ value: 'Stage', position: 'insideBottom', offset: -10 }}
+              angle={-45}
+              textAnchor="end"
+              height={80}
             />
             <YAxis 
               type="number" 
