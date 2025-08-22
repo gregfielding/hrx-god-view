@@ -6069,11 +6069,12 @@ const PipelineTab: React.FC<{
           />
         ) : (
           <PipelineBubbleChart
-            deals={deals.map((deal: any) => {
+            deals={filteredDeals.map((deal: any) => {
               const primaryId = getDealPrimaryCompanyId(deal);
               const company = companies.find((c: any) => c.id === primaryId);
               return {
                 ...deal,
+                estimatedRevenue: getDealValueForPipeline(deal), // Use calculated value
                 companyName: company?.companyName || company?.name || '',
                 aiHealth: getDealHealth(deal)
               };

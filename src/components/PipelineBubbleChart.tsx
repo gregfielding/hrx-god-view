@@ -97,6 +97,10 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
 
   // Transform deals into chart data
   const chartData = React.useMemo(() => {
+    console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
+    console.log('PipelineBubbleChart: Stages:', stages);
+    console.log('PipelineBubbleChart: StageIndexMap:', stageIndexMap);
+    
     return deals.map((deal) => {
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
@@ -121,7 +125,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         id: deal.id,
         name: deal.name,
         stage: deal.stage,
-        stageIdx: stageIndexMap[deal.stage] || 0,
+        stageIdx: stageIndexMap[deal.stage] || 1, // Default to first stage if not found
         probability,
         value,
         owner: deal.owner,
@@ -131,7 +135,10 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         // Calculate bubble size
         size: sizeMode === 'value' ? calculateBubbleSize(value) : 40
       };
-    }).filter(deal => deal.stageIdx > 0); // Only include deals with valid stages
+    }); // Include all deals, don't filter out
+    
+    console.log('PipelineBubbleChart: Final chart data:', chartData.length, 'items');
+    return chartData;
   }, [deals, stageIndexMap, colorMode, sizeMode]);
 
   // Custom tooltip component
