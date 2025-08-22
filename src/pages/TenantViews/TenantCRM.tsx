@@ -5659,6 +5659,10 @@ const PipelineTab: React.FC<{
     'deal', 'company', 'owner', 'stage', 'value', 'probability', 'aiHealth', 'lastActivity'
   ]);
   
+  // Sorting state
+  const [sortBy, setSortBy] = React.useState<string>('deal');
+  const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('asc');
+  
   // Column definitions
   const allColumns = [
     { key: 'deal', label: 'Deal' },
@@ -5734,6 +5738,59 @@ const PipelineTab: React.FC<{
     if (!d) return undefined;
     return d.toDate ? d.toDate() : new Date(d);
   };
+
+  // Sorting helper functions
+  const getSortableValue = (deal: any, field: string) => {
+    switch (field) {
+      case 'deal':
+        return deal.name?.toLowerCase() || '';
+      case 'company': {
+        const cid = getDealPrimaryCompanyId(deal);
+        const company = companies.find((c: any) => c.id === cid);
+        return (company?.companyName || company?.name || '').toLowerCase();
+      }
+      case 'owner':
+        return (deal.owner || '').toLowerCase();
+      case 'stage':
+        return deal.stage?.toLowerCase() || '';
+      case 'value':
+        return toNumber(deal.estimatedRevenue);
+      case 'probability':
+        return getDealProbability(deal);
+      case 'aiHealth': {
+        const health = getDealHealth(deal);
+        return health === 'green' ? 3 : health === 'yellow' ? 2 : 1;
+      }
+      case 'lastActivity': {
+        const date = getDealUpdatedAt(deal);
+        return date ? date.getTime() : 0;
+      }
+      default:
+        return '';
+    }
+  };
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
+  // Sort filtered deals
+  const sortedDeals = React.useMemo(() => {
+    const sorted = [...filteredDeals].sort((a, b) => {
+      const aValue = getSortableValue(a, sortBy);
+      const bValue = getSortableValue(b, sortBy);
+      
+      if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [filteredDeals, sortBy, sortOrder, companies]);
 
   // Apply filters (stage filtering disabled - only salesperson filter affects chart)
   const applyFilters = React.useCallback(() => {
@@ -6059,7 +6116,7 @@ const PipelineTab: React.FC<{
       {/* Enhanced Synchronized Table */}
       <Box sx={{ mt: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography variant="subtitle2" fontWeight={700}>Deals ({filteredDeals.length})</Typography>
+          <Typography variant="subtitle2" fontWeight={700}>Deals ({sortedDeals.length})</Typography>
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             {/* Column visibility toggle */}
             <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -6086,7 +6143,7 @@ const PipelineTab: React.FC<{
               startIcon={<FileDownloadIcon />}
               onClick={() => {
                 const headers = visibleColumns.map(col => allColumns.find(c => c.key === col)?.label || col);
-                const rows = filteredDeals.map((d) => {
+                const rows = sortedDeals.map((d) => {
                   const cid = getDealPrimaryCompanyId(d as any);
                   const c = companies.find((x: any) => x.id === cid);
                   const val = toNumber(d.estimatedRevenue);
@@ -6125,20 +6182,109 @@ const PipelineTab: React.FC<{
         <Table size="small" sx={{ borderRadius: 1, overflow: 'hidden', boxShadow: 1 }}>
           <TableHead>
             <TableRow sx={{ backgroundColor: 'grey.50' }}>
-              {visibleColumns.includes('deal') && <TableCell>Deal</TableCell>}
-              {visibleColumns.includes('company') && <TableCell>Company</TableCell>}
-              {visibleColumns.includes('owner') && <TableCell>Owner</TableCell>}
-              {visibleColumns.includes('stage') && <TableCell>Stage</TableCell>}
-              {visibleColumns.includes('value') && <TableCell align="right">Value</TableCell>}
-              {visibleColumns.includes('valueRange') && <TableCell align="right">Value Range</TableCell>}
-              {visibleColumns.includes('probability') && <TableCell align="right">Probability</TableCell>}
-              {visibleColumns.includes('aiHealth') && <TableCell>AI Health</TableCell>}
-              {visibleColumns.includes('lastActivity') && <TableCell>Last Activity</TableCell>}
-              <TableCell align="center">Actions</TableCell>
+              {visibleColumns.includes('deal') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'deal'}
+                    direction={sortBy === 'deal' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('deal')}
+                  >
+                    Deal
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('company') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'company'}
+                    direction={sortBy === 'company' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('company')}
+                  >
+                    Company
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('owner') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'owner'}
+                    direction={sortBy === 'owner' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('owner')}
+                  >
+                    Owner
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('stage') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'stage'}
+                    direction={sortBy === 'stage' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('stage')}
+                  >
+                    Stage
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('value') && (
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortBy === 'value'}
+                    direction={sortBy === 'value' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('value')}
+                  >
+                    Value
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('valueRange') && (
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortBy === 'valueRange'}
+                    direction={sortBy === 'valueRange' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('valueRange')}
+                  >
+                    Value Range
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('probability') && (
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={sortBy === 'probability'}
+                    direction={sortBy === 'probability' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('probability')}
+                  >
+                    Probability
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('aiHealth') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'aiHealth'}
+                    direction={sortBy === 'aiHealth' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('aiHealth')}
+                  >
+                    AI Health
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('lastActivity') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'lastActivity'}
+                    direction={sortBy === 'lastActivity' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('lastActivity')}
+                  >
+                    Last Activity
+                  </TableSortLabel>
+                </TableCell>
+              )}
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredDeals.map((d) => {
+            {sortedDeals.map((d) => {
               const cid = getDealPrimaryCompanyId(d as any);
               const c = companies.find((x: any) => x.id === cid);
               const health = getDealHealth(d);
@@ -6277,26 +6423,6 @@ const PipelineTab: React.FC<{
                       )}
                     </TableCell>
                   )}
-                  <TableCell align="center">
-                    <Tooltip title="Copy deal info to clipboard">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation(); // Prevent row click when clicking the button
-                          const dealInfo = `Deal: ${d.name}
-Company: ${c?.companyName || c?.name || 'N/A'}
-Owner: ${d.owner || 'Unassigned'}
-Stage: ${d.stage}
-Value: $${toNumber(d.estimatedRevenue).toLocaleString()}
-Probability: ${prob}%
-AI Health: ${health === 'green' ? 'Healthy' : health === 'yellow' ? 'At Risk' : 'Stalled'}`;
-                          navigator.clipboard.writeText(dealInfo);
-                        }}
-                      >
-                        <ContentCopyIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </TableCell>
                 </TableRow>
               );
             })}
