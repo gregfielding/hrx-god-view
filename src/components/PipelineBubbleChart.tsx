@@ -158,9 +158,13 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   // Transform deals into chart data
   const chartData = React.useMemo(() => {
     console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
-    console.log('PipelineBubbleChart: Stages:', stages);
+    console.log('PipelineBubbleChart: Available stages:', stages);
     console.log('PipelineBubbleChart: StageIndexMap:', stageIndexMap);
-    console.log('PipelineBubbleChart: Deal stages:', [...new Set(deals.map(d => d.stage))]);
+    console.log('PipelineBubbleChart: Unique deal stages:', [...new Set(deals.map(d => d.stage))]);
+    console.log('PipelineBubbleChart: Deal stages with counts:', deals.reduce((acc, d) => {
+      acc[d.stage] = (acc[d.stage] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>));
     
     const transformedData = deals.map((deal) => {
       console.log('PipelineBubbleChart: Deal stage:', deal.stage, 'Stage index:', stageIndexMap[deal.stage]);
@@ -183,14 +187,14 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           color = getStageColor(deal.stage);
       }
 
-      // Simplified stage mapping - try direct match first, then fallback to first stage
+      // Enhanced stage mapping with better fallback logic
       let stageIdx = stageIndexMap[deal.stage];
       
-      // If no direct match, try to find the best matching stage
+      // If no direct match, try comprehensive matching
       if (!stageIdx) {
         const dealStageLower = deal.stage.toLowerCase();
         
-        // Try exact match with stages
+        // First, try exact case-insensitive match with stages
         const exactMatch = stages.find(stage => 
           stage.toLowerCase() === dealStageLower
         );
@@ -222,9 +226,33 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           }
         }
         
-        // Final fallback to first stage
+        // If still no match, try to find any stage that contains the deal stage
         if (!stageIdx) {
-          stageIdx = 1;
+          for (const stage of stages) {
+            if (dealStageLower.includes(stage.toLowerCase()) || 
+                stage.toLowerCase().includes(dealStageLower)) {
+              stageIdx = stageIndexMap[stage];
+              break;
+            }
+          }
+        }
+        
+        // If still no match, distribute across stages based on deal properties
+        if (!stageIdx) {
+          // Use deal probability to determine stage - higher probability = later stage
+          if (probability >= 80) {
+            stageIdx = Math.min(stages.length, 7); // Onboarding or later
+          } else if (probability >= 60) {
+            stageIdx = Math.min(stages.length, 6); // Negotiation or later
+          } else if (probability >= 40) {
+            stageIdx = Math.min(stages.length, 5); // Proposal Review or later
+          } else if (probability >= 20) {
+            stageIdx = Math.min(stages.length, 4); // Proposal Drafted or later
+          } else if (probability >= 10) {
+            stageIdx = Math.min(stages.length, 3); // Scoping or later
+          } else {
+            stageIdx = Math.min(stages.length, 2); // Qualification or later
+          }
         }
       }
       
