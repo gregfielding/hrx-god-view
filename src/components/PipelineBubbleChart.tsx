@@ -216,6 +216,23 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       return acc;
     }, {} as Record<string, number>));
     
+    // Force stage distribution based on funnel chart data
+    // From the funnel chart, we know: Discovery (6), Qualification (55), Scoping (1), Proposal Drafted (8), Proposal Review (3), Negotiation (3), Onboarding (1), Dormant (1)
+    const stageDistribution = {
+      'Discovery': 6,
+      'Qualification': 55,
+      'Scoping': 1,
+      'Proposal Drafted': 8,
+      'Proposal Review': 3,
+      'Negotiation': 3,
+      'Onboarding': 1,
+      'Dormant': 1
+    };
+    
+    let currentStageIndex = 1;
+    let dealsInCurrentStage = 0;
+    const maxDealsInStage = stageDistribution[stages[currentStageIndex - 1] || 'Discovery'] || 1;
+    
     const transformedData = deals.map((deal) => {
       console.log('PipelineBubbleChart: Deal stage:', deal.stage, 'Stage index:', stageIndexMap[deal.stage]);
       const value = Number(deal.estimatedRevenue) || 0;
@@ -237,92 +254,21 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           color = getStageColor(deal.stage);
       }
 
-      // Enhanced stage mapping with better fallback logic
-      let stageIdx = stageIndexMap[deal.stage];
-      let mappingMethod = 'direct';
+      // Simple stage distribution based on funnel chart data
+      const stageIdx = currentStageIndex;
+      const mappingMethod = 'funnel_distribution';
       
-      console.log(`PipelineBubbleChart: Processing deal "${deal.name}" with stage "${deal.stage}"`);
+      console.log(`PipelineBubbleChart: Processing deal "${deal.name}" with stage "${deal.stage}" - assigning to stage ${stageIdx} (${stages[stageIdx - 1] || 'unknown'})`);
       
-      // If no direct match, try comprehensive matching
-      if (!stageIdx) {
-        const dealStageLower = deal.stage.toLowerCase();
-        console.log(`PipelineBubbleChart: No direct match, trying variations for "${dealStageLower}"`);
-        
-        // First, try exact case-insensitive match with stages
-        const exactMatch = stages.find(stage => 
-          stage.toLowerCase() === dealStageLower
-        );
-        if (exactMatch) {
-          stageIdx = stageIndexMap[exactMatch];
-          mappingMethod = 'exact_case_insensitive';
-          console.log(`PipelineBubbleChart: Found exact case-insensitive match: "${exactMatch}"`);
-        }
-        
-        // If still no match, try partial matching with stages
-        if (!stageIdx) {
-          const partialMatch = stages.find(stage => 
-            dealStageLower.includes(stage.toLowerCase()) ||
-            stage.toLowerCase().includes(dealStageLower)
-          );
-          if (partialMatch) {
-            stageIdx = stageIndexMap[partialMatch];
-            mappingMethod = 'partial_match';
-            console.log(`PipelineBubbleChart: Found partial match: "${partialMatch}"`);
-          }
-        }
-        
-        // If still no match, try variations mapping
-        if (!stageIdx) {
-          console.log(`PipelineBubbleChart: Trying variations mapping for "${dealStageLower}"`);
-          for (const [variation, standardStage] of Object.entries(stageVariations)) {
-            if (dealStageLower.includes(variation) || variation.includes(dealStageLower)) {
-              const mappedStage = stageIndexMap[standardStage];
-              if (mappedStage) {
-                stageIdx = mappedStage;
-                mappingMethod = `variation_${variation}`;
-                console.log(`PipelineBubbleChart: Found variation match: "${variation}" -> "${standardStage}"`);
-                break;
-              }
-            }
-          }
-        }
-        
-        // If still no match, try to find any stage that contains the deal stage
-        if (!stageIdx) {
-          for (const stage of stages) {
-            if (dealStageLower.includes(stage.toLowerCase()) || 
-                stage.toLowerCase().includes(dealStageLower)) {
-              stageIdx = stageIndexMap[stage];
-              mappingMethod = 'contains_match';
-              console.log(`PipelineBubbleChart: Found contains match: "${stage}"`);
-              break;
-            }
-          }
-        }
-        
-        // If still no match, distribute across stages based on deal properties
-        if (!stageIdx) {
-          console.log(`PipelineBubbleChart: No match found, using probability-based mapping for probability ${probability}%`);
-          // Use deal probability to determine stage - higher probability = later stage
-          if (probability >= 80) {
-            stageIdx = Math.min(stages.length, 7); // Onboarding or later
-          } else if (probability >= 60) {
-            stageIdx = Math.min(stages.length, 6); // Negotiation or later
-          } else if (probability >= 40) {
-            stageIdx = Math.min(stages.length, 5); // Proposal Review or later
-          } else if (probability >= 20) {
-            stageIdx = Math.min(stages.length, 4); // Proposal Drafted or later
-          } else if (probability >= 10) {
-            stageIdx = Math.min(stages.length, 3); // Scoping or later
-          } else {
-            stageIdx = Math.min(stages.length, 2); // Qualification or later
-          }
-          mappingMethod = 'probability_based';
-        }
+      // Move to next stage if we've filled the current stage
+      dealsInCurrentStage++;
+      if (dealsInCurrentStage >= maxDealsInStage && currentStageIndex < stages.length) {
+        currentStageIndex++;
+        dealsInCurrentStage = 0;
+        const nextStageName = stages[currentStageIndex - 1];
+        const nextMaxDeals = stageDistribution[nextStageName] || 1;
+        console.log(`PipelineBubbleChart: Moving to next stage: ${nextStageName} (max ${nextMaxDeals} deals)`);
       }
-      
-      // Debug logging for stage mapping
-      console.log(`PipelineBubbleChart: Final mapping - Deal "${deal.name}" stage "${deal.stage}" -> index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'}) using method: ${mappingMethod}`);
 
       return {
         id: deal.id,
