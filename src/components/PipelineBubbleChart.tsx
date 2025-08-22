@@ -92,6 +92,32 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     stages.forEach((stage, index) => {
       map[stage] = index + 1;
     });
+    
+    // Add common stage name variations
+    const stageVariations: Record<string, string> = {
+      'discovery': 'Discovery',
+      'qualification': 'Qualification', 
+      'scoping': 'Scoping',
+      'proposal': 'Proposal Drafted',
+      'proposal review': 'Proposal Review',
+      'negotiation': 'Negotiation',
+      'onboarding': 'Onboarding',
+      'dormant': 'Dormant',
+      'closed won': 'Onboarding',
+      'closed lost': 'Dormant',
+      'new': 'Discovery',
+      'qualified': 'Qualification',
+      'proposal drafted': 'Proposal Drafted'
+    };
+    
+    // Add variations to the map
+    Object.entries(stageVariations).forEach(([variation, standardStage]) => {
+      if (map[standardStage]) {
+        map[variation] = map[standardStage];
+      }
+    });
+    
+    console.log('PipelineBubbleChart: StageIndexMap with variations:', map);
     return map;
   }, [stages]);
 
@@ -102,7 +128,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     console.log('PipelineBubbleChart: StageIndexMap:', stageIndexMap);
     console.log('PipelineBubbleChart: Deal stages:', [...new Set(deals.map(d => d.stage))]);
     
-    return deals.map((deal) => {
+    const transformedData = deals.map((deal) => {
       console.log('PipelineBubbleChart: Deal stage:', deal.stage, 'Stage index:', stageIndexMap[deal.stage]);
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
@@ -123,18 +149,25 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           color = getStageColor(deal.stage);
       }
 
+      // Calculate stage index with better matching logic
+      let stageIdx = stageIndexMap[deal.stage];
+      if (!stageIdx) {
+        // Try to find a matching stage by checking if the deal stage contains any pipeline stage name
+        const matchingStage = stages.find(stage => 
+          deal.stage.toLowerCase().includes(stage.toLowerCase()) ||
+          stage.toLowerCase().includes(deal.stage.toLowerCase())
+        );
+        stageIdx = matchingStage ? stageIndexMap[matchingStage] : 1;
+      }
+      
+      // Debug logging for stage mapping
+      console.log(`PipelineBubbleChart: Deal "${deal.name}" stage "${deal.stage}" mapped to index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'})`);
+
       return {
         id: deal.id,
         name: deal.name,
         stage: deal.stage,
-        stageIdx: stageIndexMap[deal.stage] || (() => {
-          // Try to find a matching stage by checking if the deal stage contains any pipeline stage name
-          const matchingStage = stages.find(stage => 
-            deal.stage.toLowerCase().includes(stage.toLowerCase()) ||
-            stage.toLowerCase().includes(deal.stage.toLowerCase())
-          );
-          return matchingStage ? stageIndexMap[matchingStage] : 1;
-        })(),
+        stageIdx,
         probability,
         value,
         owner: deal.owner,
@@ -146,8 +179,13 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       };
     }); // Include all deals, don't filter out
     
-    console.log('PipelineBubbleChart: Final chart data:', chartData.length, 'items');
-    return chartData;
+    console.log('PipelineBubbleChart: Final chart data:', transformedData.length, 'items');
+    console.log('PipelineBubbleChart: Stage distribution:', transformedData.reduce((acc, item) => {
+      acc[item.stageIdx] = (acc[item.stageIdx] || 0) + 1;
+      return acc;
+    }, {} as Record<number, number>));
+    
+    return transformedData;
   }, [deals, stageIndexMap, colorMode, sizeMode]);
 
   // Custom tooltip component
