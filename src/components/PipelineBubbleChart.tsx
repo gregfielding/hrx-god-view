@@ -35,18 +35,33 @@ interface PipelineBubbleChartProps {
 // Stage color mapping (consistent with funnel)
 const getStageColor = (stage: string): string => {
   const stageColors: Record<string, string> = {
+    // Exact stage names from funnel chart
+    'Discovery': '#BBDEFB',
+    'Qualification': '#64B5F6', 
+    'Scoping': '#1E88E5',
+    'Proposal Drafted': '#FFE082',
+    'Proposal Review': '#FFA726',
+    'Negotiation': '#F4511E',
+    'Onboarding': '#BA68C8',
+    'Dormant': '#424242',
+    
+    // Lowercase variations
     'discovery': '#BBDEFB',
     'qualification': '#64B5F6', 
     'scoping': '#1E88E5',
+    'proposal drafted': '#FFE082',
+    'proposal review': '#FFA726',
+    'negotiation': '#F4511E',
+    'onboarding': '#BA68C8',
+    'dormant': '#424242',
+    
+    // Legacy variations
     'proposalDrafted': '#FFE082',
     'proposalReview': '#FFA726',
-    'negotiation': '#F4511E',
     'verbalAgreement': '#9CCC65',
     'closedWon': '#2E7D32',
     'closedLost': '#E53935',
-    'onboarding': '#BA68C8',
-    'liveAccount': '#4527A0',
-    'dormant': '#424242'
+    'liveAccount': '#4527A0'
   };
   return stageColors[stage] || '#7f8c8d';
 };
