@@ -99,7 +99,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   onDealClick, 
   colorMode = 'stage' 
 }) => {
-  const [sizeMode, setSizeMode] = React.useState<'value' | 'uniform'>('value');
+  // Always use value-based sizing
 
   // Create stage index mapping for X-axis
   // Define stage variations for mapping - comprehensive mapping for all possible stage names
@@ -282,7 +282,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         aiHealth: deal.aiHealth,
         color,
         // Calculate bubble size
-        size: sizeMode === 'value' ? calculateBubbleSize(value) : 40
+        size: calculateBubbleSize(value)
       };
     }); // Include all deals, don't filter out
     
@@ -293,7 +293,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     }, {} as Record<number, number>));
     
     return transformedData;
-  }, [deals, stageIndexMap, colorMode, sizeMode]);
+  }, [deals, stageIndexMap, colorMode]);
 
   // Custom tooltip component
   const CustomTooltip = ({ active, payload }: any) => {
@@ -442,19 +442,11 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     <Card sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h6" fontWeight={700}>Pipeline — Bubble Chart</Typography>
-        <ToggleButtonGroup
-          size="small"
-          exclusive
-          value={sizeMode}
-          onChange={(e, v) => v && setSizeMode(v)}
-        >
-          <ToggleButton value="value">Size by Value</ToggleButton>
-          <ToggleButton value="uniform">Uniform Size</ToggleButton>
-        </ToggleButtonGroup>
+        {/* Size mode toggle removed - always using value-based sizing */}
       </Box>
       
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        X: Stage • Y: Probability • Size: {sizeMode === 'value' ? 'Deal Value' : 'Equal'} • Color: {colorMode === 'stage' ? 'Stage' : colorMode === 'owner' ? 'Owner' : 'Health'}
+        X: Stage • Y: Probability • Size: Deal Value • Color: {colorMode === 'stage' ? 'Stage' : colorMode === 'owner' ? 'Owner' : 'Health'}
       </Typography>
       
       <Box sx={{ width: '100%', height: 400 }}>
