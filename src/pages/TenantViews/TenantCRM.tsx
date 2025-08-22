@@ -5752,11 +5752,17 @@ const PipelineTab: React.FC<{
     return stageDeals.reduce((sum, deal) => sum + getDealValueForPipeline(deal), 0);
   };
 
-  // Handle stage selection from funnel (disabled - chart should not filter)
+  // Handle stage selection from funnel – toggles single-stage filter
   const handleStageClick = (stage: string) => {
-    // Disabled - funnel chart should not filter by stage
-    // Only salesperson filter should affect the chart
-    console.log('Stage clicked:', stage, '- filtering disabled');
+    const current = new Set<string>(((filters?.stages as string[]) || []));
+    const isOnlySelected = current.size === 1 && current.has(stage);
+    const nextStages: string[] = isOnlySelected ? [] : [stage];
+    onFiltersChange({ ...filters, stages: nextStages });
+    // Scroll to table section
+    try {
+      const el = document.querySelector('[data-testid="customers-table"]');
+      el && el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {}
   };
 
   // Helper: parse currency-ish to number
@@ -5827,11 +5833,14 @@ const PipelineTab: React.FC<{
     return sorted;
   }, [filteredDeals, sortBy, sortOrder, companies]);
 
-  // Apply filters (stage filtering disabled - only salesperson filter affects chart)
+  // Apply filters including stage, owner, industry, size, and age
   const applyFilters = React.useCallback(() => {
     let data = [...deals];
-    // Stage filter disabled - funnel chart should not filter by stage clicks
-    // Only salesperson filter should affect the chart display
+    // Stage filter (from funnel click or stage chips)
+    const selectedStages = (filters?.stages as string[]) || [];
+    if (selectedStages.length > 0) {
+      data = data.filter((d) => selectedStages.includes(d.stage));
+    }
     // Owner - Filter by salespeople in associations.salespeople array
     if (filters?.owner === 'me' && filters?.currentUserId) {
       data = data.filter((d) => {

@@ -222,22 +222,28 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
       
-      // Simple distribution: spread deals evenly across stages
-      const stageIdx = (dealIndex % stages.length) + 1;
-      const assignedStageName = stages[stageIdx - 1] || stages[0] || 'Unknown';
+      // Distribute deals across stages evenly
+      const stageIndex = dealIndex % stages.length; // 0-based index
+      const stageIdx = stageIndex + 1; // Convert to 1-based for chart
+      const assignedStageName = stages[stageIndex] || 'Discovery';
       
       // Get color for the assigned stage
       const color = getStageColor(assignedStageName);
       
-      console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}" -> Stage ${stageIdx} (${assignedStageName}) -> Color: ${color}`);
+      console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}"`);
+      console.log(`  - Stage Index: ${stageIndex} -> Stage ${stageIdx}`);
+      console.log(`  - Assigned Stage Name: "${assignedStageName}"`);
+      console.log(`  - Color: ${color}`);
+      console.log(`  - X Position (stageIdx): ${stageIdx}`);
+      console.log(`  - Y Position (probability): ${probability}`);
 
       return {
         id: deal.id,
         name: deal.name,
         stage: deal.stage, // Keep original stage for reference
         assignedStage: assignedStageName, // Add assigned stage
-        stageIdx,
-        probability,
+        stageIdx, // X-axis position (1-based)
+        probability, // Y-axis position
         value,
         owner: deal.owner,
         companyName: deal.companyName,
@@ -248,13 +254,14 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     });
     
     console.log('PipelineBubbleChart: Final chart data:', transformedData.length, 'items');
+    console.log('PipelineBubbleChart: X-axis range should be 1 to', stages.length);
     console.log('PipelineBubbleChart: Stage distribution:', transformedData.reduce((acc, item) => {
-      acc[item.stageIdx] = (acc[item.stageIdx] || 0) + 1;
+      acc[`Stage ${item.stageIdx} (${item.assignedStage})`] = (acc[`Stage ${item.stageIdx} (${item.assignedStage})`] || 0) + 1;
       return acc;
-    }, {} as Record<number, number>));
+    }, {} as Record<string, number>));
     
     return transformedData;
-  }, [deals, stages, colorMode]);
+  }, [deals, stages]);
 
   // Custom tooltip component
   const CustomTooltip = ({ active, payload }: any) => {
