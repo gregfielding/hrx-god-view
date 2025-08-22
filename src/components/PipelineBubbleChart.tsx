@@ -241,9 +241,12 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       let stageIdx = stageIndexMap[deal.stage];
       let mappingMethod = 'direct';
       
+      console.log(`PipelineBubbleChart: Processing deal "${deal.name}" with stage "${deal.stage}"`);
+      
       // If no direct match, try comprehensive matching
       if (!stageIdx) {
         const dealStageLower = deal.stage.toLowerCase();
+        console.log(`PipelineBubbleChart: No direct match, trying variations for "${dealStageLower}"`);
         
         // First, try exact case-insensitive match with stages
         const exactMatch = stages.find(stage => 
@@ -252,6 +255,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         if (exactMatch) {
           stageIdx = stageIndexMap[exactMatch];
           mappingMethod = 'exact_case_insensitive';
+          console.log(`PipelineBubbleChart: Found exact case-insensitive match: "${exactMatch}"`);
         }
         
         // If still no match, try partial matching with stages
@@ -263,17 +267,20 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           if (partialMatch) {
             stageIdx = stageIndexMap[partialMatch];
             mappingMethod = 'partial_match';
+            console.log(`PipelineBubbleChart: Found partial match: "${partialMatch}"`);
           }
         }
         
         // If still no match, try variations mapping
         if (!stageIdx) {
+          console.log(`PipelineBubbleChart: Trying variations mapping for "${dealStageLower}"`);
           for (const [variation, standardStage] of Object.entries(stageVariations)) {
             if (dealStageLower.includes(variation) || variation.includes(dealStageLower)) {
               const mappedStage = stageIndexMap[standardStage];
               if (mappedStage) {
                 stageIdx = mappedStage;
                 mappingMethod = `variation_${variation}`;
+                console.log(`PipelineBubbleChart: Found variation match: "${variation}" -> "${standardStage}"`);
                 break;
               }
             }
@@ -287,6 +294,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
                 stage.toLowerCase().includes(dealStageLower)) {
               stageIdx = stageIndexMap[stage];
               mappingMethod = 'contains_match';
+              console.log(`PipelineBubbleChart: Found contains match: "${stage}"`);
               break;
             }
           }
@@ -294,6 +302,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         
         // If still no match, distribute across stages based on deal properties
         if (!stageIdx) {
+          console.log(`PipelineBubbleChart: No match found, using probability-based mapping for probability ${probability}%`);
           // Use deal probability to determine stage - higher probability = later stage
           if (probability >= 80) {
             stageIdx = Math.min(stages.length, 7); // Onboarding or later
@@ -313,7 +322,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       }
       
       // Debug logging for stage mapping
-      console.log(`PipelineBubbleChart: Deal "${deal.name}" stage "${deal.stage}" mapped to index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'}) using method: ${mappingMethod}`);
+      console.log(`PipelineBubbleChart: Final mapping - Deal "${deal.name}" stage "${deal.stage}" -> index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'}) using method: ${mappingMethod}`);
 
       return {
         id: deal.id,
@@ -509,7 +518,11 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
             <XAxis
               type="number"
               dataKey="stageIdx"
-              tickFormatter={(value: number) => stages[value - 1] || ''}
+              tickFormatter={(value: number) => {
+                const stageName = stages[value - 1];
+                console.log(`XAxis tickFormatter: value=${value}, stageName=${stageName}`);
+                return stageName || '';
+              }}
               ticks={stages.map((_, i) => i + 1)}
               domain={[0.5, stages.length + 0.5]}
               axisLine={true}
