@@ -32,10 +32,10 @@ interface PipelineBubbleChartProps {
   colorMode?: 'stage' | 'owner' | 'health';
 }
 
-// Stage color mapping (consistent with funnel)
+// Stage color mapping (consistent with funnel using CRM_STAGE_COLORS)
 const getStageColor = (stage: string): string => {
   const stageColors: Record<string, string> = {
-    // Exact stage names from funnel chart
+    // Exact stage names from CRM_STAGE_COLORS
     'Discovery': '#BBDEFB',
     'Qualification': '#64B5F6', 
     'Scoping': '#1E88E5',
@@ -43,7 +43,7 @@ const getStageColor = (stage: string): string => {
     'Proposal Review': '#FFA726',
     'Negotiation': '#F4511E',
     'Onboarding': '#BA68C8',
-    'Dormant': '#424242',
+    'Dormant': '#000000', // Corrected to match CRM_STAGE_COLORS
     
     // Lowercase variations
     'discovery': '#BBDEFB',
@@ -53,7 +53,7 @@ const getStageColor = (stage: string): string => {
     'proposal review': '#FFA726',
     'negotiation': '#F4511E',
     'onboarding': '#BA68C8',
-    'dormant': '#424242',
+    'dormant': '#000000',
     
     // Legacy variations
     'proposalDrafted': '#FFE082',
@@ -267,7 +267,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       const stageIdx = stageAssignments[dealIndex % stageAssignments.length];
       const assignedStageName = stages[stageIdx - 1] || 'Unknown';
       
-      console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}" -> Stage ${stageIdx} (${assignedStageName})`);
+      console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}" -> Stage ${stageIdx} (${assignedStageName}) -> Color: ${color}`);
 
       return {
         id: deal.id,
