@@ -5709,12 +5709,47 @@ const PipelineTab: React.FC<{
     return '$1M+';
   };
 
+  // Helper function to get deal value for pipeline display (uses calculated max value)
+  const getDealValueForPipeline = (deal: any): number => {
+    // Check if we have qualification stage data
+    if (deal.stageData?.qualification) {
+      const qualData = deal.stageData.qualification;
+      const payRate = qualData.expectedAveragePayRate || 16; // Default to $16
+      const markup = qualData.expectedAverageMarkup || 40; // Default to 40%
+      const timeline = qualData.staffPlacementTimeline;
+
+      if (timeline) {
+        // Calculate bill rate: pay rate + markup
+        const billRate = payRate * (1 + markup / 100);
+        
+        // Annual hours per employee (2080 full-time hours)
+        const annualHoursPerEmployee = 2080;
+        
+        // Calculate annual revenue per employee
+        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+        
+        // Get starting and 180-day numbers
+        const startingCount = timeline.starting || 0;
+        const after180DaysCount = timeline.after180Days || timeline.after90Days || timeline.after30Days || startingCount;
+        
+        if (startingCount > 0 || after180DaysCount > 0) {
+          // Use the maximum value (after180DaysCount) for pipeline display
+          const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+          return maxRevenue;
+        }
+      }
+    }
+    
+    // Fallback to estimatedRevenue if qualification data is not available
+    return toNumber(deal.estimatedRevenue);
+  };
+
   const getDealsByStage = (stageName: string) => {
     return deals.filter(deal => deal.stage === stageName);
   };
 
   const getTotalValue = (stageDeals: any[]) => {
-    return stageDeals.reduce((sum, deal) => sum + (Number(deal.estimatedRevenue) || 0), 0);
+    return stageDeals.reduce((sum, deal) => sum + getDealValueForPipeline(deal), 0);
   };
 
   // Handle stage selection from funnel (disabled - chart should not filter)
@@ -5754,7 +5789,7 @@ const PipelineTab: React.FC<{
       case 'stage':
         return deal.stage?.toLowerCase() || '';
       case 'value':
-        return toNumber(deal.estimatedRevenue);
+        return getDealValueForPipeline(deal);
       case 'probability':
         return getDealProbability(deal);
       case 'aiHealth': {
@@ -5996,17 +6031,17 @@ const PipelineTab: React.FC<{
       }}>
         {(() => {
           const totalDeals = filteredDeals.length;
-          const totalValue = filteredDeals.reduce((s, d) => s + toNumber(d.estimatedRevenue), 0);
+          const totalValue = filteredDeals.reduce((s, d) => s + getDealValueForPipeline(d), 0);
           const byStage = pipelineStages.map((s: any) => ({
             name: s.name,
             count: filteredDeals.filter((d) => d.stage === s.name).length,
-            value: filteredDeals.filter((d) => d.stage === s.name).reduce((sum, d) => sum + toNumber(d.estimatedRevenue), 0)
+                          value: filteredDeals.filter((d) => d.stage === s.name).reduce((sum, d) => sum + getDealValueForPipeline(d), 0)
           }));
           const top = byStage.sort((a, b) => b.value - a.value)[0];
           const atRisk = filteredDeals.filter((d) => getDealHealth(d) !== 'green').length;
           const ownerTotals = filteredDeals.reduce((m: Record<string, number>, d: any) => {
             const key = d.owner || 'Unassigned';
-            m[key] = (m[key] || 0) + toNumber(d.estimatedRevenue);
+            m[key] = (m[key] || 0) + getDealValueForPipeline(d);
             return m;
           }, {});
           const topOwner = Object.entries(ownerTotals).sort((a, b) => (Number(b[1]) - Number(a[1])))[0];
@@ -6096,7 +6131,7 @@ const PipelineTab: React.FC<{
                       </Typography>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
                         <Typography variant="caption" fontWeight="medium">
-                          ${Number(deal.estimatedRevenue).toLocaleString()}
+                          ${getDealValueForPipeline(deal).toLocaleString()}
                         </Typography>
                         <Chip 
                           label={`${deal.probability}%`} 
@@ -6157,7 +6192,7 @@ const PipelineTab: React.FC<{
                       case 'company': return c?.companyName || c?.name || '';
                       case 'owner': return d.owner || '';
                       case 'stage': return d.stage;
-                      case 'value': return val;
+                      case 'value': return getDealValueForPipeline(d);
                       case 'valueRange': return getDealValueRange(d);
                       case 'probability': return prob;
                       case 'aiHealth': return health;
@@ -6331,7 +6366,7 @@ const PipelineTab: React.FC<{
                   )}
                   {visibleColumns.includes('value') && (
                     <TableCell align="right" sx={{ fontWeight: 500 }}>
-                      ${toNumber(d.estimatedRevenue).toLocaleString()}
+                      ${getDealValueForPipeline(d).toLocaleString()}
                     </TableCell>
                   )}
                   {visibleColumns.includes('valueRange') && (
