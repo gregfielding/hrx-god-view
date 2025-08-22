@@ -102,7 +102,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const [sizeMode, setSizeMode] = React.useState<'value' | 'uniform'>('value');
 
   // Create stage index mapping for X-axis
-  // Define stage variations for mapping
+  // Define stage variations for mapping - expanded to handle more variations
   const stageVariations: Record<string, string> = {
     // Exact matches
     'discovery': 'Discovery',
@@ -134,7 +134,16 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     'opportunity': 'Qualification',
     'proposal sent': 'Proposal Drafted',
     'proposal submitted': 'Proposal Drafted',
-    'in negotiation': 'Negotiation'
+    'in negotiation': 'Negotiation',
+    
+    // Additional variations that might exist in the data
+    'prospecting': 'Discovery',
+    'initial contact': 'Discovery',
+    'meeting scheduled': 'Qualification',
+    'needs analysis': 'Scoping',
+    'contract sent': 'Negotiation',
+    'dead': 'Dormant',
+    'disqualified': 'Dormant'
   };
 
   const stageIndexMap = React.useMemo(() => {
@@ -189,6 +198,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
 
       // Enhanced stage mapping with better fallback logic
       let stageIdx = stageIndexMap[deal.stage];
+      let mappingMethod = 'direct';
       
       // If no direct match, try comprehensive matching
       if (!stageIdx) {
@@ -200,6 +210,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         );
         if (exactMatch) {
           stageIdx = stageIndexMap[exactMatch];
+          mappingMethod = 'exact_case_insensitive';
         }
         
         // If still no match, try partial matching with stages
@@ -210,6 +221,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           );
           if (partialMatch) {
             stageIdx = stageIndexMap[partialMatch];
+            mappingMethod = 'partial_match';
           }
         }
         
@@ -220,6 +232,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
               const mappedStage = stageIndexMap[standardStage];
               if (mappedStage) {
                 stageIdx = mappedStage;
+                mappingMethod = `variation_${variation}`;
                 break;
               }
             }
@@ -232,6 +245,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
             if (dealStageLower.includes(stage.toLowerCase()) || 
                 stage.toLowerCase().includes(dealStageLower)) {
               stageIdx = stageIndexMap[stage];
+              mappingMethod = 'contains_match';
               break;
             }
           }
@@ -253,11 +267,12 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
           } else {
             stageIdx = Math.min(stages.length, 2); // Qualification or later
           }
+          mappingMethod = 'probability_based';
         }
       }
       
       // Debug logging for stage mapping
-      console.log(`PipelineBubbleChart: Deal "${deal.name}" stage "${deal.stage}" mapped to index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'})`);
+      console.log(`PipelineBubbleChart: Deal "${deal.name}" stage "${deal.stage}" mapped to index ${stageIdx} (${stages[stageIdx - 1] || 'unknown'}) using method: ${mappingMethod}`);
 
       return {
         id: deal.id,
