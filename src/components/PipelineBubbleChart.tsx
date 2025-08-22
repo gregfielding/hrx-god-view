@@ -100,8 +100,10 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
     console.log('PipelineBubbleChart: Stages:', stages);
     console.log('PipelineBubbleChart: StageIndexMap:', stageIndexMap);
+    console.log('PipelineBubbleChart: Deal stages:', [...new Set(deals.map(d => d.stage))]);
     
     return deals.map((deal) => {
+      console.log('PipelineBubbleChart: Deal stage:', deal.stage, 'Stage index:', stageIndexMap[deal.stage]);
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
       
@@ -125,7 +127,14 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         id: deal.id,
         name: deal.name,
         stage: deal.stage,
-        stageIdx: stageIndexMap[deal.stage] || 1, // Default to first stage if not found
+        stageIdx: stageIndexMap[deal.stage] || (() => {
+          // Try to find a matching stage by checking if the deal stage contains any pipeline stage name
+          const matchingStage = stages.find(stage => 
+            deal.stage.toLowerCase().includes(stage.toLowerCase()) ||
+            stage.toLowerCase().includes(deal.stage.toLowerCase())
+          );
+          return matchingStage ? stageIndexMap[matchingStage] : 1;
+        })(),
         probability,
         value,
         owner: deal.owner,
