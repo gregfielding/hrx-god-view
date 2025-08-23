@@ -22,6 +22,9 @@ type Deal = {
   owner?: string;
   companyName?: string;
   aiHealth?: string;
+  associations?: {
+    salespeople?: Array<{ id: string; name: string }>;
+  };
 };
 
 interface PipelineBubbleChartProps {
@@ -34,19 +37,34 @@ interface PipelineBubbleChartProps {
 
 // Stage color mapping (consistent with funnel using CRM_STAGE_COLORS)
 const getStageColor = (stage: string): string => {
+  // Use the actual CRM_STAGE_COLORS from the utils
+  const stageColor = CRM_STAGE_COLORS[stage];
+  if (stageColor) {
+    console.log(`getStageColor("${stage}") -> ${stageColor.hex}`);
+    return stageColor.hex;
+  }
+  
+  // Fallback for variations
   const stageColors: Record<string, string> = {
-    // Exact stage names from the legend shown
-    'Discovery': '#BBDEFB',           // Light Blue
-    'Qualification': '#64B5F6',       // Medium Blue
-    'Scoping': '#1E88E5',            // Dark Blue
-    'Proposal Drafted': '#FFE082',    // Yellow
-    'Proposal Review': '#FFA726',     // Orange
-    'Negotiation': '#F4511E',        // Red-Orange
-    'Verbal Agreement': '#9CCC65',    // Light Green
-    'Closing': '#2E7D32',            // Dark Green
-    'Onboarding': '#BA68C8',         // Purple
-    'Live Account': '#4527A0',        // Dark Purple
-    'Dormant': '#000000',            // Black
+    // Exact stage names from CRM_STAGE_COLORS
+    'Discovery': '#BBDEFB',
+    'Qualification': '#64B5F6',
+    'Scoping': '#1E88E5',
+    'Proposal Drafted': '#FFE082',
+    'Proposal Review': '#FFA726',
+    'Negotiation': '#F4511E',
+    'Verbal Agreement': '#9CCC65',
+    'Closed – Won': '#2E7D32',  // Note: en dash, not hyphen
+    'Closed – Lost': '#E53935', // Note: en dash, not hyphen
+    'Onboarding': '#BA68C8',
+    'Live Account': '#4527A0',
+    'Dormant': '#000000',
+    
+    // Common variations
+    'Closing': '#2E7D32', // Map to Closed – Won
+    'Closed Won': '#2E7D32',
+    'Closed Lost': '#E53935',
+    'Live': '#4527A0',
     
     // Lowercase variations
     'discovery': '#BBDEFB',
@@ -57,6 +75,8 @@ const getStageColor = (stage: string): string => {
     'negotiation': '#F4511E',
     'verbal agreement': '#9CCC65',
     'closing': '#2E7D32',
+    'closed won': '#2E7D32',
+    'closed lost': '#E53935',
     'onboarding': '#BA68C8',
     'live account': '#4527A0',
     'dormant': '#000000',
@@ -70,8 +90,9 @@ const getStageColor = (stage: string): string => {
     'liveAccount': '#4527A0'
   };
   
-  console.log(`getStageColor("${stage}") -> ${stageColors[stage] || '#7f8c8d'}`);
-  return stageColors[stage] || '#7f8c8d';
+  const color = stageColors[stage];
+  console.log(`getStageColor("${stage}") -> ${color || '#7f8c8d'}`);
+  return color || '#7f8c8d';
 };
 
 // Calculate bubble size based on deal value
@@ -119,7 +140,11 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     'proposal drafted': 'Proposal Drafted',
     'proposal review': 'Proposal Review',
     'negotiation': 'Negotiation',
+    'verbal agreement': 'Verbal Agreement',
+    'closed – won': 'Closed – Won',
+    'closed – lost': 'Closed – Lost',
     'onboarding': 'Onboarding',
+    'live account': 'Live Account',
     'dormant': 'Dormant',
     
     // Discovery stage variations
@@ -176,23 +201,41 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
     'legal': 'Negotiation',
     'in negotiation': 'Negotiation',
     
+    // Verbal Agreement stage variations
+    'verbal': 'Verbal Agreement',
+    'agreement': 'Verbal Agreement',
+    'handshake': 'Verbal Agreement',
+    
+    // Closed Won stage variations
+    'closing': 'Closed – Won',
+    'close': 'Closed – Won',
+    'closed': 'Closed – Won',
+    'closed won': 'Closed – Won',
+    'won': 'Closed – Won',
+    'signed': 'Closed – Won',
+    
+    // Closed Lost stage variations
+    'lost': 'Closed – Lost',
+    'closed lost': 'Closed – Lost',
+    'dead': 'Closed – Lost',
+    'disqualified': 'Closed – Lost',
+    'no opportunity': 'Closed – Lost',
+    'not interested': 'Closed – Lost',
+    
     // Onboarding stage variations
     'onboard': 'Onboarding',
-    'close': 'Onboarding',
-    'closing': 'Onboarding',
-    'won': 'Onboarding',
-    'closed': 'Onboarding',
-    'closed won': 'Onboarding',
-    'signed': 'Onboarding',
+    'setup': 'Onboarding',
     'implementation': 'Onboarding',
     
+    // Live Account stage variations
+    'live': 'Live Account',
+    'active': 'Live Account',
+    'account': 'Live Account',
+    'customer': 'Live Account',
+    
     // Dormant stage variations
-    'lost': 'Dormant',
-    'closed lost': 'Dormant',
-    'dead': 'Dormant',
-    'disqualified': 'Dormant',
-    'no opportunity': 'Dormant',
-    'not interested': 'Dormant'
+    'inactive': 'Dormant',
+    'disengaged': 'Dormant'
   };
 
   const stageIndexMap = React.useMemo(() => {
@@ -217,25 +260,85 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
   const chartData = React.useMemo(() => {
     console.log('PipelineBubbleChart: Processing deals:', deals.length, 'deals');
     console.log('PipelineBubbleChart: Available stages:', stages);
+    console.log('PipelineBubbleChart: Sample deal stages:', deals.slice(0, 10).map(d => ({ name: d.name, stage: d.stage })));
+    console.log('PipelineBubbleChart: StageIndexMap:', stageIndexMap);
+    
+    // Emergency fallback: if no stages available, create a simple distribution
+    if (!stages || stages.length === 0) {
+      console.warn('PipelineBubbleChart: No stages available, using emergency fallback');
+      const emergencyStages = ['Discovery', 'Qualification', 'Scoping', 'Proposal Drafted', 'Proposal Review', 'Negotiation', 'Verbal Agreement', 'Closed – Won', 'Onboarding', 'Live Account'];
+      stages = emergencyStages;
+    }
     
     const transformedData = deals.map((deal, dealIndex) => {
       const value = Number(deal.estimatedRevenue) || 0;
       const probability = typeof deal.probability === 'number' ? deal.probability : 50;
       
-      // Distribute deals across stages evenly
-      const stageIndex = dealIndex % stages.length; // 0-based index
-      const stageIdx = stageIndex + 1; // Convert to 1-based for chart
-      const assignedStageName = stages[stageIndex] || 'Discovery';
+      // Map deal.stage to canonical stage index using variations map
+      const rawStage = (deal.stage || '').trim();
+      const rawLower = rawStage.toLowerCase();
       
-      // Get color for the assigned stage
+      console.log(`\n--- Processing Deal ${dealIndex + 1}: "${deal.name}" ---`);
+      console.log(`  Raw stage: "${rawStage}"`);
+      console.log(`  Raw stage (lower): "${rawLower}"`);
+      
+      // First try exact match
+      let stageIdx = stageIndexMap[rawStage];
+      console.log(`  Exact match result: ${stageIdx}`);
+      
+      // Then try lowercase match
+      if (!stageIdx) {
+        stageIdx = stageIndexMap[rawLower];
+        console.log(`  Lowercase match result: ${stageIdx}`);
+      }
+      
+      // Then try partial matching against variations
+      if (!stageIdx) {
+        for (const [variation, standardStage] of Object.entries(stageVariations)) {
+          if (rawLower.includes(variation) || variation.includes(rawLower)) {
+            stageIdx = stageIndexMap[standardStage];
+            console.log(`  Variation match: "${variation}" -> "${standardStage}" -> ${stageIdx}`);
+            break;
+          }
+        }
+      }
+      
+      // If still no match, try direct stage name matching
+      if (!stageIdx) {
+        const directMatch = stages.find(stage => 
+          stage.toLowerCase() === rawLower || 
+          rawLower.includes(stage.toLowerCase()) ||
+          stage.toLowerCase().includes(rawLower)
+        );
+        if (directMatch) {
+          stageIdx = stages.indexOf(directMatch) + 1;
+          console.log(`  Direct stage match: "${directMatch}" -> ${stageIdx}`);
+        }
+      }
+      
+      // Final fallback: probability-based placement
+      if (!stageIdx || stageIdx < 1 || stageIdx > stages.length) {
+        // Map probability to stage index (0-25% = stage 1, 26-50% = stage 2, etc.)
+        const stageIndex = Math.min(stages.length, Math.max(1, Math.ceil((probability / 100) * stages.length)));
+        stageIdx = stageIndex;
+        console.log(`  Probability fallback: ${probability}% -> stage ${stageIndex}`);
+      }
+      
+      // Emergency fallback: force distribution across stages
+      if (!stageIdx || stageIdx < 1 || stageIdx > stages.length) {
+        // Simple modulo distribution to ensure we get something
+        stageIdx = (dealIndex % stages.length) + 1;
+        console.log(`  EMERGENCY FALLBACK: dealIndex ${dealIndex} -> stage ${stageIdx}`);
+      }
+      
+      const assignedStageName = stages[stageIdx - 1] || stages[0] || 'Discovery';
       const color = getStageColor(assignedStageName);
       
-      console.log(`PipelineBubbleChart: Deal ${dealIndex + 1} "${deal.name}"`);
-      console.log(`  - Stage Index: ${stageIndex} -> Stage ${stageIdx}`);
-      console.log(`  - Assigned Stage Name: "${assignedStageName}"`);
-      console.log(`  - Color: ${color}`);
-      console.log(`  - X Position (stageIdx): ${stageIdx}`);
-      console.log(`  - Y Position (probability): ${probability}`);
+      console.log(`  Final stageIdx: ${stageIdx}`);
+      console.log(`  Assigned Stage Name: "${assignedStageName}"`);
+      console.log(`  Color: ${color}`);
+      console.log(`  X Position (stageIdx): ${stageIdx}`);
+      console.log(`  Y Position (probability): ${probability}`);
 
       return {
         id: deal.id,
@@ -249,24 +352,64 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
         companyName: deal.companyName,
         aiHealth: deal.aiHealth,
         color,
-        size: calculateBubbleSize(value)
+        size: calculateBubbleSize(value),
+        salespeople: deal.associations?.salespeople || []
       };
     });
     
+    console.log('\n=== FINAL CHART DATA SUMMARY ===');
     console.log('PipelineBubbleChart: Final chart data:', transformedData.length, 'items');
     console.log('PipelineBubbleChart: X-axis range should be 1 to', stages.length);
-    console.log('PipelineBubbleChart: Stage distribution:', transformedData.reduce((acc, item) => {
+    
+    const stageDistribution = transformedData.reduce((acc, item) => {
       acc[`Stage ${item.stageIdx} (${item.assignedStage})`] = (acc[`Stage ${item.stageIdx} (${item.assignedStage})`] || 0) + 1;
       return acc;
-    }, {} as Record<string, number>));
+    }, {} as Record<string, number>);
+    
+    console.log('PipelineBubbleChart: Stage distribution:', stageDistribution);
+    console.log('PipelineBubbleChart: Sample transformed data:', transformedData.slice(0, 3));
+    
+    // Final safety check: if no data is being generated, force a simple distribution
+    if (transformedData.length === 0 && deals.length > 0) {
+      console.warn('PipelineBubbleChart: No data generated, forcing simple distribution');
+      return deals.map((deal, dealIndex) => {
+        const value = Number(deal.estimatedRevenue) || 0;
+        const probability = typeof deal.probability === 'number' ? deal.probability : 50;
+        const stageIdx = (dealIndex % 10) + 1; // Force distribution across 10 stages
+        const assignedStageName = stages[stageIdx - 1] || 'Discovery';
+        const color = getStageColor(assignedStageName);
+        
+        return {
+          id: deal.id,
+          name: deal.name,
+          stage: deal.stage,
+          assignedStage: assignedStageName,
+          stageIdx,
+          probability,
+          value,
+          owner: deal.owner,
+          companyName: deal.companyName,
+          aiHealth: deal.aiHealth,
+          color,
+          size: calculateBubbleSize(value),
+          salespeople: deal.associations?.salespeople || []
+        };
+      });
+    }
     
     return transformedData;
-  }, [deals, stages]);
+  }, [deals, stages, stageIndexMap]);
 
   // Custom tooltip component
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0]?.payload;
+      
+      // Get salespeople names
+      const salespeopleNames = data.salespeople && data.salespeople.length > 0 
+        ? data.salespeople.map((sp: any) => sp.name).join(', ')
+        : 'Unassigned';
+      
       return (
         <Box sx={{ 
           bgcolor: 'background.paper', 
@@ -283,7 +426,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
             Company: {data.companyName || 'N/A'}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block">
-            Owner: {data.owner || 'Unassigned'}
+            Salespeople: {salespeopleNames}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block">
             Stage: {data.stage}
@@ -457,7 +600,7 @@ const PipelineBubbleChart: React.FC<PipelineBubbleChartProps> = ({
       </Box>
       
       {/* Legend */}
-      {renderStageLegend()}
+      {/* {renderStageLegend()} */}
       {renderOwnerLegend()}
       {renderHealthLegend()}
     </Card>

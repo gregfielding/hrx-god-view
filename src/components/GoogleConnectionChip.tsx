@@ -25,6 +25,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { db } from '../firebase';
 
 interface GoogleConnectionChipProps {
@@ -48,11 +49,10 @@ interface GoogleStatus {
 
 const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId }) => {
   const { user } = useAuth();
+  const { googleStatus, loading, error, refreshStatus, isOAuthInProgress, setIsOAuthInProgress } = useGoogleStatus();
   const functions = getFunctions();
   
   // Firebase Functions
-  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatus');
-  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatus');
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const disconnectCalendarFn = httpsCallable(functions, 'disconnectCalendar');
@@ -66,158 +66,45 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const testGmailEmailCaptureFn = httpsCallable(functions, 'testGmailEmailCapture');
   const testGmailTokenValidityFn = httpsCallable(functions, 'testGmailTokenValidity');
   
-  // State for Google services status
-  const [googleStatus, setGoogleStatus] = useState<GoogleStatus>({
-    gmail: { connected: false, syncStatus: 'not_synced' },
-    calendar: { connected: false, syncStatus: 'not_synced' }
-  });
-  
   // UI state
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showDialog, setShowDialog] = useState(false);
-  const [isOAuthInProgress, setIsOAuthInProgress] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   // Refs for cleanup
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const oauthWindowRef = useRef<Window | null>(null);
 
-  // Load Google status
+  // Use shared context for status loading
   const loadGoogleStatus = useCallback(async () => {
-    if (!user?.uid) return;
-    
-    setLoading(true);
-    try {
-      // Check both Gmail and Calendar status separately
-      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatus');
-      const getGmailStatus = httpsCallable(functions, 'getGmailStatus');
-      
-      const [calendarResult, gmailResult] = await Promise.all([
-        getCalendarStatus({ userId: user.uid, tenantId }),
-        getGmailStatus({ userId: user.uid, tenantId })
-      ]);
-      
-      const calendarData = calendarResult.data as any;
-      const gmailData = gmailResult.data as any;
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Calendar status:', calendarData);
-        console.log('Gmail status:', gmailData);
-      }
-      
-      const newStatus = {
-        gmail: {
-          connected: gmailData?.connected || false,
-          email: gmailData?.email,
-          lastSync: gmailData?.lastSync,
-          syncStatus: gmailData?.syncStatus || 'not_synced'
-        },
-        calendar: {
-          connected: calendarData?.connected || false,
-          email: calendarData?.email,
-          lastSync: calendarData?.lastSync,
-          syncStatus: calendarData?.syncStatus || 'not_synced'
-        }
-      };
-      
-      setGoogleStatus(newStatus);
-      
-      // If OAuth was in progress and we detect a successful connection, stop polling
-      if (isOAuthInProgress && (newStatus.gmail.connected || newStatus.calendar.connected)) {
-        setIsOAuthInProgress(false);
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-      }
-      
-    } catch (error) {
-      console.error('Error loading Google status:', error);
-      setError('Failed to load Google connection status');
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.uid, tenantId, isOAuthInProgress]);
+    await refreshStatus();
+  }, [refreshStatus]);
 
   // Start polling for status updates during OAuth
   const startStatusPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-    
-    // Poll every 2 seconds for up to 2 minutes
+    // Poll every 5 seconds for up to 1 minute (reduced frequency and duration)
     let pollCount = 0;
-    const maxPolls = 60; // 2 minutes max
+    const maxPolls = 12; // 1 minute max (12 * 5 seconds)
     
-    pollingIntervalRef.current = setInterval(async () => {
+    const interval = setInterval(async () => {
       pollCount++;
       
       if (pollCount >= maxPolls) {
-        // Stop polling after 2 minutes
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
+        // Stop polling after 1 minute
+        clearInterval(interval);
         setIsOAuthInProgress(false);
         return;
       }
       
-      await loadGoogleStatus();
-    }, 2000);
-  }, [loadGoogleStatus]);
-
-  // Real-time listener for user document changes
-  useEffect(() => {
-    if (!user?.uid) return;
-
-    const userRef = doc(db, 'users', user.uid);
-    const unsubscribe = onSnapshot(userRef, (doc) => {
-      if (doc.exists()) {
-        const userData = doc.data();
-        const gmailConnected = !!(userData?.gmailConnected && userData?.gmailTokens?.access_token);
-        const calendarConnected = !!(userData?.calendarConnected && userData?.calendarTokens?.access_token);
-        
-        // Update status if there's a change
-        setGoogleStatus(prev => {
-          const newStatus = {
-            gmail: {
-              ...prev.gmail,
-              connected: gmailConnected,
-              email: userData?.gmailTokens?.email || userData?.email
-            },
-            calendar: {
-              ...prev.calendar,
-              connected: calendarConnected,
-              email: userData?.calendarTokens?.email || userData?.email
-            }
-          };
-          
-          // If OAuth was in progress and we detect a successful connection, stop polling
-          if (isOAuthInProgress && (gmailConnected || calendarConnected)) {
-            setIsOAuthInProgress(false);
-            if (pollingIntervalRef.current) {
-              clearInterval(pollingIntervalRef.current);
-              pollingIntervalRef.current = null;
-            }
-          }
-          
-          return newStatus;
-        });
-      }
-    }, (error) => {
-      console.error('Error listening to user document:', error);
-    });
-
-    return () => unsubscribe();
-  }, [user?.uid, isOAuthInProgress]);
+      await refreshStatus();
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [refreshStatus, setIsOAuthInProgress]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
       if (oauthWindowRef.current && !oauthWindowRef.current.closed) {
         oauthWindowRef.current.close();
       }
@@ -228,7 +115,6 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleGoogleAuth = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
     setIsOAuthInProgress(true);
     try {
       const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
@@ -239,7 +125,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       
       const data = result.data as any;
       if (data.error) {
-        setError(data.message || 'Failed to get Google auth URL');
+        console.error('Failed to get Google auth URL:', data.message);
         setIsOAuthInProgress(false);
         return;
       }
@@ -247,7 +133,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       const { authUrl } = data;
       
       if (!authUrl) {
-        setError('No authentication URL received from server');
+        console.error('No authentication URL received from server');
         setIsOAuthInProgress(false);
         return;
       }
@@ -263,10 +149,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       
     } catch (error: any) {
       console.error('Error getting Google auth URL:', error);
-      setError(`Failed to initiate Google authentication: ${error.message}`);
       setIsOAuthInProgress(false);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -274,7 +157,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleDisconnect = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
+    setBusy(true);
     try {
       const disconnectAllGoogleServices = httpsCallable(functions, 'disconnectAllGoogleServices');
       await disconnectAllGoogleServices({ userId: user.uid, tenantId });
@@ -284,9 +167,9 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       setShowDialog(false);
     } catch (error) {
       console.error('Error disconnecting Google:', error);
-      setError('Failed to disconnect Google account');
+      setErrorMsg('Failed to disconnect Google account');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -294,7 +177,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleClearExpiredTokens = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
+    setBusy(true);
     try {
       await clearExpiredTokensFn({ userId: user.uid, tenantId });
       
@@ -303,9 +186,9 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       setShowDialog(false);
     } catch (error) {
       console.error('Error clearing expired tokens:', error);
-      setError('Failed to clear expired tokens');
+      setErrorMsg('Failed to clear expired tokens');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -313,7 +196,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleTestAndFixTokens = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
+    setBusy(true);
     try {
       // Test both Calendar and Gmail tokens
       const [calendarResult, gmailResult] = await Promise.all([
@@ -330,7 +213,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       // Check if both tokens are valid
       if (calendarData.valid && gmailData.valid) {
         setSuccessMsg('All tokens are valid - no action needed');
-        setError(null);
+        setErrorMsg(null);
       } else if (calendarData.needsReauth || gmailData.needsReauth) {
         // Clear the invalid tokens and reload status
         await clearExpiredTokensFn({ userId: user.uid, tenantId });
@@ -340,22 +223,22 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
         if (calendarData.needsReauth) issues.push('Calendar');
         if (gmailData.needsReauth) issues.push('Gmail');
         
-        setError(`Invalid ${issues.join(' and ')} tokens cleared. Please reconnect your Google account.`);
+        setErrorMsg(`Invalid ${issues.join(' and ')} tokens cleared. Please reconnect your Google account.`);
         setSuccessMsg(null);
       } else {
         const issues = [];
         if (!calendarData.valid) issues.push(`Calendar: ${calendarData.reason}`);
         if (!gmailData.valid) issues.push(`Gmail: ${gmailData.reason}`);
         
-        setError(`Token issues: ${issues.join('; ')}`);
+        setErrorMsg(`Token issues: ${issues.join('; ')}`);
         setSuccessMsg(null);
       }
     } catch (error) {
       console.error('Error testing token validity:', error);
-      setError('Failed to test token validity');
+      setErrorMsg('Failed to test token validity');
       setSuccessMsg(null);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -363,7 +246,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleEnableCalendarSync = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
+    setBusy(true);
     setIsOAuthInProgress(true);
     try {
       const enableCalendarSync = httpsCallable(functions, 'enableCalendarSync');
@@ -383,13 +266,13 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
         if (url) {
           oauthWindowRef.current = window.open(url, '_blank');
           startStatusPolling();
-          setError('Please complete Google consent to add Calendar access, then click Refresh.');
+          setErrorMsg('Please complete Google consent to add Calendar access, then click Refresh.');
           return;
         }
       }
-      setError('Failed to enable Calendar sync');
+      setErrorMsg('Failed to enable Calendar sync');
     } finally {
-      setLoading(false);
+      setBusy(false);
       setIsOAuthInProgress(false);
     }
   };
@@ -398,8 +281,8 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleTestGmailEmailCapture = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
-    setError(null);
+    setBusy(true);
+    setErrorMsg(null);
     setSuccessMsg(null);
     try {
       const result = await testGmailEmailCaptureFn({ 
@@ -413,13 +296,13 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
         const contactsFound = data.testResults?.reduce((sum: number, result: any) => sum + (result.contactsFound || 0), 0) || 0;
         setSuccessMsg(`Test completed: ${totalMessages} emails found, ${contactsFound} contacts matched in CRM`);
       } else {
-        setError(data.message || 'Test failed');
+        setErrorMsg(data.message || 'Test failed');
       }
     } catch (error: any) {
       console.error('Error testing Gmail email capture:', error);
-      setError(error?.message || 'Failed to test Gmail email capture');
+      setErrorMsg(error?.message || 'Failed to test Gmail email capture');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -427,8 +310,8 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const handleMonitorGmailEmails = async () => {
     if (!user?.uid) return;
     
-    setLoading(true);
-    setError(null);
+    setBusy(true);
+    setErrorMsg(null);
     setSuccessMsg(null);
     try {
       const result = await monitorGmailForContactEmailsFn({ 
@@ -440,13 +323,13 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       if (data.success) {
         setSuccessMsg(`Monitoring completed: ${data.processedCount} emails processed, ${data.activityLogsCreated} activities created`);
       } else {
-        setError(data.message || 'Monitoring failed');
+        setErrorMsg(data.message || 'Monitoring failed');
       }
     } catch (error: any) {
       console.error('Error monitoring Gmail emails:', error);
-      setError(error?.message || 'Failed to monitor Gmail emails');
+      setErrorMsg(error?.message || 'Failed to monitor Gmail emails');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
@@ -589,14 +472,14 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
         </DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            {successMsg && !error && (
+            {successMsg && !errorMsg && (
               <Alert severity="success" onClose={() => setSuccessMsg(null)}>
                 {successMsg}
               </Alert>
             )}
-            {error && (
-              <Alert severity="error" onClose={() => setError(null)}>
-                {error}
+            {errorMsg && (
+              <Alert severity="error" onClose={() => setErrorMsg(null)}>
+                {errorMsg}
               </Alert>
             )}
             
@@ -685,14 +568,14 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowDialog(false)} disabled={loading}>
+          <Button onClick={() => setShowDialog(false)} disabled={busy}>
             Close
           </Button>
           {googleStatus.gmail.connected && (
             <>
               <Button 
                 onClick={handleTestGmailEmailCapture} 
-                disabled={loading}
+                disabled={busy}
                 color="info"
                 variant="outlined"
               >
@@ -700,7 +583,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
               </Button>
               <Button 
                 onClick={handleMonitorGmailEmails} 
-                disabled={loading}
+                disabled={busy}
                 color="primary"
                 variant="outlined"
               >
@@ -710,7 +593,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           )}
           <Button 
             onClick={handleTestAndFixTokens} 
-            disabled={loading}
+            disabled={busy}
             color="warning"
             variant="outlined"
           >
@@ -718,7 +601,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           </Button>
           <Button 
             onClick={handleDisconnect} 
-            disabled={loading}
+            disabled={busy}
             color="error"
             variant="contained"
           >

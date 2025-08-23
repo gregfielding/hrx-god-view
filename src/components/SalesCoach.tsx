@@ -122,7 +122,19 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
     console.log('Conversations state updated:', conversations);
   }, [conversations]);
 
+  // Debounce analysis to prevent rapid successive calls
+  const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
+  const ANALYZE_DEBOUNCE_DELAY = 10000; // 10 seconds debounce
+
   const analyze = async () => {
+    // Debounce rapid analyze calls
+    const now = Date.now();
+    if (now - lastAnalyzeTime < ANALYZE_DEBOUNCE_DELAY) {
+      console.log('Skipping Sales Coach analysis - too soon since last analyze');
+      return;
+    }
+    setLastAnalyzeTime(now);
+
     setAnalyzing(true);
     try {
       // Only attempt to analyze if we have valid entity data

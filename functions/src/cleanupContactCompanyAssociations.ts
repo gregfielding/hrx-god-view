@@ -2,6 +2,7 @@ import { onCall } from 'firebase-functions/v2/https';
 import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getApps, getApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 
 // Initialize Firebase Admin
 const app = getApps().length ? getApp() : getApps()[0];
@@ -217,11 +218,42 @@ export const cleanupContactCompanyAssociationsHttp = onRequest({
   // Set CORS headers
   res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
   res.set('Access-Control-Allow-Methods', 'GET, POST');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
+    return;
+  }
+
+  // Check for authentication
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('❌ Missing or invalid authorization header');
+    res.status(401).json({ error: 'Unauthorized - Missing or invalid authorization header' });
+    return;
+  }
+
+  try {
+    // Verify the Firebase Auth token
+    const token = authHeader.split('Bearer ')[1];
+    if (!token) {
+      console.error('❌ Invalid token format');
+      res.status(401).json({ error: 'Unauthorized - Invalid token format' });
+      return;
+    }
+    
+    // Verify the token with Firebase Admin SDK
+    const auth = getAuth();
+    const decodedToken = await auth.verifyIdToken(token);
+    console.log('✅ Token verified for user:', decodedToken.uid);
+    
+    // You can add additional checks here if needed
+    // For example, check if the user belongs to the tenant they're trying to access
+    
+  } catch (error) {
+    console.error('❌ Authentication error:', error);
+    res.status(401).json({ error: 'Unauthorized - Authentication failed' });
     return;
   }
 

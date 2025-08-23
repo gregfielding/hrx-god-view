@@ -228,6 +228,14 @@ export const getCalendarStatus = onCall({
       throw new Error('Missing required field: userId');
     }
 
+    // Check cache first
+    const cached = calendarStatusCache.get(userId);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < CALENDAR_STATUS_CACHE_DURATION) {
+      console.log('Calendar status served from cache for user:', userId);
+      return cached.data;
+    }
+
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
       throw new Error('User not found');
@@ -246,22 +254,36 @@ export const getCalendarStatus = onCall({
     const lastSync = userData?.lastCalendarSync;
     const syncStatus = connected ? 'not_synced' : 'not_synced';
 
-    console.log('Calendar status result:', { connected, email, lastSync, syncStatus });
-
-    return {
+    const result = {
       connected,
       email,
       lastSync,
       syncStatus
     };
+
+    // Cache the result
+    calendarStatusCache.set(userId, { data: result, timestamp: now });
+
+    console.log('Calendar status result:', result);
+
+    return result;
   } catch (error) {
     console.error('Error getting Calendar status:', error);
     throw new Error(`Failed to get Calendar status: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
 
+// Add caching for calendar status to reduce database calls
+const calendarStatusCache = new Map<string, { data: any; timestamp: number }>();
+const CALENDAR_STATUS_CACHE_DURATION = 30 * 1000; // 30 seconds cache (same as Gmail status)
+
+// Add caching for calendar events to reduce API calls
+const calendarEventsCache = new Map<string, { data: any; timestamp: number }>();
+const CALENDAR_CACHE_DURATION = 60 * 1000; // 1 minute cache (longer than Gmail since calendar data changes less frequently)
+
 /**
  * List calendar events for a user
+ * Optimized with caching to reduce Google Calendar API calls
  */
 export const listCalendarEvents = onCall({
   cors: true
@@ -271,6 +293,17 @@ export const listCalendarEvents = onCall({
 
     if (!userId) {
       throw new Error('Missing required field: userId');
+    }
+
+    // Create cache key based on parameters
+    const cacheKey = `${userId}_${maxResults}_${timeMin || 'default'}_${timeMax || 'default'}`;
+    
+    // Check cache first
+    const cached = calendarEventsCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < CALENDAR_CACHE_DURATION) {
+      console.log('Calendar events served from cache for user:', userId);
+      return cached.data;
     }
 
     // Get user's Calendar tokens
@@ -311,11 +344,16 @@ export const listCalendarEvents = onCall({
       status: event.status
     })) || [];
 
-    return {
+    const result = {
       success: true,
       events,
       totalEvents: events.length
     };
+
+    // Cache the result
+    calendarEventsCache.set(cacheKey, { data: result, timestamp: now });
+
+    return result;
   } catch (error: any) {
     console.error('Error listing calendar events:', error);
     if (error instanceof HttpsError) {
@@ -327,6 +365,21 @@ export const listCalendarEvents = onCall({
     throw new HttpsError('internal', message);
   }
 });
+
+// Clear cache when user data changes (called from other functions)
+export const clearCalendarEventsCache = (userId: string) => {
+  // Clear all cache entries for this user
+  for (const [key] of calendarEventsCache.entries()) {
+    if (key.startsWith(`${userId}_`)) {
+      calendarEventsCache.delete(key);
+    }
+  }
+};
+
+// Clear calendar status cache when user data changes
+export const clearCalendarStatusCache = (userId: string) => {
+  calendarStatusCache.delete(userId);
+};
 
 /**
  * Create calendar event

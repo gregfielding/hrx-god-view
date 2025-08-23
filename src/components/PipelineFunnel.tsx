@@ -327,7 +327,7 @@ const PipelineFunnel: React.FC<PipelineFunnelProps> = ({
   );
 
   const renderDesktopFunnel = () => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: 320 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: 360 }}>
 
       
 
@@ -396,15 +396,21 @@ const PipelineFunnel: React.FC<PipelineFunnelProps> = ({
                     transition: 'all 0.3s ease-in-out',
                     position: 'relative',
                     zIndex: 1,
+                    animation: `${flowAnimation} 4s ease-in-out infinite`,
+                    animationDelay: `${index * 0.2}s`,
                     '&:hover': {
                       transform: 'translateY(-8px) scale(1.05)',
-                      zIndex: 10
+                      animation: 'none',
+                      '& .funnel-bar': {
+                        boxShadow: '0 8px 25px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.1)',
+                      }
                     }
                   }}
                   onClick={() => onStageClick?.(stage.id)}
                 >
                 {/* Funnel bar with enhanced styling */}
                 <Box
+                  className="funnel-bar"
                   sx={{
                     width: '100%',
                     height: `${height}px`,
@@ -421,10 +427,11 @@ const PipelineFunnel: React.FC<PipelineFunnelProps> = ({
                     minHeight: 60,
                     minWidth: 100,
                     position: 'relative',
-                    boxShadow: theme.shadows[2],
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    transition: 'all 0.3s ease-in-out',
                     animation: `${pulseAnimation} 3s ease-in-out infinite`,
                     '&:hover': {
-                      boxShadow: theme.shadows[8],
+                      boxShadow: '0 8px 25px rgba(0,0,0,0.15), 0 4px 10px rgba(0,0,0,0.1)',
                       animation: 'none'
                     }
                   }}

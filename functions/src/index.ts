@@ -10282,6 +10282,7 @@ export {
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
+  backfillGmailEmails,
   cleanupDuplicateEmailLogs,
   bulkImportGmailEmails
 } from './gmailIntegration';

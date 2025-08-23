@@ -302,21 +302,47 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
     const { dealId, stageKey, tenantId, entityType, entityName, contactCompany, contactTitle } = request.data || {};
     if (!dealId || !stageKey || !tenantId) throw new Error('Missing dealId, stageKey or tenantId');
 
-    // Cache key
-    const cacheId = `coach_analyze_${dealId}_${stageKey}`;
-    const cacheRef = db.collection('ai_cache').doc(cacheId);
+    // ENHANCED CACHING: Use a more sophisticated cache key that includes all parameters
+    const cacheKey = `coach_analyze_${dealId}_${stageKey}_${entityType || 'deal'}_${entityName || 'default'}_${contactCompany || 'default'}_${contactTitle || 'default'}`;
+    const cacheRef = db.collection('ai_cache').doc(cacheKey);
+    
+    // Check cache first with longer TTL for analysis results
+    const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes (longer since analysis doesn't change frequently)
     const cached = await cacheRef.get();
     const now = Date.now();
+    
     if (cached.exists) {
       const data = cached.data() as any;
       if (data.updatedAt && (now - data.updatedAt.toMillis()) < CACHE_TTL_MS) {
         try {
           const parsed = AnalyzeResponse.parse(data.payload);
+          console.log('✅ Deal Coach analysis served from cache for:', cacheKey);
           try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
           return { ...parsed, threadId: dealId, cacheHit: true };
+        } catch (parseError) {
+          console.log('Cache data invalid, will regenerate:', parseError);
+        }
+      }
+    }
+
+    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 5 minutes)
+    // This prevents rapid successive calls for the same entity
+    const recentCacheKey = `coach_analyze_recent_${dealId}_${stageKey}`;
+    const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
+    const recentCached = await recentCacheRef.get();
+    
+    if (recentCached.exists) {
+      const recentData = recentCached.data() as any;
+      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 5 * 60 * 1000) { // 5 minutes
+        console.log('⏱️ Recent analysis found, returning cached result to prevent rapid calls');
+        try {
+          const parsed = AnalyzeResponse.parse(recentData.payload);
+          return { ...parsed, threadId: dealId, cacheHit: true, recent: true };
         } catch {}
       }
     }
+
+    console.log('🔄 Generating new Deal Coach analysis for:', cacheKey);
 
     // Ensure thread doc exists and update stageKey
     const threadRef = db.doc(`tenants/${tenantId}/ai_threads/${dealId}`);
@@ -423,14 +449,20 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
     // Validate via zod
     const parsed = AnalyzeResponse.parse(result);
 
-    // Persist cache
+    // ENHANCED CACHING: Store in both cache locations
+    // Main cache (30 minutes)
     await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    
+    // Recent cache (5 minutes) to prevent rapid successive calls
+    await recentCacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
     // Log telemetry (best-effort)
     try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
 
+    console.log('✅ Deal Coach analysis completed and cached for:', cacheKey);
     return { ...parsed, threadId: dealId, cacheHit: false };
   } catch (e: any) {
+    console.error('❌ Deal Coach analysis error:', e);
     throw new Error(e?.message || 'Server error');
   }
 });

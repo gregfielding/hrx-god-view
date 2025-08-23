@@ -1,5 +1,19 @@
 import React from 'react';
 import { Chip, ChipProps, Tooltip } from '@mui/material';
+import { 
+  Search as SearchIcon,
+  CheckCircle as CheckCircleIcon,
+  Assignment as AssignmentIcon,
+  Description as DescriptionIcon,
+  RateReview as RateReviewIcon,
+  Handshake as HandshakeIcon,
+  ThumbUp as ThumbUpIcon,
+  CheckCircleOutline as CheckCircleOutlineIcon,
+  Cancel as CancelIcon,
+  PersonAdd as PersonAddIcon,
+  Business as BusinessIcon,
+  Block as BlockIcon
+} from '@mui/icons-material';
 
 import { getStageChipProps, getStageColor, getTextContrastColor, getStageHexColor } from '../utils/crmStageColors';
 
@@ -32,6 +46,24 @@ const StageChip: React.FC<StageChipProps> = ({
   const stageColor = getStageColor(stage);
   const stageDescription = stageColor?.description || 'Unknown stage';
   
+  // Get stage icon based on stage name
+  const getStageIcon = (stageName: string) => {
+    const stageLower = stageName.toLowerCase();
+    if (stageLower.includes('discovery')) return <SearchIcon fontSize="small" />;
+    if (stageLower.includes('qualification')) return <CheckCircleIcon fontSize="small" />;
+    if (stageLower.includes('scoping')) return <AssignmentIcon fontSize="small" />;
+    if (stageLower.includes('proposal drafted')) return <DescriptionIcon fontSize="small" />;
+    if (stageLower.includes('proposal review')) return <RateReviewIcon fontSize="small" />;
+    if (stageLower.includes('negotiation')) return <HandshakeIcon fontSize="small" />;
+    if (stageLower.includes('verbal agreement')) return <ThumbUpIcon fontSize="small" />;
+    if (stageLower.includes('closed') && stageLower.includes('won')) return <CheckCircleOutlineIcon fontSize="small" />;
+    if (stageLower.includes('closed') && stageLower.includes('lost')) return <CancelIcon fontSize="small" />;
+    if (stageLower.includes('onboarding')) return <PersonAddIcon fontSize="small" />;
+    if (stageLower.includes('live account')) return <BusinessIcon fontSize="small" />;
+    if (stageLower.includes('dormant')) return <BlockIcon fontSize="small" />;
+    return <SearchIcon fontSize="small" />; // Default icon
+  };
+  
   // Get chip props based on configuration
   const chipProps = useCustomColors 
     ? {
@@ -41,11 +73,13 @@ const StageChip: React.FC<StageChipProps> = ({
           color: getTextContrastColor(getStageHexColor(stage)),
           fontWeight: 600
         },
-        size
+        size,
+        icon: getStageIcon(stage)
       }
     : {
         ...getStageChipProps(stage),
-        size
+        size,
+        icon: getStageIcon(stage)
       };
 
   const chip = (

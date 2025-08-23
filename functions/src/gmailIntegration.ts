@@ -415,8 +415,13 @@ export const disconnectGmail = onCall({
   }
 });
 
+// Add caching for Gmail status to reduce database calls
+const gmailStatusCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_DURATION = 30 * 1000; // 30 seconds cache
+
 /**
  * Get Gmail connection status for a user
+ * Optimized with caching to reduce database calls
  */
 export const getGmailStatus = onCall({
   cors: true
@@ -426,6 +431,14 @@ export const getGmailStatus = onCall({
 
     if (!userId) {
       throw new Error('Missing required field: userId');
+    }
+
+    // Check cache first
+    const cached = gmailStatusCache.get(userId);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < CACHE_DURATION) {
+      console.log('Gmail status served from cache for user:', userId);
+      return cached.data;
     }
 
     const userDoc = await db.collection('users').doc(userId).get();
@@ -446,19 +459,29 @@ export const getGmailStatus = onCall({
     const lastSync = userData?.lastGmailSync;
     const syncStatus = connected ? 'not_synced' : 'not_synced';
 
-    console.log('Gmail status result:', { connected, email, lastSync, syncStatus });
-
-    return {
+    const result = {
       connected,
       email,
       lastSync,
       syncStatus
     };
+
+    // Cache the result
+    gmailStatusCache.set(userId, { data: result, timestamp: now });
+
+    console.log('Gmail status result:', result);
+
+    return result;
   } catch (error) {
     console.error('Error getting Gmail status:', error);
     throw new Error(`Failed to get Gmail status: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-}); 
+});
+
+// Clear cache when user data changes (called from other functions)
+export const clearGmailStatusCache = (userId: string) => {
+  gmailStatusCache.delete(userId);
+};
 
 /**
  * Monitor Gmail for new sent emails and log them as contact activities
@@ -536,7 +559,12 @@ export const monitorGmailForContactEmails = onCall({
         const subject = headers.find(h => h.name === 'Subject')?.value || '';
         const date = headers.find(h => h.name === 'Date')?.value || '';
 
-        // Extract body snippet
+        // Determine direction and extract body snippet
+        const fromEmailHeader = headers.find(h => h.name === 'From')?.value || '';
+        const fromEmailParsed = extractEmailAddresses(fromEmailHeader)[0] || '';
+        const currentUserEmail = (userData?.email || userData?.gmailTokens?.email || '').toLowerCase();
+        const isOutbound = (fromEmailParsed || '').toLowerCase() === currentUserEmail;
+
         let bodySnippet = messageData.snippet || '';
         if (messageData.payload?.body?.data) {
           bodySnippet = Buffer.from(messageData.payload.body.data, 'base64').toString();
@@ -601,7 +629,7 @@ export const monitorGmailForContactEmails = onCall({
                 emailTo: to,
                 emailCc: cc,
                 emailBcc: bcc,
-                direction: 'outbound',
+                direction: isOutbound ? 'outbound' : 'inbound',
                 gmailMessageId: message.id,
                 gmailThreadId: messageData.threadId,
                 bodySnippet: bodySnippet.substring(0, 500),
@@ -1213,6 +1241,122 @@ return {
 });
 
 /**
+ * One-time backfill function to process emails from the last 24 hours
+ * This can be called manually to capture any missed emails
+ */
+export const backfillGmailEmails = onCall({
+  cors: true,
+  maxInstances: 1,
+  region: 'us-central1',
+  memory: '512MiB',
+  timeoutSeconds: 540 // 9 minutes
+}, async (request) => {
+  try {
+    const { hours = 24 } = request.data as any;
+    
+    console.log(`🔄 Starting Gmail backfill for last ${hours} hours...`);
+    
+    // Get all users with Gmail connected
+    const usersSnapshot = await db.collection('users')
+      .where('gmailConnected', '==', true)
+      .get();
+    
+    if (usersSnapshot.empty) {
+      console.log('No users with Gmail connected found');
+      return { success: true, message: 'No users with Gmail connected found' };
+    }
+    
+    console.log(`Found ${usersSnapshot.docs.length} users with Gmail connected`);
+    
+    let totalProcessed = 0;
+    let totalActivityLogs = 0;
+    const results = [];
+    
+    // Process each user
+    for (const userDoc of usersSnapshot.docs) {
+      try {
+        const userData = userDoc.data();
+        const userId = userDoc.id;
+        
+        // Get user's tenant ID
+        const tenantId = userData.tenantId || userData.defaultTenantId;
+        
+        if (!tenantId) {
+          console.log(`No tenant ID found for user ${userId}, skipping`);
+          continue;
+        }
+        
+        console.log(`Processing user ${userId} for tenant ${tenantId}`);
+        
+        // Call the monitoring function with deep scan
+        try {
+          const result = await monitorGmailForContactEmailsInternal(
+            userId,
+            tenantId,
+            500, // Higher limit for backfill
+            { deepScanHours: hours }
+          );
+          
+          if (result.success) {
+            totalProcessed += result.processedCount || 0;
+            totalActivityLogs += result.activityLogsCreated || 0;
+            results.push({
+              userId,
+              tenantId,
+              processed: result.processedCount || 0,
+              activityLogs: result.activityLogsCreated || 0,
+              success: true
+            });
+            console.log(`✅ User ${userId}: ${result.processedCount} emails processed, ${result.activityLogsCreated} activity logs created`);
+          } else {
+            results.push({
+              userId,
+              tenantId,
+              error: result.message || 'Unknown error',
+              success: false
+            });
+            console.error(`❌ User ${userId}: ${result.message || 'Unknown error'}`);
+          }
+        } catch (error) {
+          results.push({
+            userId,
+            tenantId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            success: false
+          });
+          console.error(`❌ Error processing user ${userId}:`, error);
+        }
+        
+      } catch (userError) {
+        console.error(`Error processing user ${userDoc.id}:`, userError);
+        results.push({
+          userId: userDoc.id,
+          error: userError instanceof Error ? userError.message : 'Unknown error',
+          success: false
+        });
+      }
+    }
+    
+    console.log(`🎉 Gmail backfill completed: ${totalProcessed} emails processed, ${totalActivityLogs} activity logs created`);
+    
+    return {
+      success: true,
+      totalProcessed,
+      totalActivityLogs,
+      results,
+      message: `Backfill completed: ${totalProcessed} emails processed, ${totalActivityLogs} activity logs created`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in Gmail backfill:', error);
+    return {
+      success: false,
+      message: `Failed to backfill Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+});
+
+/**
  * Helper function to extract email addresses from a string
  */
 function extractEmailAddresses(text: string): string[] {
@@ -1224,7 +1368,7 @@ function extractEmailAddresses(text: string): string[] {
 /**
  * Internal function for monitoring Gmail (used by scheduled function)
  */
-async function monitorGmailForContactEmailsInternal(userId: string, tenantId: string, maxResults: number = 20) {
+async function monitorGmailForContactEmailsInternal(userId: string, tenantId: string, maxResults: number = 100, opts?: { deepScanHours?: number }) {
   try {
     // Get user's Gmail tokens
     const userDoc = await db.collection('users').doc(userId).get();
@@ -1286,47 +1430,60 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
       .get();
 
     let lastProcessedTime: Date;
-    if (lastProcessedDoc.exists) {
-      lastProcessedTime = lastProcessedDoc.data()?.lastProcessedTime?.toDate() || new Date(Date.now() - 30 * 60 * 1000); // Default to 30 minutes ago
+    // If deepScanHours is provided (e.g., manual backfill), always honor it regardless of saved state
+    if (opts?.deepScanHours && opts.deepScanHours > 0) {
+      lastProcessedTime = new Date(Date.now() - opts.deepScanHours * 60 * 60 * 1000);
+    } else if (lastProcessedDoc.exists) {
+      lastProcessedTime = lastProcessedDoc.data()?.lastProcessedTime?.toDate() || new Date(Date.now() - 30 * 60 * 1000);
     } else {
-      // If no previous processing record, start from 30 minutes ago to catch recent emails
-      lastProcessedTime = new Date(Date.now() - 30 * 60 * 1000);
+      // If no previous processing record, start from a wider window to ensure completeness
+      const deepHours = 1; // default 1 hour first run
+      lastProcessedTime = new Date(Date.now() - deepHours * 60 * 60 * 1000);
     }
 
-    const userEmail = userData?.email || userData?.gmailTokens?.email;
+    const userEmail = (userData?.email || userData?.gmailTokens?.email || '').toLowerCase();
     
-    // Use the last processed time to avoid duplicates
-    const query = `in:sent after:${Math.floor(lastProcessedTime.getTime() / 1000)}`;
+    // Guard against a future-stamped state (reset to deep scan window)
+    const nowSafe = new Date();
+    if (lastProcessedTime > nowSafe) {
+      const fallbackHours = opts?.deepScanHours ?? 12;
+      lastProcessedTime = new Date(nowSafe.getTime() - fallbackHours * 60 * 60 * 1000);
+    }
+
+    // Use the last processed time to avoid duplicates; add small backoff for clock skew
+    const afterEpoch = Math.floor((lastProcessedTime.getTime() - 60 * 1000) / 1000); // minus 60s
+    // Capture both outbound (from:me) and inbound (to:me -from:me) messages
+    const query = `(from:me OR to:me) after:${afterEpoch}`;
     
     console.log(`🔍 Searching for sent emails with query: "${query}"`);
     console.log(`📧 User email: ${userEmail}`);
     console.log(`⏰ Last processed time: ${lastProcessedTime.toISOString()}`);
 
-    const messagesResponse = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults,
-      q: query
-    });
-
-    const messages = messagesResponse.data.messages || [];
-    console.log(`📨 Found ${messages.length} sent messages since last processing`);
-    
-    if (messages.length === 0) {
-      console.log('📭 No new messages to process');
-      return {
-        success: true,
-        processedCount: 0,
-        activityLogsCreated: 0,
-        message: 'No new messages to process'
-      };
-    }
-
+    let nextPageToken: string | undefined = undefined;
+    let page = 0;
     let processedCount = 0;
     let activityLogsCreated = 0;
     let latestProcessedTime = lastProcessedTime;
 
-    // Process each sent message
-    for (const message of messages) {
+    do {
+      page += 1;
+      const messagesResponse = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults,
+        q: query,
+        pageToken: nextPageToken
+      });
+
+      const messages = messagesResponse.data.messages || [];
+      nextPageToken = messagesResponse.data.nextPageToken || undefined;
+      console.log(`📨 Page ${page}: found ${messages.length} sent messages since last processing`);
+      
+      if (messages.length === 0) {
+        break;
+      }
+
+      // Process each sent message
+      for (const message of messages) {
       try {
         // Get full message details first to get the actual email date
         const messageResponse = await gmail.users.messages.get({
@@ -1336,8 +1493,10 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
 
         const messageData = messageResponse.data;
         const headers = messageData.payload?.headers || [];
-        const date = headers.find(h => h.name === 'Date')?.value || '';
-        const emailDate = new Date(date);
+        // Prefer internalDate from Gmail (epoch ms), fallback to Date header
+        const internalMs = Number(messageData.internalDate || 0);
+        const headerDate = headers.find(h => h.name === 'Date')?.value || '';
+        const emailDate = internalMs ? new Date(internalMs) : new Date(headerDate);
 
         // Skip if this email is older than our last processed time (extra safety check)
         if (emailDate <= lastProcessedTime) {
@@ -1377,9 +1536,16 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
           }
         }
 
-        // Find contacts in the recipient list
+        // Determine direction (outbound if from user, inbound otherwise)
+        const fromEmail = extractEmailAddresses(from)[0] || '';
+        const isOutbound = fromEmail.toLowerCase() === userEmail;
+
+        // Build set of candidate contact emails: recipients, and for inbound also the sender
         const allRecipients = [to, cc, bcc].flat().filter(Boolean);
         const contactEmails = allRecipients.flatMap(email => extractEmailAddresses(email));
+        if (!isOutbound && fromEmail) {
+          contactEmails.push(fromEmail.toLowerCase());
+        }
         
         // Debug: Log email parsing
         console.log(`🔍 Email parsing for message ${message.id}:`, {
@@ -1394,32 +1560,72 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
         });
         
         // Find contacts in CRM
-        const contactQuery = await db.collection('tenants').doc(tenantId)
-          .collection('crm_contacts')
-          .where('email', 'in', contactEmails)
-          .get();
+        // Firestore 'in' supports max 10 values; chunk queries if needed
+        const chunked = [] as any[];
+        for (let i = 0; i < contactEmails.length; i += 10) {
+          const batch = contactEmails.slice(i, i + 10);
+          if (batch.length === 0) continue;
+          try {
+            const snap = await db.collection('tenants').doc(tenantId)
+              .collection('crm_contacts')
+              .where('email', 'in', batch)
+              .get();
+            chunked.push(...snap.docs);
+          } catch (chunkErr) {
+            console.warn('Contact IN query failed for batch', batch, chunkErr);
+          }
+        }
+        // De-duplicate contacts by id
+        const uniqueContactDocs = Array.from(new Map(chunked.map(d => [d.id, d])).values());
 
         // Debug: Log contact matching results
         console.log(`📧 Contact matching for message ${message.id}:`, {
           emailsSearched: contactEmails,
-          contactsFound: contactQuery.docs.length,
-          contactDetails: contactQuery.docs.map(doc => ({
+          contactsFound: uniqueContactDocs.length,
+          contactDetails: uniqueContactDocs.map(doc => ({
             id: doc.id,
             email: doc.data().email,
             name: doc.data().fullName || `${doc.data().firstName || ''} ${doc.data().lastName || ''}`.trim()
           }))
         });
 
-        if (contactQuery.empty) {
-          console.log(`❌ No contacts found for message ${message.id}, skipping...`);
-          // Update the latest processed time even for emails without contacts
+        if (uniqueContactDocs.length === 0) {
+          console.log(`❌ No contacts found for message ${message.id}. Logging email only for traceability.`);
+          // Write a lightweight email_log so we can audit unmatched emails
+          try {
+            await db.collection('tenants').doc(tenantId)
+              .collection('email_logs')
+              .add({
+                messageId: message.id,
+                threadId: messageData.threadId,
+                subject,
+                from,
+                to: to.split(',').map((e: string) => e.trim()).filter(Boolean),
+                cc: cc.split(',').map((e: string) => e.trim()).filter(Boolean),
+                bcc: bcc.split(',').map((e: string) => e.trim()).filter(Boolean),
+                timestamp: emailDate,
+                bodySnippet: bodySnippet.substring(0, 250),
+                direction: 'outbound',
+                userId,
+                contactId: null,
+                companyId: null,
+                dealId: null,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                note: 'unmatched_contact'
+              });
+          } catch (logErr) {
+            console.warn('Failed to write unmatched email_log for message', message.id, logErr);
+          }
+          // Update latest processed time and count this message as processed
           if (emailDate > latestProcessedTime) {
             latestProcessedTime = emailDate;
           }
-          continue; // No contacts found, skip this email
+          processedCount++;
+          continue;
         }
 
-        const contacts = contactQuery.docs.map(doc => ({
+        const contacts = uniqueContactDocs.map(doc => ({
           id: doc.id,
           ...doc.data()
         })) as any[];
@@ -1453,7 +1659,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               entityType: 'contact',
               entityId: contact.id,
               activityType: 'email',
-              title: `Email sent: ${subject}`,
+              title: `Email ${isOutbound ? 'sent' : 'received'}: ${subject}`,
               description: bodySnippet.substring(0, 200) + (bodySnippet.length > 200 ? '...' : ''),
               timestamp: emailDate,
               userId,
@@ -1464,7 +1670,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
                 emailTo: to,
                 emailCc: cc,
                 emailBcc: bcc,
-                direction: 'outbound',
+                direction: isOutbound ? 'outbound' : 'inbound',
                 gmailMessageId: message.id,
                 gmailThreadId: messageData.threadId,
                 bodySnippet: bodySnippet.substring(0, 500),
@@ -1496,7 +1702,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
               bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
               timestamp: emailDate,
               bodySnippet: bodySnippet.substring(0, 250),
-              direction: 'outbound',
+              direction: isOutbound ? 'outbound' : 'inbound',
               contactId: contact.id,
               companyId: contact.companyId,
               dealId,
@@ -1562,7 +1768,9 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
         console.error(`Error processing message ${message.id}:`, messageError);
         // Continue with next message
       }
-    }
+    } // End of for loop for messages
+    
+    } while (nextPageToken); // End of do-while loop for pagination
 
     // Update the processing state to track the latest processed time
     await db.collection('tenants').doc(tenantId)
@@ -1599,6 +1807,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
  * Runs every 15 minutes
  */
 export const scheduledGmailMonitoring = onSchedule({
+  // Run every 15 minutes, plus run more completely hourly (handled below)
   schedule: 'every 15 minutes',
   timeZone: 'America/New_York'
 }, async (context) => {
@@ -1621,6 +1830,9 @@ export const scheduledGmailMonitoring = onSchedule({
     let totalActivityLogs = 0;
     
     // Process each user
+    const now = new Date();
+    const deepScan = now.getMinutes() < 5; // within first 5 minutes of the hour run deep
+    const deepScanHours = 12; // scan back 12 hours on deep runs for completeness
     for (const userDoc of usersSnapshot.docs) {
       try {
         const userData = userDoc.data();
@@ -1638,7 +1850,12 @@ export const scheduledGmailMonitoring = onSchedule({
         
         // Call the monitoring function for this user
         try {
-          const result = await monitorGmailForContactEmailsInternal(userId, tenantId, 10);
+          const result = await monitorGmailForContactEmailsInternal(
+            userId,
+            tenantId,
+            100,
+            deepScan ? { deepScanHours } : undefined
+          );
           if (result.success) {
             totalProcessed += result.processedCount || 0;
             totalActivityLogs += result.activityLogsCreated || 0;
@@ -1877,11 +2094,7 @@ export const cleanupDuplicateEmailLogs = onCall({
             // time slice guard
             if (Date.now() - startTime > maxRuntimeMs) {
               hasMore = false;
-              hasMore = false;
-              // signal we have more to do in next call
-              // outer scope
-              // @ts-ignore
-              arguments; // noop to keep linter happy for block
+              break;
             }
 
           } catch (passError: any) {

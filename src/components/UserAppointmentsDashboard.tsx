@@ -75,8 +75,20 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
 
   const functions = getFunctions();
 
+  // Debounce load appointments to prevent rapid successive calls
+  const [lastLoadTime, setLastLoadTime] = useState(0);
+  const LOAD_DEBOUNCE_DELAY = 3000; // 3 seconds debounce
+
   const loadAppointments = useCallback(async () => {
     if (!userId || !tenantId) return;
+    
+    // Debounce rapid load calls
+    const now = Date.now();
+    if (now - lastLoadTime < LOAD_DEBOUNCE_DELAY) {
+      console.log('Skipping appointments load - too soon since last load');
+      return;
+    }
+    setLastLoadTime(now);
     
     setLoading(true);
     setError(null);
@@ -246,11 +258,23 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
     }
   }, [userId, tenantId, functions]);
 
+  // Debounce sync to prevent rapid successive calls
+  const [lastSyncTime, setLastSyncTime] = useState(0);
+  const SYNC_DEBOUNCE_DELAY = 5000; // 5 seconds debounce
+
   const syncWithGoogleCalendar = useCallback(async () => {
     if (!userId || !tenantId) {
       console.log('❌ Missing userId or tenantId for sync:', { userId, tenantId });
       return;
     }
+    
+    // Debounce rapid sync calls
+    const now = Date.now();
+    if (now - lastSyncTime < SYNC_DEBOUNCE_DELAY) {
+      console.log('Skipping calendar sync - too soon since last sync');
+      return;
+    }
+    setLastSyncTime(now);
     
     console.log('🔄 Starting Google Calendar sync...', { userId, tenantId });
     setSyncing(true);

@@ -517,6 +517,9 @@ const getTheme = (mode: 'light' | 'dark') => {
         styleOverrides: {
           root: {
             '& .MuiTableRow-root': {
+              '&:nth-of-type(odd)': {
+                backgroundColor: mode === 'light' ? '#FAFBFD' : '#121212',
+              },
               '&:hover': {
                 backgroundColor: mode === 'light' ? '#F7F9FC' : '#1C1C1E',
                 cursor: 'pointer',

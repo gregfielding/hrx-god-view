@@ -45,6 +45,7 @@ import { Role, SecurityLevel } from '../utils/AccessRoles';
 
 import TenantSwitcher from './TenantSwitcher';
 import GoogleConnectionChip from './GoogleConnectionChip';
+import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -689,7 +690,9 @@ const Layout: React.FC = React.memo(function Layout() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             {/* Google Connection Chip */}
             {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && (
-              <GoogleConnectionChip tenantId={activeTenant.id} />
+              <GoogleStatusProvider tenantId={activeTenant.id}>
+                <GoogleConnectionChip tenantId={activeTenant.id} />
+              </GoogleStatusProvider>
             )}
             {/* User menu and actions can go here */}
           </Box>

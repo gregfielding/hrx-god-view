@@ -45,6 +45,7 @@ import {
   CircularProgress,
   InputAdornment,
   Tooltip,
+  Skeleton,
 } from '@mui/material';
 import {
   collection,
@@ -163,7 +164,7 @@ const TenantCRM: React.FC = () => {
   const [regularTasks, setRegularTasks] = useState<any[]>([]);
   
   // Pagination state for companies
-  const [companiesLoading, setCompaniesLoading] = useState(false);
+  const [companiesLoading, setCompaniesLoading] = useState(true); // Start with loading true to prevent flash
   const [companiesLastDoc, setCompaniesLastDoc] = useState<any>(null);
   const [companiesHasMore, setCompaniesHasMore] = useState(true);
   const [companiesPageSize] = useState(20);
@@ -177,7 +178,7 @@ const TenantCRM: React.FC = () => {
   const [locations, setLocations] = useState<any[]>([]);
   
   // Pagination state for contacts
-  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsLoading, setContactsLoading] = useState(true); // Start with loading true to prevent flash
   const [contactsLastDoc, setContactsLastDoc] = useState<any>(null);
   const [contactsHasMore, setContactsHasMore] = useState(true);
   const [contactsPageSize] = useState(20);
@@ -234,6 +235,8 @@ const TenantCRM: React.FC = () => {
   const [salesTeamLoading, setSalesTeamLoading] = useState(false);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   const companiesLoadSeq = useRef(0);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [lockHeight, setLockHeight] = useState<number | null>(null);
 
 
   // Load companies with pagination
@@ -591,8 +594,20 @@ const TenantCRM: React.FC = () => {
   };
 
   // Load sales team (workforce with crm_sales true)
+  // Debounce sales team loading to prevent rapid successive calls
+  const [lastSalesTeamLoadTime, setLastSalesTeamLoadTime] = useState(0);
+  const SALES_TEAM_DEBOUNCE_DELAY = 10000; // 10 seconds debounce (longer since salespeople don't change often)
+
   const loadSalesTeam = async () => {
     if (!tenantId) return;
+    
+    // Debounce rapid load calls
+    const now = Date.now();
+    if (now - lastSalesTeamLoadTime < SALES_TEAM_DEBOUNCE_DELAY) {
+      console.log('Skipping sales team load - too soon since last load');
+      return;
+    }
+    setLastSalesTeamLoadTime(now);
     
     setSalesTeamLoading(true);
     try {
@@ -1211,8 +1226,23 @@ const TenantCRM: React.FC = () => {
   // Remove the separate useEffects for filter changes - they're now handled in the main useEffect above
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    // Lock current content height to prevent layout flash between tabs
+    try {
+      if (contentRef.current) {
+        const rect = contentRef.current.getBoundingClientRect();
+        setLockHeight(rect.height);
+      }
+    } catch {}
+
     setTabValue(newValue);
     updateCacheState({ activeTab: newValue });
+    
+    // Set loading states when switching tabs to prevent flash
+    if (newValue === 1) { // Contacts tab
+      setContactsLoading(true);
+    } else if (newValue === 2) { // Companies tab
+      setCompaniesLoading(true);
+    }
     
     // Update URL with the new tab
     const tabMap: Record<number, string> = {
@@ -1234,6 +1264,13 @@ const TenantCRM: React.FC = () => {
       setSearchParams(newSearchParams);
     }
   };
+
+  // Release height lock after initial paint of the new tab
+  useEffect(() => {
+    if (lockHeight == null) return;
+    const t = setTimeout(() => setLockHeight(null), 200);
+    return () => clearTimeout(t);
+  }, [tabValue, companiesLoading, contactsLoading]);
 
   const handleAddNew = (type: 'contact' | 'company' | 'deal' | 'task') => {
     setDialogType(type);
@@ -1769,6 +1806,7 @@ const TenantCRM: React.FC = () => {
       </Box>
 
       {/* Tab Panels */}
+      <Box ref={contentRef} sx={{ minHeight: lockHeight ? `${Math.max(200, lockHeight)}px` : undefined }}>
       {tabValue === 0 && (
         <SalesDashboard 
           tenantId={tenantId}
@@ -1876,6 +1914,7 @@ const TenantCRM: React.FC = () => {
       {tabValue === 8 && (
         <KPIDashboard tenantId={tenantId} salespersonId={currentUser?.uid || ''} />
       )}
+      </Box>
 
       {/* Snackbars */}
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
@@ -2774,11 +2813,18 @@ const ContactsTab: React.FC<{
     try {
       console.log('🔧 Starting cleanup for tenant:', tenantId);
       
+      // Get the current user's ID token for authentication
+      const idToken = await currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error('User not authenticated');
+      }
+      
       // Use HTTP function directly (more reliable for CORS)
       const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/cleanupContactCompanyAssociationsHttp', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({ tenantId })
       });
@@ -3394,7 +3440,38 @@ const ContactsTab: React.FC<{
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredContacts.map((contact) => (
+            {loading || contacts.length === 0 ? (
+              // Skeleton loader rows
+              Array.from({ length: 8 }).map((_, index) => (
+                <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
+                  <TableCell sx={{ px: 2, py: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                      <Skeleton variant="circular" width={32} height={32} />
+                      <Skeleton variant="text" width={120} height={20} />
+                    </Box>
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={100} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                      <Skeleton variant="text" width={140} height={16} />
+                      <Skeleton variant="text" width={100} height={16} />
+                    </Box>
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={120} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={80} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={100} height={20} />
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              filteredContacts.map((contact) => (
               <TableRow 
                 key={contact.id} 
                 hover
@@ -3536,7 +3613,8 @@ const ContactsTab: React.FC<{
                 </TableCell>
 
               </TableRow>
-            ))}
+            ))
+            )}
           </TableBody>
         </Table>
       </TableContainer>
@@ -4117,15 +4195,63 @@ const CompaniesTab: React.FC<{
       <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Companies Table */}
-      <TableContainer component={Paper} sx={{ 
-        overflowX: 'auto',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-      }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-            <CircularProgress />
-          </Box>
+              <TableContainer component={Paper} sx={{
+          overflowX: 'auto',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+        }}>
+          {loading || companies.length === 0 ? (
+          <Table sx={{ minWidth: 1200 }}>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={100} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={80} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={120} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={100} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={90} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={110} height={20} />
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {Array.from({ length: 8 }).map((_, index) => (
+                <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
+                  <TableCell sx={{ px: 2, py: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                      <Skeleton variant="circular" width={32} height={32} />
+                      <Skeleton variant="text" width={150} height={20} />
+                    </Box>
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={60} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={100} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={80} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={70} height={20} />
+                  </TableCell>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="text" width={90} height={20} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         ) : (
         <Table sx={{ minWidth: 1200 }}>
           <TableHead>
@@ -4209,7 +4335,7 @@ const CompaniesTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Account Owner
+                Active Salespeople
               </TableCell>
 
             </TableRow>
@@ -4317,58 +4443,38 @@ const CompaniesTab: React.FC<{
                 </TableCell>
                 <TableCell sx={{ py: 1 }}>
                   {(() => {
-                    // Get associated salespeople for this company using the associations system
-                    const salespeople = new Set<string>();
-                    
-                    // Check if company has associations data
-                    if (company.associations && company.associations.salespeople) {
-                      // If associations are already loaded in the company object
-                      company.associations.salespeople.forEach((salesperson: any) => {
-                        if (salesperson.name) {
-                          salespeople.add(salesperson.name);
-                        } else if (typeof salesperson === 'string') {
-                          salespeople.add(getSalespersonName(salesperson));
-                        }
-                      });
-                    }
-                    
-                    // Also check for legacy fields
-                    if (company.salesOwnerId) {
-                      salespeople.add(getSalespersonName(company.salesOwnerId));
-                    }
-                    if (company.accountOwnerId) {
-                      salespeople.add(getSalespersonName(company.accountOwnerId));
-                    }
-                    if (company.salesOwnerName) {
-                      salespeople.add(company.salesOwnerName);
-                    }
-                    if (company.accountOwner) {
-                      salespeople.add(company.accountOwner);
-                    }
-                    
-                    // Check deals for additional salespeople
-                    const companyDeals = getCompanyDeals(company.id);
-                    companyDeals.forEach(deal => {
-                      if (deal.owner) {
-                        salespeople.add(getSalespersonName(deal.owner));
+                    // Build list of active salespeople from associations first
+                    const names: string[] = [];
+                    const seen = new Set<string>();
+                    const addName = (label?: string) => {
+                      const v = (label || '').trim();
+                      if (!v) return;
+                      if (seen.has(v)) return;
+                      seen.add(v);
+                      names.push(v);
+                    };
+                    const assoc = company.associations?.salespeople || [];
+                    assoc.forEach((sp: any) => {
+                      if (typeof sp === 'string') {
+                        addName(getSalespersonName(sp));
+                      } else if (sp && typeof sp === 'object') {
+                        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+                        addName(sp.name || sp.displayName || full || sp.email || getSalespersonName(sp.id));
                       }
                     });
-                    
-                    const salespeopleList = Array.from(salespeople);
-                    
-                    if (salespeopleList.length === 0) {
+                    // Fallbacks to legacy fields if no associations present
+                    if (names.length === 0) {
+                      addName(company.salesOwnerName);
+                      if (company.salesOwnerId) addName(getSalespersonName(company.salesOwnerId));
+                      if (company.accountOwnerId) addName(getSalespersonName(company.accountOwnerId));
+                      addName(company.accountOwner);
+                    }
+                    if (names.length === 0) {
                       return <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>;
                     }
-                    
-                    const primarySalesperson = salespeopleList[0];
-                    const displayName = primarySalesperson.includes('@') 
-                      ? primarySalesperson.split('@')[0] 
-                      : `${primarySalesperson.split(' ')[0]} ${primarySalesperson.split(' ')[1]?.[0] || ''}.`;
-                    
                     return (
                       <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                        {displayName}
-                        {salespeopleList.length > 1 && ` +${salespeopleList.length - 1}`}
+                        {names.join(', ')}
                       </Typography>
                     );
                   })()}
@@ -4753,38 +4859,39 @@ const CompaniesTab: React.FC<{
   };
 
   const getDealOwner = (deal: any) => {
-    // Helper function to get salesperson name by ID
-    const getSalespersonName = (salespersonId: string) => {
-      const salesperson = salesTeam.find(sp => sp.id === salespersonId);
-      return salesperson?.name || salesperson?.displayName || salespersonId;
+    // Helper to resolve a display name from a salesperson object or id
+    const resolveFromId = (id: string): string => {
+      const sp = salesTeam.find(s => (s.id === id || s.uid === id || s.userId === id || s.userID === id || s.docId === id || s.email === id));
+      if (!sp) return id;
+      const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+      return sp.name || sp.displayName || full || sp.email || id;
     };
 
-    // Get all salespeople from associations
-    if (deal.associations?.salespeople && deal.associations.salespeople.length > 0) {
-      const salespersonNames = deal.associations.salespeople.map((salesperson: any) => {
-        // Handle both string IDs and object format
-        if (typeof salesperson === 'string') {
-          return getSalespersonName(salesperson);
-        } else if (salesperson && typeof salesperson === 'object') {
-          // If it's an object, use the name property if available, otherwise fall back to ID lookup
-          return salesperson.name || salesperson.displayName || getSalespersonName(salesperson.id);
-        }
-        return 'Unknown';
-      });
-      return salespersonNames.join(', ');
-    }
+    const names: string[] = [];
+    const visited = new Set<string>();
 
-    // Fallback to salesOwnerName if available
-    if (deal.salesOwnerName) {
-      return deal.salesOwnerName;
-    }
+    // Prefer associations.salespeople
+    const assoc = (deal.associations?.salespeople || []) as any[];
+    assoc.forEach((sp: any) => {
+      let label = '';
+      if (typeof sp === 'string') {
+        label = resolveFromId(sp);
+      } else if (sp && typeof sp === 'object') {
+        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+        label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+      }
+      if (label && !visited.has(label)) {
+        visited.add(label);
+        names.push(label);
+      }
+    });
 
-    // Fallback to salespeopleNames array if available
-    if (deal.salespeopleNames && deal.salespeopleNames.length > 0) {
-      return deal.salespeopleNames.join(', ');
-    }
+    if (names.length > 0) return names.join(', ');
 
-    // Final fallback
+    // Fallbacks
+    if (deal.salesOwnerName) return deal.salesOwnerName;
+    if (deal.salespeopleNames && deal.salespeopleNames.length > 0) return deal.salespeopleNames.join(', ');
+
     return '-';
   };
 
@@ -4984,12 +5091,12 @@ const CompaniesTab: React.FC<{
   return (
     <Box>
       {/* Header with search and actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
           Opportunities ({filteredDeals.length})
         </Typography>
 
-      </Box>
+      </Box> */}
 
       {/* Filter & Toolbar Area - Consolidated with card background */}
       <Box sx={{ 
@@ -5900,6 +6007,30 @@ const PipelineTab: React.FC<{
   }, [applyFilters]);
 
   // AI Health heuristic + probability calculation
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+  // Recent activity bonus used to nudge probability and health
+  // Uses last updated timestamp as a proxy; also optionally reads common fields if present
+  const getActivityBonus = (deal: any): number => {
+    const updated = getDealUpdatedAt(deal)?.getTime() || 0;
+    const days = updated ? Math.floor((Date.now() - updated) / (24 * 60 * 60 * 1000)) : 999;
+
+    let bonus = 0;
+    // Recency tiers
+    if (days <= 3) bonus += 15;
+    else if (days <= 7) bonus += 10;
+    else if (days <= 14) bonus += 5;
+    else if (days > 30) bonus -= 10;
+
+    // Optional signals if present on the deal (safe no-ops if missing)
+    const activity7d = Number(deal.recentActivityCount || deal.activityCount7d || deal.activity7d || 0);
+    if (activity7d >= 10) bonus += 5; else if (activity7d >= 5) bonus += 3;
+    const emails7d = Number(deal.emailsLast7Days || deal.recentEmails || 0);
+    if (emails7d >= 5) bonus += 3; else if (emails7d === 0 && days > 14) bonus -= 2;
+
+    return bonus;
+  };
+
   const getStageProbability = (deal: any): number => {
     const stage = pipelineStages.find((s: any) => s.name === deal.stage);
     const base = typeof stage?.probability === 'number' ? stage.probability : (typeof deal.probability === 'number' ? deal.probability : 50);
@@ -5910,17 +6041,40 @@ const PipelineTab: React.FC<{
     // If deal has explicit probability, use weighted with stage probability
     const stageProb = getStageProbability(deal);
     const dealProb = typeof deal.probability === 'number' ? deal.probability : stageProb;
-    // Combine: simple average for now (can refine with recency weighting)
-    return Math.round((stageProb + dealProb) / 2);
+    // Combine average + recent activity bonus (−10 to +15 typical)
+    const avg = Math.round((stageProb + dealProb) / 2);
+    const activityBonus = getActivityBonus(deal);
+    return clamp(avg + activityBonus, 0, 100);
   };
 
   const getDealHealth = (deal: any): 'green' | 'yellow' | 'red' => {
     const prob = getDealProbability(deal);
     const updated = getDealUpdatedAt(deal)?.getTime() || 0;
     const days = updated ? Math.floor((Date.now() - updated) / (24 * 60 * 60 * 1000)) : 999;
-    if (days <= 7 && prob >= 50) return 'green';
-    if (days <= 14 && prob >= 30) return 'yellow';
-    return 'red';
+    const activityBonus = getActivityBonus(deal);
+
+    // Dynamic recency gates influenced by activity
+    let greenDays = 7;
+    let yellowDays = 14;
+    if (activityBonus >= 10) {
+      greenDays += 7; // more forgiving when very active
+      yellowDays += 7;
+    } else if (activityBonus <= -10) {
+      greenDays = Math.max(2, greenDays - 3);
+      yellowDays = Math.max(7, yellowDays - 7);
+    }
+
+    let status: 'green' | 'yellow' | 'red';
+    if (days <= greenDays && prob >= 50) status = 'green';
+    else if (days <= yellowDays && prob >= 30) status = 'yellow';
+    else status = 'red';
+
+    // Upgrade/downgrade one band based on strong activity signals
+    if (activityBonus >= 10 && status === 'yellow') status = 'green';
+    if (activityBonus <= -10 && status === 'green') status = 'yellow';
+    if (activityBonus <= -10 && status === 'yellow') status = 'red';
+
+    return status;
   };
 
   return (

@@ -104,7 +104,19 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
     }
   }, [messages, threadKey]);
 
+  // Debounce analysis to prevent rapid successive calls
+  const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
+  const ANALYZE_DEBOUNCE_DELAY = 10000; // 10 seconds debounce
+
   const analyze = async () => {
+    // Debounce rapid analyze calls
+    const now = Date.now();
+    if (now - lastAnalyzeTime < ANALYZE_DEBOUNCE_DELAY) {
+      console.log('Skipping Deal Coach analysis - too soon since last analyze');
+      return;
+    }
+    setLastAnalyzeTime(now);
+
     setAnalyzing(true);
     try {
       const functions = getFunctions(undefined, 'us-central1');
