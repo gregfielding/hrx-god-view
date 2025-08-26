@@ -1599,7 +1599,6 @@ const TenantCRM: React.FC = () => {
       }, 500);
     }, 0);
   };
-
   // Release height lock after initial paint of the new tab
   useEffect(() => {
     if (lockHeight == null) return;
@@ -6275,6 +6274,45 @@ const PipelineTab: React.FC<{
     return colors[index];
   };
 
+  // Company logo/name cache fetched from crm_companies for Pipeline view
+  const { tenantId } = useAuth();
+  const [companyDocCache, setCompanyDocCache] = React.useState<Record<string, { name: string; logo: string | null }>>({});
+
+  React.useEffect(() => {
+    if (!tenantId || !Array.isArray(deals) || deals.length === 0) return;
+    const ids = new Set<string>();
+    deals.forEach((deal: any) => {
+      const primaryId = getDealPrimaryCompanyId(deal);
+      if (primaryId && !companyDocCache[primaryId]) ids.add(primaryId);
+      const assoc = deal.associations?.companies;
+      if (!primaryId && Array.isArray(assoc) && assoc.length > 0) {
+        const primaryCompany = assoc.find((c: any) => c?.isPrimary || c?.primary || c?.snapshot?.type === 'primary');
+        const fc = primaryCompany || assoc[0];
+        const assocId = typeof fc === 'string' ? fc : fc?.id;
+        if (assocId && !companyDocCache[assocId]) ids.add(assocId);
+      }
+    });
+    if (ids.size === 0) return;
+    const fetchAll = async () => {
+      const updates: Record<string, { name: string; logo: string | null }> = {};
+      await Promise.all(Array.from(ids).map(async (id) => {
+        try {
+          const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', id));
+          if (snap.exists()) {
+            const data: any = snap.data();
+            updates[id] = { name: data.companyName || data.name || data.legalName || '', logo: data.logo || data.logoUrl || data.logo_url || data.avatar || null };
+          } else {
+            updates[id] = { name: '', logo: null };
+          }
+        } catch {
+          updates[id] = { name: '', logo: null };
+        }
+      }));
+      setCompanyDocCache((prev) => ({ ...prev, ...updates }));
+    };
+    fetchAll();
+  }, [tenantId, deals]);
+
   // Helper function to get company information with fallbacks
   const getDealCompanyInfo = (deal: any) => {
     // First try to get company from primary company ID
@@ -6288,51 +6326,68 @@ const PipelineTab: React.FC<{
           id: company.id
         };
       }
-    }
-    
-    // Fallback to external company name from deal
-    if (deal.externalCompanyName) {
-      return {
-        name: deal.externalCompanyName,
-        logo: null,
-        id: null
-      };
+      // Fallback to cached company doc if not in companies array
+      if (companyDocCache[primaryId]) {
+        const cached = companyDocCache[primaryId];
+        return {
+          name: cached.name || deal.externalCompanyName || '-',
+          logo: cached.logo || null,
+          id: primaryId
+        };
+      }
     }
     
     // Fallback to company name from deal associations
     if (deal.associations?.companies && Array.isArray(deal.associations.companies)) {
       // Look for primary company first
-      const primaryCompany = deal.associations.companies.find((c: any) => c.isPrimary || c.primary || c.snapshot?.type === 'primary');
+      const primaryCompany = deal.associations.companies.find((c: any) => c.isPrimary || c.primary || c.type === 'primary' || c.snapshot?.type === 'primary');
       if (primaryCompany) {
-        return {
+        const result = {
           name: primaryCompany.snapshot?.companyName || primaryCompany.snapshot?.name || primaryCompany.name,
           logo: primaryCompany.snapshot?.logo || primaryCompany.logo,
           id: primaryCompany.id
         };
+        if (!result.logo && primaryCompany.id && companyDocCache[primaryCompany.id]) {
+          result.logo = companyDocCache[primaryCompany.id].logo || null;
+        }
+        return result;
       }
       
       // If no primary company, try the first one
       const firstCompany = deal.associations.companies[0];
       if (firstCompany) {
         if (typeof firstCompany === 'string') {
-          const company = companies.find(c => c.id === firstCompany);
+          const company = companies.find(c => c.id === firstCompany) || (companyDocCache[firstCompany] ? { id: firstCompany, ...companyDocCache[firstCompany] } as any : undefined);
           if (company) {
             return {
-              name: company.companyName || company.name || company.legalName,
-              logo: company.logo || company.logoUrl || company.logo_url || company.avatar,
-              id: company.id
+              name: (company as any).companyName || (company as any).name || (company as any).legalName || (company as any).name,
+              logo: (company as any).logo || (company as any).logoUrl || (company as any).logo_url || (company as any).avatar || (companyDocCache[firstCompany]?.logo ?? null),
+              id: (company as any).id || firstCompany
             };
           }
         } else if (typeof firstCompany === 'object') {
-          return {
+          const result = {
             name: firstCompany.snapshot?.companyName || firstCompany.snapshot?.name || firstCompany.name,
             logo: firstCompany.snapshot?.logo || firstCompany.logo,
             id: firstCompany.id
           };
+          if (!result.logo && firstCompany.id && companyDocCache[firstCompany.id]) {
+            result.logo = companyDocCache[firstCompany.id].logo || null;
+          }
+          return result;
         }
       }
     }
-    
+
+    // Fallback to external company name from deal (only if no associations present)
+    if (deal.externalCompanyName && !(deal.associations?.companies?.length)) {
+      return {
+        name: deal.externalCompanyName,
+        logo: null,
+        id: null
+      };
+    }
+
     // Extract company name from deal name if it contains company indicators
     const dealName = deal.name || '';
     const companyIndicators = ['Offer', 'Agreement', 'Contract', 'Deal'];
@@ -6611,18 +6666,9 @@ const PipelineTab: React.FC<{
         return salespeople.some((sp: any) => sp.id === filters.currentUserId);
       });
     } else if (filters?.owner && filters.owner !== 'all') {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔍 Filtering by salesperson ID:', filters.owner);
-        console.log('🔍 Sample deal associations:', data[0]?.associations);
-      }
-      
       data = data.filter((d) => {
         const salespeople = d.associations?.salespeople || [];
         const hasSalesperson = salespeople.some((sp: any) => sp.id === filters.owner);
-        
-        if (process.env.NODE_ENV === 'development') {
-          console.log('🔍 Deal salespeople:', salespeople.map((sp: any) => sp.id), 'Looking for:', filters.owner, 'Found:', hasSalesperson);
-        }
         
         return hasSalesperson;
       });
