@@ -6246,6 +6246,86 @@ const PipelineTab: React.FC<{
   const [viewMode, setViewMode] = React.useState<'funnel' | 'bubble'>('funnel');
   const [bubbleColorMode, setBubbleColorMode] = React.useState<'stage' | 'owner' | 'health'>('stage');
   
+  // Helper function to get avatar background color - softer pastel palette
+  const getAvatarColor = (name: string) => {
+    const colors = [
+      '#E3F2FD', '#F3E5F5', '#E8F5E8', '#FFF3E0', '#FCE4EC',
+      '#F1F8E9', '#E0F2F1', '#F9FBE7', '#E8EAF6', '#FFF8E1',
+      '#F3E5F5', '#E1F5FE', '#F1F8E9', '#FFF3E0', '#E8F5E8'
+    ];
+    const index = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % colors.length;
+    return colors[index];
+  };
+
+  // Helper function to get avatar text color
+  const getAvatarTextColor = (name: string) => {
+    const colors = [
+      '#1976D2', '#7B1FA2', '#388E3C', '#F57C00', '#C2185B',
+      '#689F38', '#009688', '#AFB42B', '#3F51B5', '#FF8F00',
+      '#7B1FA2', '#0277BD', '#689F38', '#F57C00', '#388E3C'
+    ];
+    const index = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % colors.length;
+    return colors[index];
+  };
+
+  // Helper function to get deal owner/salesperson names
+  const getDealOwner = (deal: any) => {
+    // Helper to resolve a display name from a salesperson object or id
+    const resolveFromId = (id: string): string => {
+      // Try to find in the salesTeam array with multiple field matches
+      const sp = salesTeam.find(s => (
+        s.id === id || 
+        s.uid === id || 
+        s.userId === id || 
+        s.userID === id || 
+        s.docId === id || 
+        s.email === id ||
+        s.user_id === id ||
+        s.userId === id
+      ));
+      
+      if (sp) {
+        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+        return sp.name || sp.displayName || full || sp.email || id;
+      }
+      
+      // If not found, return a more user-friendly version of the ID
+      // For Firebase UIDs, show just the first 8 characters
+      if (id && id.length > 20) {
+        return `User ${id.substring(0, 8)}...`;
+      }
+      
+      return id;
+    };
+
+    const names: string[] = [];
+    const visited = new Set<string>();
+
+    // Prefer associations.salespeople
+    const assoc = (deal.associations?.salespeople || []) as any[];
+    assoc.forEach((sp: any) => {
+      let label = '';
+      if (typeof sp === 'string') {
+        label = resolveFromId(sp);
+      } else if (sp && typeof sp === 'object') {
+        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+        label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+      }
+      if (label && !visited.has(label)) {
+        visited.add(label);
+        names.push(label);
+      }
+    });
+
+    if (names.length > 0) return names.join(', ');
+
+    // Fallbacks
+    if (deal.salesOwnerName) return deal.salesOwnerName;
+    if (deal.salespeopleNames && deal.salespeopleNames.length > 0) return deal.salespeopleNames.join(', ');
+
+    return '-';
+  };
+  
   // Column visibility state
   const [visibleColumns, setVisibleColumns] = React.useState<string[]>([
     'deal', 'company', 'owner', 'stage', 'value', 'probability', 'aiHealth', 'lastActivity'
@@ -6891,7 +6971,7 @@ const PipelineTab: React.FC<{
                     direction={sortBy === 'owner' ? sortOrder : 'asc'}
                     onClick={() => handleSort('owner')}
                   >
-                    Owner
+                    Salesperson
                   </TableSortLabel>
                 </TableCell>
               )}
@@ -6991,10 +7071,33 @@ const PipelineTab: React.FC<{
                     <TableCell sx={{ fontWeight: 500 }}>{d.name}</TableCell>
                   )}
                   {visibleColumns.includes('company') && (
-                    <TableCell>{c?.companyName || c?.name || '-'}</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Avatar 
+                          src={c?.logo || c?.logoUrl || c?.logo_url || c?.avatar}
+                          sx={{ 
+                            width: 24, 
+                            height: 24,
+                            backgroundColor: getAvatarColor(c?.companyName || c?.name || ''),
+                            color: getAvatarTextColor(c?.companyName || c?.name || ''),
+                            fontWeight: 600,
+                            fontSize: '10px'
+                          }}
+                        >
+                          {(c?.companyName || c?.name || '?').charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                          {c?.companyName || c?.name || '-'}
+                        </Typography>
+                      </Box>
+                    </TableCell>
                   )}
                   {visibleColumns.includes('owner') && (
-                    <TableCell>{d.owner || '-'}</TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                        {getDealOwner(d)}
+                      </Typography>
+                    </TableCell>
                   )}
                   {visibleColumns.includes('stage') && (
                     <TableCell>
