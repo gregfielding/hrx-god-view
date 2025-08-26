@@ -6268,6 +6268,70 @@ const PipelineTab: React.FC<{
     return colors[index];
   };
 
+  // Helper function to get company information with fallbacks
+  const getDealCompanyInfo = (deal: any) => {
+    // First try to get company from primary company ID
+    const primaryId = getDealPrimaryCompanyId(deal);
+    if (primaryId) {
+      const company = companies.find(c => c.id === primaryId);
+      if (company) {
+        return {
+          name: company.companyName || company.name || company.legalName,
+          logo: company.logo || company.logoUrl || company.logo_url || company.avatar,
+          id: company.id
+        };
+      }
+    }
+    
+    // Fallback to external company name from deal
+    if (deal.externalCompanyName) {
+      return {
+        name: deal.externalCompanyName,
+        logo: null,
+        id: null
+      };
+    }
+    
+    // Fallback to company name from deal associations
+    if (deal.associations?.companies && deal.associations.companies.length > 0) {
+      const companyId = deal.associations.companies[0];
+      if (typeof companyId === 'string') {
+        const company = companies.find(c => c.id === companyId);
+        if (company) {
+          return {
+            name: company.companyName || company.name || company.legalName,
+            logo: company.logo || company.logoUrl || company.logo_url || company.avatar,
+            id: company.id
+          };
+        }
+      } else if (typeof companyId === 'object' && companyId.name) {
+        return {
+          name: companyId.name,
+          logo: companyId.logo || companyId.logoUrl || companyId.logo_url || companyId.avatar,
+          id: companyId.id
+        };
+      }
+    }
+    
+    // Extract company name from deal name if it contains company indicators
+    const dealName = deal.name || '';
+    const companyIndicators = ['Offer', 'Agreement', 'Contract', 'Deal'];
+    for (const indicator of companyIndicators) {
+      if (dealName.includes(indicator)) {
+        const beforeIndicator = dealName.split(indicator)[0].trim();
+        if (beforeIndicator && beforeIndicator.length > 2) {
+          return {
+            name: beforeIndicator,
+            logo: null,
+            id: null
+          };
+        }
+      }
+    }
+    
+    return null;
+  };
+
   // Helper function to get deal owner/salesperson names
   const getDealOwner = (deal: any) => {
     // Helper to resolve a display name from a salesperson object or id
@@ -7045,8 +7109,7 @@ const PipelineTab: React.FC<{
           </TableHead>
           <TableBody>
             {sortedDeals.map((d) => {
-              const cid = getDealPrimaryCompanyId(d as any);
-              const c = companies.find((x: any) => x.id === cid);
+              const companyInfo = getDealCompanyInfo(d);
               const health = getDealHealth(d);
               const updated = getDealUpdatedAt(d);
               const prob = getDealProbability(d);
@@ -7072,24 +7135,30 @@ const PipelineTab: React.FC<{
                   )}
                   {visibleColumns.includes('company') && (
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Avatar 
-                          src={c?.logo || c?.logoUrl || c?.logo_url || c?.avatar}
-                          sx={{ 
-                            width: 24, 
-                            height: 24,
-                            backgroundColor: getAvatarColor(c?.companyName || c?.name || ''),
-                            color: getAvatarTextColor(c?.companyName || c?.name || ''),
-                            fontWeight: 600,
-                            fontSize: '10px'
-                          }}
-                        >
-                          {(c?.companyName || c?.name || '?').charAt(0).toUpperCase()}
-                        </Avatar>
-                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                          {c?.companyName || c?.name || '-'}
+                      {companyInfo ? (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <Avatar 
+                            src={companyInfo.logo}
+                            sx={{ 
+                              width: 24, 
+                              height: 24,
+                              backgroundColor: getAvatarColor(companyInfo.name || ''),
+                              color: getAvatarTextColor(companyInfo.name || ''),
+                              fontWeight: 600,
+                              fontSize: '10px'
+                            }}
+                          >
+                            {(companyInfo.name || '?').charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                            {companyInfo.name}
+                          </Typography>
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>
+                          -
                         </Typography>
-                      </Box>
+                      )}
                     </TableCell>
                   )}
                   {visibleColumns.includes('owner') && (
