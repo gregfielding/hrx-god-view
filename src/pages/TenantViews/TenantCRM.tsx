@@ -6293,23 +6293,36 @@ const PipelineTab: React.FC<{
     }
     
     // Fallback to company name from deal associations
-    if (deal.associations?.companies && deal.associations.companies.length > 0) {
-      const companyId = deal.associations.companies[0];
-      if (typeof companyId === 'string') {
-        const company = companies.find(c => c.id === companyId);
-        if (company) {
+    if (deal.associations?.companies && Array.isArray(deal.associations.companies)) {
+      // Look for primary company first
+      const primaryCompany = deal.associations.companies.find((c: any) => c.isPrimary || c.primary);
+      if (primaryCompany) {
+        return {
+          name: primaryCompany.snapshot?.companyName || primaryCompany.snapshot?.name || primaryCompany.name,
+          logo: primaryCompany.snapshot?.logo || primaryCompany.logo,
+          id: primaryCompany.id
+        };
+      }
+      
+      // If no primary company, try the first one
+      const firstCompany = deal.associations.companies[0];
+      if (firstCompany) {
+        if (typeof firstCompany === 'string') {
+          const company = companies.find(c => c.id === firstCompany);
+          if (company) {
+            return {
+              name: company.companyName || company.name || company.legalName,
+              logo: company.logo || company.logoUrl || company.logo_url || company.avatar,
+              id: company.id
+            };
+          }
+        } else if (typeof firstCompany === 'object') {
           return {
-            name: company.companyName || company.name || company.legalName,
-            logo: company.logo || company.logoUrl || company.logo_url || company.avatar,
-            id: company.id
+            name: firstCompany.snapshot?.companyName || firstCompany.snapshot?.name || firstCompany.name,
+            logo: firstCompany.snapshot?.logo || firstCompany.logo,
+            id: firstCompany.id
           };
         }
-      } else if (typeof companyId === 'object' && companyId.name) {
-        return {
-          name: companyId.name,
-          logo: companyId.logo || companyId.logoUrl || companyId.logo_url || companyId.avatar,
-          id: companyId.id
-        };
       }
     }
     
