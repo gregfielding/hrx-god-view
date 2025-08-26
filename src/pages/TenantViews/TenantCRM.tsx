@@ -709,7 +709,7 @@ const TenantCRM: React.FC = () => {
       }
       
       // Use Firebase Function to get salespeople with proper tenant filtering
-              const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
+      const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
       
       const params = { 
         tenantId,
@@ -723,9 +723,30 @@ const TenantCRM: React.FC = () => {
       
       const result = await getSalespeople(params);
       const data = result.data as { salespeople: any[] };
-      setSalesTeam(data.salespeople || []);
+      
+      // Also try to get all users in the tenant to ensure we have complete coverage
+      let allUsers: any[] = [];
+      try {
+        const usersRef = collection(db, 'users');
+        const usersSnapshot = await getDocs(usersRef);
+        allUsers = usersSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter((user: any) => user.tenantIds && user.tenantIds[tenantId]);
+      } catch (error) {
+        console.warn('Could not load all users for name resolution:', error);
+      }
+      
+      // Combine salespeople with all users, prioritizing salespeople
+      const combinedTeam = [...(data.salespeople || [])];
+      allUsers.forEach(user => {
+        if (!combinedTeam.find(sp => sp.id === user.id)) {
+          combinedTeam.push(user);
+        }
+      });
+      
+      setSalesTeam(combinedTeam);
       if (process.env.NODE_ENV === 'development') {
-        console.log('✅ Loaded', data.salespeople?.length || 0, 'sales team members');
+        console.log('✅ Loaded', combinedTeam.length, 'total team members (salespeople + all users)');
       }
       
     } catch (error: any) {
@@ -5302,10 +5323,30 @@ const CompaniesTab: React.FC<{
   const getDealOwner = (deal: any) => {
     // Helper to resolve a display name from a salesperson object or id
     const resolveFromId = (id: string): string => {
-      const sp = salesTeam.find(s => (s.id === id || s.uid === id || s.userId === id || s.userID === id || s.docId === id || s.email === id));
-      if (!sp) return id;
-      const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
-      return sp.name || sp.displayName || full || sp.email || id;
+      // Try to find in the salesTeam array with multiple field matches
+      const sp = salesTeam.find(s => (
+        s.id === id || 
+        s.uid === id || 
+        s.userId === id || 
+        s.userID === id || 
+        s.docId === id || 
+        s.email === id ||
+        s.user_id === id ||
+        s.userId === id
+      ));
+      
+      if (sp) {
+        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+        return sp.name || sp.displayName || full || sp.email || id;
+      }
+      
+      // If not found, return a more user-friendly version of the ID
+      // For Firebase UIDs, show just the first 8 characters
+      if (id && id.length > 20) {
+        return `User ${id.substring(0, 8)}...`;
+      }
+      
+      return id;
     };
 
     const names: string[] = [];
