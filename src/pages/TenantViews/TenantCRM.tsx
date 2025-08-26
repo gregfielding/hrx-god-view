@@ -5278,7 +5278,12 @@ const CompaniesTab: React.FC<{
   const getDealCompanyName = (deal: any) => {
     const primaryId = getDealPrimaryCompanyId(deal);
     if (primaryId) {
-      const company = companies.find(c => c.id === primaryId);
+      // First try to find in the filtered companies array
+      let company = companies.find(c => c.id === primaryId);
+      // If not found, try in allCompanies (for deals with companies not in current filter)
+      if (!company && allCompanies) {
+        company = allCompanies.find(c => c.id === primaryId);
+      }
       if (company) return company.companyName || company.name || '-';
     }
     if (deal.externalCompanyName) return deal.externalCompanyName;
@@ -5871,7 +5876,12 @@ const CompaniesTab: React.FC<{
                       src={(() => {
                         const primaryId = getDealPrimaryCompanyId(deal);
                         if (primaryId) {
-                          const company = companies.find(c => c.id === primaryId);
+                          // First try to find in the filtered companies array
+                          let company = companies.find(c => c.id === primaryId);
+                          // If not found, try in allCompanies (for deals with companies not in current filter)
+                          if (!company && allCompanies) {
+                            company = allCompanies.find(c => c.id === primaryId);
+                          }
                           return company?.logo || company?.logoUrl || company?.logo_url || company?.avatar;
                         }
                         return null;
