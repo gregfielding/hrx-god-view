@@ -5359,8 +5359,15 @@ const CompaniesTab: React.FC<{
       if (typeof sp === 'string') {
         label = resolveFromId(sp);
       } else if (sp && typeof sp === 'object') {
-        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
-        label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        // Check for snapshot data first (new structure)
+        if (sp.snapshot) {
+          const full = [sp.snapshot.firstName, sp.snapshot.lastName].filter(Boolean).join(' ').trim();
+          label = sp.snapshot.displayName || sp.snapshot.name || full || sp.snapshot.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        } else {
+          // Fallback to direct properties (old structure)
+          const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+          label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        }
       }
       if (label && !visited.has(label)) {
         visited.add(label);
@@ -6295,7 +6302,7 @@ const PipelineTab: React.FC<{
     // Fallback to company name from deal associations
     if (deal.associations?.companies && Array.isArray(deal.associations.companies)) {
       // Look for primary company first
-      const primaryCompany = deal.associations.companies.find((c: any) => c.isPrimary || c.primary);
+      const primaryCompany = deal.associations.companies.find((c: any) => c.isPrimary || c.primary || c.snapshot?.type === 'primary');
       if (primaryCompany) {
         return {
           name: primaryCompany.snapshot?.companyName || primaryCompany.snapshot?.name || primaryCompany.name,
@@ -6385,8 +6392,15 @@ const PipelineTab: React.FC<{
       if (typeof sp === 'string') {
         label = resolveFromId(sp);
       } else if (sp && typeof sp === 'object') {
-        const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
-        label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        // Check for snapshot data first (new structure)
+        if (sp.snapshot) {
+          const full = [sp.snapshot.firstName, sp.snapshot.lastName].filter(Boolean).join(' ').trim();
+          label = sp.snapshot.displayName || sp.snapshot.name || full || sp.snapshot.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        } else {
+          // Fallback to direct properties (old structure)
+          const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
+          label = sp.name || sp.displayName || full || sp.email || (sp.id ? resolveFromId(sp.id) : 'Unknown');
+        }
       }
       if (label && !visited.has(label)) {
         visited.add(label);
