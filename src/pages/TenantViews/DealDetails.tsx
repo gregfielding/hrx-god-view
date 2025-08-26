@@ -2024,6 +2024,68 @@ const DealDetails: React.FC = () => {
                 </SectionCard>
               </Box>
 
+              {/* Company Widget */}
+              <Box sx={{ mb: 0 }}>
+                <SectionCard title="Company" action={
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => {
+                      if (company) {
+                        navigate(`/crm/companies/${company.id}`);
+                      }
+                    }}
+                    sx={{ 
+                      minWidth: 'auto',
+                      px: 1,
+                      py: 0.5,
+                      fontSize: '0.75rem',
+                      textTransform: 'none'
+                    }}
+                  >
+                    View
+                  </Button>
+                }>
+                  {company ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Box
+                        sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                        onClick={() => navigate(`/crm/companies/${company.id}`)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { 
+                          if (e.key === 'Enter' || e.key === ' ') { 
+                            e.preventDefault(); 
+                            navigate(`/crm/companies/${company.id}`);
+                          } 
+                        }}
+                      >
+                        <Avatar 
+                          src={company.logo || company.logoUrl || company.logo_url || company.avatar}
+                          sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+                        >
+                          {(company.companyName || company.name || 'C').charAt(0).toUpperCase()}
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" fontWeight="medium">
+                            {company.companyName || company.name || 'Unknown Company'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {company.industry || company.sector || 'No industry'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 3 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No company assigned
+                      </Typography>
+                    </Box>
+                  )}
+                </SectionCard>
+              </Box>
+
               {/* Active Salespeople Widget */}
               <Box sx={{ mb: 0 }}>
                 <SectionCard title="Active Salespeople" action={
