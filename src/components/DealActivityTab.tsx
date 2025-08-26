@@ -25,7 +25,7 @@ import {
 import {
   Timeline as TimelineIcon,
 } from '@mui/icons-material';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 
 type DealActivityItem = {
@@ -63,139 +63,160 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
   // Pagination
   const PAGE_SIZE = 25;
   const [page, setPage] = useState<number>(1);
-
+  // Real-time listeners for tasks, notes, stage history, and emails
   useEffect(() => {
-    const load = async () => {
-      if (!deal?.id || !tenantId) return;
-      setLoading(true);
-      setError('');
-      try {
-        const dealId: string = deal.id;
-        // contacts in associations can be strings (ids) or objects with an id + snapshot
-        const contactIds: string[] = Array.isArray(deal.associations?.contacts)
-          ? (deal.associations.contacts as any[])
-              .map((c: any) => (typeof c === 'string' ? c : c?.id))
-              .filter((id: any) => typeof id === 'string' && id.length > 0)
-          : [];
+    if (!deal?.id || !tenantId) return;
+    setLoading(true);
+    setError('');
 
-        const aggregated: DealActivityItem[] = [];
+    const dealId: string = deal.id;
+    const contactIds: string[] = Array.isArray(deal.associations?.contacts)
+      ? (deal.associations.contacts as any[])
+          .map((c: any) => (typeof c === 'string' ? c : c?.id))
+          .filter((id: any) => typeof id === 'string' && id.length > 0)
+      : [];
 
-        // Tasks: completed tasks associated to this deal
-        try {
-          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-          const tq = query(
-            tasksRef,
-            where('associations.deals', 'array-contains', dealId),
-            where('status', '==', 'completed'),
-            orderBy('updatedAt', 'desc'),
-            limit(200)
-          );
-          const ts = await getDocs(tq);
-          ts.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `task_${docSnap.id}`,
-              type: 'task',
-              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
-              title: d.title || 'Task completed',
-              description: d.description || '',
-              metadata: { priority: d.priority, taskType: d.type }
-            });
-          });
-        } catch {}
+    const unsubs: Array<() => void> = [];
 
-        // Notes: deal notes
-        try {
-          const notesRef = collection(db, 'tenants', tenantId, 'notes');
-          const nq = query(
-            notesRef, 
-            where('entityId', '==', dealId), 
-            where('entityType', '==', 'deal'),
-            orderBy('timestamp', 'desc'), 
-            limit(200)
-          );
-          const ns = await getDocs(nq);
-          ns.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `note_${docSnap.id}`,
-              type: 'note',
-              timestamp: d.timestamp?.toDate?.() || new Date(),
-              title: d.category ? `Note (${d.category})` : 'Note',
-              description: d.content,
-              metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
-            });
-          });
-        } catch {}
-
-        // Deal stage progression: subcollection stage_history under the deal
-        try {
-          const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
-          const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
-          const ss = await getDocs(sq);
-          ss.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `dealstage_${dealId}_${docSnap.id}`,
-              type: 'deal_stage',
-              timestamp: d.timestamp?.toDate?.() || new Date(),
-              title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
-              description: d.reason || 'Stage updated',
-              metadata: { dealId }
-            });
-          });
-        } catch {}
-
-        // Emails: email_logs filtered by dealId and by each contactId
-        try {
-          const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
-          // Deal-specific emails
-          const dq = query(emailsRef, where('dealId', '==', dealId), orderBy('timestamp', 'desc'), limit(200));
-          const ds = await getDocs(dq);
-          ds.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `email_deal_${docSnap.id}`,
-              type: 'email',
-              timestamp: d.timestamp?.toDate?.() || new Date(),
-              title: `Email: ${d.subject || '(no subject)'}`,
-              description: d.bodySnippet,
-              metadata: { from: d.from, to: d.to, direction: d.direction }
-            });
-          });
-          
-          // Contact-specific emails
-          for (const contactId of contactIds) {
-            try {
-              const cq = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
-              const cs = await getDocs(cq);
-              cs.forEach((docSnap) => {
-                const d = docSnap.data() as any;
-                aggregated.push({
-                  id: `email_contact_${contactId}_${docSnap.id}`,
-                  type: 'email',
-                  timestamp: d.timestamp?.toDate?.() || new Date(),
-                  title: `Email: ${d.subject || '(no subject)'}`,
-                  description: d.bodySnippet,
-                  metadata: { from: d.from, to: d.to, direction: d.direction }
-                });
-              });
-            } catch {}
-          }
-        } catch {}
-
-        // Sort newest first
-        aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
-        setItems(aggregated);
-        setPage(1);
-      } catch (e: any) {
-        setError(e?.message || 'Failed to load activity');
-      } finally {
-        setLoading(false);
-      }
+    const update = (parts: DealActivityItem[][]) => {
+      const aggregated = parts.flat();
+      aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+      setItems(aggregated);
+      setPage(1);
+      setLoading(false);
     };
-    load();
-  }, [deal?.id, tenantId]);
+
+    let tasks: DealActivityItem[] = [];
+    let notes: DealActivityItem[] = [];
+    let stages: DealActivityItem[] = [];
+    let emails: DealActivityItem[] = [];
+
+    // Tasks listener
+    try {
+      const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+      const tq = query(
+        tasksRef,
+        where('associations.deals', 'array-contains', dealId),
+        where('status', '==', 'completed'),
+        orderBy('updatedAt', 'desc'),
+        limit(200)
+      );
+      unsubs.push(onSnapshot(tq, (snap) => {
+        tasks = snap.docs.map((docSnap) => {
+          const d = docSnap.data() as any;
+          return {
+            id: `task_${docSnap.id}`,
+            type: 'task',
+            timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+            title: d.title || 'Task completed',
+            description: d.description || '',
+            metadata: { priority: d.priority, taskType: d.type }
+          } as DealActivityItem;
+        });
+        update([tasks, notes, stages, emails]);
+      }));
+    } catch {}
+
+    // Notes listener
+    try {
+      const notesRef = collection(db, 'tenants', tenantId, 'notes');
+      const nq = query(
+        notesRef,
+        where('entityId', '==', dealId),
+        where('entityType', '==', 'deal'),
+        orderBy('timestamp', 'desc'),
+        limit(200)
+      );
+      unsubs.push(onSnapshot(nq, (snap) => {
+        notes = snap.docs.map((docSnap) => {
+          const d = docSnap.data() as any;
+          return {
+            id: `note_${docSnap.id}`,
+            type: 'note',
+            timestamp: d.timestamp?.toDate?.() || new Date(),
+            title: d.category ? `Note (${d.category})` : 'Note',
+            description: d.content,
+            metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+          } as DealActivityItem;
+        });
+        update([tasks, notes, stages, emails]);
+      }));
+    } catch {}
+
+    // Stage history listener
+    try {
+      const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+      const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+      unsubs.push(onSnapshot(sq, (snap) => {
+        stages = snap.docs.map((docSnap) => {
+          const d = docSnap.data() as any;
+          return {
+            id: `dealstage_${dealId}_${docSnap.id}`,
+            type: 'deal_stage',
+            timestamp: d.timestamp?.toDate?.() || new Date(),
+            title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+            description: d.reason || 'Stage updated',
+            metadata: { dealId }
+          } as DealActivityItem;
+        });
+        update([tasks, notes, stages, emails]);
+      }));
+    } catch {}
+
+    // Emails listeners (deal + contacts)
+    try {
+      const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+      const dq = query(emailsRef, where('dealId', '==', dealId), orderBy('timestamp', 'desc'), limit(200));
+      unsubs.push(onSnapshot(dq, (snap) => {
+        const dealEmails = snap.docs.map((docSnap) => {
+          const d = docSnap.data() as any;
+          return {
+            id: `email_deal_${docSnap.id}`,
+            type: 'email',
+            timestamp: d.timestamp?.toDate?.() || new Date(),
+            title: `Email: ${d.subject || '(no subject)'}`,
+            description: d.bodySnippet,
+            metadata: { from: d.from, to: d.to, direction: d.direction }
+          } as DealActivityItem;
+        });
+        // Keep contact emails; merge with deal emails
+        emails = [...dealEmails, ...emails.filter((e) => e.id.startsWith('email_contact_'))];
+        update([tasks, notes, stages, emails]);
+      }));
+
+      // Contact-specific emails
+      for (const contactId of contactIds) {
+        try {
+          const cq = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+          unsubs.push(onSnapshot(cq, (snap) => {
+            const contactEmails = snap.docs.map((docSnap) => {
+              const d = docSnap.data() as any;
+              return {
+                id: `email_contact_${contactId}_${docSnap.id}`,
+                type: 'email',
+                timestamp: d.timestamp?.toDate?.() || new Date(),
+                title: `Email: ${d.subject || '(no subject)'}`,
+                description: d.bodySnippet,
+                metadata: { from: d.from, to: d.to, direction: d.direction }
+              } as DealActivityItem;
+            });
+            // Remove previous entries for this contact and merge
+            emails = [
+              ...emails.filter((e) => !e.id.startsWith(`email_contact_${contactId}_`)),
+              ...contactEmails,
+            ];
+            update([tasks, notes, stages, emails]);
+          }));
+        } catch {}
+      }
+    } catch {}
+
+    return () => {
+      unsubs.forEach((u) => {
+        try { u(); } catch {}
+      });
+    };
+  }, [deal?.id, tenantId, deal?.associations?.contacts]);
 
   // Derived list after filters
   const filtered = items.filter((it) => {
