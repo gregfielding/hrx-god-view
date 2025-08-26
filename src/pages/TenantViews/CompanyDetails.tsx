@@ -643,7 +643,6 @@ const CompanyDetails: React.FC = () => {
       setLogoLoading(false);
     }
   };
-
   const handleDeleteLogo = async () => {
     setLogoLoading(true);
     try {
@@ -759,7 +758,6 @@ const CompanyDetails: React.FC = () => {
       setAiLoading(false);
     }
   };
-
   const handleEnhanceWithAI = async () => {
     setAiLoading(true);
     try {
@@ -1271,7 +1269,6 @@ const CompanyDetails: React.FC = () => {
           onChange={handleLogoUpload}
         />
       </Box>
-
       {/* Pattern Alerts */}
       {featureFlags.patternAlerts && patternAlerts.length > 0 && (
         <Box sx={{ mb: 2 }}>
@@ -1744,7 +1741,6 @@ const RecentActivityWidget: React.FC<{ company: any; tenantId: string }> = ({ co
     </Box>
   );
 };
-
 // Aggregated activity across company, its contacts, and its deals
 const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
   const [items, setItems] = useState<CompanyActivityItem[]>([]);
@@ -2163,6 +2159,48 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
   </Box>
 );
 
+// Lightweight row to render a related company by ID
+const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'child'; companyId: string }> = ({ tenantId, relation, companyId }) => {
+  const navigate = useNavigate();
+  const [name, setName] = useState<string>('');
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+        const data: any = snap.data() || {};
+        const display = data.companyName || data.name || '';
+        if (isMounted) setName(display);
+      } catch {
+        if (isMounted) setName('');
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [tenantId, companyId]);
+
+  return (
+    <Box
+      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+      onClick={() => navigate(`/crm/companies/${companyId}`)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/companies/${companyId}`); } }}
+    >
+      <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+        {name?.charAt(0)?.toUpperCase() || 'C'}
+      </Avatar>
+      <Box sx={{ flex: 1 }}>
+        <Typography variant="body2" fontWeight="medium">
+          {name || companyId}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {relation === 'parent' ? 'Parent Company' : 'Child Company'}
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
 // Tab Components
 const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: any[]; deals: any[] }> = ({ company, tenantId, contacts, deals }) => {
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
@@ -2775,7 +2813,6 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
           </Card>
         </Box>
       </Grid>
-
       {/* Right Column - Recent Activity + Opportunities + Active Salespeople */}
       <Grid item xs={12} md={3}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -3023,6 +3060,36 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
             </CardContent>
           </Card>
           </Box>
+
+          {/* Related Companies */}
+          <Card>
+            <CardHeader 
+              title="Related Companies" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {(() => {
+                const rows: any[] = [];
+                const childIds: string[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+                const parentId: string | null = company.parentCompany || null;
+
+                if (parentId) {
+                  rows.push({ kind: 'parent', id: parentId });
+                }
+                childIds.forEach((id) => rows.push({ kind: 'child', id }));
+
+                if (rows.length === 0) {
+                  return (
+                    <Typography variant="body2" color="text.secondary">No related companies</Typography>
+                  );
+                }
+
+                return rows.map((rel) => (
+                  <RelatedCompanyRow key={`${rel.kind}-${rel.id}`} tenantId={tenantId} relation={rel.kind} companyId={rel.id} />
+                ));
+              })()}
+            </CardContent>
+          </Card>
 
         </Box>
       </Grid>
@@ -3346,7 +3413,6 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       setAiLoading(false);
     }
   };
-
   const handleEnhanceWithAI = async () => {
     setAiLoading(true);
     try {
@@ -3945,7 +4011,6 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
           }}
         />
       </Grid>
-
       {/* Company Headquarters */}
       <Grid item xs={12} md={6}>
         <Card>
@@ -4040,7 +4105,6 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
     </Grid>
   );
 };
-
 const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company, currentTab }) => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
@@ -4235,6 +4299,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLocation, setNewLocation] = useState({
     name: '',
+    code: '',
     address: '',
     city: '',
     state: '',
@@ -4242,6 +4307,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
     country: 'USA',
     type: 'Office',
     division: '',
+    phone: '',
     coordinates: null
   });
   const autocompleteRef = useRef<any>(null);
@@ -4267,6 +4333,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
       
       setNewLocation({
         name: '',
+        code: '',
         address: '',
         city: '',
         state: '',
@@ -4274,6 +4341,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
         country: 'USA',
         type: 'Office',
         division: '',
+        phone: '',
         coordinates: null
       });
       setShowAddForm(false);
@@ -4291,9 +4359,6 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
       </Box>
     );
   }
-
-
-
   return (
     <Box sx={{ p: 0 }}>
       {/* Header with AI Discovery Button */}
@@ -4402,6 +4467,15 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                   value={newLocation.name}
                   onChange={(e) => setNewLocation(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="e.g., Headquarters, Manufacturing Plant"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Location Code"
+                  value={newLocation.code}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, code: e.target.value }))}
+                  placeholder="Internal code (e.g., HQ-01)"
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -4552,6 +4626,21 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                   label="ZIP Code"
                   value={newLocation.zipCode}
                   onChange={(e) => setNewLocation(prev => ({ ...prev, zipCode: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Phone"
+                  value={newLocation.phone}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
+                    const pretty = raw.length >= 10
+                      ? `(${raw.slice(0,3)}) ${raw.slice(3,6)}-${raw.slice(6,10)}`
+                      : raw;
+                    setNewLocation(prev => ({ ...prev, phone: pretty }));
+                  }}
+                  placeholder="(555) 123-4567"
                 />
               </Grid>
               {newLocation.coordinates && (
@@ -4816,7 +4905,6 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
     </Box>
   );
 };
-
 const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }> = ({ contacts, company, locations }) => {
   const navigate = useNavigate();
   const { tenantId, currentUser } = useAuth();
@@ -5438,7 +5526,6 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     </>
   );
 };
-
 const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] }> = ({ deals, company, locations }) => {
   const navigate = useNavigate();
   const { tenantId } = useAuth();
@@ -6020,7 +6107,6 @@ const NotesTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenan
     />
   );
 };
-
 // Helper function to scrape job postings from Google Jobs
 const scrapeJobPostings = async (companyName: string): Promise<any[]> => {
   try {
@@ -6174,7 +6260,6 @@ const NewsTab: React.FC<{ company: any }> = ({ company }) => {
     </Box>
   );
 };
-
 const IndeedJobsTab: React.FC<{ 
   company: any; 
   jobPostings: any[]; 
@@ -6418,7 +6503,6 @@ const IndeedJobsTab: React.FC<{
     </Box>
   );
 };
-
 // Order Defaults Tab Component
 const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
   const [steps, setSteps] = useState<any[]>([]);
@@ -6428,6 +6512,8 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [vendorProcessFromDb, setVendorProcessFromDb] = useState<any | null>(null);
+  const isWritingRef = useRef(false);
 
   // Dialog states
   const [addStepDialogOpen, setAddStepDialogOpen] = useState(false);
@@ -6439,42 +6525,81 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
   const [selectedSalesperson, setSelectedSalesperson] = useState('');
   const [selectedContact, setSelectedContact] = useState('');
 
-  // Load vendor process data
+  // Helper to persist vendor process immediately
+  const persistVendorProcess = useCallback(async (
+    nextSteps?: any[],
+    nextSalespeople?: any[],
+    nextCompanyContacts?: any[],
+  ) => {
+    try {
+      isWritingRef.current = true;
+      setSaving(true);
+      const payload = {
+        vendorProcess: {
+          steps: nextSteps ?? steps,
+          salespeople: (nextSalespeople ?? salespeople).filter((s: any) => s.selected).map((s: any) => ({ id: s.id, displayName: s.displayName || s.name || s.email })),
+          companyContacts: (nextCompanyContacts ?? companyContacts).filter((c: any) => c.selected).map((c: any) => ({ id: c.id, firstName: c.firstName || '', lastName: c.lastName || '' })),
+        },
+        updatedAt: serverTimestamp(),
+      } as any;
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), payload);
+      setSuccess('Saved');
+      setTimeout(() => setSuccess(null), 1200);
+    } catch (err) {
+      console.error('Error saving vendor process:', err);
+      setError('Failed to save vendor process');
+    } finally {
+      setSaving(false);
+      // release the flag slightly later so the snapshot from our write does not bounce
+      setTimeout(() => { isWritingRef.current = false; }, 150);
+    }
+  }, [tenantId, company?.id, steps, salespeople, companyContacts]);
+
+  // Load vendor process data & listen live
+  useEffect(() => {
+    if (!company?.id || !tenantId) return;
+
+    const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', company.id);
+
+    const unsub = onSnapshot(companyRef, (snap) => {
+      const data = snap.data();
+      const vp = data?.vendorProcess || {};
+      setVendorProcessFromDb(vp);
+      // Always reflect steps from DB (unless we are mid-write and local source-of-truth already set)
+      if (!isWritingRef.current) {
+        setSteps(vp.steps || []);
+      }
+    }, (err) => console.error('VendorProcess onSnapshot error', err));
+
+    return () => unsub();
+  }, [tenantId, company?.id]);
+
+  // When we have salespeople/contacts loaded or vendorProcess updates, hydrate selections
+  useEffect(() => {
+    if (!vendorProcessFromDb) return;
+    setSalespeople((prev) => prev.map((s: any) => ({ ...s, selected: Boolean(vendorProcessFromDb.salespeople?.some((x: any) => x.id === s.id)) })));
+    setCompanyContacts((prev) => prev.map((c: any) => ({ ...c, selected: Boolean(vendorProcessFromDb.companyContacts?.some((x: any) => x.id === c.id)) })));
+  }, [vendorProcessFromDb]);
+
+  // Load static lists (contacts + salespeople) once
   useEffect(() => {
     const loadVendorProcessData = async () => {
       try {
         setLoading(true);
-        
         // Load company contacts
         const contactsQuery = query(
           collection(db, 'tenants', tenantId, 'crm_contacts'),
           where('companyId', '==', company.id)
         );
         const contactsSnapshot = await getDocs(contactsQuery);
-        const contactsData = contactsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setCompanyContacts(contactsData);
 
         // Load salespeople (users with crm_sales: true)
-        const salespeopleQuery = query(
-          collection(db, 'users'),
-          where('crm_sales', '==', true)
-        );
+        const salespeopleQuery = query(collection(db, 'users'), where('crm_sales', '==', true));
         const salespeopleSnapshot = await getDocs(salespeopleQuery);
-        const salespeopleData = salespeopleSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        const salespeopleData = salespeopleSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setSalespeople(salespeopleData);
-
-        // Load existing vendor process data
-        const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id));
-        const companyData = companyDoc.data();
-        if (companyData?.vendorProcess) {
-          setSteps(companyData.vendorProcess.steps || []);
-        }
       } catch (err) {
         console.error('Error loading vendor process data:', err);
         setError('Failed to load vendor process data');
@@ -6488,74 +6613,65 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
     }
   }, [company?.id, tenantId]);
 
-  const handleSaveVendorProcess = async () => {
-    try {
-      setSaving(true);
-      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), {
-        vendorProcess: {
-          steps: steps,
-          salespeople: salespeople.filter(s => s.selected),
-          companyContacts: companyContacts.filter(c => c.selected)
-        },
-        updatedAt: serverTimestamp()
-      });
-      setSuccess('Vendor process saved successfully');
-    } catch (err) {
-      console.error('Error saving vendor process:', err);
-      setError('Failed to save vendor process');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleAddStep = () => {
     if (newStep.title.trim()) {
-      setSteps(prev => [...prev, { ...newStep, id: Date.now().toString() }]);
+      const next = [...steps, { ...newStep, id: Date.now().toString() }];
+      setSteps(next);
       setNewStep({ title: '', description: '', status: 'Not Started' });
       setAddStepDialogOpen(false);
+      persistVendorProcess(next);
     }
   };
 
   const handleAddSalesperson = () => {
     if (selectedSalesperson) {
-      setSalespeople(prev => prev.map(s => 
-        s.id === selectedSalesperson ? { ...s, selected: true } : s
-      ));
+      const next = salespeople.map(s => s.id === selectedSalesperson ? { ...s, selected: true } : s);
+      setSalespeople(next);
       setSelectedSalesperson('');
       setAddSalespersonDialogOpen(false);
+      persistVendorProcess(undefined, next, undefined);
     }
   };
 
   const handleAddContact = () => {
     if (selectedContact) {
-      setCompanyContacts(prev => prev.map(c => 
-        c.id === selectedContact ? { ...c, selected: true } : c
-      ));
+      const next = companyContacts.map(c => c.id === selectedContact ? { ...c, selected: true } : c);
+      setCompanyContacts(next);
       setSelectedContact('');
       setAddContactDialogOpen(false);
+      persistVendorProcess(undefined, undefined, next);
     }
   };
 
   const handleRemoveSalesperson = (salespersonId: string) => {
-    setSalespeople(prev => prev.map(s => 
-      s.id === salespersonId ? { ...s, selected: false } : s
-    ));
+    const next = salespeople.map(s => s.id === salespersonId ? { ...s, selected: false } : s);
+    setSalespeople(next);
+    persistVendorProcess(undefined, next, undefined);
   };
 
   const handleRemoveContact = (contactId: string) => {
-    setCompanyContacts(prev => prev.map(c => 
-      c.id === contactId ? { ...c, selected: false } : c
-    ));
+    const next = companyContacts.map(c => c.id === contactId ? { ...c, selected: false } : c);
+    setCompanyContacts(next);
+    persistVendorProcess(undefined, undefined, next);
   };
 
   const handleUpdateStepStatus = (stepId: string, newStatus: string) => {
-    setSteps(prev => prev.map(step => 
-      step.id === stepId ? { ...step, status: newStatus } : step
-    ));
+    const next = steps.map(step => step.id === stepId ? { ...step, status: newStatus } : step);
+    setSteps(next);
+    persistVendorProcess(next);
   };
 
   const handleDeleteStep = (stepId: string) => {
-    setSteps(prev => prev.filter(step => step.id !== stepId));
+    const next = steps.filter(step => step.id !== stepId);
+    setSteps(next);
+    persistVendorProcess(next);
+  };
+
+  const handleUpdateStepField = (stepId: string, field: 'title' | 'description', value: string) => {
+    const next = steps.map(step => step.id === stepId ? { ...step, [field]: value } : step);
+    setSteps(next);
+    // Save on blur
+    persistVendorProcess(next);
   };
 
   if (loading) {
@@ -6572,14 +6688,6 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
         <Typography variant="h6" sx={{ fontWeight:700 }}>
           Vendor Process
         </Typography>
-        {/* <Button
-          variant="contained"
-          onClick={handleSaveVendorProcess}
-          disabled={saving}
-          startIcon={saving ? <CircularProgress size={16} /> : null}
-        >
-          {saving ? 'Saving...' : 'Save Process'}
-        </Button> */}
       </Box>
 
       <Grid container spacing={3}>
@@ -6609,14 +6717,21 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
                       alignItems: 'center'
                     }}>
                       <Box sx={{ flex: 1 }}>
-                        <Typography variant="body1" fontWeight="medium">
-                          {step.title}
-                        </Typography>
-                        {step.description && (
-                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                            {step.description}
-                          </Typography>
-                        )}
+                        <TextField
+                          variant="standard"
+                          fullWidth
+                          defaultValue={step.title}
+                          onBlur={(e) => handleUpdateStepField(step.id, 'title', e.target.value)}
+                          inputProps={{ style: { fontWeight: 500 } }}
+                        />
+                        <TextField
+                          variant="standard"
+                          fullWidth
+                          defaultValue={step.description || ''}
+                          onBlur={(e) => handleUpdateStepField(step.id, 'description', e.target.value)}
+                          placeholder="Description"
+                          sx={{ mt: 0.5 }}
+                        />
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -6891,7 +7006,6 @@ const VendorProcessTab: React.FC<{ company: any; tenantId: string }> = ({ compan
     </Box>
   );
 };
-
 const OrderDefaultsTab: React.FC<{ company: any; tenantId: string; tenantName: string }> = ({ company, tenantId, tenantName }) => {
   const [orderDefaults, setOrderDefaults] = useState<any>({
     backgroundCheckRequired: false,
@@ -7531,7 +7645,6 @@ const OrderDefaultsTab: React.FC<{ company: any; tenantId: string; tenantName: s
             </CardContent>
           </Card>
         </Grid>
-
         {/* Contracts and Rate Sheets Section */}
         <Grid item xs={12} md={6}>
           <Card>

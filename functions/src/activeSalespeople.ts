@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
-import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { onDocumentUpdated, onDocumentCreated } from 'firebase-functions/v2/firestore';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -382,6 +382,94 @@ export const rebuildContactActiveSalespeople = onCall({ cors: true }, async (req
     console.error('rebuildContactActiveSalespeople error', e);
     return { ok: false, error: (e as Error).message || 'unknown_error' };
   }
+});
+
+// Trigger updates when email logs are created
+export const updateActiveSalespeopleOnEmailLog = onDocumentCreated('tenants/{tenantId}/email_logs/{emailId}', async (event) => {
+  const data = event.data?.data();
+  if (!data) return;
+  const tenantId = event.params.tenantId as string;
+
+  const contactIds: string[] = [];
+  const companyIds: string[] = [];
+
+  // Collect contact IDs from various shapes
+  try {
+    if (Array.isArray((data as any).matchingContacts)) {
+      (data as any).matchingContacts.forEach((id: any) => {
+        if (typeof id === 'string') contactIds.push(id);
+      });
+    }
+    if (Array.isArray((data as any).associations?.contacts)) {
+      (data as any).associations.contacts.forEach((c: any) => {
+        const id = typeof c === 'string' ? c : c?.id;
+        if (typeof id === 'string') contactIds.push(id);
+      });
+    }
+    if (typeof (data as any).contactId === 'string') {
+      contactIds.push((data as any).contactId);
+    }
+  } catch {}
+
+  // Collect company IDs directly from the email log
+  try {
+    if (typeof (data as any).companyId === 'string') {
+      companyIds.push((data as any).companyId);
+    }
+    if (Array.isArray((data as any).associations?.companies)) {
+      (data as any).associations.companies.forEach((c: any) => {
+        const id = typeof c === 'string' ? c : c?.id;
+        if (typeof id === 'string') companyIds.push(id);
+      });
+    }
+  } catch {}
+
+  // If company not present, resolve from contacts
+  if (companyIds.length === 0 && contactIds.length > 0) {
+    const chunks: string[][] = [];
+    for (let i = 0; i < contactIds.length; i += 10) chunks.push(contactIds.slice(i, i + 10));
+    for (const batch of chunks) {
+      const snap = await db
+        .collection('tenants').doc(tenantId)
+        .collection('crm_contacts')
+        .where(admin.firestore.FieldPath.documentId(), 'in' as any, batch as any)
+        .get();
+      snap.docs.forEach((d) => {
+        const cd: any = d.data() || {};
+        if (Array.isArray(cd.associations?.companies)) {
+          cd.associations.companies.forEach((c: any) => {
+            const id = typeof c === 'string' ? c : c?.id;
+            if (typeof id === 'string') companyIds.push(id);
+          });
+        } else if (typeof cd.companyId === 'string') {
+          companyIds.push(cd.companyId);
+        }
+      });
+    }
+  }
+
+  const uniqCompanies = Array.from(new Set(companyIds.filter(Boolean)));
+  const uniqContacts = Array.from(new Set(contactIds.filter(Boolean)));
+
+  // Recompute maps and write back
+  await Promise.all([
+    ...uniqCompanies.map(async (cid) => {
+      const map = await computeActiveSalespeople(tenantId, cid);
+      Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
+      await db.doc(`tenants/${tenantId}/crm_companies/${cid}`).set(
+        { activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    }),
+    ...uniqContacts.map(async (contactId) => {
+      const map = await computeContactActiveSalespeople(tenantId, contactId);
+      Object.keys(map).forEach((k) => { (map as any)[k] = removeUndefined((map as any)[k]); });
+      await db.doc(`tenants/${tenantId}/crm_contacts/${contactId}`).set(
+        { activeSalespeople: map, activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    })
+  ]);
 });
 
 // Batch rebuild for all companies in a tenant (or all tenants if none provided)

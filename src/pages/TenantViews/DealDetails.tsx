@@ -1452,6 +1452,9 @@ const DealDetails: React.FC = () => {
                 <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
                   {deal.name}
                 </Typography>
+                <IconButton size="small" aria-label="Edit deal name" onClick={handleStartEditDealName} sx={{ mt: 0.5 }}>
+                  <EditIcon fontSize="small" />
+                </IconButton>
               </Box>
               
               {/* Deal Value Range */}
@@ -1687,43 +1690,6 @@ const DealDetails: React.FC = () => {
         
 
       </Box>
-
-      {/* Pattern Alerts */}
-      {featureFlags.patternAlerts && patternAlerts.length > 0 && (
-        <Box sx={{ mb: 2 }}>
-          {patternAlerts.map((alert) => (
-            <Alert 
-              key={alert.id}
-              severity={alert.type}
-              sx={{ mb: 1 }}
-              action={
-                alert.action && (
-                  <Button 
-                    color="inherit" 
-                    size="small"
-                    onClick={() => {
-                      if (alert.action === 'Advance Stage') {
-                        // TODO: Open stage advancement dialog
-                        console.log('Advance stage clicked');
-                      } else if (alert.action === 'View Checklist') {
-                        setTabValue(2); // Switch to Stages tab
-                      }
-                    }}
-                  >
-                    {alert.action}
-                  </Button>
-                )
-              }
-            >
-              {alert.message}
-            </Alert>
-          ))}
-        </Box>
-      )}
-
-
-
-
 
       {/* Main Content Area */}
       <Box sx={{ display: 'flex', gap: 3 }}>
@@ -2602,6 +2568,26 @@ const DealDetails: React.FC = () => {
           />
         );
       })()}
+
+      {/* Edit Deal Name Dialog */}
+      <Dialog open={isEditingDealName} onClose={handleCancelEditDealName} maxWidth="xs" fullWidth>
+        <DialogTitle>Edit Deal Name</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            margin="dense"
+            label="Deal name"
+            value={editingDealName}
+            onChange={(e) => setEditingDealName(e.target.value)}
+            onKeyDown={handleDealNameKeyPress}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelEditDealName}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveDealName}>Save</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -1347,6 +1347,14 @@ const LocationDetails: React.FC = () => {
                   </Grid>
                   
                   <TextField
+                    label="Location Code"
+                    defaultValue={(location as any).code || ''}
+                    onBlur={(e) => handleFieldChange('code', e.target.value)}
+                    size="small"
+                    fullWidth
+                  />
+                  
+                  <TextField
                     label="Phone Number"
                     defaultValue={location.phone || ''}
                     onBlur={(e) => handleFieldChange('phone', e.target.value)}

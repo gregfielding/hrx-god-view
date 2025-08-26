@@ -366,23 +366,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                             />
                           </Box>
                         )}
-                        {note.aiInsights && (
-                          <Box sx={{ display: 'flex', gap: 0.5, mb: 1 }}>
-                            <Chip
-                              label="AI Insights Available"
-                              size="small"
-                              color="primary"
-                              variant="outlined"
-                              sx={{
-                                fontSize: '0.75rem',
-                                height: 20,
-                                '& .MuiChip-label': {
-                                  px: 1
-                                }
-                              }}
-                            />
-                          </Box>
-                        )}
+                        {/* AI Insights indicator removed */}
                         {note.source && note.source !== entityType && (
                           <Box sx={{ display: 'flex', gap: 0.5 }}>
                             <Chip
@@ -499,18 +483,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                 </Box>
               )}
 
-              {viewNoteDialog.note.aiInsights && (
-                <Box mb={2}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    AI Insights:
-                  </Typography>
-                  <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
-                    <Typography variant="body2">
-                      {viewNoteDialog.note.aiInsights}
-                    </Typography>
-                  </Paper>
-                </Box>
-              )}
+              {/* AI Insights section removed */}
 
               <Divider sx={{ my: 2 }} />
               

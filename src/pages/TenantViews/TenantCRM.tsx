@@ -236,7 +236,8 @@ const TenantCRM: React.FC = () => {
     website: '',
     industry: '',
     source: '',
-    notes: ''
+    notes: '',
+    parentCompany: ''
   });
   const [savingCompany, setSavingCompany] = useState(false);
   
@@ -1766,8 +1767,9 @@ const TenantCRM: React.FC = () => {
 
     setSavingCompany(true);
     try {
+      const { parentCompany, ...rest } = companyForm as any;
       const companyData = {
-        ...companyForm,
+        ...rest,
         tenantId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -1775,6 +1777,7 @@ const TenantCRM: React.FC = () => {
         associations: {
           salespeople: [currentUser?.uid]
         },
+        parentCompany: parentCompany || null,
         // Legacy fields for backward compatibility
         salesOwnerId: currentUser?.uid || null,
         accountOwnerId: currentUser?.uid || null,
@@ -1783,16 +1786,21 @@ const TenantCRM: React.FC = () => {
       };
 
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-      await addDoc(companiesRef, companyData);
+      const newDocRef = await addDoc(companiesRef, companyData);
+      const newCompanyId = newDocRef.id;
+
+      // If parent company selected, call function to register child on parent
+      if (parentCompany) {
+        try {
+          const fn = httpsCallable(getFunctions(), 'registerChildCompany');
+          await fn({ tenantId, parentCompanyId: parentCompany, childCompanyId: newCompanyId });
+        } catch (e) {
+          console.warn('registerChildCompany failed', e);
+        }
+      }
 
       // Reset form and close dialog
-      setCompanyForm({
-        name: '',
-        website: '',
-        industry: '',
-        source: '',
-        notes: ''
-      });
+      setCompanyForm({ name: '', website: '', industry: '', source: '', notes: '', parentCompany: '' });
       setShowAddDialog(false);
       setSuccess(true);
       setSuccessMessage('Company added successfully!');
@@ -2550,33 +2558,24 @@ const TenantCRM: React.FC = () => {
                 placeholder="https://example.com"
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Industry"
-                value={companyForm.industry}
-                onChange={(e) => handleCompanyFormChange('industry', e.target.value)}
-                placeholder="e.g., Technology, Healthcare, Manufacturing"
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Lead Source"
-                value={companyForm.source}
-                onChange={(e) => handleCompanyFormChange('source', e.target.value)}
-                placeholder="e.g., Website, Referral, Cold Call"
-              />
-            </Grid>
+            {/* Removed Industry, Lead Source, and Notes */}
             <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Notes"
-                multiline
-                rows={3}
-                value={companyForm.notes}
-                onChange={(e) => handleCompanyFormChange('notes', e.target.value)}
-                placeholder="Additional notes about this company..."
+              <Autocomplete
+                options={allCompanies}
+                getOptionLabel={(option) => option.companyName || option.name || ''}
+                value={allCompanies.find((c) => c.id === companyForm.parentCompany) || null}
+                onChange={(event, newValue) => {
+                  handleCompanyFormChange('parentCompany', newValue?.id || '');
+                }}
+                loading={loadingAllCompanies}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Parent Company"
+                    placeholder="Select a parent company (optional)"
+                  />
+                )}
               />
             </Grid>
           </Grid>
@@ -6146,25 +6145,7 @@ const CompaniesTab: React.FC<{
                 )}
               />
             </Grid>
-            {companyDivisions.length > 0 && (
-              <Grid item xs={12}>
-                <FormControl fullWidth>
-                  <InputLabel>Company Division (Optional)</InputLabel>
-                  <Select
-                    value={newOpportunityForm.divisionId}
-                    onChange={(e) => setNewOpportunityForm(prev => ({ ...prev, divisionId: e.target.value }))}
-                    label="Company Division (Optional)"
-                  >
-                    <MenuItem value="">Skip Division</MenuItem>
-                    {companyDivisions.map((division) => (
-                      <MenuItem key={division.id} value={division.id}>
-                        {division.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            )}
+            {/* Division dropdown removed per request */}
             {companyLocations.length > 0 && (
               <Grid item xs={12}>
                 <FormControl fullWidth>

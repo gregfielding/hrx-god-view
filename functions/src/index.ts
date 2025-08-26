@@ -10389,7 +10389,8 @@ export { syncApolloHeadquartersLocation } from './apolloLocationSync';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
 // Active Salespeople (Company)
-export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
+export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, updateActiveSalespeopleOnEmailLog, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
+export { registerChildCompany } from './parentChildCompanies';
 
 // Auto Activity Logger
 export { 

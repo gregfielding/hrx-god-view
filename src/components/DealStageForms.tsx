@@ -1788,17 +1788,24 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           sx={{ mb: 2 }}
         />
 
-        <TextField
-          label="Payment Terms"
-          value={data.invoicing?.paymentTerms || ''}
-          onChange={(e) => handleStageDataChange('scoping', 'invoicing', {
-            ...data.invoicing,
-            paymentTerms: e.target.value
-          })}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-        />
+        <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+          <InputLabel>Payment Terms</InputLabel>
+          <Select
+            value={data.invoicing?.paymentTerms || ''}
+            label="Payment Terms"
+            onChange={(e) => handleStageDataChange('scoping', 'invoicing', {
+              ...data.invoicing,
+              paymentTerms: e.target.value
+            })}
+          >
+            <MenuItem value="due_on_receipt">Due On Receipt</MenuItem>
+            <MenuItem value="net_7">Net 7</MenuItem>
+            <MenuItem value="net_15">Net 15</MenuItem>
+            <MenuItem value="net_30">Net 30</MenuItem>
+            <MenuItem value="net_45">Net 45</MenuItem>
+            <MenuItem value="net_60">Net 60</MenuItem>
+          </Select>
+        </FormControl>
 
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
