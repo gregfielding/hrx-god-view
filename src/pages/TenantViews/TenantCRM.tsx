@@ -4772,7 +4772,7 @@ const CompaniesTab: React.FC<{
                 borderBottom: '1px solid #E5E7EB',
                 py: 1.5
               }}>
-                Active Salespeople
+                Salespeople
               </TableCell>
 
             </TableRow>
