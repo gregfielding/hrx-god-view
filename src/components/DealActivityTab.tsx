@@ -71,7 +71,12 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
       setError('');
       try {
         const dealId: string = deal.id;
-        const contactIds: string[] = Array.isArray(deal.associations?.contacts) ? deal.associations.contacts : [];
+        // contacts in associations can be strings (ids) or objects with an id + snapshot
+        const contactIds: string[] = Array.isArray(deal.associations?.contacts)
+          ? (deal.associations.contacts as any[])
+              .map((c: any) => (typeof c === 'string' ? c : c?.id))
+              .filter((id: any) => typeof id === 'string' && id.length > 0)
+          : [];
 
         const aggregated: DealActivityItem[] = [];
 
