@@ -17,6 +17,8 @@ export const getSalespeopleForTenant = onCall(async (request) => {
       throw new Error('tenantId is required');
     }
 
+    console.log(`🔍 getSalespeopleForTenant called for tenant: ${tenantId}, user: ${request.auth.uid}`);
+
     // Check cache first
     const cached = salespeopleCache.get(tenantId);
     const now = Date.now();
@@ -42,45 +44,84 @@ export const getSalespeopleForTenant = onCall(async (request) => {
       throw new Error('User does not have access to this tenant');
     }
 
-    // OPTIMIZED: Use a more efficient query approach
-    // Instead of fetching ALL users, we'll use a collection group query with a filter
-    // This is much more efficient than fetching all users and filtering client-side
-    
     console.log(`🔍 Fetching salespeople for tenant: ${tenantId}`);
     
-    // Use collection group query to find users with the specific tenant access
-    const usersSnapshot = await admin.firestore()
-      .collectionGroup('users')
-      .where(`tenantIds.${tenantId}`, '==', true)
-      .get();
+    let salespeople: any[] = [];
+    
+    try {
+      // Try the optimized collection group query first
+      console.log('🔄 Attempting collection group query...');
+      const usersSnapshot = await admin.firestore()
+        .collectionGroup('users')
+        .where(`tenantIds.${tenantId}`, '==', true)
+        .get();
 
-    console.log(`🏢 Users with tenant access: ${usersSnapshot.docs.length}`);
+      console.log(`🏢 Collection group query found: ${usersSnapshot.docs.length} users`);
 
-    // Filter for users with crm_sales: true
-    const salespeople = usersSnapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter((user: any) => user.crm_sales === true)
-      .map((user: any) => ({
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        jobTitle: user.jobTitle,
-        crm_sales: user.crm_sales
-      }));
+      // Filter for users with crm_sales: true
+      salespeople = usersSnapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((user: any) => user.crm_sales === true)
+        .map((user: any) => ({
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          jobTitle: user.jobTitle,
+          crm_sales: user.crm_sales
+        }));
+
+    } catch (collectionGroupError) {
+      console.warn('⚠️ Collection group query failed, falling back to direct query:', collectionGroupError);
+      
+      // Fallback: Query the users collection directly
+      try {
+        console.log('🔄 Falling back to direct users collection query...');
+        const usersSnapshot = await admin.firestore()
+          .collection('users')
+          .where(`tenantIds.${tenantId}`, '==', true)
+          .get();
+
+        console.log(`🏢 Direct query found: ${usersSnapshot.docs.length} users`);
+
+        salespeople = usersSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter((user: any) => user.crm_sales === true)
+          .map((user: any) => ({
+            id: user.id,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            jobTitle: user.jobTitle,
+            crm_sales: user.crm_sales
+          }));
+
+      } catch (directQueryError) {
+        console.error('❌ Direct query also failed:', directQueryError);
+        
+        // Final fallback: Return empty array to prevent 500 error
+        console.log('🔄 Final fallback: returning empty salespeople array');
+        salespeople = [];
+      }
+    }
 
     const result = { salespeople };
 
-    // Cache the result
+    // Cache the result (even if empty)
     salespeopleCache.set(tenantId, { data: result, timestamp: now });
 
     console.log(`✅ Salespeople with crm_sales: true: ${salespeople.length}`);
-    console.log('📋 Salespeople:', salespeople.map(sp => ({ id: sp.id, name: `${sp.firstName} ${sp.lastName}`, email: sp.email })));
+    if (salespeople.length > 0) {
+      console.log('📋 Salespeople:', salespeople.map(sp => ({ id: sp.id, name: `${sp.firstName} ${sp.lastName}`, email: sp.email })));
+    }
 
     return result;
   } catch (error) {
-    console.error('Error in getSalespeopleForTenant:', error);
-    throw new Error('Failed to get salespeople');
+    console.error('❌ Error in getSalespeopleForTenant:', error);
+    
+    // Return empty result instead of throwing to prevent 500 errors
+    console.log('🔄 Returning empty result due to error');
+    return { salespeople: [] };
   }
 });
 

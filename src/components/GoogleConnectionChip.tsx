@@ -62,7 +62,6 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
   const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
   
   // Gmail Email Capture Functions
-  const monitorGmailForContactEmailsFn = httpsCallable(functions, 'monitorGmailForContactEmails');
   const testGmailEmailCaptureFn = httpsCallable(functions, 'testGmailEmailCapture');
   const testGmailTokenValidityFn = httpsCallable(functions, 'testGmailTokenValidity');
   
@@ -306,32 +305,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     }
   };
 
-  // Handle manual Gmail monitoring
-  const handleMonitorGmailEmails = async () => {
-    if (!user?.uid) return;
-    
-    setBusy(true);
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    try {
-      const result = await monitorGmailForContactEmailsFn({ 
-        userId: user.uid, 
-        tenantId,
-        maxResults: 20 
-      });
-      const data = result.data as any;
-      if (data.success) {
-        setSuccessMsg(`Monitoring completed: ${data.processedCount} emails processed, ${data.activityLogsCreated} activities created`);
-      } else {
-        setErrorMsg(data.message || 'Monitoring failed');
-      }
-    } catch (error: any) {
-      console.error('Error monitoring Gmail emails:', error);
-      setErrorMsg(error?.message || 'Failed to monitor Gmail emails');
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Manual monitoring removed to avoid duplicate importing; scheduled job handles ingestion
 
 
   // Load status on mount
@@ -572,24 +546,14 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
             Close
           </Button>
           {googleStatus.gmail.connected && (
-            <>
-              <Button 
-                onClick={handleTestGmailEmailCapture} 
-                disabled={busy}
-                color="info"
-                variant="outlined"
-              >
-                Test Email Capture
-              </Button>
-              <Button 
-                onClick={handleMonitorGmailEmails} 
-                disabled={busy}
-                color="primary"
-                variant="outlined"
-              >
-                Monitor Emails
-              </Button>
-            </>
+            <Button 
+              onClick={handleTestGmailEmailCapture} 
+              disabled={busy}
+              color="info"
+              variant="outlined"
+            >
+              Test Email Capture
+            </Button>
           )}
           <Button 
             onClick={handleTestAndFixTokens} 

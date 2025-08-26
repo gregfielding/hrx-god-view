@@ -10,6 +10,9 @@ interface CRMCacheState {
   salesTeamFilter: 'all' | 'my';
   pipelineFilters: any;
   lastVisitedCompanyId?: string;
+  // Added: state filters persistence
+  companiesStateFilter?: string; // e.g., 'all' | 'TX'
+  contactsStateFilter?: string;  // e.g., 'all' | 'TX'
 }
 
 interface CRMCacheContextType {
@@ -28,6 +31,8 @@ const defaultCacheState: CRMCacheState = {
   taskFilter: 'all',
   salesTeamFilter: 'all',
   pipelineFilters: {},
+  companiesStateFilter: 'all',
+  contactsStateFilter: 'all',
 };
 
 const CRMCacheContext = createContext<CRMCacheContextType | undefined>(undefined);
@@ -47,6 +52,8 @@ export const CRMCacheProvider: React.FC<{ children: ReactNode }> = ({ children }
                       newState.dealFilter !== 'all' ||
                       newState.taskFilter !== 'all' ||
                       newState.salesTeamFilter !== 'all' ||
+                      (newState.companiesStateFilter && newState.companiesStateFilter !== 'all') ||
+                      (newState.contactsStateFilter && newState.contactsStateFilter !== 'all') ||
                       Object.keys(newState.pipelineFilters).length > 0);
       
       setHasCachedState(hasState);

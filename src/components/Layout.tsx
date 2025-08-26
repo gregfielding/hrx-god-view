@@ -524,7 +524,17 @@ const Layout: React.FC = React.memo(function Layout() {
                     color: 'inherit',
                   }}
                 >
-                  <Avatar alt={`${firstName} ${lastName}`} src={avatarUrl || undefined} sx={{ width: open ? 28 : 24, height: open ? 28 : 24 }}>
+                  <Avatar 
+                    alt={`${firstName} ${lastName}`} 
+                    src={avatarUrl || undefined} 
+                    sx={{ width: open ? 28 : 24, height: open ? 28 : 24 }}
+                    onError={(e) => {
+                      // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
+                      console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                    }}
+                  >
                     {!avatarUrl && initials}
                   </Avatar>
                 </ListItemIcon>

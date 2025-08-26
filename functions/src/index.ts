@@ -782,7 +782,6 @@ export const getAutoDevOpsSettings = onCall(async (request) => {
     throw new Error(`Failed to fetch AutoDevOps settings: ${error.message}`);
   }
 });
-
 export const updateAutoDevOpsSettings = onCall(async (request) => {
   const { settings, userId } = request.data;
   const start = Date.now();
@@ -1523,7 +1522,6 @@ export const getAIChatConversations = onCall(async (request) => {
     throw error;
   }
 });
-
 export const createAIChatConversation = onCall(async (request) => {
   const { workerId, initialMessage, customerId } = request.data;
   const start = Date.now();
@@ -2236,7 +2234,6 @@ export const triggerScheduledCheckins = onSchedule('0 9 * * *', async (event) =>
     throw error;
   }
 });
-
 // Real-time Analytics for AI Chat
 export const getRealTimeAIChatAnalytics = onCall(async (request) => {
   const { customerId, timeRange } = request.data;
@@ -2988,7 +2985,6 @@ export const generateAIPerformanceInsights = onCall(async (request) => {
     throw error;
   }
 });
-
 // Analyze performance trends
 async function analyzePerformanceTrends(feedbackData: any[], customerId: string, moduleId?: string) {
   const insights = {
@@ -3710,7 +3706,6 @@ export const sendBroadcast = onCall(async (request) => {
     throw error;
   }
 });
-
 export const replyToBroadcast = onCall(async (request) => {
   const { 
     notificationId, 
@@ -4498,7 +4493,6 @@ export const tagChunk = onCall(async (request) => {
     throw error;
   }
 });
-
 // Advanced Analytics Functions
 export const generateOrchestrationReport = onCall(async (request) => {
   const { timeRange, userId } = request.data;
@@ -5297,7 +5291,6 @@ export const generateHelpDraftsFromCode = onCall(async (request) => {
 Job orders are the foundation of workforce management in HRX. They define the work that needs to be done, when it needs to be completed, and who can perform it.
 
 ## Creating a New Job Order
-
 ### Step 1: Access Job Orders
 1. Navigate to your agency dashboard
 2. Click on "Job Orders" in the left sidebar
@@ -6096,7 +6089,6 @@ Maintaining a safe work environment is everyone's responsibility. This guide cov
       {
         title: "Performance Management and Feedback",
         content: `# Performance Management and Feedback
-
 ## Overview
 Effective performance management helps workers succeed and organizations thrive. This guide covers how to give and receive feedback, set goals, and track performance improvements.
 
@@ -6882,7 +6874,6 @@ export const addMotivation = onCall(async (request) => {
     throw error;
   }
 });
-
 // Quotable.io API Integration for Motivation Library Seeding
 export const seedMotivationMessagesFromAPI = onCall(async (request) => {
   const userId = request.auth?.uid || 'system';
@@ -7606,7 +7597,6 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
   // 7. Return success and the link (for dev/testing)
   return { success: true, link };
 });
-
 // Resend Invite - 2nd Gen
 export const resendInviteV2 = onCall(async (request) => {
   const { email } = request.data;
@@ -8362,7 +8352,6 @@ export const translateContent = onCall(async (request) => {
     throw new Error(`Translation failed: ${error.message}`);
   }
 });
-
 // Enhanced User Login Tracking with Hello Message Settings
 export const updateUserLoginInfo = onCall(async (request) => {
   const { userId, loginData } = request.data;
@@ -9060,7 +9049,6 @@ export const updateUserPrimaryTenant = onCall(async (request) => {
     throw new Error(error.message || 'Failed to update primary tenant');
   }
 });
-
 // ===== AI CAMPAIGNS AUTOMATION =====
 
 // Execute scheduled campaigns
@@ -9687,7 +9675,6 @@ export const toggleHrxFlex = onCall({ maxInstances: 10 }, async (request) => {
     throw new Error(`Failed to toggle HRX Flex: ${error.message}`);
   }
 });
-
 // ===== SECURITY LEVEL AI ENGAGEMENT SETTINGS =====
 
 // Get tenant AI engagement settings
@@ -10278,7 +10265,6 @@ export {
   syncGmailEmails,
   disconnectGmail,
   getGmailStatus,
-  monitorGmailForContactEmails,
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
@@ -10437,4 +10423,3 @@ export {
 
 // Prospecting Functions
 export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList };
-

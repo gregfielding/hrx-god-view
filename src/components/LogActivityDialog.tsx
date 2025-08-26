@@ -287,6 +287,7 @@ interface LogActivityDialogProps {
                 <MenuItem value="call">Phone Call</MenuItem>
                 <MenuItem value="meeting">Meeting</MenuItem>
                 <MenuItem value="email">Email</MenuItem>
+                <MenuItem value="linkedin_message">LinkedIn Message</MenuItem>
                 <MenuItem value="research">Research</MenuItem>
                 <MenuItem value="proposal">Proposal Work</MenuItem>
                 <MenuItem value="follow_up">Follow-up</MenuItem>

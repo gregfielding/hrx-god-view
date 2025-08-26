@@ -164,17 +164,28 @@ export async function loadContactActivities(
       
       emailsSnapshot.docs.forEach(doc => {
         const data = doc.data();
+        const direction = (data.direction || '').toLowerCase();
+        const toList: string[] = Array.isArray(data.to)
+          ? data.to
+          : (typeof data.to === 'string' && data.to ? [data.to] : []);
+        const toDisplay = toList.join(', ');
+        const fromDisplay: string = typeof data.from === 'string' ? data.from : '';
+
+        const description = direction === 'outbound'
+          ? `Email sent to ${toDisplay || 'recipient'}`
+          : `Email received from ${fromDisplay || 'sender'}`;
+
         activities.push({
           id: `email_${doc.id}`,
           type: 'email',
           title: `Email: ${data.subject || '(no subject)'}`,
-          description: `Email ${data.direction === 'outbound' ? 'sent to' : 'received from'} ${Array.isArray(data.to) ? data.to.join(', ') : data.to || 'recipients'}`,
+          description,
           timestamp: data.timestamp?.toDate?.() || new Date(),
           salespersonId: data.userId || data.salespersonId,
           metadata: { 
             from: data.from, 
             to: data.to, 
-            direction: data.direction || 'sent',
+            direction: direction || 'sent',
             subject: data.subject,
             gmailMessageId: data.messageId
           },

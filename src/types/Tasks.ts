@@ -4,7 +4,7 @@
 // 🏗️ CORE TASK TYPES
 export type TaskStatus = 'scheduled' | 'upcoming' | 'due' | 'overdue' | 'completed' | 'cancelled';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskType = 'email' | 'phone_call' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'activity' | 'other';
+export type TaskType = 'email' | 'phone_call' | 'linkedin_message' | 'scheduled_meeting_virtual' | 'scheduled_meeting_in_person' | 'research' | 'custom' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'activity' | 'other';
 export type TaskCategory = 'general' | 'follow_up' | 'prospecting' | 'presentation' | 'demo' | 'proposal' | 'contract' | 'onboarding' | 'training' | 'admin' | 'other';
 export type QuotaCategory = 'business_generating' | 'business_maintaining' | 'business_developing' | 'non_business';
 
@@ -112,7 +112,7 @@ export interface Task {
   
   // Communication details (for email/phone tasks)
   communicationDetails?: {
-    method: 'email' | 'phone';
+    method: 'email' | 'phone' | 'linkedin';
     subject?: string;
     draftContent?: string;
     recipient?: string;

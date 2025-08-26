@@ -716,6 +716,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   >
                     <MenuItem value="email">Email</MenuItem>
                     <MenuItem value="phone_call">Phone Call</MenuItem>
+                    <MenuItem value="linkedin_message">LinkedIn Message</MenuItem>
                     <MenuItem value="scheduled_meeting_virtual">Google Meet</MenuItem>
                     <MenuItem value="scheduled_meeting_in_person">In-Person Meeting</MenuItem>
                     <MenuItem value="research">Research</MenuItem>

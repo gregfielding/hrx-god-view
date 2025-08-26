@@ -96,7 +96,16 @@ const CustomerProfileHeader: React.FC<CustomerProfileHeaderProps> = ({
           onMouseEnter={() => setHover(true)}
           onMouseLeave={() => setHover(false)}
         >
-          <Avatar src={avatarUrl || undefined} sx={{ width: 60, height: 60, fontSize: '1.5rem' }}>
+          <Avatar 
+            src={avatarUrl || undefined} 
+            sx={{ width: 60, height: 60, fontSize: '1.5rem' }}
+            onError={(e) => {
+              // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
+              console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+              const target = e.target as HTMLImageElement;
+              target.style.display = 'none';
+            }}
+          >
             {!avatarUrl && initials}
           </Avatar>
 
