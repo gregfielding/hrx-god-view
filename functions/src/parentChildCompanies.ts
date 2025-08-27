@@ -35,7 +35,10 @@ async function getCompanyObj(tenantId: string, companyId: string) {
 }
 
 // Create or update a relationship with reciprocal writes
-export const setCompanyRelationship = onCall({ cors: true }, async (request) => {
+export const setCompanyRelationship = onCall({ 
+  cors: true,
+  maxInstances: 10
+}, async (request) => {
   const { tenantId, sourceCompanyId, targetCompanyId, relationType } = (request.data || {}) as {
     tenantId: string; sourceCompanyId: string; targetCompanyId: string; relationType: 'parent' | 'child' | 'sibling' | 'msp';
   };
@@ -84,7 +87,10 @@ export const setCompanyRelationship = onCall({ cors: true }, async (request) => 
 });
 
 // Remove a relationship and its reciprocal
-export const removeCompanyRelationship = onCall({ cors: true }, async (request) => {
+export const removeCompanyRelationship = onCall({ 
+  cors: true,
+  maxInstances: 10
+}, async (request) => {
   const { tenantId, sourceCompanyId, targetCompanyId, relationType } = (request.data || {}) as {
     tenantId: string; sourceCompanyId: string; targetCompanyId: string; relationType: 'parent' | 'child' | 'sibling' | 'msp';
   };

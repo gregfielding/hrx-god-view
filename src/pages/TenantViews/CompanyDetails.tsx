@@ -82,6 +82,7 @@ import {
   Timeline as TimelineIcon,
   Close as CloseIcon,
   RocketLaunch as RocketLaunchIcon,
+  AccountTree as AccountTreeIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import SalesCoach from '../../components/SalesCoach';
@@ -1037,6 +1038,75 @@ const CompanyDetails: React.FC = () => {
                 </Typography>
               )}
               
+              {/* Related Companies */}
+              {(() => {
+                const relatedCompanies: Array<{ id: string; name: string; relation: string }> = [];
+                
+                // Handle parent company
+                const parentId = company.parentCompany || null;
+                if (parentId) {
+                  const actualParentId = typeof parentId === 'string' ? parentId : 
+                                       (parentId && typeof parentId === 'object' && parentId.id) ? parentId.id : 
+                                       null;
+                  if (actualParentId) {
+                    relatedCompanies.push({ id: actualParentId, name: 'Parent Company', relation: 'parent' });
+                  }
+                }
+                
+                // Handle child companies
+                const childIds: any[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+                childIds.forEach((cid) => {
+                  const actualChildId = typeof cid === 'string' ? cid : 
+                                      (cid && typeof cid === 'object' && cid.id) ? cid.id : 
+                                      null;
+                  if (actualChildId) {
+                    relatedCompanies.push({ id: actualChildId, name: 'Child Company', relation: 'child' });
+                  }
+                });
+                
+                // Handle MSP
+                const msp = company.msp || null;
+                if (msp) {
+                  const actualMspId = typeof msp === 'string' ? msp : 
+                                    (msp && typeof msp === 'object' && msp.id) ? msp.id : 
+                                    null;
+                  if (actualMspId) {
+                    relatedCompanies.push({ id: actualMspId, name: 'MSP', relation: 'msp' });
+                  }
+                }
+                
+                if (relatedCompanies.length === 0) return null;
+                
+                return (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0 }}>
+                    <AccountTreeIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                      {relatedCompanies.map((rel, index) => (
+                        <React.Fragment key={rel.id}>
+                          <MUILink
+                            component="button"
+                            variant="body2"
+                            color="primary"
+                            sx={{ 
+                              textDecoration: 'none', 
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                              '&:hover': { textDecoration: 'underline' }
+                            }}
+                            onClick={() => navigate(`/crm/companies/${rel.id}`)}
+                          >
+                            <CompanyNameDisplay tenantId={tenantId!} companyId={rel.id} />
+                          </MUILink>
+                          {index < relatedCompanies.length - 1 && (
+                            <Typography variant="body2" color="text.secondary">•</Typography>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </Box>
+                  </Box>
+                );
+              })()}
+              
               {/* Social Media Icons */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
                 <IconButton
@@ -1635,23 +1705,7 @@ const CompanyDetails: React.FC = () => {
   );
 };
 
-// Inline helper: render a company name from ID
-const RelatedCompanyName: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
-  const [name, setName] = React.useState<string>('');
-  React.useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
-        if (mounted) setName((snap.data() as any)?.companyName || (snap.data() as any)?.name || '(unknown)');
-      } catch {
-        if (mounted) setName('(unknown)');
-      }
-    })();
-    return () => { mounted = false; };
-  }, [tenantId, companyId]);
-  return <>{name}</>;
-};
+
 
 // Form to add a related company
 const AddRelatedCompanyForm: React.FC<{ tenantId: string; company: any; onDone: () => void }> = ({ tenantId, company, onDone }) => {
@@ -1659,6 +1713,7 @@ const AddRelatedCompanyForm: React.FC<{ tenantId: string; company: any; onDone: 
   const [options, setOptions] = useState<any[]>([]);
   const [selected, setSelected] = useState<any | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -1677,11 +1732,21 @@ const AddRelatedCompanyForm: React.FC<{ tenantId: string; company: any; onDone: 
     setSaving(true);
     try {
       const setRel = httpsCallable(functions, 'setCompanyRelationship');
-      await setRel({ tenantId, sourceCompanyId: company.id, targetCompanyId: selected.id, relationType });
-      setRelationType('');
-      setSelected(null);
-      onDone();
+      const result = await setRel({ tenantId, sourceCompanyId: company.id, targetCompanyId: selected.id, relationType });
+      
+      if (result.data && (result.data as any).ok) {
+        setRelationType('');
+        setSelected(null);
+        setError(null);
+        onDone();
+      } else {
+        const errorMsg = (result.data as any)?.error || 'Failed to add related company';
+        setError(errorMsg);
+        console.error('Failed to add related company:', result.data);
+      }
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to add related company';
+      setError(errorMsg);
       console.error('Failed to add related company', err);
     } finally {
       setSaving(false);
@@ -1702,10 +1767,17 @@ const AddRelatedCompanyForm: React.FC<{ tenantId: string; company: any; onDone: 
       <Autocomplete
         options={options}
         getOptionLabel={(o: any) => o.companyName || o.name || ''}
+        getOptionKey={(o: any) => o.id}
         value={selected}
         onChange={(e, v) => setSelected(v)}
         renderInput={(params) => <TextField {...params} label="Select Company" size="small" />}
+        isOptionEqualToValue={(option, value) => option.id === value.id}
       />
+      {error && (
+        <Alert severity="error" sx={{ mt: 1 }}>
+          {error}
+        </Alert>
+      )}
       <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button variant="contained" onClick={handleAdd} disabled={!relationType || !selected || saving}>
           {saving ? 'Saving...' : 'Add'}
@@ -2273,19 +2345,25 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
   </Box>
 );
 
-// Lightweight row to render a related company by ID
-const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'child'; companyId: string }> = ({ tenantId, relation, companyId }) => {
-  const navigate = useNavigate();
+// Component to get company name for display
+const CompanyNameDisplay: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
   const [name, setName] = useState<string>('');
 
   useEffect(() => {
+    // Safety check for props
+    if (!tenantId || !companyId || typeof companyId !== 'string') {
+      // console.error('CompanyNameDisplay received invalid props:', { tenantId, companyId, type: typeof companyId });
+      setName('Invalid company');
+      return;
+    }
+
     let isMounted = true;
     (async () => {
       try {
         const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
         const data: any = snap.data() || {};
         const display = data.companyName || data.name || '';
-        if (isMounted) setName(display);
+        if (isMounted) setName(String(display || ''));
       } catch {
         if (isMounted) setName('');
       }
@@ -2293,23 +2371,68 @@ const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'chil
     return () => { isMounted = false; };
   }, [tenantId, companyId]);
 
+  return <>{name || companyId}</>;
+};
+
+// Component to get company name for avatar
+const CompanyAvatar: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
+  const [name, setName] = useState<string>('');
+
+  useEffect(() => {
+    // Safety check for props
+    if (!tenantId || !companyId || typeof companyId !== 'string') {
+      setName('');
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+        const data: any = snap.data() || {};
+        const display = data.companyName || data.name || '';
+        if (isMounted) setName(String(display || ''));
+      } catch {
+        if (isMounted) setName('');
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [tenantId, companyId]);
+
+  return <>{name?.charAt(0)?.toUpperCase() || 'C'}</>;
+};
+
+// Lightweight row to render a related company by ID
+const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'child' | 'msp'; companyId: string | any }> = ({ tenantId, relation, companyId }) => {
+  const navigate = useNavigate();
+
+  // Extract actual company ID from object if needed
+  const actualCompanyId = typeof companyId === 'string' ? companyId : 
+                         (companyId && typeof companyId === 'object' && companyId.id) ? companyId.id : 
+                         'unknown';
+
+  // Debug logging (commented out since fix is working)
+  // if (typeof companyId !== 'string') {
+  //   console.error('RelatedCompanyRow received non-string companyId:', { companyId, type: typeof companyId, extractedId: actualCompanyId });
+  // }
+
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-      onClick={() => navigate(`/crm/companies/${companyId}`)}
+      onClick={() => navigate(`/crm/companies/${actualCompanyId}`)}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/companies/${companyId}`); } }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/companies/${actualCompanyId}`); } }}
     >
       <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
-        {name?.charAt(0)?.toUpperCase() || 'C'}
+        <CompanyAvatar tenantId={tenantId} companyId={actualCompanyId} />
       </Avatar>
       <Box sx={{ flex: 1 }}>
         <Typography variant="body2" fontWeight="medium">
-          {name || companyId}
+          <CompanyNameDisplay tenantId={tenantId} companyId={actualCompanyId} />
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          {relation === 'parent' ? 'Parent Company' : 'Child Company'}
+          {relation === 'parent' ? 'Parent Company' : relation === 'child' ? 'Child Company' : 'MSP'}
         </Typography>
       </Box>
     </Box>
@@ -3201,13 +3324,39 @@ const CompanyDashboardTab: React.FC<{
             <CardContent sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
               {(() => {
                 const rows: any[] = [];
-                const childIds: string[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
-                const parentId: string | null = company.parentCompany || null;
-
+                
+                // Handle parent company - extract ID if it's an object
+                const parentId = company.parentCompany || null;
                 if (parentId) {
-                  rows.push({ kind: 'parent', id: parentId });
+                  const actualParentId = typeof parentId === 'string' ? parentId : 
+                                       (parentId && typeof parentId === 'object' && parentId.id) ? parentId.id : 
+                                       null;
+                  if (actualParentId) {
+                    rows.push({ kind: 'parent', id: actualParentId });
+                  }
                 }
-                childIds.forEach((id) => rows.push({ kind: 'child', id }));
+                
+                // Handle child companies - extract IDs if they're objects
+                const childIds: any[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+                childIds.forEach((cid) => {
+                  const actualChildId = typeof cid === 'string' ? cid : 
+                                      (cid && typeof cid === 'object' && cid.id) ? cid.id : 
+                                      null;
+                  if (actualChildId) {
+                    rows.push({ kind: 'child', id: actualChildId });
+                  }
+                });
+                
+                // Handle MSP - extract ID if it's an object
+                const msp = company.msp || null;
+                if (msp) {
+                  const actualMspId = typeof msp === 'string' ? msp : 
+                                    (msp && typeof msp === 'object' && msp.id) ? msp.id : 
+                                    null;
+                  if (actualMspId) {
+                    rows.push({ kind: 'msp', id: actualMspId });
+                  }
+                }
 
                 if (rows.length === 0) {
                   return (
@@ -3230,24 +3379,49 @@ const CompanyDashboardTab: React.FC<{
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {(() => {
                       const rows: Array<{ id: string; name: string; relation: 'parent' | 'child' | 'msp' }> = [];
+                      
+                      // Handle parent company - extract ID if it's an object
                       const parentId = company.parentCompany || null;
-                      if (parentId) rows.push({ id: parentId, name: 'Parent Company', relation: 'parent' });
-                      const children: string[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
-                      children.forEach((cid) => rows.push({ id: cid, name: 'Child Company', relation: 'child' }));
-                      const msps: string[] = Array.isArray(company.msps) ? company.msps : [];
-                      msps.forEach((mid) => rows.push({ id: mid, name: 'MSP', relation: 'msp' }));
+                      if (parentId) {
+                        const actualParentId = typeof parentId === 'string' ? parentId : 
+                                             (parentId && typeof parentId === 'object' && parentId.id) ? parentId.id : 
+                                             null;
+                        if (actualParentId) {
+                          // console.log('Parent ID:', actualParentId, 'Original:', parentId, 'Type:', typeof parentId);
+                          rows.push({ id: actualParentId, name: 'Parent Company', relation: 'parent' });
+                        }
+                      }
+                      
+                      // Handle child companies - extract IDs if they're objects
+                      const children: any[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+                      children.forEach((cid) => {
+                        const actualChildId = typeof cid === 'string' ? cid : 
+                                            (cid && typeof cid === 'object' && cid.id) ? cid.id : 
+                                            null;
+                        if (actualChildId) {
+                          // console.log('Child ID:', actualChildId, 'Original:', cid, 'Type:', typeof cid);
+                          rows.push({ id: actualChildId, name: 'Child Company', relation: 'child' });
+                        }
+                      });
+                      
+                      // Handle MSP - extract ID if it's an object (single MSP relationship)
+                      const msp = company.msp || null;
+                      if (msp) {
+                        const actualMspId = typeof msp === 'string' ? msp : 
+                                          (msp && typeof msp === 'object' && msp.id) ? msp.id : 
+                                          null;
+                        if (actualMspId) {
+                          // console.log('MSP ID:', actualMspId, 'Original:', msp, 'Type:', typeof msp);
+                          rows.push({ id: actualMspId, name: 'MSP', relation: 'msp' });
+                        }
+                      }
+                      
                       if (rows.length === 0) {
                         return <Typography variant="body2" color="text.secondary">No related companies</Typography>;
                       }
                       return rows.map((r) => (
                         <Box key={`${r.relation}-${r.id}`} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                          <Avatar sx={{ width: 28, height: 28, fontSize: '0.8125rem' }}>{r.name.charAt(0)}</Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              <RelatedCompanyName tenantId={tenantId!} companyId={r.id} />
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">{r.relation === 'parent' ? 'Parent Company' : r.relation === 'child' ? 'Child Company' : 'MSP'}</Typography>
-                          </Box>
+                          <RelatedCompanyRow tenantId={tenantId!} relation={r.relation} companyId={r.id} />
                           <IconButton size="small" color="error" onClick={async () => {
                             try {
                               const removeRel = httpsCallable(functions, 'removeCompanyRelationship');
