@@ -10390,7 +10390,7 @@ export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
 // Active Salespeople (Company)
 export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, updateActiveSalespeopleOnEmailLog, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
-export { registerChildCompany } from './parentChildCompanies';
+export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
 
 // Auto Activity Logger
 export { 

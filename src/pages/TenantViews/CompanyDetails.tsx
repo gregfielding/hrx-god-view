@@ -99,6 +99,9 @@ import {
   addDoc,
   deleteDoc,
   serverTimestamp,
+  arrayUnion,
+  arrayRemove,
+  deleteField,
 } from 'firebase/firestore';
 import {
   ref,
@@ -308,6 +311,8 @@ const CompanyDetails: React.FC = () => {
   const [jobPostings, setJobPostings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // UI: Related Companies dialog
+  const [relatedCompaniesDialogOpen, setRelatedCompaniesDialogOpen] = useState<boolean>(false);
   const [tabValue, setTabValue] = useState(0);
   // Removed inline company name edit (managed in Core Identity widget)
   
@@ -1483,7 +1488,14 @@ const CompanyDetails: React.FC = () => {
 
       {/* Tab Panels */}
       {tabValue === 0 && (
-        <CompanyDashboardTab company={company} tenantId={tenantId} contacts={contacts} deals={deals} />
+        <CompanyDashboardTab 
+  company={company} 
+  tenantId={tenantId} 
+  contacts={contacts} 
+  deals={deals}
+  relatedCompaniesDialogOpen={relatedCompaniesDialogOpen}
+  setRelatedCompaniesDialogOpen={setRelatedCompaniesDialogOpen}
+/>
       )}
       
       {tabValue === 1 && (
@@ -1623,6 +1635,85 @@ const CompanyDetails: React.FC = () => {
   );
 };
 
+// Inline helper: render a company name from ID
+const RelatedCompanyName: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
+  const [name, setName] = React.useState<string>('');
+  React.useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+        if (mounted) setName((snap.data() as any)?.companyName || (snap.data() as any)?.name || '(unknown)');
+      } catch {
+        if (mounted) setName('(unknown)');
+      }
+    })();
+    return () => { mounted = false; };
+  }, [tenantId, companyId]);
+  return <>{name}</>;
+};
+
+// Form to add a related company
+const AddRelatedCompanyForm: React.FC<{ tenantId: string; company: any; onDone: () => void }> = ({ tenantId, company, onDone }) => {
+  const [relationType, setRelationType] = useState<'parent' | 'child' | 'msp' | ''>('');
+  const [options, setOptions] = useState<any[]>([]);
+  const [selected, setSelected] = useState<any | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const qs = await getDocs(collection(db, 'tenants', tenantId, 'crm_companies'));
+        setOptions(qs.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+      } catch (e) {
+        setOptions([]);
+      }
+    })();
+  }, [tenantId]);
+
+  const handleAdd = async () => {
+    if (!relationType || !selected?.id) return;
+    if (selected.id === company.id) return;
+    setSaving(true);
+    try {
+      const setRel = httpsCallable(functions, 'setCompanyRelationship');
+      await setRel({ tenantId, sourceCompanyId: company.id, targetCompanyId: selected.id, relationType });
+      setRelationType('');
+      setSelected(null);
+      onDone();
+    } catch (err) {
+      console.error('Failed to add related company', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <FormControl fullWidth size="small">
+        <InputLabel>Relation Type</InputLabel>
+        <Select value={relationType} label="Relation Type" onChange={(e) => setRelationType(e.target.value as any)}>
+          <MenuItem value={''}><em>Select type</em></MenuItem>
+          <MenuItem value={'parent'}>Parent Company</MenuItem>
+          <MenuItem value={'child'}>Child Company</MenuItem>
+          <MenuItem value={'msp'}>MSP</MenuItem>
+        </Select>
+      </FormControl>
+      <Autocomplete
+        options={options}
+        getOptionLabel={(o: any) => o.companyName || o.name || ''}
+        value={selected}
+        onChange={(e, v) => setSelected(v)}
+        renderInput={(params) => <TextField {...params} label="Select Company" size="small" />}
+      />
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button variant="contained" onClick={handleAdd} disabled={!relationType || !selected || saving}>
+          {saving ? 'Saving...' : 'Add'}
+        </Button>
+      </Box>
+    </Box>
+  );
+};
 // Recent Activity Widget for Dashboard
 const RecentActivityWidget: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
   const [items, setItems] = useState<CompanyActivityItem[]>([]);
@@ -2225,7 +2316,14 @@ const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'chil
   );
 };
 // Tab Components
-const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: any[]; deals: any[] }> = ({ company, tenantId, contacts, deals }) => {
+const CompanyDashboardTab: React.FC<{ 
+  company: any; 
+  tenantId: string; 
+  contacts: any[]; 
+  deals: any[];
+  relatedCompaniesDialogOpen: boolean;
+  setRelatedCompaniesDialogOpen: (open: boolean) => void;
+}> = ({ company, tenantId, contacts, deals, relatedCompaniesDialogOpen, setRelatedCompaniesDialogOpen }) => {
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
   const [rebuildingActive, setRebuildingActive] = useState(false);
   const [localSuccess, setLocalSuccess] = useState<string | null>(null);
@@ -3089,6 +3187,16 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
             <CardHeader 
               title="Related Companies" 
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              action={
+                <Button 
+                  variant="outlined" 
+                  size="small"
+                  onClick={() => setRelatedCompaniesDialogOpen(true)}
+                  sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+                >
+                  Edit
+                </Button>
+              }
             />
             <CardContent sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
               {(() => {
@@ -3112,6 +3220,56 @@ const CompanyDashboardTab: React.FC<{ company: any; tenantId: string; contacts: 
                 ));
               })()}
             </CardContent>
+            {/* Manage Related Companies Dialog */}
+            <Dialog open={relatedCompaniesDialogOpen} onClose={() => setRelatedCompaniesDialogOpen(false)} maxWidth="md" fullWidth>
+              <DialogTitle>Manage Related Companies</DialogTitle>
+              <DialogContent>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {/* Current relations */}
+                  <Typography variant="subtitle2" color="text.secondary">Current Relations</Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {(() => {
+                      const rows: Array<{ id: string; name: string; relation: 'parent' | 'child' | 'msp' }> = [];
+                      const parentId = company.parentCompany || null;
+                      if (parentId) rows.push({ id: parentId, name: 'Parent Company', relation: 'parent' });
+                      const children: string[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+                      children.forEach((cid) => rows.push({ id: cid, name: 'Child Company', relation: 'child' }));
+                      const msps: string[] = Array.isArray(company.msps) ? company.msps : [];
+                      msps.forEach((mid) => rows.push({ id: mid, name: 'MSP', relation: 'msp' }));
+                      if (rows.length === 0) {
+                        return <Typography variant="body2" color="text.secondary">No related companies</Typography>;
+                      }
+                      return rows.map((r) => (
+                        <Box key={`${r.relation}-${r.id}`} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                          <Avatar sx={{ width: 28, height: 28, fontSize: '0.8125rem' }}>{r.name.charAt(0)}</Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight="medium">
+                              <RelatedCompanyName tenantId={tenantId!} companyId={r.id} />
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">{r.relation === 'parent' ? 'Parent Company' : r.relation === 'child' ? 'Child Company' : 'MSP'}</Typography>
+                          </Box>
+                          <IconButton size="small" color="error" onClick={async () => {
+                            try {
+                              const removeRel = httpsCallable(functions, 'removeCompanyRelationship');
+                              await removeRel({ tenantId, sourceCompanyId: company.id, targetCompanyId: r.id, relationType: r.relation });
+                            } catch (err) { console.error('Failed to remove relation', err); }
+                          }}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ));
+                    })()}
+                  </Box>
+
+                  {/* Add relation */}
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>Add Related Company</Typography>
+                  <AddRelatedCompanyForm tenantId={tenantId!} company={company} onDone={() => {}} />
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setRelatedCompaniesDialogOpen(false)}>Close</Button>
+              </DialogActions>
+            </Dialog>
           </Card>
 
         </Box>
