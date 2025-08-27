@@ -21,6 +21,10 @@ import {
   Button,
   CircularProgress,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Timeline as TimelineIcon,
@@ -56,6 +60,8 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
   const [items, setItems] = useState<DealActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+  const [selectedItem, setSelectedItem] = useState<DealActivityItem | null>(null);
+  const [showDetails, setShowDetails] = useState<boolean>(false);
   // Filters
   const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'note' | 'deal_stage' | 'email'>('all');
   const [startDate, setStartDate] = useState<string>('');
@@ -355,6 +361,7 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
                           backgroundColor: '#F9FAFB'
                         }
                       }}
+                      onClick={() => { setSelectedItem(it); setShowDetails(true); }}
                     >
                       <TableCell sx={{ py: 1 }}>
                         <Chip 
@@ -417,6 +424,46 @@ const DealActivityTab: React.FC<DealActivityTabProps> = ({ deal, tenantId }) => 
           )}
         </CardContent>
       </Card>
+      {/* Details Dialog */}
+      <Dialog open={showDetails} onClose={() => setShowDetails(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Activity Details</DialogTitle>
+        <DialogContent>
+          {selectedItem && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Chip 
+                  size="small" 
+                  label={selectedItem.type.replace('_', ' ')} 
+                  sx={{
+                    fontSize: '0.75rem',
+                    height: 22,
+                    fontWeight: 600,
+                    backgroundColor: getActivityTypeColor(selectedItem.type),
+                    color: 'white'
+                  }}
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {selectedItem.timestamp?.toLocaleString?.()}
+                </Typography>
+              </Box>
+              <Typography variant="subtitle1" fontWeight={700}>{selectedItem.title}</Typography>
+              {selectedItem.description && (
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {selectedItem.description}
+                </Typography>
+              )}
+              {selectedItem.metadata && (
+                <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {(() => { try { return JSON.stringify(selectedItem.metadata, null, 2); } catch { return ''; } })()}
+                </Typography>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDetails(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

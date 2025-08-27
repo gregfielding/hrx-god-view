@@ -435,7 +435,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
             <DialogTitle>
               <Box display="flex" justifyContent="space-between" alignItems="center">
                 <Typography variant="h6">Note Details</Typography>
-                <Box display="flex" gap={1}>
+                {/* <Box display="flex" gap={1}>
                   <Chip
                     label={viewNoteDialog.note.category}
                     color={getCategoryColor(viewNoteDialog.note.category)}
@@ -444,7 +444,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     label={viewNoteDialog.note.priority}
                     color={getPriorityColor(viewNoteDialog.note.priority)}
                   />
-                </Box>
+                </Box> */}
               </Box>
             </DialogTitle>
             <DialogContent>
@@ -454,7 +454,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                 </Typography>
               </Box>
               
-              {viewNoteDialog.note.tags && viewNoteDialog.note.tags.length > 0 && (
+              {/* {viewNoteDialog.note.tags && viewNoteDialog.note.tags.length > 0 && (
                 <Box mb={2}>
                   <Typography variant="subtitle2" gutterBottom>
                     Tags:
@@ -465,7 +465,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     ))}
                   </Box>
                 </Box>
-              )}
+              )} */}
 
               {viewNoteDialog.note.files && viewNoteDialog.note.files.length > 0 && (
                 <Box mb={2}>

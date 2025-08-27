@@ -502,15 +502,12 @@ const CompanyDetails: React.FC = () => {
     const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
     const qByCompanyId = query(dealsRef, where('companyId', '==', companyId));
     const qByPrimaryCompanyId = query(dealsRef, where('primaryCompanyId', '==', companyId));
-    const qByAssociations = query(dealsRef, where('associations.companies', 'array-contains', companyId));
-
     let cacheByCompanyId: any[] = [];
     let cacheByPrimary: any[] = [];
-    let cacheByAssoc: any[] = [];
 
     const recomputeDeals = () => {
       const map: Record<string, any> = {};
-      [...cacheByCompanyId, ...cacheByPrimary, ...cacheByAssoc].forEach((d) => {
+      [...cacheByCompanyId, ...cacheByPrimary].forEach((d) => {
         map[d.id] = d;
       });
       setDeals(Object.values(map));
@@ -530,12 +527,8 @@ const CompanyDetails: React.FC = () => {
       console.error('Error loading deals (primaryCompanyId):', err);
     });
 
-    const unsubscribeDeals3 = onSnapshot(qByAssociations, (snapshot) => {
-      cacheByAssoc = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      recomputeDeals();
-    }, (err) => {
-      console.error('Error loading deals (associations):', err);
-    });
+    // Note: We intentionally avoid a listener on associations.companies due to legacy shapes
+    // and cross-tenant index/rules issues. Legacy deals can be backfilled with companyId.
     
     // Cleanup function to unsubscribe from listeners
     return () => {
@@ -543,7 +536,6 @@ const CompanyDetails: React.FC = () => {
       unsubscribeContacts();
       unsubscribeDeals1();
       unsubscribeDeals2();
-      unsubscribeDeals3();
     };
   }, [companyId, tenantId, updateCacheState]);
 
