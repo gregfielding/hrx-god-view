@@ -498,21 +498,52 @@ const CompanyDetails: React.FC = () => {
       console.error('Error loading contacts:', err);
     });
     
-    // Real-time listener for associated deals
+    // Real-time listeners for associated deals (handles historical shapes)
     const dealsRef = collection(db, 'tenants', tenantId, 'crm_deals');
-    const dealsQuery = query(dealsRef, where('companyId', '==', companyId));
-    const unsubscribeDeals = onSnapshot(dealsQuery, (snapshot) => {
-      const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setDeals(dealsData);
+    const qByCompanyId = query(dealsRef, where('companyId', '==', companyId));
+    const qByPrimaryCompanyId = query(dealsRef, where('primaryCompanyId', '==', companyId));
+    const qByAssociations = query(dealsRef, where('associations.companies', 'array-contains', companyId));
+
+    let cacheByCompanyId: any[] = [];
+    let cacheByPrimary: any[] = [];
+    let cacheByAssoc: any[] = [];
+
+    const recomputeDeals = () => {
+      const map: Record<string, any> = {};
+      [...cacheByCompanyId, ...cacheByPrimary, ...cacheByAssoc].forEach((d) => {
+        map[d.id] = d;
+      });
+      setDeals(Object.values(map));
+    };
+
+    const unsubscribeDeals1 = onSnapshot(qByCompanyId, (snapshot) => {
+      cacheByCompanyId = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      recomputeDeals();
     }, (err) => {
-      console.error('Error loading deals:', err);
+      console.error('Error loading deals (companyId):', err);
+    });
+
+    const unsubscribeDeals2 = onSnapshot(qByPrimaryCompanyId, (snapshot) => {
+      cacheByPrimary = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      recomputeDeals();
+    }, (err) => {
+      console.error('Error loading deals (primaryCompanyId):', err);
+    });
+
+    const unsubscribeDeals3 = onSnapshot(qByAssociations, (snapshot) => {
+      cacheByAssoc = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      recomputeDeals();
+    }, (err) => {
+      console.error('Error loading deals (associations):', err);
     });
     
     // Cleanup function to unsubscribe from listeners
     return () => {
       unsubscribeCompany();
       unsubscribeContacts();
-      unsubscribeDeals();
+      unsubscribeDeals1();
+      unsubscribeDeals2();
+      unsubscribeDeals3();
     };
   }, [companyId, tenantId, updateCacheState]);
 

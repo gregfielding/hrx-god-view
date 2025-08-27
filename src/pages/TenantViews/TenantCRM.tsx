@@ -5538,17 +5538,17 @@ const CompaniesTab: React.FC<{
       // Create the new opportunity
       const opportunityData = {
         name: newOpportunityForm.name,
+        companyId: newOpportunityForm.companyId,
+        primaryCompanyId: newOpportunityForm.companyId,
         stage: 'qualification', // Default stage
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         associations: {
           companies: [newOpportunityForm.companyId],
-          salespeople: [currentUser?.uid],
-          divisions: newOpportunityForm.divisionId ? [newOpportunityForm.divisionId] : [],
+          salespeople: [currentUser?.uid].filter(Boolean),
           locations: newOpportunityForm.locationId ? [newOpportunityForm.locationId] : [],
         },
-        // Add division and location data if selected
-        ...(newOpportunityForm.divisionId && { divisionId: newOpportunityForm.divisionId }),
+        // Add location data if selected
         ...(newOpportunityForm.locationId && { locationId: newOpportunityForm.locationId }),
       } as any;
 
