@@ -271,14 +271,24 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           individualSummariesMap[key] = allSummaryData[index];
         });
         
+        // Filter activities to only include CRM contact emails
+        const crmFilteredActivities = combinedActivities.filter(activity => {
+          if (activity.type === 'email') {
+            return activity.metadata?.contactId && 
+                   activity.metadata.contactId !== null && 
+                   activity.metadata.contactId !== 'null';
+          }
+          return true;
+        });
+
         // Create a combined summary
         const combinedSummary: ActivitySummary = {
-          totalActivities: combinedActivities.length,
-          todosCompleted: combinedActivities.filter(a => a.type === 'task').length,
-          emailsSent: combinedActivities.filter(a => a.type === 'email').length,
-          appointmentsHeld: combinedActivities.filter(a => a.type === 'task' && a.metadata?.taskType === 'appointment').length,
+          totalActivities: crmFilteredActivities.length,
+          todosCompleted: crmFilteredActivities.filter(a => a.type === 'task').length,
+          emailsSent: crmFilteredActivities.filter(a => a.type === 'email').length,
+          appointmentsHeld: crmFilteredActivities.filter(a => a.type === 'task' && a.metadata?.taskType === 'appointment').length,
           notesCreated: 0, // Notes are no longer included
-          lastActivityDate: combinedActivities.length > 0 ? combinedActivities[0].timestamp : undefined
+          lastActivityDate: crmFilteredActivities.length > 0 ? crmFilteredActivities[0].timestamp : undefined
         };
         
         setActivities(combinedActivities);
@@ -307,8 +317,28 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           )
         ]);
 
-        setActivities(activitiesData);
-        setSummary(summaryData);
+        // Filter activities to only include CRM contact emails
+        const crmFilteredActivities = activitiesData.filter(activity => {
+          if (activity.type === 'email') {
+            return activity.metadata?.contactId && 
+                   activity.metadata.contactId !== null && 
+                   activity.metadata.contactId !== 'null';
+          }
+          return true;
+        });
+
+        // Update summary to reflect filtered activities
+        const updatedSummary: ActivitySummary = {
+          totalActivities: crmFilteredActivities.length,
+          todosCompleted: crmFilteredActivities.filter(a => a.type === 'task').length,
+          emailsSent: crmFilteredActivities.filter(a => a.type === 'email').length,
+          appointmentsHeld: crmFilteredActivities.filter(a => a.type === 'task' && a.metadata?.taskType === 'appointment').length,
+          notesCreated: 0,
+          lastActivityDate: crmFilteredActivities.length > 0 ? crmFilteredActivities[0].timestamp : undefined
+        };
+
+        setActivities(crmFilteredActivities);
+        setSummary(updatedSummary);
         setIndividualSummaries({}); // Clear individual summaries for single salesperson view
       }
     } catch (error) {
@@ -458,6 +488,15 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
   };
 
   const filteredActivities = activities.filter(activity => {
+    // For emails, only show those with valid contactId (CRM contacts only)
+    if (getActivityCategory(activity) === 'emails') {
+      if (!activity.metadata?.contactId || 
+          activity.metadata.contactId === null || 
+          activity.metadata.contactId === 'null') {
+        return false;
+      }
+    }
+    
     if (activityFilter === 'all') return true;
     const category = getActivityCategory(activity);
     return category === activityFilter;
@@ -475,19 +514,25 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
       end: dateRange.endDate
     });
 
-    // Group activities by day
+    // Group activities by day - ensure only one data point per day
     const activitiesByDay = daysInRange.map(day => {
       const dayActivities = activities.filter(activity => 
         activity.timestamp && isSameDay(activity.timestamp, day)
       );
 
+      // Only include emails that have a valid contactId (CRM contacts only)
+      const crmEmails = dayActivities.filter(a => {
+        if (getActivityCategory(a) !== 'emails') return true;
+        return a.metadata?.contactId && a.metadata.contactId !== null && a.metadata.contactId !== 'null';
+      });
+
       return {
         date: format(day, 'MMM dd'),
         fullDate: day,
-        total: dayActivities.length,
-        todos: dayActivities.filter(a => getActivityCategory(a) === 'todos').length,
-        emails: dayActivities.filter(a => getActivityCategory(a) === 'emails').length,
-        appointments: dayActivities.filter(a => getActivityCategory(a) === 'appointments').length,
+        total: crmEmails.length,
+        todos: crmEmails.filter(a => getActivityCategory(a) === 'todos').length,
+        emails: crmEmails.filter(a => getActivityCategory(a) === 'emails').length,
+        appointments: crmEmails.filter(a => getActivityCategory(a) === 'appointments').length,
       };
     });
 
