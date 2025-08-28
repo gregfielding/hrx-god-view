@@ -65,7 +65,7 @@ function TabPanel(props: TabPanelProps) {
       {...other}
     >
       {value === index && (
-        <Box sx={{ p: 3 }}>
+        <Box sx={{ p: 0 }}>
           {children}
         </Box>
       )}
@@ -733,7 +733,7 @@ const RecruiterDashboard: React.FC = () => {
         {/* Dashboard Tab - All the current content */}
         <Box>
           {/* Personalized Welcome Header */}
-          <Box sx={{ mb: 4 }}>
+          <Box sx={{ mb: 3 }}>
             <Typography variant="h4" gutterBottom sx={{ fontWeight: 700 }}>
               Welcome back, {loadingUser ? '...' : (userData?.firstName || 'Recruiter')}!
             </Typography>
