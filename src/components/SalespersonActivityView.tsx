@@ -504,7 +504,7 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
 
   // Process activities for chart data
   const chartData = useMemo(() => {
-    if (!dateRange.startDate || !dateRange.endDate || activities.length === 0) {
+    if (!dateRange.startDate || !dateRange.endDate || filteredActivities.length === 0) {
       return [];
     }
 
@@ -516,32 +516,26 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
 
     // Group activities by day - ensure only one data point per day
     const activitiesByDay = daysInRange.map(day => {
-      const dayActivities = activities.filter(activity => 
+      const dayActivities = filteredActivities.filter(activity => 
         activity.timestamp && isSameDay(activity.timestamp, day)
       );
-
-      // Only include emails that have a valid contactId (CRM contacts only)
-      const crmEmails = dayActivities.filter(a => {
-        if (getActivityCategory(a) !== 'emails') return true;
-        return a.metadata?.contactId && a.metadata.contactId !== null && a.metadata.contactId !== 'null';
-      });
 
       return {
         date: format(day, 'MMM dd'),
         fullDate: day,
-        total: crmEmails.length,
-        todos: crmEmails.filter(a => getActivityCategory(a) === 'todos').length,
-        emails: crmEmails.filter(a => getActivityCategory(a) === 'emails').length,
-        appointments: crmEmails.filter(a => getActivityCategory(a) === 'appointments').length,
+        total: dayActivities.length,
+        todos: dayActivities.filter(a => getActivityCategory(a) === 'todos').length,
+        emails: dayActivities.filter(a => getActivityCategory(a) === 'emails').length,
+        appointments: dayActivities.filter(a => getActivityCategory(a) === 'appointments').length,
       };
     });
 
     return activitiesByDay;
-  }, [activities, dateRange.startDate, dateRange.endDate]);
+  }, [filteredActivities, dateRange.startDate, dateRange.endDate]);
 
   // Calculate individual salesperson chart data for Compare All view
   const individualChartData = useMemo(() => {
-    if (selectedSalesperson !== 'compare_all' || !activities.length || !dateRange.startDate || !dateRange.endDate) {
+    if (selectedSalesperson !== 'compare_all' || !filteredActivities.length || !dateRange.startDate || !dateRange.endDate) {
       return [];
     }
 
@@ -551,7 +545,7 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
     });
 
     const activitiesByDay = days.map(day => {
-      const dayActivities = activities.filter(activity => 
+      const dayActivities = filteredActivities.filter(activity => 
         activity.timestamp && isSameDay(activity.timestamp, day)
       );
 
