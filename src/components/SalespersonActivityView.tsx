@@ -153,10 +153,26 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
       });
     } else if (isRestricted) {
       // Restricted users can only see themselves
-      return salesTeam.filter(salesperson => {
+      // First, try to find themselves in the salesTeam
+      const selfInTeam = salesTeam.find(salesperson => {
         const email = salesperson?.email?.toLowerCase();
         return email && email === currentUserEmail;
       });
+      
+      if (selfInTeam) {
+        // If they're in the team, return just themselves
+        return [selfInTeam];
+      } else {
+        // If they're not in the team, create a placeholder entry for themselves
+        return [{
+          uid: salespersonId,
+          email: salespersonEmail,
+          displayName: salespersonName,
+          // Add any other required fields with default values
+          role: 'sales',
+          status: 'active'
+        }];
+      }
     } else {
       // Default fallback - show all for unknown users
       return salesTeam.filter(salesperson => {
@@ -164,7 +180,7 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
         return email && (adminEmails.includes(email) || restrictedEmails.includes(email));
       });
     }
-  }, [salesTeam, salespersonEmail]);
+  }, [salesTeam, salespersonEmail, salespersonId, salespersonName]);
 
   // Helper function to get salesperson color
   const getSalespersonColor = (email: string): string => {
