@@ -867,42 +867,44 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           </Paper>
         )}
 
-        {/* Activity Type Tabs */}
-        <Paper sx={{ mb: 2 }}>
-          <Tabs
-            value={activityFilter}
-            onChange={(e, newValue) => setActivityFilter(newValue)}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{
-              borderBottom: 1,
-              borderColor: 'divider',
-              '& .MuiTab-root': {
-                borderRadius: 0,
-                textTransform: 'none',
-                fontWeight: 500,
-                minHeight: 48,
-              },
-              '& .Mui-selected': {
-                color: 'primary.main',
-                fontWeight: 600,
-              },
-            }}
-          >
-            {activityTypes.map((type) => (
-              <Tab
-                key={type.value}
-                value={type.value}
-                label={
-                  <Box display="flex" alignItems="center" gap={1}>
-                    {type.icon}
-                    {type.label}
-                  </Box>
-                }
-              />
-            ))}
-          </Tabs>
-        </Paper>
+        {/* Activity Type Tabs - Hidden when Compare All is selected */}
+        {selectedSalesperson !== 'compare_all' && (
+          <Paper sx={{ mb: 2 }}>
+            <Tabs
+              value={activityFilter}
+              onChange={(e, newValue) => setActivityFilter(newValue)}
+              variant="scrollable"
+              scrollButtons="auto"
+              sx={{
+                borderBottom: 1,
+                borderColor: 'divider',
+                '& .MuiTab-root': {
+                  borderRadius: 0,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  minHeight: 48,
+                },
+                '& .Mui-selected': {
+                  color: 'primary.main',
+                  fontWeight: 600,
+                },
+              }}
+            >
+              {activityTypes.map((type) => (
+                <Tab
+                  key={type.value}
+                  value={type.value}
+                  label={
+                    <Box display="flex" alignItems="center" gap={1}>
+                      {type.icon}
+                      {type.label}
+                    </Box>
+                  }
+                />
+              ))}
+            </Tabs>
+          </Paper>
+        )}
 
         {/* Activity Table - Hidden when Compare All is selected */}
         {selectedSalesperson !== 'compare_all' && (
