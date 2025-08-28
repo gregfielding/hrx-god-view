@@ -44,6 +44,7 @@ import {
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../contexts/AuthContext';
+import { app } from '../../firebase';
 import GmailBulkImport from '../../components/GmailBulkImport';
 import GmailReauthHelper from '../../components/GmailReauthHelper';
 
@@ -207,8 +208,13 @@ const DataOperations: React.FC = () => {
       console.log('Selected User ID:', selectedUserId);
       
       // Use callable function for both localhost and production to avoid CORS issues
-      const functions = getFunctions();
+      const functions = getFunctions(app, 'us-central1');
+      console.log('Functions instance:', functions);
+      console.log('Functions region:', functions.region);
+      
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+      console.log('Callable function created:', queueGmailBulkImport);
+      
       const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
       const resultData = response.data as any;
       setSingleUserImportResults(resultData);
@@ -231,7 +237,7 @@ const DataOperations: React.FC = () => {
     const pollInterval = setInterval(async () => {
       try {
         // Use callable function for both localhost and production to avoid CORS issues
-        const functions = getFunctions();
+        const functions = getFunctions(app, 'us-central1');
         const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
         const response = await getGmailImportProgress({ requestId, tenantId });
         const progressData = response.data as any;
@@ -276,7 +282,7 @@ const DataOperations: React.FC = () => {
           if (window.location.hostname === 'localhost' && error.message?.includes('CORS')) {
             console.log('CORS error detected, trying callable function as fallback...');
             try {
-              const functions = getFunctions();
+              const functions = getFunctions(app, 'us-central1');
               const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
               const response = await getGmailImportProgress({ requestId, tenantId });
               const progressData = response.data as any;
@@ -348,8 +354,13 @@ const DataOperations: React.FC = () => {
       console.log('Tenant ID:', tenantId);
       
       // Use callable function for both localhost and production to avoid CORS issues
-      const functions = getFunctions();
+      const functions = getFunctions(app, 'us-central1');
+      console.log('Functions instance:', functions);
+      console.log('Functions region:', functions.region);
+      
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+      console.log('Callable function created:', queueGmailBulkImport);
+      
       const response = await queueGmailBulkImport({ tenantId, daysBack });
       const resultData = response.data as any;
       setGmailImportResults(resultData);
@@ -372,7 +383,7 @@ const DataOperations: React.FC = () => {
     const pollInterval = setInterval(async () => {
       try {
         // Use callable function for both localhost and production to avoid CORS issues
-        const functions = getFunctions();
+        const functions = getFunctions(app, 'us-central1');
         const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
         const response = await getGmailImportProgress({ requestId, tenantId });
         const progressData = response.data as any;
