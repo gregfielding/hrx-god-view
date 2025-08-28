@@ -42,7 +42,7 @@ import {
   DeleteSweep as DeleteSweepIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getFunctions, httpsCallable, connectFunctionsEmulator } from 'firebase/functions';
 import { useAuth } from '../../contexts/AuthContext';
 import { app } from '../../firebase';
 import GmailBulkImport from '../../components/GmailBulkImport';
@@ -212,8 +212,16 @@ const DataOperations: React.FC = () => {
       console.log('Functions instance:', functions);
       console.log('Functions region:', functions.region);
       
+      // Ensure we're not using emulator
+      if (window.location.hostname !== 'localhost') {
+        console.log('Production environment - using callable functions');
+      }
+      
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
       console.log('Callable function created:', queueGmailBulkImport);
+      
+      // Force the function to be called as a callable function
+      console.log('About to call queueGmailBulkImport with data:', { userIds: [selectedUserId], tenantId, daysBack });
       
       const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
       const resultData = response.data as any;
@@ -358,8 +366,16 @@ const DataOperations: React.FC = () => {
       console.log('Functions instance:', functions);
       console.log('Functions region:', functions.region);
       
+      // Ensure we're not using emulator
+      if (window.location.hostname !== 'localhost') {
+        console.log('Production environment - using callable functions');
+      }
+      
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
       console.log('Callable function created:', queueGmailBulkImport);
+      
+      // Force the function to be called as a callable function
+      console.log('About to call queueGmailBulkImport with data:', { tenantId, daysBack });
       
       const response = await queueGmailBulkImport({ tenantId, daysBack });
       const resultData = response.data as any;
