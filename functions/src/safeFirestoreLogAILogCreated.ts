@@ -28,6 +28,12 @@ const SAFE_CONFIG = {
     'meta_logging',
     'system',
     'debug'
+  ],
+  // Skip certain source modules to prevent loops
+  SKIP_SOURCE_MODULES: [
+    'FirestoreTrigger',
+    'firestoreLogAILogCreated',
+    'safeFirestoreLogAILogCreated'
   ]
 };
 
@@ -49,23 +55,33 @@ function shouldLogEvent(logData: any): boolean {
     return false;
   }
 
-  // Skip low-urgency events
-  if (logData.urgencyScore && logData.urgencyScore < SAFE_CONFIG.MIN_URGENCY_SCORE) {
+  // Skip if sourceModule is in the skip list
+  if (SAFE_CONFIG.SKIP_SOURCE_MODULES.includes(logData.sourceModule)) {
     return false;
   }
 
-  // Skip certain event types
-  if (logData.eventType && SAFE_CONFIG.SKIP_EVENT_TYPES.includes(logData.eventType)) {
+  // Skip if eventType is in the skip list
+  if (SAFE_CONFIG.SKIP_EVENT_TYPES.includes(logData.eventType)) {
     return false;
   }
 
-  // Skip certain context types
-  if (logData.contextType && SAFE_CONFIG.SKIP_CONTEXT_TYPES.includes(logData.contextType)) {
+  // Skip if contextType is in the skip list
+  if (SAFE_CONFIG.SKIP_CONTEXT_TYPES.includes(logData.contextType)) {
     return false;
   }
 
   // Skip meta-logging events
   if (logData.contextType === 'meta_logging') {
+    return false;
+  }
+
+  // Skip if urgency score is too low
+  if (logData.urgencyScore && logData.urgencyScore < SAFE_CONFIG.MIN_URGENCY_SCORE) {
+    return false;
+  }
+
+  // Skip if this is a meta-log entry (prevents infinite loops)
+  if (logData.actionType === 'ai_log_created' || logData.targetType === 'ai_log') {
     return false;
   }
 

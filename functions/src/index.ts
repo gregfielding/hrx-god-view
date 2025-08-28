@@ -7909,7 +7909,7 @@ export {
   firestoreLogSettingCreated,
   firestoreLogSettingUpdated,
   firestoreLogSettingDeleted,
-  firestoreLogAILogCreated,
+  // firestoreLogAILogCreated, // DISABLED - Using safe version to prevent infinite loops
   firestoreLogAILogUpdated,
   firestoreLogAILogDeleted,
   firestoreLogTaskCreated,
@@ -10391,8 +10391,12 @@ export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRe
 export { syncApolloHeadquartersLocation } from './apolloLocationSync';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
-// Active Salespeople (Company)
-export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, updateActiveSalespeopleOnEmailLog, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
+// Active Salespeople (Company) - SAFE VERSIONS
+export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
+// Safe version of email log trigger to prevent excessive calls
+export { updateActiveSalespeopleOnEmailLog } from './safeUpdateActiveSalespeopleOnEmailLog';
+// Safe version of AI log trigger to prevent infinite loops
+export { firestoreLogAILogCreated } from './safeFirestoreLogAILogCreated';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
 
 // Auto Activity Logger
