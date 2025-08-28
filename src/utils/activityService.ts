@@ -519,7 +519,6 @@ export async function loadSalespersonActivities(
         const emailsQuery = query(
           emailsRef,
           where('userId', '==', salespersonId),
-          where('contactId', '!=', null),
           ...(startDate ? [where('timestamp', '>=', startDate)] : []),
           ...(endDate ? [where('timestamp', '<=', endDate)] : []),
           orderBy('timestamp', 'desc'),
@@ -540,12 +539,18 @@ export async function loadSalespersonActivities(
           totalEmailsProcessed++;
           
           // Debug logging for first few emails
-          if (totalEmailsProcessed <= 5) {
-            console.log(`📧 Email ${totalEmailsProcessed}: contactId="${data.contactId}", subject="${data.subject}"`);
+          if (totalEmailsProcessed <= 10) {
+            console.log(`📧 Email ${totalEmailsProcessed}: contactId="${data.contactId}", subject="${data.subject}", included=${data.contactId && data.contactId !== null && data.contactId !== 'null' && crmContactIds.has(data.contactId)}`);
           }
           
-          // Since we're filtering at the database level, just verify the contactId exists in CRM
-          if (data.contactId && crmContactIds.has(data.contactId)) {
+          // Only include emails that have a valid contactId that matches a CRM contact
+          // Exclude emails with contactId: null, undefined, or 'null' string
+          if (data.contactId && 
+              data.contactId !== null && 
+              data.contactId !== undefined &&
+              data.contactId !== 'null' &&
+              data.contactId.trim() !== '' &&
+              crmContactIds.has(data.contactId)) {
             
             // Create a more sophisticated unique key for deduplication
             // Use messageId if available, otherwise create a composite key
