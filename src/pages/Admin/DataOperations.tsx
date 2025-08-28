@@ -222,14 +222,14 @@ const DataOperations: React.FC = () => {
       console.log('Got ID token for authentication');
       
       // Use HTTP endpoint with proper authentication headers
-      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImport', {
+      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          data: { userIds: [selectedUserId], tenantId, daysBack }
+          userIds: [selectedUserId], tenantId, daysBack
         }),
       });
       
@@ -389,14 +389,14 @@ const DataOperations: React.FC = () => {
       console.log('Got ID token for authentication');
       
       // Use HTTP endpoint with proper authentication headers
-      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImport', {
+      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          data: { tenantId, daysBack }
+          tenantId, daysBack
         }),
       });
       
