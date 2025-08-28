@@ -10387,8 +10387,8 @@ export { metricsIngest } from './telemetry/metrics';
 export { app_ai_generateResponse } from './appAi';
 // Apollo scaffolding will use utils; callables/triggers to be added next iteration
 export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRecommendedContacts, apolloPing, apolloPingHttp } from './apolloIntegration';
-// RE-ENABLED WITH FIXES
-export { syncApolloHeadquartersLocation } from './apolloLocationSync';
+// RE-ENABLED WITH FIXES - USING SAFE VERSION
+export { syncApolloHeadquartersLocation } from './safeSyncApolloHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
 // Active Salespeople (Company) - SAFE VERSIONS
