@@ -257,11 +257,24 @@ const DataOperations: React.FC = () => {
   const pollSingleUserImportStatus = async (requestId: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        // Use callable function for both localhost and production to avoid CORS issues
-        const functions = getFunctions(app, 'us-central1');
-        const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
-        const response = await getGmailImportProgress({ requestId, tenantId });
-        const progressData = response.data as any;
+        // Use HTTP endpoint with proper authentication headers
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            requestId, tenantId
+          }),
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const progressData = await response.json();
         
         if (progressData) {
           // Update results with current status
@@ -424,11 +437,24 @@ const DataOperations: React.FC = () => {
   const pollImportStatus = async (requestId: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        // Use callable function for both localhost and production to avoid CORS issues
-        const functions = getFunctions(app, 'us-central1');
-        const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
-        const response = await getGmailImportProgress({ requestId, tenantId });
-        const progressData = response.data as any;
+        // Use HTTP endpoint with proper authentication headers
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            requestId, tenantId
+          }),
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const progressData = await response.json();
         
         if (progressData) {
           // Update results with current status
