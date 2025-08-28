@@ -193,10 +193,19 @@ const DataOperations: React.FC = () => {
       return;
     }
 
+    if (!currentUser) {
+      alert('You must be signed in to perform this operation');
+      return;
+    }
+
     setSingleUserImportLoading(true);
     setSingleUserImportResults(null);
     
     try {
+      console.log('Current user:', currentUser?.uid, currentUser?.email);
+      console.log('Tenant ID:', tenantId);
+      console.log('Selected User ID:', selectedUserId);
+      
       // Use callable function for both localhost and production to avoid CORS issues
       const functions = getFunctions();
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
@@ -328,8 +337,16 @@ const DataOperations: React.FC = () => {
       return;
     }
 
+    if (!currentUser) {
+      alert('You must be signed in to perform this operation');
+      return;
+    }
+
     setGmailImportLoading(true);
     try {
+      console.log('Current user:', currentUser?.uid, currentUser?.email);
+      console.log('Tenant ID:', tenantId);
+      
       // Use callable function for both localhost and production to avoid CORS issues
       const functions = getFunctions();
       const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
