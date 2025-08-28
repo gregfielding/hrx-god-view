@@ -126,20 +126,45 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
     );
   };
 
-  // Filter salesTeam to only include specific emails
+  // Filter salesTeam based on user role permissions
   const filteredSalesTeam = useMemo(() => {
-    const allowedEmails = [
-      'dm@c1staffing.com',
-      'g.fielding@c1staffing.com', 
-      'i.castaneda@c1staffing.com',
-      'j.robinson@c1staffing.com'
+    // Define admin users who can see all salespeople
+    const adminEmails = [
+      'dm@c1staffing.com',      // Donna
+      'g.fielding@c1staffing.com' // Greg
     ];
     
-    return salesTeam.filter(salesperson => {
-      const email = salesperson?.email?.toLowerCase();
-      return email && allowedEmails.includes(email);
-    });
-  }, [salesTeam]);
+    // Define restricted users who can only see themselves
+    const restrictedEmails = [
+      'i.castaneda@c1staffing.com', // Irene
+      'j.robinson@c1staffing.com'   // Jasmyne
+    ];
+    
+    // Check if current user is admin or restricted
+    const currentUserEmail = salespersonEmail?.toLowerCase();
+    const isAdmin = currentUserEmail && adminEmails.includes(currentUserEmail);
+    const isRestricted = currentUserEmail && restrictedEmails.includes(currentUserEmail);
+    
+    if (isAdmin) {
+      // Admin users can see all salespeople
+      return salesTeam.filter(salesperson => {
+        const email = salesperson?.email?.toLowerCase();
+        return email && (adminEmails.includes(email) || restrictedEmails.includes(email));
+      });
+    } else if (isRestricted) {
+      // Restricted users can only see themselves
+      return salesTeam.filter(salesperson => {
+        const email = salesperson?.email?.toLowerCase();
+        return email && email === currentUserEmail;
+      });
+    } else {
+      // Default fallback - show all for unknown users
+      return salesTeam.filter(salesperson => {
+        const email = salesperson?.email?.toLowerCase();
+        return email && (adminEmails.includes(email) || restrictedEmails.includes(email));
+      });
+    }
+  }, [salesTeam, salespersonEmail]);
 
   // Helper function to get salesperson color
   const getSalespersonColor = (email: string): string => {
@@ -879,76 +904,78 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           </Tabs>
         </Paper>
 
-        {/* Activity Table */}
-        <Paper>
-          <TableContainer sx={{ maxHeight: 600 }}>
-            <Table size="small" stickyHeader>
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ width: 50, fontWeight: 600 }}>Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Activity</TableCell>
-                  <TableCell sx={{ width: 180, fontWeight: 600 }}>Date/Time</TableCell>
-                  <TableCell sx={{ width: 100, fontWeight: 600 }}>Category</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredActivities.length === 0 ? (
+        {/* Activity Table - Hidden when Compare All is selected */}
+        {selectedSalesperson !== 'compare_all' && (
+          <Paper>
+            <TableContainer sx={{ maxHeight: 600 }}>
+              <Table size="small" stickyHeader>
+                <TableHead>
                   <TableRow>
-                    <TableCell colSpan={4} sx={{ textAlign: 'center', py: 4 }}>
-                      <Typography color="text.secondary">
-                        No activities found for the selected criteria.
-                      </Typography>
-                    </TableCell>
+                    <TableCell sx={{ width: 50, fontWeight: 600 }}>Type</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Activity</TableCell>
+                    <TableCell sx={{ width: 180, fontWeight: 600 }}>Date/Time</TableCell>
+                    <TableCell sx={{ width: 100, fontWeight: 600 }}>Category</TableCell>
                   </TableRow>
-                ) : (
-                  filteredActivities.map((activity, index) => (
-                    <TableRow
-                      key={activity.id}
-                      onClick={() => handleActivityClick(activity)}
-                      sx={{
-                        cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: 'action.hover',
-                        },
-                        backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                        '&:last-child td': { border: 0 },
-                      }}
-                    >
-                      <TableCell sx={{ py: 1 }}>
-                        <Box display="flex" alignItems="center" justifyContent="center">
-                          {getActivityIcon(activity.type)}
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ py: 1 }}>
-                        <Typography variant="body2" fontWeight="medium" noWrap>
-                          {getActivityDisplayTitle(activity).length > 72 
-                            ? getActivityDisplayTitle(activity).substring(0, 72) + '...'
-                            : getActivityDisplayTitle(activity)
-                          }
+                </TableHead>
+                <TableBody>
+                  {filteredActivities.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} sx={{ textAlign: 'center', py: 4 }}>
+                        <Typography color="text.secondary">
+                          No activities found for the selected criteria.
                         </Typography>
-                      </TableCell>
-                      <TableCell sx={{ py: 1, width: 180 }}>
-                        <Typography variant="body2" color="text.secondary" noWrap>
-                          {activity.timestamp && !isNaN(activity.timestamp.getTime()) 
-                            ? format(activity.timestamp, 'MMM dd, yyyy HH:mm')
-                            : 'Unknown date'
-                          }
-                        </Typography>
-                      </TableCell>
-                      <TableCell sx={{ py: 1 }}>
-                        <Chip
-                          label={getActivityDisplayLabel(activity)}
-                          size="small"
-                          color={getActivityColor(activity.type) as any}
-                        />
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
+                  ) : (
+                    filteredActivities.map((activity, index) => (
+                      <TableRow
+                        key={activity.id}
+                        onClick={() => handleActivityClick(activity)}
+                        sx={{
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover',
+                          },
+                          backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                          '&:last-child td': { border: 0 },
+                        }}
+                      >
+                        <TableCell sx={{ py: 1 }}>
+                          <Box display="flex" alignItems="center" justifyContent="center">
+                            {getActivityIcon(activity.type)}
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography variant="body2" fontWeight="medium" noWrap>
+                            {getActivityDisplayTitle(activity).length > 72 
+                              ? getActivityDisplayTitle(activity).substring(0, 72) + '...'
+                              : getActivityDisplayTitle(activity)
+                            }
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1, width: 180 }}>
+                          <Typography variant="body2" color="text.secondary" noWrap>
+                            {activity.timestamp && !isNaN(activity.timestamp.getTime()) 
+                              ? format(activity.timestamp, 'MMM dd, yyyy HH:mm')
+                              : 'Unknown date'
+                            }
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Chip
+                            label={getActivityDisplayLabel(activity)}
+                            size="small"
+                            color={getActivityColor(activity.type) as any}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+        )}
 
         {/* Activity Detail Dialog */}
         <Dialog
