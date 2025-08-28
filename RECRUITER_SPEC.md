@@ -1159,25 +1159,25 @@ try {
 
 ## 🚀 **Implementation Phases**
 
-### **Phase 1: Foundation & Event Bus (Week 1)**
-- [ ] Route scaffolding and navigation (`/recruiter/*`)
-- [ ] Firestore rules with tenant enforcement
-- [ ] Event bus architecture (`/events` collection)
-- [ ] Canonical data strategy implementation
-- [ ] Base schemas with `crm_companyId` references
+### **Phase 1: Foundation & Event Bus (Week 1)** ✅ **COMPLETED**
+- [x] Route scaffolding and navigation (`/recruiter/*`)
+- [x] Firestore rules with tenant enforcement
+- [x] Event bus architecture (`/events` collection)
+- [x] Canonical data strategy implementation
+- [x] Base schemas with `crm_companyId` references
 
-### **Phase 2: Handoff System (Week 2)**
-- [ ] Event-driven handoff triggers with guardrails
-- [ ] `onOpportunityHandoff` function with validation
-- [ ] Event processors for handoff events
-- [ ] Write-through editing for company/contact updates
-- [ ] Job Orders with canonical references
+### **Phase 2: Handoff System (Week 2)** ✅ **COMPLETED**
+- [x] Event-driven handoff triggers with guardrails
+- [x] `onOpportunityHandoff` function with validation
+- [x] Event processors for handoff events
+- [x] Write-through editing for company/contact updates
+- [x] Job Orders with canonical references
 
-### **Phase 3: Core Recruiter Features (Week 3)**
-- [ ] Recruiter client extensions (no duplication)
-- [ ] Job Orders list and detail views
-- [ ] Basic submittal workflow
-- [ ] Worksite management with CRM references
+### **Phase 3: Core Recruiter Features (Week 3)** 🔄 **IN PROGRESS**
+- [x] Recruiter client extensions (no duplication)
+- [x] Job Orders list and detail views
+- [x] Basic submittal workflow
+- [x] Worksite management with CRM references
 
 ### **Phase 4: Candidates & Pipeline (Week 4)**
 - [ ] Candidate management system
@@ -1199,6 +1199,18 @@ try {
 - [ ] AI suggestions engine
 - [ ] Comprehensive reporting
 - [ ] E2E testing and validation
+
+### **Phase 2: Recruiter Enhancements (Companion Integration)** 🆕 **PLANNED**
+- [ ] **Bulk Submittals**: Multi-candidate selection with auto-generated packets
+- [ ] **One-Click Scheduling**: Companion availability + client availability integration
+- [ ] **Job Board Auto-Fill**: Preloaded role templates for evergreen jobs
+- [ ] **One-Click Background/Drug Checks**: Companion-triggered compliance workflows
+- [ ] **Unified Timeline**: Chronological feed for all candidate/client/job order events
+- [ ] **Messaging Integration**: Recruiter ↔ Candidate via Companion with push notifications
+- [ ] **Reusable Templates**: Rate cards, compliance packets, interview scorecards
+- [ ] **Compliance Automation**: Alerts, checklists, auto-generated reports
+- [ ] **Workflow Improvements**: Candidate pools, hot lists, instant client feedback
+- [ ] **Recruiter Delight Features**: Drag-drop pipelines, inline previews, hover actions
 
 ## 🎯 **Competitive Advantages**
 
@@ -1416,7 +1428,19 @@ functions/src/recruiter/
 
 ## 🔮 **Future Enhancements**
 
-### **Phase 2 Features**
+### **Phase 2: Recruiter Enhancements (Companion Integration)** 🆕
+- **Bulk Submittals**: Multi-candidate selection with auto-generated packets
+- **One-Click Scheduling**: Companion availability + client availability integration
+- **Job Board Auto-Fill**: Preloaded role templates for evergreen jobs
+- **One-Click Background/Drug Checks**: Companion-triggered compliance workflows
+- **Unified Timeline**: Chronological feed for all candidate/client/job order events
+- **Messaging Integration**: Recruiter ↔ Candidate via Companion with push notifications
+- **Reusable Templates**: Rate cards, compliance packets, interview scorecards
+- **Compliance Automation**: Alerts, checklists, auto-generated reports
+- **Workflow Improvements**: Candidate pools, hot lists, instant client feedback
+- **Recruiter Delight Features**: Drag-drop pipelines, inline previews, hover actions
+
+### **Phase 3 Features**
 - **Advanced AI**: Machine learning for candidate matching
 - **Video Interviews**: Built-in video conferencing
 - **Background Check Integration**: Direct vendor APIs
@@ -1424,12 +1448,428 @@ functions/src/recruiter/
 - **Mobile App**: Native iOS/Android applications
 - **Advanced Analytics**: Predictive modeling and insights
 
-### **Phase 3 Features**
+### **Phase 4 Features**
 - **AI Chatbot**: Candidate and client support
 - **Blockchain Verification**: Immutable credential verification
 - **Advanced Compliance**: Automated regulatory reporting
 - **Market Intelligence**: Competitive analysis and pricing
 - **Global Expansion**: Multi-language and multi-currency support
+
+## 🆕 **Phase 2: Recruiter Enhancements (Companion Integration)**
+
+### **General Themes**
+- **One-click everything**: Streamlined workflows for maximum efficiency
+- **Bulk Operations**: Multi-candidate selection and batch processing
+- **Unified Timeline**: Single chronological feed for all events
+- **Companion Integration**: Seamless worker app integration
+- **Automation**: AI-driven suggestions and automated workflows
+
+### **1. Bulk Submittals**
+```typescript
+interface BulkSubmittalRequest {
+  tenantId: string;
+  jobOrderId: string;
+  candidateIds: string[];
+  recruiterId: string;
+  options: {
+    includeResume: boolean;
+    includeCompanionProfile: boolean;
+    includeComplianceDocs: boolean;
+    customMessage?: string;
+  };
+}
+
+interface BulkSubmittalResult {
+  success: boolean;
+  submittals: {
+    candidateId: string;
+    submittalId: string;
+    status: 'created' | 'failed';
+    error?: string;
+  }[];
+  packetUrl?: string; // Combined PDF packet
+}
+```
+
+**Features:**
+- Multi-candidate selection with checkboxes
+- Auto-generated submittal packets with resumes
+- Companion profile data integration
+- Compliance document bundling
+- One-click submission to client
+
+### **2. One-Click Scheduling**
+```typescript
+interface SchedulingRequest {
+  tenantId: string;
+  jobOrderId: string;
+  candidateId: string;
+  clientContactId: string;
+  interviewType: 'phone' | 'video' | 'onsite';
+  options: {
+    useCompanionAvailability: boolean;
+    useClientAvailability: boolean;
+    autoSendInvites: boolean;
+  };
+}
+
+interface SchedulingResult {
+  success: boolean;
+  interviewId: string;
+  scheduledTime: string;
+  timezone: string;
+  invitesSent: {
+    candidate: boolean;
+    client: boolean;
+  };
+}
+```
+
+**Features:**
+- Companion availability integration
+- Client calendar integration
+- Auto-scheduling based on availability
+- One-click interview confirmation
+- Automatic invite sending
+
+### **3. Job Board Auto-Fill**
+```typescript
+interface JobTemplate {
+  id: string;
+  title: string;
+  roleCategory: string;
+  description: string;
+  requirements: string[];
+  payRange: {
+    min: number;
+    max: number;
+  };
+  shifts: string[];
+  benefits: string[];
+  compliance: {
+    backgroundCheck: boolean;
+    drugTest: boolean;
+    certifications: string[];
+  };
+}
+
+interface AutoFillRequest {
+  tenantId: string;
+  templateId: string;
+  clientId: string;
+  customizations: {
+    payRate?: number;
+    location?: string;
+    startDate?: string;
+    additionalRequirements?: string[];
+  };
+}
+```
+
+**Features:**
+- Preloaded role templates (Forklift, CNA, etc.)
+- Client-specific customizations
+- Compliance requirement inheritance
+- One-click job order creation
+- Auto-posting to jobs board
+
+### **4. One-Click Background/Drug Checks**
+```typescript
+interface ComplianceCheckRequest {
+  tenantId: string;
+  candidateId: string;
+  checkTypes: ('background' | 'drug' | 'reference')[];
+  vendor?: string;
+  options: {
+    notifyCompanion: boolean;
+    autoFollowUp: boolean;
+    requireCompletion: boolean;
+  };
+}
+
+interface ComplianceCheckResult {
+  success: boolean;
+  checkIds: string[];
+  companionNotificationSent: boolean;
+  estimatedCompletion: string;
+}
+```
+
+**Features:**
+- Trigger from candidate profile
+- Companion notification to worker
+- Vendor integration (Checkr, etc.)
+- Auto-follow-up for completion
+- Compliance status tracking
+
+### **5. Unified Timeline**
+```typescript
+interface TimelineEvent {
+  id: string;
+  tenantId: string;
+  entityType: 'candidate' | 'client' | 'jobOrder';
+  entityId: string;
+  eventType: string;
+  timestamp: number;
+  source: 'recruiter' | 'companion' | 'client' | 'system';
+  data: any;
+  visibility: 'recruiter' | 'candidate' | 'client' | 'all';
+}
+
+interface TimelineRequest {
+  tenantId: string;
+  entityType?: string;
+  entityId?: string;
+  filters: {
+    eventTypes?: string[];
+    sources?: string[];
+    dateRange?: {
+      start: number;
+      end: number;
+    };
+  };
+  limit: number;
+  offset: number;
+}
+```
+
+**Features:**
+- Chronological feed for all events
+- Companion events integration
+- Client feedback integration
+- Filterable by entity and event type
+- Real-time updates
+
+### **6. Messaging Integration**
+```typescript
+interface MessageThread {
+  id: string;
+  tenantId: string;
+  participants: {
+    recruiterId: string;
+    candidateId: string;
+    jobOrderId?: string;
+  };
+  messages: Message[];
+  status: 'active' | 'archived';
+  lastActivity: number;
+}
+
+interface Message {
+  id: string;
+  senderId: string;
+  senderType: 'recruiter' | 'candidate' | 'system';
+  content: string;
+  timestamp: number;
+  attachments: string[];
+  readBy: string[];
+  deliveredTo: string[];
+}
+```
+
+**Features:**
+- Recruiter ↔ Candidate via Companion
+- Auto-linked to job orders
+- Push notifications with SMS/email fallback
+- Inline messaging from recruiter dashboard
+- Message threading and history
+
+### **7. Reusable Templates**
+```typescript
+interface RateCard {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  roleCategory: string;
+  location: string;
+  payRates: {
+    entry: number;
+    experienced: number;
+    expert: number;
+  };
+  billRates: {
+    entry: number;
+    experienced: number;
+    expert: number;
+  };
+  markup: number;
+}
+
+interface CompliancePacket {
+  id: string;
+  tenantId: string;
+  clientId: string;
+  documents: {
+    i9: string;
+    w4: string;
+    handbook?: string;
+    nda?: string;
+    safety?: string;
+  };
+  requirements: {
+    backgroundCheck: boolean;
+    drugTest: boolean;
+    certifications: string[];
+  };
+}
+```
+
+**Features:**
+- Client-specific rate cards
+- Auto-suggested rates by role/location
+- Compliance packet templates
+- Interview scorecard templates
+- One-click template application
+
+### **8. Compliance Automation**
+```typescript
+interface ComplianceAlert {
+  id: string;
+  tenantId: string;
+  type: 'expiring_license' | 'expiring_cert' | 'missing_doc' | 'bgc_failed';
+  entityType: 'candidate' | 'employee';
+  entityId: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  dueDate: number;
+  actions: {
+    type: string;
+    label: string;
+    url?: string;
+  }[];
+}
+
+interface ComplianceChecklist {
+  id: string;
+  tenantId: string;
+  jobOrderId: string;
+  candidateId: string;
+  items: {
+    id: string;
+    description: string;
+    required: boolean;
+    completed: boolean;
+    completedBy?: string;
+    completedAt?: number;
+  }[];
+  status: 'pending' | 'in_progress' | 'complete' | 'blocked';
+}
+```
+
+**Features:**
+- Expiring license/cert alerts
+- Built-in compliance checklists
+- Non-compliant submittal blocking
+- Auto-generated OSHA/EEO reports
+- Companion notification integration
+
+### **9. Workflow Improvements**
+```typescript
+interface CandidatePool {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string;
+  criteria: {
+    skills: string[];
+    location: string;
+    experience: number;
+    certifications: string[];
+  };
+  candidates: string[];
+  evergreenPostId?: string;
+}
+
+interface HotList {
+  id: string;
+  tenantId: string;
+  recruiterId: string;
+  name: string;
+  candidates: string[];
+  notes: string;
+  lastUpdated: number;
+}
+
+interface ClientFeedback {
+  id: string;
+  submittalId: string;
+  clientId: string;
+  action: 'accept' | 'decline' | 'interview' | 'hold';
+  rating?: number;
+  comments?: string;
+  timestamp: number;
+  recruiterNotified: boolean;
+}
+```
+
+**Features:**
+- Saved candidate pools
+- Recruiter hot lists
+- One-click client feedback
+- Instant recruiter notifications
+- Feedback analytics
+
+### **10. Recruiter Delight Features**
+```typescript
+interface PipelineStage {
+  id: string;
+  name: string;
+  color: string;
+  candidates: string[];
+  order: number;
+}
+
+interface InlineAction {
+  type: 'call' | 'message' | 'submit' | 'schedule' | 'add_to_hotlist';
+  label: string;
+  icon: string;
+  action: (candidateId: string) => void;
+}
+
+interface ResumePreview {
+  candidateId: string;
+  resumeUrl: string;
+  parsedData: {
+    skills: string[];
+    experience: number;
+    certifications: string[];
+    education: string[];
+  };
+  companionProfile: {
+    availability: string[];
+    preferences: string[];
+    rating: number;
+  };
+}
+```
+
+**Features:**
+- Drag-drop pipeline management
+- Inline resume previews
+- Hover actions everywhere
+- Companion profile integration
+- One-click candidate actions
+
+### **Working Architecture Overview**
+```
+CRM (Sales) = Companies, Contacts, Opportunities
+Recruiter (Ops) = Job Orders, Submittals, Placements, Compliance
+Companion (Worker App) = Candidate/employee profiles, messaging, availability, compliance docs, push notifications, AI prompts
+Glue = Event Bus + Unified Timeline — all actions logged; recruiters and candidates see different views of the same truth
+```
+
+### **Acceptance Criteria (Phase 2)**
+- [ ] Bulk submittals, one-click scheduling, and job board autofill functional
+- [ ] Unified timeline implemented with candidate + client events
+- [ ] All recruiter-candidate messaging flows through Companion
+- [ ] Compliance alerts and checklists block non-compliant actions
+- [ ] Drag-drop pipelines and inline previews available
+- [ ] Client one-click feedback loop in place
+
+### **Open Questions**
+- **Contact editing rights**: Should recruiters edit contacts in Recruiter (write-through to CRM) or CRM-only?
+- **Companion feature split**: What do candidates see (job board, apply, messaging) vs. what do employees see (assignments, HR contacts, workers comp info)?
+- **Messaging spec**: Should Companion support both recruiter and AI threads, or merge them into one feed with tagging?
 
 ---
 

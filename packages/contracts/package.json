@@ -1,0 +1,28 @@
+{
+  "name": "@hrx/contracts",
+  "version": "0.1.0",
+  "description": "Shared contracts for HRX Recruiter and Companion apps",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "generate": "ts-node scripts/gen.ts",
+    "seed": "ts-node scripts/seed.ts",
+    "validate": "ts-node scripts/validate.ts",
+    "test": "jest"
+  },
+  "keywords": ["hrx", "contracts", "firestore", "typescript"],
+  "author": "HRX Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "zod": "^3.22.0",
+    "json-schema-to-typescript": "^15.0.4",
+    "jest": "^29.0.0"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  }
+}

@@ -84,6 +84,8 @@ import PrivacySettings from './pages/PrivacySettings';
 import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
+import RecruiterDashboard from './pages/RecruiterDashboard';
+
 import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
@@ -583,6 +585,12 @@ function App() {
             <FlexSettings />
           </ProtectedRoute>
         } />
+        <Route path="recruiter" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <RecruiterDashboard />
+          </ProtectedRoute>
+        } />
+
         <Route path="recruiter-settings" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <RecruiterSettings />

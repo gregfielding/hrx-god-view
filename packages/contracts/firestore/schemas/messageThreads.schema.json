@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "messageThreads.schema.json",
+  "title": "MessageThread",
+  "type": "object",
+  "required": ["tenantId", "type", "candidateId", "lastMessageAt"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the message thread"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this thread belongs to"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["recruiter_thread", "ai_thread", "system_thread"],
+      "description": "Type of message thread"
+    },
+    "jobOrderId": {
+      "type": ["string", "null"],
+      "description": "Related job order ID"
+    },
+    "candidateId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Candidate ID this thread is for"
+    },
+    "recruiterIds": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Recruiter IDs participating in this thread"
+    },
+    "lastMessageAt": {
+      "type": "number",
+      "description": "Timestamp of last message"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "archived"],
+      "default": "open",
+      "description": "Thread status"
+    },
+    "createdAt": {
+      "type": "number",
+      "description": "Creation timestamp"
+    },
+    "updatedAt": {
+      "type": "number",
+      "description": "Last update timestamp"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "subject": {"type": "string"},
+        "tags": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "urgent"]
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

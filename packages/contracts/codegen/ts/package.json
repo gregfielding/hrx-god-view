@@ -1,0 +1,11 @@
+{
+  "name": "@hrx/contracts-types",
+  "version": "0.1.0",
+  "description": "Generated TypeScript types for HRX Contracts",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "*.d.ts"
+  ],
+  "private": true
+}

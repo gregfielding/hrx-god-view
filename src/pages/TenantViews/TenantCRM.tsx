@@ -117,6 +117,7 @@ import TasksDashboard from '../../components/TasksDashboard';
 import UserAppointmentsDashboard from '../../components/UserAppointmentsDashboard';
 import CalendarWidget from '../../components/CalendarWidget';
 import ProspectingHub from './ProspectingHub';
+import SalespersonActivityView from '../../components/SalespersonActivityView';
 
 
 
@@ -140,6 +141,7 @@ const TenantCRM: React.FC = () => {
         'opportunities': 3,
         'pipeline': 4,
         'prospect': 5,
+        'activity': 6,
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8
@@ -1340,6 +1342,7 @@ const TenantCRM: React.FC = () => {
         'opportunities': 3,
         'pipeline': 4,
         'prospect': 5,
+        'activity': 6,
         'reports': 9,
         'kpi-management': 7,
         'kpi-dashboard': 8
@@ -1562,6 +1565,7 @@ const TenantCRM: React.FC = () => {
         3: 'opportunities',
         4: 'pipeline',
         5: 'prospect',
+        6: 'activity',
         9: 'reports',
         7: 'kpi-management',
         8: 'kpi-dashboard'
@@ -2172,6 +2176,58 @@ const TenantCRM: React.FC = () => {
               />
             )}
           </Box>
+          
+          <Box 
+            sx={{ 
+              cursor: 'pointer', 
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange({} as any, 6)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 6 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 6 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 6 ? 1 : 0
+              }}
+            >
+              Activity
+            </Typography>
+            {tabValue === 6 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
         </Box>
       </Box>
 
@@ -2297,6 +2353,16 @@ const TenantCRM: React.FC = () => {
       
       {tabValue === 5 && (
         <ProspectingHub />
+      )}
+      
+      {tabValue === 6 && (
+        <SalespersonActivityView
+          tenantId={tenantId}
+          salespersonId={currentUser?.uid || ''}
+          salespersonName={currentUser?.displayName || 'Current User'}
+          salespersonEmail={currentUser?.email || ''}
+          salesTeam={salesTeam}
+        />
       )}
       
       {tabValue === 9 && (

@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jobs_board_posts.schema.json",
+  "title": "JobsBoardPost",
+  "type": "object",
+  "required": ["tenantId", "title", "description", "location", "payRate", "payPeriod", "visibility", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the job post"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this post belongs to"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["linked", "evergreen"],
+      "description": "Whether post is linked to a job order or standalone"
+    },
+    "jobOrderId": {
+      "type": ["string", "null"],
+      "description": "Linked job order ID (required for linked mode)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Job title"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 5000,
+      "description": "Job description"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Job location"
+    },
+    "payRate": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Pay rate amount"
+    },
+    "payPeriod": {
+      "type": "string",
+      "enum": ["hourly", "daily", "weekly", "monthly", "yearly"],
+      "description": "Pay rate period"
+    },
+    "billRate": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Bill rate amount"
+    },
+    "billPeriod": {
+      "type": "string",
+      "enum": ["hourly", "daily", "weekly", "monthly", "yearly"],
+      "description": "Bill rate period"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["public", "private", "internal"],
+      "description": "Post visibility level"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "posted", "paused", "closed"],
+      "description": "Post status"
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["Companion", "PublicURL", "QR"]
+      },
+      "default": ["Companion"],
+      "description": "Distribution channels"
+    },
+    "screeningQuestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "question": {"type": "string"},
+          "type": {
+            "type": "string",
+            "enum": ["text", "yesno", "multiselect", "number"]
+          },
+          "required": {"type": "boolean"},
+          "options": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "minLength": {"type": "number"},
+          "maxLength": {"type": "number"},
+          "regex": {"type": "string"}
+        },
+        "required": ["id", "question", "type", "required"]
+      },
+      "default": []
+    },
+    "searchKeywords": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "views": {"type": "number", "default": 0},
+        "applications": {"type": "number", "default": 0},
+        "conversionRate": {"type": "number", "default": 0}
+      },
+      "default": {}
+    },
+    "createdAt": {
+      "type": "number",
+      "description": "Creation timestamp"
+    },
+    "updatedAt": {
+      "type": "number",
+      "description": "Last update timestamp"
+    },
+    "postedAt": {
+      "type": ["number", "null"],
+      "description": "When post was published"
+    },
+    "expiresAt": {
+      "type": ["number", "null"],
+      "description": "Post expiration timestamp"
+    }
+  },
+  "additionalProperties": false
+}

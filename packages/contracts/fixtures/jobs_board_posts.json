@@ -1,0 +1,73 @@
+{
+  "jobs_board_posts": [
+    {
+      "id": "post_1",
+      "tenantId": "tenant_test_1",
+      "mode": "linked",
+      "jobOrderId": "job_order_1",
+      "title": "Senior Software Engineer",
+      "description": "We are looking for a talented Senior Software Engineer to join our team. You will be responsible for developing and maintaining our web applications.",
+      "location": "San Francisco, CA",
+      "payRate": 150000,
+      "payPeriod": "yearly",
+      "billRate": 180000,
+      "billPeriod": "yearly",
+      "visibility": "public",
+      "status": "posted",
+      "channels": ["Companion", "PublicURL"],
+      "screeningQuestions": [
+        {
+          "id": "q1",
+          "question": "How many years of experience do you have with React?",
+          "type": "number",
+          "required": true,
+          "minLength": 1,
+          "maxLength": 2
+        },
+        {
+          "id": "q2", 
+          "question": "Are you willing to relocate to San Francisco?",
+          "type": "yesno",
+          "required": true
+        }
+      ],
+      "searchKeywords": ["software", "engineer", "react", "javascript", "senior"],
+      "metrics": {
+        "views": 45,
+        "applications": 3,
+        "conversionRate": 6.67
+      },
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000,
+      "postedAt": 1640995200000,
+      "expiresAt": 1672531200000
+    },
+    {
+      "id": "post_2",
+      "tenantId": "tenant_test_1",
+      "mode": "evergreen",
+      "jobOrderId": null,
+      "title": "Marketing Specialist",
+      "description": "Join our marketing team and help us grow our brand presence across digital channels.",
+      "location": "Remote",
+      "payRate": 75000,
+      "payPeriod": "yearly",
+      "billRate": 90000,
+      "billPeriod": "yearly",
+      "visibility": "public",
+      "status": "posted",
+      "channels": ["Companion"],
+      "screeningQuestions": [],
+      "searchKeywords": ["marketing", "digital", "remote", "specialist"],
+      "metrics": {
+        "views": 23,
+        "applications": 1,
+        "conversionRate": 4.35
+      },
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000,
+      "postedAt": 1640995200000,
+      "expiresAt": null
+    }
+  ]
+}

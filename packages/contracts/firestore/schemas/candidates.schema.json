@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "candidates.schema.json",
+  "title": "Candidate",
+  "type": "object",
+  "required": ["tenantId", "firstName", "lastName", "email"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the candidate"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this candidate belongs to"
+    },
+    "firstName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Candidate's first name"
+    },
+    "lastName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Candidate's last name"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "Primary email address"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Primary phone number"
+    },
+    "address": {
+      "type": "object",
+      "properties": {
+        "street": {"type": "string"},
+        "city": {"type": "string"},
+        "state": {"type": "string"},
+        "zipCode": {"type": "string"},
+        "country": {"type": "string", "default": "US"}
+      }
+    },
+    "dateOfBirth": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of birth (YYYY-MM-DD)"
+    },
+    "ssn": {
+      "type": "string",
+      "description": "Social Security Number (encrypted)"
+    },
+    "workAuth": {
+      "type": "string",
+      "enum": ["citizen", "permanent_resident", "work_visa", "student_visa", "other"],
+      "description": "Work authorization status"
+    },
+    "skills": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "company": {"type": "string"},
+          "position": {"type": "string"},
+          "startDate": {"type": "string", "format": "date"},
+          "endDate": {"type": ["string", "null"], "format": "date"},
+          "description": {"type": "string"},
+          "skills": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "required": ["company", "position", "startDate"]
+      },
+      "default": []
+    },
+    "education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "institution": {"type": "string"},
+          "degree": {"type": "string"},
+          "field": {"type": "string"},
+          "graduationDate": {"type": "string", "format": "date"},
+          "gpa": {"type": "number", "minimum": 0, "maximum": 4}
+        },
+        "required": ["institution", "degree"]
+      },
+      "default": []
+    },
+    "certifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "issuer": {"type": "string"},
+          "issueDate": {"type": "string", "format": "date"},
+          "expiryDate": {"type": ["string", "null"], "format": "date"},
+          "certificateNumber": {"type": "string"}
+        },
+        "required": ["name", "issuer"]
+      },
+      "default": []
+    },
+    "resumeUrl": {
+      "type": "string",
+      "description": "URL to resume file"
+    },
+    "profilePictureUrl": {
+      "type": "string",
+      "description": "URL to profile picture"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["applicant", "active_employee", "inactive", "hired", "rejected", "terminated", "completed"],
+      "default": "applicant"
+    },
+    "pipelineStage": {
+      "type": "string",
+      "enum": ["applicant", "screened", "interview", "offer", "hired"],
+      "default": "applicant"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["manual", "jobs_board", "referral", "import", "companion"],
+      "default": "manual"
+    },
+    "companionUserId": {
+      "type": ["string", "null"],
+      "description": "Link to Companion user if exists"
+    },
+    "notificationPrefs": {
+      "type": "object",
+      "properties": {
+        "email": {"type": "boolean", "default": true},
+        "sms": {"type": "boolean", "default": true},
+        "push": {"type": "boolean", "default": true}
+      },
+      "default": {"email": true, "sms": true, "push": true}
+    },
+    "complianceStatus": {
+      "type": "object",
+      "properties": {
+        "i9Status": {
+          "type": "string",
+          "enum": ["pending", "complete", "pass", "fail", "expired"],
+          "default": "pending"
+        },
+        "bgcStatus": {
+          "type": "string",
+          "enum": ["pending", "complete", "pass", "fail", "expired"],
+          "default": "pending"
+        },
+        "drugStatus": {
+          "type": "string",
+          "enum": ["pending", "complete", "pass", "fail", "expired"],
+          "default": "pending"
+        }
+      },
+      "default": {
+        "i9Status": "pending",
+        "bgcStatus": "pending",
+        "drugStatus": "pending"
+      }
+    },
+    "recruiterOwnerId": {
+      "type": ["string", "null"],
+      "description": "Primary recruiter assigned to candidate"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Internal notes about candidate"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "createdAt": {
+      "type": "number",
+      "description": "Creation timestamp"
+    },
+    "updatedAt": {
+      "type": "number",
+      "description": "Last update timestamp"
+    },
+    "lastContactAt": {
+      "type": ["number", "null"],
+      "description": "Last contact timestamp"
+    },
+    "duplicateCheck": {
+      "type": "object",
+      "properties": {
+        "isDuplicate": {"type": "boolean"},
+        "duplicateCandidateIds": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasons": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

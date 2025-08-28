@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "features.schema.json",
+  "title": "Features",
+  "type": "object",
+  "properties": {
+    "recruiter": {
+      "type": "object",
+      "properties": {
+        "enableJobsBoard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable jobs board functionality"
+        },
+        "enableApplications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable application management"
+        },
+        "enablePipeline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable candidate pipeline"
+        },
+        "enableOffers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable offer management"
+        },
+        "enablePlacements": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable placement tracking"
+        },
+        "messaging": {
+          "type": "object",
+          "properties": {
+            "fallbackSMS": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable SMS fallback for messaging"
+            },
+            "aiNudges": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable AI-powered messaging nudges"
+            },
+            "autoResponses": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable automatic responses"
+            }
+          },
+          "additionalProperties": false
+        },
+        "ai": {
+          "type": "object",
+          "properties": {
+            "enableScoring": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable AI candidate scoring"
+            },
+            "enableDuplicateDetection": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable duplicate candidate detection"
+            },
+            "enableRecommendations": {
+              "type": "boolean",
+              "default": true,
+              "description": "Enable AI recommendations"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "companion": {
+      "type": "object",
+      "properties": {
+        "enableJobsBoard": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable jobs board in companion app"
+        },
+        "enableApplications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable application submission in companion app"
+        },
+        "enableMessaging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable messaging in companion app"
+        },
+        "enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable push notifications"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

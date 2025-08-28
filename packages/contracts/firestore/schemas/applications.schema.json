@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "applications.schema.json",
+  "title": "Application",
+  "type": "object",
+  "required": ["tenantId", "postId", "applicantData"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the application"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this application belongs to"
+    },
+    "postId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Jobs board post ID this application is for"
+    },
+    "jobOrderId": {
+      "type": ["string", "null"],
+      "description": "Linked job order ID (if post is linked)"
+    },
+    "candidateId": {
+      "type": ["string", "null"],
+      "description": "Existing candidate ID (if applicant is already in system)"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["authenticated", "guest"],
+      "description": "Application mode - authenticated user or guest"
+    },
+    "applicantData": {
+      "type": "object",
+      "required": ["firstName", "lastName", "email"],
+      "properties": {
+        "firstName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "lastName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "resumeUrl": {
+          "type": "string"
+        },
+        "coverLetter": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "questionId": {"type": "string"},
+          "question": {"type": "string"},
+          "answer": {"type": "string"},
+          "type": {
+            "type": "string",
+            "enum": ["text", "yesno", "multiselect", "number"]
+          }
+        },
+        "required": ["questionId", "question", "answer"]
+      },
+      "default": []
+    },
+    "status": {
+      "type": "string",
+      "enum": ["new", "screened", "advanced", "interview", "offer_pending", "hired", "rejected", "withdrawn"],
+      "default": "new"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["QR", "URL", "referral", "Companion"],
+      "description": "How the applicant found the job"
+    },
+    "aiScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "AI-generated match score"
+    },
+    "aiRecommendations": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "aiRiskFactors": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": []
+    },
+    "workAuth": {
+      "type": "string",
+      "enum": ["citizen", "permanent_resident", "work_visa", "student_visa", "other"],
+      "description": "Work authorization status"
+    },
+    "availability": {
+      "type": "string",
+      "enum": ["immediate", "2_weeks", "1_month", "3_months", "flexible"],
+      "description": "When candidate can start"
+    },
+    "createdAt": {
+      "type": "number",
+      "description": "Application creation timestamp"
+    },
+    "updatedAt": {
+      "type": "number",
+      "description": "Last update timestamp"
+    },
+    "screenedAt": {
+      "type": ["number", "null"],
+      "description": "When application was screened"
+    },
+    "advancedAt": {
+      "type": ["number", "null"],
+      "description": "When candidate advanced to next stage"
+    },
+    "interviewedAt": {
+      "type": ["number", "null"],
+      "description": "When interview was conducted"
+    },
+    "hiredAt": {
+      "type": ["number", "null"],
+      "description": "When candidate was hired"
+    },
+    "rejectedAt": {
+      "type": ["number", "null"],
+      "description": "When application was rejected"
+    },
+    "withdrawnAt": {
+      "type": ["number", "null"],
+      "description": "When application was withdrawn"
+    },
+    "recruiterNotes": {
+      "type": "string",
+      "description": "Internal recruiter notes"
+    },
+    "duplicateCheck": {
+      "type": "object",
+      "properties": {
+        "isDuplicate": {"type": "boolean"},
+        "duplicateCandidateIds": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasons": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

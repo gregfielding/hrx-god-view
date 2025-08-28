@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // Helper functions
+    function tenant() {
+      return request.auth != null ? request.auth.token.tenantId : null;
+    }
+    
+    function isTenantScoped() {
+      return request.resource.data.tenantId == tenant();
+    }
+    
+    function isHRX() {
+      return request.auth != null && request.auth.token.tenantId == 'TgDJ4sIaC7x2n5cPs3rW';
+    }
+    
+    function isTenantAdmin(tenantId) {
+      return request.auth != null && 
+             request.auth.token.tenantId == tenantId && 
+             request.auth.token.securityLevel >= 6;
+    }
+    
+    function isAssignedToTenant(tenantId) {
+      return request.auth != null && 
+             request.auth.token.tenantId == tenantId;
+    }
+    
+    function hasRecruiterAccess() {
+      return request.auth != null && 
+             (request.auth.token.role == 'Recruiter' || 
+              request.auth.token.role == 'Recruiting_Manager' ||
+              request.auth.token.securityLevel >= 6);
+    }
+
+    // Message Threads
+    match /messageThreads/{threadId} {
+      allow read: if request.auth != null && resource.data.tenantId == tenant();
+      allow create: if request.auth != null && isTenantScoped();
+      allow update, delete: if request.auth != null && 
+                           resource.data.tenantId == tenant() && 
+                           isTenantScoped();
+      
+      // Messages subcollection
+      match /messages/{msgId} {
+        allow read, create, update: if request.auth != null &&
+          get(/databases/$(db)/documents/messageThreads/$(threadId)).data.tenantId == tenant();
+      }
+    }
+
+    // Jobs Board Posts (public read for posted items)
+    match /jobs_board_posts/{postId} {
+      allow read: if resource.data.visibility == 'public' && 
+                   resource.data.status == 'posted';
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+    }
+
+    // Applications (public create, tenant-scoped read/write)
+    match /applications/{applicationId} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == resource.data.candidateId ||
+         isAssignedToTenant(resource.data.tenantId));
+      allow create: if true; // Public applications allowed
+      allow update: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow update: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+    }
+
+    // Candidates (tenant-scoped)
+    match /candidates/{candidateId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // Job Orders (tenant-scoped)
+    match /job_orders/{jobOrderId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // Interviews (tenant-scoped)
+    match /interviews/{interviewId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // Offers (tenant-scoped)
+    match /offers/{offerId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // Placements (tenant-scoped)
+    match /placements/{placementId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+      allow read, write: if isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // Features (tenant-scoped, read-only for most users)
+    match /features/{featureId} {
+      allow read: if isHRX() || isAssignedToTenant(resource.data.tenantId);
+      allow write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+
+    // Audit Logs (HRX and tenant admins only)
+    match /audit_logs/{logId} {
+      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
+    }
+
+    // Generic fallback - deny all other collections
+    match /{document=**} {
+      allow read, write: if false; // explicit rules per collection only
+    }
+  }
+}

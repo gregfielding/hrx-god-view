@@ -241,6 +241,94 @@ service cloud.firestore {
         }
       }
       
+      // --- RECRUITER MODULE COLLECTIONS ---
+      
+      // --- RECRUITER CLIENTS (Extensions of CRM Companies) ---
+      match /recruiter_clients/{crmCompanyId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER JOB ORDERS ---
+      match /recruiter_jobOrders/{jobOrderId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER CANDIDATES ---
+      match /recruiter_candidates/{candidateId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER APPLICATIONS ---
+      match /recruiter_applications/{applicationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER SUBMITTALS ---
+      match /recruiter_submittals/{submittalId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER INTERVIEWS ---
+      match /recruiter_interviews/{interviewId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER OFFERS ---
+      match /recruiter_offers/{offerId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER PLACEMENTS ---
+      match /recruiter_placements/{placementId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER WORKSITES ---
+      match /recruiter_worksites/{worksiteId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER JOBS BOARD POSTS ---
+      match /recruiter_jobsBoardPosts/{postId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        // Allow public read access for job board posts
+        allow read: if resource.data.visibility == 'public';
+      }
+      
+      // --- RECRUITER AI SCORES ---
+      match /recruiter_aiScores/{scoreId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // --- RECRUITER AUDIT LOGS ---
+      match /recruiter_auditLogs/{logId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
       // --- CRM COLLECTIONS (Tenants) ---
       match /crm_contacts/{contactId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -575,6 +663,14 @@ service cloud.firestore {
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
       // Temporary: Allow all authenticated users for debugging
       allow read: if isAuthenticated();
+    }
+    
+    // --- EVENTS (Event Bus) ---
+    match /events/{eventId} {
+      allow read, write: if isHRX();
+      allow read, write: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
+      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
     }
 
     // --- MOMENT ANALYSIS ---
@@ -963,6 +1059,17 @@ service cloud.firestore {
              user.securityLevel == "7" ||
              user.crm_sales == true ||
              user.role == "HRX";
+    }
+    
+    function hasRecruiterAccess() {
+      let user = getUser();
+      return isAuthenticated() &&
+             (user.role == "HRX" ||
+              user.role == "Recruiter" ||
+              user.role == "Recruiting_Manager" ||
+              user.securityLevel == "6" ||
+              user.securityLevel == "7" ||
+              user.recruiter_access == true);
     }
     
     function belongsToSameTenant(targetUserData) {

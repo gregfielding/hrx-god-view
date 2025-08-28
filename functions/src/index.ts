@@ -61,6 +61,9 @@ import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHtt
 import { getEmailLogBody } from './emailLogs';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
+// 🎯 RECRUITER MODULE IMPORTS
+import * as RecruiterFunctions from './recruiter';
+
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
 import { getCalendarWebhookStatus } from './calendarWebhookStatus';
@@ -10424,3 +10427,56 @@ export {
 
 // Prospecting Functions
 export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList };
+
+// 🎯 RECRUITER MODULE FUNCTIONS
+export {
+  // Event Bus Functions
+  createEventFunction,
+  processEventsScheduled,
+  cleanupEventsScheduled,
+  onEventCreated,
+  processEventsManual,
+  getEventsForEntity,
+  getEventsByType,
+  // Handoff Functions
+  onOpportunityHandoff,
+  validateHandoffGuardrails,
+  upsertCrmCompany,
+  upsertRecruiterClient,
+  createJobOrdersFromDeal,
+  updateCompanyFromRecruiter,
+  updateContactFromRecruiter,
+  refreshRecruiterCaches,
+  // Jobs Functions
+  getJobOrders,
+  updateJobOrder,
+  createJobOrder,
+  // Candidates Functions
+  getCandidates,
+  createCandidate,
+  updateCandidate,
+  // Applications Functions
+  getApplications,
+  createApplication,
+  updateApplicationStatus,
+  // Pipeline Functions
+  getPipelineBoard,
+  updatePipelineStage,
+  // AI Functions
+  scoreCandidateForJob,
+  detectDuplicates,
+  bulkDetectDuplicates,
+  // Jobs Board Functions
+  getJobsBoardPosts,
+  createJobsBoardPost,
+  updateJobsBoardPost,
+  applyToPost,
+  // Workflows Functions
+  createInterview,
+  submitInterviewScorecard,
+  createOffer,
+  updateOfferStatus,
+  getOffers,
+  getPlacements,
+  updatePlacementStatus,
+} from './recruiter';

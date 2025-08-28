@@ -1,0 +1,28 @@
+{
+  "tenants": [
+    {
+      "id": "TgDJ4sIaC7x2n5cPs3rW",
+      "name": "HRX Admin",
+      "type": "HRX",
+      "status": "active",
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000
+    },
+    {
+      "id": "tenant_test_1",
+      "name": "Test Company 1",
+      "type": "Tenant",
+      "status": "active",
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000
+    },
+    {
+      "id": "tenant_test_2", 
+      "name": "Test Company 2",
+      "type": "Tenant",
+      "status": "active",
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "messages",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "ts", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "messageThreads",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "lastMessageAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "messageThreads",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "candidateId", "order": "ASCENDING"},
+        {"fieldPath": "lastMessageAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "jobs_board_posts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "postedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "jobs_board_posts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "visibility", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "postedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "applications",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "postId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "candidates",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "candidates",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "pipelineStage", "order": "ASCENDING"},
+        {"fieldPath": "updatedAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "job_orders",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "interviews",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "candidateId", "order": "ASCENDING"},
+        {"fieldPath": "scheduledAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "offers",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "offers",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "candidateId", "order": "ASCENDING"},
+        {"fieldPath": "expiresAt", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "placements",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "tenantId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "createdAt", "order": "DESCENDING"}
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

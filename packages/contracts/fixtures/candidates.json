@@ -1,0 +1,128 @@
+{
+  "candidates": [
+    {
+      "id": "candidate_1",
+      "tenantId": "tenant_test_1",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john.doe@example.com",
+      "phone": "+1-555-0123",
+      "address": {
+        "street": "123 Main St",
+        "city": "San Francisco",
+        "state": "CA",
+        "zipCode": "94102",
+        "country": "US"
+      },
+      "workAuth": "citizen",
+      "skills": ["JavaScript", "React", "Node.js", "TypeScript"],
+      "experience": [
+        {
+          "company": "Tech Corp",
+          "position": "Senior Developer",
+          "startDate": "2020-01-01",
+          "endDate": null,
+          "description": "Led development of web applications",
+          "skills": ["React", "Node.js", "AWS"]
+        }
+      ],
+      "education": [
+        {
+          "institution": "University of California",
+          "degree": "Bachelor of Science",
+          "field": "Computer Science",
+          "graduationDate": "2019-05-01",
+          "gpa": 3.8
+        }
+      ],
+      "status": "applicant",
+      "pipelineStage": "applicant",
+      "source": "jobs_board",
+      "companionUserId": null,
+      "notificationPrefs": {
+        "email": true,
+        "sms": true,
+        "push": true
+      },
+      "complianceStatus": {
+        "i9Status": "pending",
+        "bgcStatus": "pending",
+        "drugStatus": "pending"
+      },
+      "recruiterOwnerId": "recruiter_1",
+      "notes": "Strong technical background, good communication skills",
+      "tags": ["senior", "react", "remote"],
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000,
+      "lastContactAt": null,
+      "duplicateCheck": {
+        "isDuplicate": false,
+        "duplicateCandidateIds": [],
+        "confidence": 0,
+        "reasons": []
+      }
+    },
+    {
+      "id": "candidate_2",
+      "tenantId": "tenant_test_1",
+      "firstName": "Jane",
+      "lastName": "Smith",
+      "email": "jane.smith@example.com",
+      "phone": "+1-555-0456",
+      "address": {
+        "street": "456 Oak Ave",
+        "city": "New York",
+        "state": "NY",
+        "zipCode": "10001",
+        "country": "US"
+      },
+      "workAuth": "citizen",
+      "skills": ["Marketing", "Social Media", "Content Creation", "Analytics"],
+      "experience": [
+        {
+          "company": "Marketing Agency",
+          "position": "Marketing Coordinator",
+          "startDate": "2021-03-01",
+          "endDate": null,
+          "description": "Managed social media campaigns and content creation",
+          "skills": ["Social Media", "Content Marketing", "Analytics"]
+        }
+      ],
+      "education": [
+        {
+          "institution": "New York University",
+          "degree": "Bachelor of Arts",
+          "field": "Marketing",
+          "graduationDate": "2020-05-01",
+          "gpa": 3.6
+        }
+      ],
+      "status": "applicant",
+      "pipelineStage": "screened",
+      "source": "jobs_board",
+      "companionUserId": null,
+      "notificationPrefs": {
+        "email": true,
+        "sms": false,
+        "push": true
+      },
+      "complianceStatus": {
+        "i9Status": "pending",
+        "bgcStatus": "pending",
+        "drugStatus": "pending"
+      },
+      "recruiterOwnerId": "recruiter_1",
+      "notes": "Creative marketer with strong social media skills",
+      "tags": ["marketing", "social", "creative"],
+      "createdAt": 1640995200000,
+      "updatedAt": 1640995200000,
+      "lastContactAt": 1640995200000,
+      "duplicateCheck": {
+        "isDuplicate": false,
+        "duplicateCandidateIds": [],
+        "confidence": 0,
+        "reasons": []
+      }
+    }
+  ]
+}

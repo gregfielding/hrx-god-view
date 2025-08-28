@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "messages.schema.json",
+  "title": "Message",
+  "type": "object",
+  "required": ["tenantId", "senderType", "senderId", "text", "ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the message"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this message belongs to"
+    },
+    "senderType": {
+      "type": "string",
+      "enum": ["recruiter", "candidate", "ai", "system"],
+      "description": "Type of sender"
+    },
+    "senderId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the sender"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Message text content"
+    },
+    "attachments": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Array of attachment URLs"
+    },
+    "ts": {
+      "type": "number",
+      "description": "Message timestamp"
+    },
+    "readBy": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "Array of user IDs who have read this message"
+    },
+    "deliveryStatus": {
+      "type": "string",
+      "enum": ["queued", "sent", "delivered", "read"],
+      "default": "sent",
+      "description": "Message delivery status"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "messageType": {
+          "type": "string",
+          "enum": ["text", "image", "file", "system", "notification"]
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "urgent"]
+        },
+        "expiresAt": {"type": "number"}
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}

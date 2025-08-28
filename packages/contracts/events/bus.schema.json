@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventEnvelope",
+  "type": "object",
+  "required": ["type", "tenantId", "entityType", "entityId", "ts"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique event identifier"
+    },
+    "type": {
+      "type": "string",
+      "description": "Event type (e.g., 'application_created', 'candidate_updated')"
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant ID this event belongs to"
+    },
+    "entityType": {
+      "type": "string",
+      "description": "Type of entity (e.g., 'application', 'candidate', 'job_order')"
+    },
+    "entityId": {
+      "type": "string",
+      "description": "ID of the entity this event relates to"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific payload data"
+    },
+    "source": {
+      "type": "string",
+      "description": "Source system (e.g., 'web', 'flutter', 'functions')"
+    },
+    "ts": {
+      "type": "number",
+      "description": "Event timestamp"
+    },
+    "dedupeKey": {
+      "type": "string",
+      "description": "Deduplication key to prevent double processing"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "userId": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "correlationId": {"type": "string"},
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "urgent"]
+        }
+      },
+      "default": {}
+    }
+  },
+  "additionalProperties": false
+}
