@@ -913,9 +913,6 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
                     labelFormatter={(label) => `Date: ${label}`}
                   />
                   <Bar dataKey="total" fill="#1976d2" name="Total Activities" />
-                  <Bar dataKey="todos" fill="#2e7d32" name="Todos" />
-                  <Bar dataKey="emails" fill="#1976d2" name="Emails" />
-                  <Bar dataKey="appointments" fill="#ed6c02" name="Appointments" />
                 </BarChart>
               )}
             </ResponsiveContainer>
