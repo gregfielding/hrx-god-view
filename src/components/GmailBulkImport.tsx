@@ -120,22 +120,10 @@ const GmailBulkImport: React.FC<GmailBulkImportProps> = ({ tenantId, users }) =>
     setSuccess(null);
 
     try {
-      let data: any;
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userIds: selectedUsers, tenantId, daysBack })
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        data = await response.json();
-      } else {
-        const queueImport = httpsCallable(functions, 'queueGmailBulkImport');
-        const result = await queueImport({ userIds: selectedUsers, tenantId, daysBack });
-        data = result.data as any;
-      }
+      // Use callable function for both localhost and production to avoid CORS issues
+      const queueImport = httpsCallable(functions, 'queueGmailBulkImport');
+      const result = await queueImport({ userIds: selectedUsers, tenantId, daysBack });
+      const data = result.data as any;
       
       if (data.success) {
         setSuccess(`Gmail import queued successfully! Request ID: ${data.requestId}`);
