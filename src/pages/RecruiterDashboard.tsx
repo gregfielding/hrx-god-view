@@ -40,6 +40,7 @@ import {
   TrendingFlat as TrendingFlatIcon,
   FilterList as FilterListIcon,
   ArrowForward as ArrowForwardIcon,
+  Dashboard as DashboardIcon,
 } from '@mui/icons-material';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -169,31 +170,31 @@ const RecruiterDashboard: React.FC = () => {
     // Navigate to appropriate tab with filters
     switch (cardType) {
       case 'openJobOrders':
-        setTabValue(0); // Job Orders tab
+        setTabValue(1); // Job Orders tab
         // TODO: Apply filters: status=open, owner=me
         break;
       case 'candidatesInProcess':
-        setTabValue(1); // Candidates tab
+        setTabValue(2); // Candidates tab
         // TODO: Apply filters: stage ∈ {Screened, Submitted, Interview}
         break;
       case 'interviewsThisWeek':
-        setTabValue(3); // Pipeline tab
+        setTabValue(4); // Pipeline tab
         // TODO: Apply calendar filter for interviews
         break;
       case 'placementsMTD':
-        setTabValue(3); // Pipeline tab
+        setTabValue(4); // Pipeline tab
         // TODO: Apply filters: dateRange=MTD
         break;
       case 'timeToFill':
-        setTabValue(3); // Pipeline tab
+        setTabValue(4); // Pipeline tab
         // TODO: Show time-to-fill reports
         break;
       case 'submittalsPerJob':
-        setTabValue(2); // Applications tab
+        setTabValue(3); // Applications tab
         // TODO: Open saved report for last 30 days
         break;
       case 'complianceAlerts':
-        setTabValue(1); // Candidates tab
+        setTabValue(2); // Candidates tab
         // TODO: Apply filters: complianceStatus=red|yellow
         break;
       default:
@@ -400,277 +401,17 @@ const RecruiterDashboard: React.FC = () => {
 
   return (
     <Box sx={{ width: '100%' }}>
-      {/* Personalized Welcome Header */}
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" gutterBottom sx={{ fontWeight: 700 }}>
-          Welcome back, {loadingUser ? '...' : (userData?.firstName || 'Recruiter')}!
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Here's your recruitment dashboard overview
-        </Typography>
-      </Box>
-
-      {/* Date Range Switcher */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 3 }}>
-        <ToggleButtonGroup
-          value={dateRange}
-          exclusive
-          onChange={handleDateRangeChange}
-          size="small"
-          aria-label="date range"
-        >
-          <ToggleButton value="week" aria-label="this week">
-            This Week
-          </ToggleButton>
-          <ToggleButton value="mtd" aria-label="month to date">
-            MTD
-          </ToggleButton>
-          <ToggleButton value="30d" aria-label="last 30 days">
-            Last 30d
-          </ToggleButton>
-          <ToggleButton value="90d" aria-label="last 90 days">
-            Last 90d
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
-
-      {/* Enhanced KPI Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Open Job Orders"
-            value={kpis.openJobOrders}
-            subtitle="vs. 15 last month"
-            icon={<WorkIcon sx={{ fontSize: 32 }} />}
-            color="#1976d2"
-            trend={{ value: -20, isPositive: false }}
-            cardType="openJobOrders"
-            emptyState={kpis.openJobOrders === 0}
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Candidates in Process"
-            value={kpis.candidatesInProcess}
-            subtitle="Active pipeline"
-            icon={<PeopleIcon sx={{ fontSize: 32 }} />}
-            color="#9c27b0"
-            trend={{ value: 12, isPositive: true }}
-            cardType="candidatesInProcess"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Interviews This Week"
-            value={kpis.interviewsThisWeek}
-            subtitle="Scheduled"
-            icon={<EventIcon sx={{ fontSize: 32 }} />}
-            color="#ff9800"
-            cardType="interviewsThisWeek"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Placements MTD"
-            value={kpis.placementsMTD}
-            subtitle={`${kpis.placementGoal}% of goal`}
-            icon={<CheckCircleIcon sx={{ fontSize: 32 }} />}
-            color="#4caf50"
-            trend={{ value: 8, isPositive: true }}
-            cardType="placementsMTD"
-          />
-        </Grid>
-      </Grid>
-
-      {/* Secondary KPI Row */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Avg Time to Fill"
-            value={`${kpis.timeToFill} days`}
-            subtitle="Industry avg: 18 days"
-            icon={<ScheduleIcon sx={{ fontSize: 32 }} />}
-            color="#607d8b"
-            cardType="timeToFill"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Submittals per Job"
-            value={kpis.submittalsPerJob}
-            subtitle="Quality candidates"
-            icon={<TrendingUpIcon sx={{ fontSize: 32 }} />}
-            color="#795548"
-            cardType="submittalsPerJob"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Placement Goal"
-            value={`${kpis.placementGoal}%`}
-            subtitle="Monthly target"
-            icon={<AssessmentIcon sx={{ fontSize: 32 }} />}
-            color="#e91e63"
-            cardType="placementGoal"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <KPICard
-            title="Compliance Alerts"
-            value={kpis.complianceAlerts}
-            subtitle="Requires attention"
-            icon={<WarningIcon sx={{ fontSize: 32 }} />}
-            color="#f44336"
-            cardType="complianceAlerts"
-          />
-        </Grid>
-      </Grid>
-
-      {/* To-Dos and Calendar Layout (mirroring CRM) */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} md={4}>
-          {/* Left Column - To-Dos & Quick Actions */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {/* To-Dos Widget */}
-            <Card>
-              <CardHeader 
-                title="To-Dos" 
-                action={
-                  <IconButton 
-                    size="small" 
-                    title="Add new task"
-                    onClick={() => setTabValue(1)}
-                  >
-                    <AddIcon />
-                  </IconButton>
-                }
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ p: 0 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <TasksDashboard
-                    entityId={user?.uid || 'dashboard'}
-                    entityType="salesperson"
-                    tenantId={tenantId}
-                    entity={tasksEntity}
-                    preloadedContacts={[]}
-                    preloadedSalespeople={[]}
-                    preloadedCompany={null}
-                    preloadedDeals={[]}
-                    preloadedCompanies={[]}
-                    showOnlyTodos={true}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader 
-                title="Quick Actions" 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <QuickActionButton
-                    title="Create Job Order"
-                    icon={<AddIcon />}
-                    onClick={() => setTabValue(0)}
-                    color="primary"
-                    variant="contained"
-                  />
-                  <QuickActionButton
-                    title="Add Candidate"
-                    icon={<AddIcon />}
-                    onClick={() => setTabValue(1)}
-                    color="secondary"
-                  />
-                  <QuickActionButton
-                    title="Create Job Post"
-                    icon={<AddIcon />}
-                    onClick={() => setTabValue(4)}
-                    color="success"
-                  />
-                  <QuickActionButton
-                    title="Open Candidate Pipeline"
-                    icon={<TimelineIcon />}
-                    onClick={() => setTabValue(3)}
-                    color="info"
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-
-            {/* Enhanced Jobs Board Widget */}
-            <Card>
-              <CardHeader 
-                title="Jobs Board" 
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent>
-                <Box sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="h4" color="primary" fontWeight="bold">
-                    {jobsBoardMetrics.activePosts}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Active Posts
-                  </Typography>
-                  
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 2 }}>
-                    <Typography variant="h6" color="success.main" fontWeight="bold">
-                      {jobsBoardMetrics.newApplicantsToday}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      New Applicants Today
-                    </Typography>
-                  </Box>
-                  
-                  <Box sx={{ mb: 2 }}>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Applicants (7-day trend)
-                    </Typography>
-                    <SparklineChart data={jobsBoardMetrics.applicantsTrend} color="#4caf50" />
-                  </Box>
-                  
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <Button 
-                      variant="outlined" 
-                      size="small" 
-                      onClick={() => setTabValue(4)}
-                    >
-                      Manage Posts
-                    </Button>
-                    <Button 
-                      variant="contained" 
-                      size="small" 
-                      startIcon={<AddIcon />}
-                      onClick={() => setTabValue(4)}
-                    >
-                      + New Evergreen Post
-                    </Button>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Box>
-        </Grid>
-        
-        <Grid item xs={12} md={8}>
-          {/* Calendar Widget */}
-          <CalendarWidget
-            userId={user?.uid || ''}
-            tenantId={tenantId}
-            preloadedContacts={[]}
-            preloadedSalespeople={[]}
-            preloadedCompanies={[]}
-            preloadedDeals={[]}
-          />
-        </Grid>
-      </Grid>
-
-      {/* Tabs */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+      {/* Top Navigation Tabs */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="recruiter tabs">
+          <Tab 
+            label={
+              <Box display="flex" alignItems="center" gap={1}>
+                <DashboardIcon />
+                Dashboard
+              </Box>
+            } 
+          />
           <Tab 
             label={
               <Box display="flex" alignItems="center" gap={1}>
@@ -716,6 +457,279 @@ const RecruiterDashboard: React.FC = () => {
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
+        {/* Dashboard Tab - All the current content */}
+        <Box>
+          {/* Personalized Welcome Header */}
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h4" gutterBottom sx={{ fontWeight: 700 }}>
+              Welcome back, {loadingUser ? '...' : (userData?.firstName || 'Recruiter')}!
+            </Typography>
+            <Typography variant="body1" color="text.secondary">
+              Here's your recruitment dashboard overview
+            </Typography>
+          </Box>
+
+          {/* Date Range Switcher */}
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 3 }}>
+            <ToggleButtonGroup
+              value={dateRange}
+              exclusive
+              onChange={handleDateRangeChange}
+              size="small"
+              aria-label="date range"
+            >
+              <ToggleButton value="week" aria-label="this week">
+                This Week
+              </ToggleButton>
+              <ToggleButton value="mtd" aria-label="month to date">
+                MTD
+              </ToggleButton>
+              <ToggleButton value="30d" aria-label="last 30 days">
+                Last 30d
+              </ToggleButton>
+              <ToggleButton value="90d" aria-label="last 90 days">
+                Last 90d
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
+          {/* Enhanced KPI Cards */}
+          <Grid container spacing={3} sx={{ mb: 4 }}>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Open Job Orders"
+                value={kpis.openJobOrders}
+                subtitle="vs. 15 last month"
+                icon={<WorkIcon sx={{ fontSize: 32 }} />}
+                color="#1976d2"
+                trend={{ value: -20, isPositive: false }}
+                cardType="openJobOrders"
+                emptyState={kpis.openJobOrders === 0}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Candidates in Process"
+                value={kpis.candidatesInProcess}
+                subtitle="Active pipeline"
+                icon={<PeopleIcon sx={{ fontSize: 32 }} />}
+                color="#9c27b0"
+                trend={{ value: 12, isPositive: true }}
+                cardType="candidatesInProcess"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Interviews This Week"
+                value={kpis.interviewsThisWeek}
+                subtitle="Scheduled"
+                icon={<EventIcon sx={{ fontSize: 32 }} />}
+                color="#ff9800"
+                cardType="interviewsThisWeek"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Placements MTD"
+                value={kpis.placementsMTD}
+                subtitle={`${kpis.placementGoal}% of goal`}
+                icon={<CheckCircleIcon sx={{ fontSize: 32 }} />}
+                color="#4caf50"
+                trend={{ value: 8, isPositive: true }}
+                cardType="placementsMTD"
+              />
+            </Grid>
+          </Grid>
+
+          {/* Secondary KPI Row */}
+          <Grid container spacing={3} sx={{ mb: 4 }}>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Avg Time to Fill"
+                value={`${kpis.timeToFill} days`}
+                subtitle="Industry avg: 18 days"
+                icon={<ScheduleIcon sx={{ fontSize: 32 }} />}
+                color="#607d8b"
+                cardType="timeToFill"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Submittals per Job"
+                value={kpis.submittalsPerJob}
+                subtitle="Quality candidates"
+                icon={<TrendingUpIcon sx={{ fontSize: 32 }} />}
+                color="#795548"
+                cardType="submittalsPerJob"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Placement Goal"
+                value={`${kpis.placementGoal}%`}
+                subtitle="Monthly target"
+                icon={<AssessmentIcon sx={{ fontSize: 32 }} />}
+                color="#e91e63"
+                cardType="placementGoal"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <KPICard
+                title="Compliance Alerts"
+                value={kpis.complianceAlerts}
+                subtitle="Requires attention"
+                icon={<WarningIcon sx={{ fontSize: 32 }} />}
+                color="#f44336"
+                cardType="complianceAlerts"
+              />
+            </Grid>
+          </Grid>
+
+          {/* To-Dos and Calendar Layout (mirroring CRM) */}
+          <Grid container spacing={3} sx={{ mb: 4 }}>
+            <Grid item xs={12} md={4}>
+              {/* Left Column - To-Dos & Quick Actions */}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {/* To-Dos Widget */}
+                <Card>
+                  <CardHeader 
+                    title="To-Dos" 
+                    action={
+                      <IconButton 
+                        size="small" 
+                        title="Add new task"
+                        onClick={() => setTabValue(2)}
+                      >
+                        <AddIcon />
+                      </IconButton>
+                    }
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 0 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <TasksDashboard
+                        entityId={user?.uid || 'dashboard'}
+                        entityType="salesperson"
+                        tenantId={tenantId}
+                        entity={tasksEntity}
+                        preloadedContacts={[]}
+                        preloadedSalespeople={[]}
+                        preloadedCompany={null}
+                        preloadedDeals={[]}
+                        preloadedCompanies={[]}
+                        showOnlyTodos={true}
+                      />
+                    </Box>
+                  </CardContent>
+                </Card>
+
+                {/* Quick Actions */}
+                <Card>
+                  <CardHeader 
+                    title="Quick Actions" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <QuickActionButton
+                        title="Create Job Order"
+                        icon={<AddIcon />}
+                        onClick={() => setTabValue(1)}
+                        color="primary"
+                        variant="contained"
+                      />
+                      <QuickActionButton
+                        title="Add Candidate"
+                        icon={<AddIcon />}
+                        onClick={() => setTabValue(2)}
+                        color="secondary"
+                      />
+                      <QuickActionButton
+                        title="Create Job Post"
+                        icon={<AddIcon />}
+                        onClick={() => setTabValue(5)}
+                        color="success"
+                      />
+                      <QuickActionButton
+                        title="Open Candidate Pipeline"
+                        icon={<TimelineIcon />}
+                        onClick={() => setTabValue(4)}
+                        color="info"
+                      />
+                    </Box>
+                  </CardContent>
+                </Card>
+
+                {/* Enhanced Jobs Board Widget */}
+                <Card>
+                  <CardHeader 
+                    title="Jobs Board" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent>
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="h4" color="primary" fontWeight="bold">
+                        {jobsBoardMetrics.activePosts}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Active Posts
+                      </Typography>
+                      
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 2 }}>
+                        <Typography variant="h6" color="success.main" fontWeight="bold">
+                          {jobsBoardMetrics.newApplicantsToday}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          New Applicants Today
+                        </Typography>
+                      </Box>
+                      
+                      <Box sx={{ mb: 2 }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          Applicants (7-day trend)
+                        </Typography>
+                        <SparklineChart data={jobsBoardMetrics.applicantsTrend} color="#4caf50" />
+                      </Box>
+                      
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Button 
+                          variant="outlined" 
+                          size="small" 
+                          onClick={() => setTabValue(5)}
+                        >
+                          Manage Posts
+                        </Button>
+                        <Button 
+                          variant="contained" 
+                          size="small" 
+                          startIcon={<AddIcon />}
+                          onClick={() => setTabValue(5)}
+                        >
+                          + New Evergreen Post
+                        </Button>
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} md={8}>
+              {/* Calendar Widget */}
+              <CalendarWidget
+                userId={user?.uid || ''}
+                tenantId={tenantId}
+                preloadedContacts={[]}
+                preloadedSalespeople={[]}
+                preloadedCompanies={[]}
+                preloadedDeals={[]}
+              />
+            </Grid>
+          </Grid>
+        </Box>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={1}>
         <Box>
           <Typography variant="h5" gutterBottom>
             Job Orders
@@ -730,7 +744,7 @@ const RecruiterDashboard: React.FC = () => {
         </Box>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={1}>
+      <TabPanel value={tabValue} index={2}>
         <Box>
           <Typography variant="h5" gutterBottom>
             Candidates
@@ -745,7 +759,7 @@ const RecruiterDashboard: React.FC = () => {
         </Box>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={2}>
+      <TabPanel value={tabValue} index={3}>
         <Box>
           <Typography variant="h5" gutterBottom>
             Applications
@@ -771,7 +785,7 @@ const RecruiterDashboard: React.FC = () => {
         </Box>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={3}>
+      <TabPanel value={tabValue} index={4}>
         <Box>
           <Typography variant="h5" gutterBottom>
             Candidate Pipeline
@@ -817,7 +831,7 @@ const RecruiterDashboard: React.FC = () => {
         </Box>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={4}>
+      <TabPanel value={tabValue} index={5}>
         <Box>
           <Typography variant="h5" gutterBottom>
             Jobs Board
