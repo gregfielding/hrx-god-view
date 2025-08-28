@@ -518,7 +518,7 @@ export async function loadSalespersonActivities(
       while (totalEmailsProcessed < 5000) { // Cap at 5000 emails to prevent infinite loops
         const emailsQuery = query(
           emailsRef,
-          where('salespersonId', '==', salespersonId),
+          where('userId', '==', salespersonId),
           ...(startDate ? [where('timestamp', '>=', startDate)] : []),
           ...(endDate ? [where('timestamp', '<=', endDate)] : []),
           orderBy('timestamp', 'desc'),
