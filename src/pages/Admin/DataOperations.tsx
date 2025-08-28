@@ -217,14 +217,27 @@ const DataOperations: React.FC = () => {
         console.log('Production environment - using callable functions');
       }
       
-      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-      console.log('Callable function created:', queueGmailBulkImport);
+      // Get the current user's ID token for authentication
+      const idToken = await currentUser.getIdToken();
+      console.log('Got ID token for authentication');
       
-      // Force the function to be called as a callable function
-      console.log('About to call queueGmailBulkImport with data:', { userIds: [selectedUserId], tenantId, daysBack });
+      // Use HTTP endpoint with proper authentication headers
+      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImport', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          data: { userIds: [selectedUserId], tenantId, daysBack }
+        }),
+      });
       
-      const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
-      const resultData = response.data as any;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+            const resultData = await response.json();
       setSingleUserImportResults(resultData);
       
       console.log('Single user Gmail import queued:', resultData);
@@ -371,14 +384,27 @@ const DataOperations: React.FC = () => {
         console.log('Production environment - using callable functions');
       }
       
-      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-      console.log('Callable function created:', queueGmailBulkImport);
+      // Get the current user's ID token for authentication
+      const idToken = await currentUser.getIdToken();
+      console.log('Got ID token for authentication');
       
-      // Force the function to be called as a callable function
-      console.log('About to call queueGmailBulkImport with data:', { tenantId, daysBack });
+      // Use HTTP endpoint with proper authentication headers
+      const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImport', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          data: { tenantId, daysBack }
+        }),
+      });
       
-      const response = await queueGmailBulkImport({ tenantId, daysBack });
-      const resultData = response.data as any;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const resultData = await response.json();
       setGmailImportResults(resultData);
       
       console.log('Gmail bulk import queued:', resultData);
