@@ -197,24 +197,11 @@ const DataOperations: React.FC = () => {
     setSingleUserImportResults(null);
     
     try {
-      let resultData: any;
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        // Use HTTP endpoint in local dev to avoid callable CORS/URL issues
-        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userIds: [selectedUserId], tenantId, daysBack })
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        resultData = await response.json();
-      } else {
-        const functions = getFunctions();
-        const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-        const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
-        resultData = response.data as any;
-      }
+      // Use callable function for both localhost and production to avoid CORS issues
+      const functions = getFunctions();
+      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+      const response = await queueGmailBulkImport({ userIds: [selectedUserId], tenantId, daysBack });
+      const resultData = response.data as any;
       setSingleUserImportResults(resultData);
       
       console.log('Single user Gmail import queued:', resultData);
@@ -234,30 +221,11 @@ const DataOperations: React.FC = () => {
   const pollSingleUserImportStatus = async (requestId: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        let progressData: any;
-        
-        // Use HTTP function for localhost development to avoid CORS issues
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ requestId, tenantId })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-          
-          progressData = await response.json();
-        } else {
-          // Use callable function for production
-          const functions = getFunctions();
-          const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
-          const response = await getGmailImportProgress({ requestId, tenantId });
-          progressData = response.data as any;
-        }
+        // Use callable function for both localhost and production to avoid CORS issues
+        const functions = getFunctions();
+        const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+        const response = await getGmailImportProgress({ requestId, tenantId });
+        const progressData = response.data as any;
         
         if (progressData) {
           // Update results with current status
@@ -362,24 +330,11 @@ const DataOperations: React.FC = () => {
 
     setGmailImportLoading(true);
     try {
-      let resultData: any;
-      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        // Use HTTP endpoint in local dev to avoid callable CORS/URL issues
-        const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/queueGmailBulkImportHttp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tenantId, daysBack })
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        resultData = await response.json();
-      } else {
-        const functions = getFunctions();
-        const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
-        const response = await queueGmailBulkImport({ tenantId, daysBack });
-        resultData = response.data as any;
-      }
+      // Use callable function for both localhost and production to avoid CORS issues
+      const functions = getFunctions();
+      const queueGmailBulkImport = httpsCallable(functions, 'queueGmailBulkImport');
+      const response = await queueGmailBulkImport({ tenantId, daysBack });
+      const resultData = response.data as any;
       setGmailImportResults(resultData);
       
       console.log('Gmail bulk import queued:', resultData);
@@ -399,30 +354,11 @@ const DataOperations: React.FC = () => {
   const pollImportStatus = async (requestId: string) => {
     const pollInterval = setInterval(async () => {
       try {
-        let progressData: any;
-        
-        // Use HTTP function for localhost development to avoid CORS issues
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/getGmailImportProgressHttp', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ requestId, tenantId })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-          
-          progressData = await response.json();
-        } else {
-          // Use callable function for production
-          const functions = getFunctions();
-          const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
-          const response = await getGmailImportProgress({ requestId, tenantId });
-          progressData = response.data as any;
-        }
+        // Use callable function for both localhost and production to avoid CORS issues
+        const functions = getFunctions();
+        const getGmailImportProgress = httpsCallable(functions, 'getGmailImportProgress');
+        const response = await getGmailImportProgress({ requestId, tenantId });
+        const progressData = response.data as any;
         
         if (progressData) {
           // Update results with current status
