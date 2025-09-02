@@ -27,6 +27,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getUserTimezone } from '../utils/dateUtils';
 
 import { useAuth } from '../contexts/AuthContext';
+import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 
 interface GoogleIntegrationProps {
   tenantId: string;
@@ -71,13 +72,10 @@ interface CalendarEvent {
 const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   const { user } = useAuth();
   const functions = getFunctions();
+  const { googleStatus, refreshStatus } = useGoogleStatus();
   const SHOW_EVENTS = false; // Keep this layout focused on connection management only
   
-  // State for Google services status
-  const [googleStatus, setGoogleStatus] = useState<GoogleStatus>({
-    gmail: { connected: false, syncStatus: 'not_synced' },
-    calendar: { connected: false, syncStatus: 'not_synced' }
-  });
+  // Status comes from context
   
   // State for calendar events
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -98,8 +96,7 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   });
 
   // Firebase Functions
-  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
-  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatusOptimized');
+  // Status fetched via context; keep other callables
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const disconnectCalendarFn = httpsCallable(functions, 'disconnectCalendar');
@@ -126,49 +123,7 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
     setError('');
     
     try {
-      console.log('Loading Google status for user:', user.uid);
-      
-      // Call each function separately to catch individual errors
-      console.log('Calling getGmailStatus...');
-      const gmailResult = await getGmailStatusFn({ userId: user.uid });
-      console.log('Gmail status response:', gmailResult.data);
-      
-      console.log('Calling getCalendarStatus...');
-      const calendarResult = await getCalendarStatusFn({ userId: user.uid });
-      console.log('Calendar status response:', calendarResult.data);
-      
-      // Debug: Check if calendar tokens exist
-      const calendarData = calendarResult.data as any;
-      if (calendarData && calendarData.connected) {
-        console.log('✅ Calendar is connected!');
-        console.log('Calendar email:', calendarData.email);
-        console.log('Last sync:', calendarData.lastSync);
-        console.log('Sync status:', calendarData.syncStatus);
-      } else {
-        console.log('❌ Calendar is NOT connected');
-        console.log('Calendar status:', calendarData);
-      }
-      
-      const gmailStatus = gmailResult.data as any;
-      const calendarStatus = calendarResult.data as any;
-      
-      const newStatus = {
-        gmail: {
-          connected: gmailStatus.connected || false,
-          email: gmailStatus.email,
-          lastSync: gmailStatus.lastSync,
-          syncStatus: gmailStatus.syncStatus || 'not_synced'
-        },
-        calendar: {
-          connected: calendarStatus.connected || false,
-          email: calendarStatus.email,
-          lastSync: calendarStatus.lastSync,
-          syncStatus: calendarStatus.syncStatus || 'not_synced'
-        }
-      };
-      
-      console.log('Setting new Google status:', newStatus);
-      setGoogleStatus(newStatus);
+      await refreshStatus();
     } catch (error: any) {
       console.error('Error loading Google status:', error);
       console.error('Error details:', {
@@ -264,20 +219,7 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
       window.open(authUrl, '_blank', 'width=600,height=600');
       
       setSuccess('Google authentication initiated. Please complete the OAuth flow in the popup window.');
-      
-      // Refresh status after a delay to check if auth was completed
-      setTimeout(() => {
-        loadGoogleStatus();
-      }, 3000);
-      
-      // Also refresh immediately and then every 2 seconds for the next 10 seconds
-      const refreshInterval = setInterval(() => {
-        loadGoogleStatus();
-      }, 2000);
-      
-      setTimeout(() => {
-        clearInterval(refreshInterval);
-      }, 10000);
+      // Rely on GoogleStatusContext to poll during OAuth; no extra local polling
       
     } catch (error: any) {
       console.error('Error getting Google auth URL:', error);

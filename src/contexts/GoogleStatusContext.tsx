@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { CallableCache } from '../utils/callableCache';
 
 interface GoogleStatus {
   gmail: {
@@ -44,6 +45,7 @@ interface GoogleStatusProviderProps {
 export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ children, tenantId }) => {
   const { user } = useAuth();
   const functions = getFunctions();
+  const clientCacheRef = useRef(new CallableCache(30 * 60 * 1000));
   
   const [googleStatus, setGoogleStatus] = useState<GoogleStatus>({
     gmail: { connected: false, syncStatus: 'not_synced' },
@@ -87,17 +89,19 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
     setError(null);
 
     try {
-      // Use optimized functions
+      // Use optimized functions with client-side dedupe + TTL
       const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
       const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
 
-      const [calendarResult, gmailResult] = await Promise.all([
-        getCalendarStatus({ userId: user.uid }),
-        getGmailStatus({ userId: user.uid })
-      ]);
-
-      const calendarData = calendarResult.data as any;
-      const gmailData = gmailResult.data as any;
+      const cache = clientCacheRef.current;
+      const calendarData = await cache.getOrFetch<any>(`calendar:${user.uid}`, async () => {
+        const res = await getCalendarStatus({ userId: user.uid });
+        return res.data as any;
+      });
+      const gmailData = await cache.getOrFetch<any>(`gmail:${user.uid}`, async () => {
+        const res = await getGmailStatus({ userId: user.uid });
+        return res.data as any;
+      });
 
       const newStatus: GoogleStatus = {
         gmail: {
@@ -160,8 +164,15 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
 
   // Refresh status function for manual refresh
   const refreshStatus = useCallback(async () => {
+    if (user?.uid) {
+      // Invalidate client cache to force a fresh fetch
+      clientCacheRef.current.invalidate(`calendar:${user.uid}`);
+      clientCacheRef.current.invalidate(`gmail:${user.uid}`);
+      lastStatusCache = null;
+      setLastLoadTime(0);
+    }
     await loadGoogleStatus();
-  }, [loadGoogleStatus]);
+  }, [loadGoogleStatus, user?.uid]);
 
   // Start polling when OAuth is in progress
   useEffect(() => {
@@ -173,10 +184,20 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
     }
   }, [isOAuthInProgress, startStatusPolling]);
 
-  // Initial load
+  // Initial load (only when tab is visible to avoid background churn)
   useEffect(() => {
-    if (user?.uid) {
-      loadGoogleStatus();
+    if (!user?.uid) return;
+    const run = () => loadGoogleStatus();
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          run();
+          document.removeEventListener('visibilitychange', onVisible);
+        }
+      };
+      document.addEventListener('visibilitychange', onVisible);
+    } else {
+      run();
     }
   }, [user?.uid, loadGoogleStatus]);
 

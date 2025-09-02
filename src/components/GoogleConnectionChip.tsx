@@ -79,27 +79,12 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     await refreshStatus();
   }, [refreshStatus]);
 
-  // Start polling for status updates during OAuth
+  // Use GoogleStatusContext's OAuth polling; remove local interval to avoid duplicates
   const startStatusPolling = useCallback(() => {
-    // Poll every 5 seconds for up to 1 minute (reduced frequency and duration)
-    let pollCount = 0;
-    const maxPolls = 12; // 1 minute max (12 * 5 seconds)
-    
-    const interval = setInterval(async () => {
-      pollCount++;
-      
-      if (pollCount >= maxPolls) {
-        // Stop polling after 1 minute
-        clearInterval(interval);
-        setIsOAuthInProgress(false);
-        return;
-      }
-      
-      await refreshStatus();
-    }, 5000);
-    
-    return () => clearInterval(interval);
-  }, [refreshStatus, setIsOAuthInProgress]);
+    // Delegate to context: just trigger an immediate refresh once
+    refreshStatus();
+    return () => {};
+  }, [refreshStatus]);
 
   // Cleanup on unmount
   useEffect(() => {
