@@ -1478,40 +1478,13 @@ export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async
   }
 });
 
-// Firestore trigger: Log AI log creation (meta-logging)
+// Firestore trigger: Log AI log creation (meta-logging) - EMERGENCY DISABLED
 export const firestoreLogAILogCreated = onDocumentCreated('ai_logs/{logId}', async (event) => {
-  const logData = event.data?.data();
-  const logId = event.params.logId;
-  if (!logData) return;
-  
-  // Prevent feedback loop: skip any log where sourceModule is 'FirestoreTrigger'
-  if (logData.sourceModule === 'FirestoreTrigger') {
-    return { success: true };
-  }
-  
-  try {
-    await logAIAction({
-      userId: logData.userId || 'system',
-      actionType: 'ai_log_created',
-      sourceModule: 'FirestoreTrigger',
-      success: true,
-      eventType: 'ai_log.created',
-      targetType: 'ai_log',
-      targetId: logId,
-      aiRelevant: true,
-      contextType: 'meta_logging',
-      traitsAffected: null,
-      aiTags: ['ai_log', 'meta_logging', 'creation', logData.actionType || 'unknown'],
-      urgencyScore: 3,
-      reason: `AI log created: ${logData.actionType || 'Unknown'} for ${logData.targetType || 'Unknown'}`,
-      versionTag: 'v1',
-      latencyMs: 0
-    });
-    return { success: true };
-  } catch (error: any) {
-    console.error('firestoreLogAILogCreated error:', error);
-    return { success: false, error: error.message };
-  }
+  // 🚨 EMERGENCY: This function is DISABLED to prevent infinite feedback loops
+  // It was creating meta-logs for every AI log, causing runaway costs
+  // Status: DISABLED until cost containment measures are implemented
+  console.log('🚨 firestoreLogAILogCreated is DISABLED - preventing infinite loops');
+  return { success: true, disabled: true };
 });
 
 // Firestore trigger: Log AI log updates (meta-logging)

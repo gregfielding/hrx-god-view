@@ -1871,7 +1871,10 @@ export const getDealStageAISuggestions = onCall({
 });
 
 export const generateTaskContent = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 1, // Reduced for cost containment
+  timeoutSeconds: 30, // Reduced timeout
+  memory: '256MiB' // Reduced memory
 }, async (request) => {
   const { 
     taskId, 
@@ -1884,7 +1887,46 @@ export const generateTaskContent = onCall({
       throw new Error('Missing required fields: taskId, tenantId, userId');
     }
 
-    // Get task information
+    // 🚨 EMERGENCY COST CONTAINMENT: Check cache first
+    const cacheKey = `task_content_${taskId}_${tenantId}`;
+    const cacheRef = db.collection('ai_cache').doc(cacheKey);
+    
+    // Check cache with 4-hour TTL for task content
+    const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const cached = await cacheRef.get();
+    const now = Date.now();
+    
+    if (cached.exists) {
+      const data = cached.data() as any;
+      if (data.updatedAt && (now - data.updatedAt.toMillis()) < CACHE_TTL_MS) {
+        console.log('✅ Task content served from cache for:', cacheKey);
+        return { 
+          ...data.payload, 
+          cacheHit: true,
+          _costContainment: 'cached'
+        };
+      }
+    }
+
+    // 🚨 EMERGENCY COST CONTAINMENT: Rate limiting per task
+    const rateLimitKey = `task_content_ratelimit_${taskId}`;
+    const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
+    const rateLimitCached = await rateLimitRef.get();
+    
+    if (rateLimitCached.exists) {
+      const rateLimitData = rateLimitCached.data() as any;
+      if (rateLimitData.updatedAt && (now - rateLimitData.updatedAt.toMillis()) < 60 * 60 * 1000) { // 1 hour rate limit
+        console.log('🚫 Rate limit hit for task content:', taskId, 'returning cached result');
+        try {
+          const parsed = rateLimitData.payload;
+          return { ...parsed, cacheHit: true, rateLimited: true, _costContainment: 'rate_limited' };
+        } catch {}
+      }
+    }
+
+    console.log('🔄 Generating new task content for:', cacheKey);
+
+    // Get task information with minimal reads
     let taskData = null;
     if (taskId === 'new') {
       // For new tasks, use the task data passed in the request
@@ -1898,58 +1940,92 @@ export const generateTaskContent = onCall({
       taskData = taskDoc.data();
     }
 
-    // Get associated data for context
+    // 🚨 EMERGENCY COST CONTAINMENT: Skip expensive operations for low-priority tasks
+    if (taskData.priority === 'low' || taskData.urgencyScore < 5) {
+      console.log('🚨 Skipping expensive content generation for low-priority task:', taskId);
+      const basicContent = generateBasicContentOnly(taskData);
+      
+      // Cache the basic content
+      await cacheRef.set({ 
+        payload: basicContent, 
+        updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+      }, { merge: true });
+      
+      return {
+        success: true,
+        content: basicContent,
+        suggestions: [],
+        insights: [],
+        _costContainment: 'basic_content_only'
+      };
+    }
+
+    // 🚨 EMERGENCY COST CONTAINMENT: Simplified data fetching - only get essential data
     const associations = taskData.associations || {};
     let companyData = null;
     let contactData = null;
     let dealData = null;
 
-    if (associations.companies && associations.companies.length > 0) {
+    // Only fetch company data if absolutely necessary
+    if (associations.companies && associations.companies.length > 0 && taskData.type === 'email') {
       const companyDoc = await db.collection('tenants').doc(tenantId).collection('crm_companies').doc(associations.companies[0]).get();
       if (companyDoc.exists) {
         companyData = companyDoc.data();
       }
     }
 
-    if (associations.contacts && associations.contacts.length > 0) {
+    // Only fetch contact data if absolutely necessary
+    if (associations.contacts && associations.contacts.length > 0 && (taskData.type === 'email' || taskData.type === 'phone_call')) {
       const contactDoc = await db.collection('tenants').doc(tenantId).collection('crm_contacts').doc(associations.contacts[0]).get();
       if (contactDoc.exists) {
         contactData = contactDoc.data();
       }
     }
 
-    if (associations.deals && associations.deals.length > 0) {
+    // Only fetch deal data if absolutely necessary
+    if (associations.deals && associations.deals.length > 0 && taskData.type === 'proposal_preparation') {
       const dealDoc = await db.collection('tenants').doc(tenantId).collection('crm_deals').doc(associations.deals[0]).get();
       if (dealDoc.exists) {
         dealData = dealDoc.data();
       }
     }
 
-    // Generate content based on task type
-    const generatedContent = await generateContentByType(taskData, companyData, contactData, dealData);
+    // 🚨 EMERGENCY COST CONTAINMENT: Use simplified content generation instead of AI
+    const generatedContent = generateSimplifiedContent(taskData, companyData, contactData, dealData);
 
-    // Create AI log for tracking
-    await createTaskAILog(
-      'task.content_generated',
-      taskId,
-      `AI content generated for ${taskData.type} task`,
-      tenantId,
-      userId,
-      associations,
-      JSON.stringify({
-        taskType: taskData.type,
-        contentGenerated: Object.keys(generatedContent),
-        companyContext: !!companyData,
-        contactContext: !!contactData,
-        dealContext: !!dealData
-      })
-    );
+    // 🚨 EMERGENCY COST CONTAINMENT: Skip AI logging to prevent feedback loops
+    // await logAIAction(...) - DISABLED for cost containment
 
+    // Cache the result with rate limiting
+    await cacheRef.set({ 
+      payload: {
+        success: true,
+        content: generatedContent,
+        suggestions: generateBasicSuggestions(taskData, generatedContent),
+        insights: generateBasicInsights(taskData, companyData, contactData, dealData)
+      }, 
+      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true });
+    
+    // Set rate limit cache
+    await rateLimitRef.set({ 
+      payload: {
+        success: true,
+        content: generatedContent,
+        suggestions: generateBasicSuggestions(taskData, generatedContent),
+        insights: generateBasicInsights(taskData, companyData, contactData, dealData)
+      }, 
+      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
+    }, { merge: true });
+
+    console.log('✅ Task content generated and cached for:', cacheKey);
+    
     return {
       success: true,
       content: generatedContent,
-      suggestions: generateContentSuggestions(taskData, generatedContent),
-      insights: generateContentInsights(taskData, companyData, contactData, dealData)
+      suggestions: generateBasicSuggestions(taskData, generatedContent),
+      insights: generateBasicInsights(taskData, companyData, contactData, dealData),
+      _costContainment: 'simplified_generation'
     };
 
   } catch (error) {
@@ -2575,3 +2651,169 @@ export const createNextRepeatingTask = onCall({ cors: true, region: 'us-central1
     throw new Error(`Failed to create next repeating task: ${errorMessage}`);
   }
 });
+
+function generateBasicInsights(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return [
+    'Focus on building relationships',
+    'Provide value in every interaction',
+    'Follow up consistently',
+    'Document all interactions'
+  ];
+}
+
+// 🚨 EMERGENCY COST CONTAINMENT: Simplified content generation functions
+function generateBasicContentOnly(taskData: any) {
+  return {
+    title: taskData.title || 'Task',
+    description: taskData.description || 'Complete this task as specified',
+    keyPoints: ['Review requirements', 'Execute task', 'Document results'],
+    nextSteps: ['Complete task', 'Update records', 'Follow up if needed']
+  };
+}
+
+function generateSimplifiedContent(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const taskType = taskData.type || 'custom';
+  const content: any = {};
+
+  switch (taskType) {
+    case 'email':
+      content.email = generateBasicEmailContent(taskData, companyData, contactData, dealData);
+      break;
+    case 'phone_call':
+      content.callScript = generateBasicCallScript(taskData, companyData, contactData, dealData);
+      break;
+    case 'scheduled_meeting_virtual':
+    case 'scheduled_meeting_in_person':
+      content.meetingAgenda = generateBasicMeetingAgenda(taskData, companyData, contactData, dealData);
+      break;
+    case 'research':
+      content.researchPlan = generateBasicResearchPlan(taskData, companyData, contactData, dealData);
+      break;
+    default:
+      content.generalContent = generateBasicGeneralContent(taskData, companyData, contactData, dealData);
+  }
+
+  return content;
+}
+
+function generateBasicEmailContent(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const contactName = contactData?.firstName || contactData?.fullName || 'there';
+  const companyName = companyData?.companyName || companyData?.name || 'your company';
+  const dealName = dealData?.name || 'our discussion';
+
+  return {
+    subject: `Follow up: ${taskData.title || 'our conversation'}`,
+    greeting: `Hi ${contactName},`,
+    body: `I hope this email finds you well. I wanted to follow up on ${dealName} and see if you had any questions or if there's anything else I can help you with.
+
+${taskData.description || 'I appreciate your time and look forward to continuing our conversation.'}`,
+    callToAction: `Please let me know if you'd like to schedule a call or if you have any questions. I'm here to help!`,
+    personalization: {
+      contactName,
+      companyName,
+      dealName,
+      taskContext: taskData.description
+    }
+  };
+}
+
+function generateBasicCallScript(taskData: any, companyData: any, contactData: any, dealData: any) {
+  const contactName = contactData?.firstName || contactData?.fullName || 'there';
+  const dealName = dealData?.name || 'your needs';
+
+  return {
+    opening: `Hi ${contactName}, this is [Your Name] calling about ${dealName}.`,
+    agenda: [
+      'Introduce yourself and purpose',
+      'Ask about current situation',
+      'Share relevant information',
+      'Discuss next steps'
+    ],
+    questions: [
+      'What are your current challenges?',
+      'How can I help you today?',
+      'What would success look like?',
+      'Who else should be involved?'
+    ],
+    closing: "Thank you for your time. When would be a good time to follow up?"
+  };
+}
+
+function generateBasicMeetingAgenda(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return {
+    title: taskData.title || 'Meeting',
+    duration: '30 minutes',
+    agenda: [
+      'Introductions and context',
+      'Review objectives',
+      'Discuss key points',
+      'Identify next steps'
+    ],
+    objectives: [
+      'Understand requirements',
+      'Share relevant information',
+      'Agree on next steps'
+    ],
+    preparation: [
+      'Review background materials',
+      'Prepare key questions',
+      'Set up meeting logistics'
+    ]
+  };
+}
+
+function generateBasicResearchPlan(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return {
+    objectives: [
+      'Understand the current situation',
+      'Identify key challenges',
+      'Research potential solutions',
+      'Develop recommendations'
+    ],
+    researchAreas: [
+      'Market analysis',
+      'Competitive landscape',
+      'Best practices',
+      'Success metrics'
+    ],
+    sources: [
+      'Industry reports',
+      'Company websites',
+      'Professional networks',
+      'Case studies'
+    ],
+    deliverables: [
+      'Research summary',
+      'Key findings',
+      'Recommendations',
+      'Next steps'
+    ]
+  };
+}
+
+function generateBasicGeneralContent(taskData: any, companyData: any, contactData: any, dealData: any) {
+  return {
+    title: taskData.title || 'Task',
+    description: taskData.description || 'Complete this task as specified',
+    keyPoints: [
+      'Understand the requirements',
+      'Gather necessary information',
+      'Execute the task',
+      'Document results'
+    ],
+    nextSteps: [
+      'Complete the task',
+      'Update relevant records',
+      'Follow up if needed'
+    ]
+  };
+}
+
+function generateBasicSuggestions(taskData: any, generatedContent: any) {
+  return [
+    'Review and customize the content',
+    'Add personal touches',
+    'Include specific details',
+    'Set clear next steps'
+  ];
+}

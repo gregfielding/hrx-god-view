@@ -3,75 +3,13 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 
 const db = admin.firestore();
 
-// AI Engine Processor - Listens to ai_logs collection and routes to appropriate engines
+// AI Engine Processor - EMERGENCY DISABLED for cost containment
 export const processAILog = onDocumentCreated('ai_logs/{logId}', async (event) => {
-  const logData = event.data?.data();
-  const logId = event.params.logId;
-
-  if (!logData) {
-    console.error('No log data found for logId:', logId);
-    return;
-  }
-
-  console.log('Processing AI log:', logId, 'Event type:', logData.eventType);
-
-  const start = Date.now(); // Start time for latency
-
-  try {
-    // Update log status to processing
-    await db.collection('ai_logs').doc(logId).update({
-      processed: true,
-      processingStartedAt: admin.firestore.FieldValue.serverTimestamp(),
-      engineTouched: []
-    });
-
-    const enginesToProcess = determineEnginesToProcess(logData);
-    const processingResults = [];
-
-    // Process through each relevant engine
-    for (const engine of enginesToProcess) {
-      try {
-        const result = await processWithEngine(engine, logData, logId);
-        processingResults.push({
-          engine,
-          success: true,
-          result,
-          processedAt: new Date().toISOString()
-        });
-      } catch (error) {
-        console.error(`Error processing with engine ${engine}:`, error);
-        processingResults.push({
-          engine,
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          processedAt: new Date().toISOString()
-        });
-      }
-    }
-
-    const latencyMs = Date.now() - start;
-
-    // Update log with processing results
-    await db.collection('ai_logs').doc(logId).update({
-      engineTouched: enginesToProcess,
-      processingResults,
-      processingCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
-      errors: processingResults.filter(r => !r.success).map(r => r.error),
-      latencyMs
-    });
-
-    console.log(`Successfully processed log ${logId} through ${enginesToProcess.length} engines`);
-
-  } catch (error) {
-    console.error('Error processing AI log:', error);
-    
-    // Update log with error status
-    await db.collection('ai_logs').doc(logId).update({
-      processed: false,
-      errors: [error instanceof Error ? error.message : 'Unknown error'],
-      processingCompletedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-  }
+  // 🚨 EMERGENCY: This function is DISABLED to prevent excessive AI log processing
+  // It was processing every AI log entry, contributing to runaway costs
+  // Status: DISABLED until cost containment measures are implemented
+  console.log('🚨 processAILog is DISABLED - preventing excessive AI log processing');
+  return { success: true, disabled: true };
 });
 
 // Determine which engines should process this log based on schema fields

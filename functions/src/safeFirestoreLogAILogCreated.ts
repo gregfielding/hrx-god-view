@@ -75,6 +75,9 @@ function checkCircuitBreaker(): void {
   if (process.env.CIRCUIT_BREAKER === 'on') {
     throw new Error('Circuit breaker is active - function execution blocked');
   }
+  
+  // 🚨 EMERGENCY: Always block this function during cost containment
+  throw new Error('🚨 firestoreLogAILogCreated is EMERGENCY DISABLED for cost containment');
 }
 
 /**

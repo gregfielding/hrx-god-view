@@ -53,7 +53,42 @@ export const logAIAction = async (logData: {
   tokensOut?: number;
   cacheHit?: boolean;
   requestId?: string;
+  sourceModule?: string; // Added for cost containment
 }): Promise<string> => {
+  // 🚨 EMERGENCY COST CONTAINMENT: Aggressive sampling to reduce logs by 99%
+  
+  // 1. Skip low-urgency events entirely (urgencyScore < 7)
+  if (logData.urgencyScore < 7) {
+    console.log(`🚨 AI Logging blocked: Low urgency score ${logData.urgencyScore} for ${logData.eventType}`);
+    return 'blocked_low_urgency';
+  }
+  
+  // 2. Skip non-critical event types
+  const criticalEvents = [
+    'dealCoach.analyze',
+    'dealCoach.chat',
+    'ai_log.created',
+    'ai_log.updated',
+    'ai_log.deleted'
+  ];
+  
+  if (!criticalEvents.some(event => logData.eventType?.includes(event))) {
+    console.log(`🚨 AI Logging blocked: Non-critical event type ${logData.eventType}`);
+    return 'blocked_non_critical';
+  }
+  
+  // 3. Aggressive sampling: only log 1% of events (99% blocked)
+  if (Math.random() > 0.01) {
+    console.log(`🚨 AI Logging sampled out: ${logData.eventType} (1% sampling)`);
+    return 'sampled_out';
+  }
+  
+  // 4. Skip if sourceModule is FirestoreTrigger to prevent loops
+  if (logData.sourceModule === 'FirestoreTrigger') {
+    console.log(`🚨 AI Logging blocked: FirestoreTrigger source to prevent loops`);
+    return 'blocked_firestore_trigger';
+  }
+  
   try {
     const logId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
@@ -90,7 +125,12 @@ export const logAIAction = async (logData: {
       tokensIn: logData.tokensIn || 0,
       tokensOut: logData.tokensOut || 0,
       cacheHit: logData.cacheHit ?? false,
-      requestId: logData.requestId || ''
+      requestId: logData.requestId || '',
+      _costContainment: {
+        sampled: true,
+        originalUrgencyScore: logData.urgencyScore,
+        timestamp: new Date().toISOString()
+      }
     };
 
     // Sanitize to remove undefined values while preserving serverTimestamp sentinel
@@ -98,7 +138,7 @@ export const logAIAction = async (logData: {
 
     await db.collection('ai_logs').doc(logId).set(aiLogData);
     
-    console.log(`✅ AI log created: ${logId} - ${logData.eventType}`);
+    console.log(`✅ AI log created (EMERGENCY MODE): ${logId} - ${logData.eventType}`);
     return logId;
     
   } catch (error) {
