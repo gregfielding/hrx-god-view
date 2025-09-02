@@ -1661,6 +1661,10 @@ const CompanyDetails: React.FC = () => {
 />
       )}
       
+      {tabValue === 1 && (
+        <LocationsTab company={company} currentTab={tabValue} />
+      )}
+      
       {tabValue === 2 && (
         <ContactsTab contacts={contacts} company={company} locations={[]} />
       )}
