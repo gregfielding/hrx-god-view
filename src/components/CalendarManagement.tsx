@@ -93,16 +93,16 @@ const CalendarManagement: React.FC<CalendarManagementProps> = ({ tenantId }) => 
   });
 
   // Firebase Functions
-  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatus');
+  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatusOptimized');
   const getCalendarAuthUrlFn = httpsCallable(functions, 'getCalendarAuthUrl');
   const disconnectCalendarFn = httpsCallable(functions, 'disconnectCalendar');
-  const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEvents');
+  const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEventsOptimized');
   const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
 
-  // Load Calendar status
+  // Load Calendar status (manual or after actions)
   const loadCalendarStatus = async () => {
     if (!user?.uid) return;
-    
+
     setLoading(true);
     try {
       const result = await getCalendarStatusFn({ userId: user.uid });
@@ -116,10 +116,10 @@ const CalendarManagement: React.FC<CalendarManagementProps> = ({ tenantId }) => 
     }
   };
 
-  // Load calendar events
+  // Load calendar events (manual or after status shows connected)
   const loadCalendarEvents = async () => {
     if (!user?.uid || !calendarStatus.connected) return;
-    
+
     setLoading(true);
     try {
       const result = await listCalendarEventsFn({ 
@@ -127,7 +127,7 @@ const CalendarManagement: React.FC<CalendarManagementProps> = ({ tenantId }) => 
         maxResults: 20
       });
       const data = result.data as any;
-      
+
       if (data.success) {
         setEvents(data.events || []);
       }
@@ -139,10 +139,15 @@ const CalendarManagement: React.FC<CalendarManagementProps> = ({ tenantId }) => 
     }
   };
 
+  // Remove automatic status polling; only fetch on explicit actions and initial mount
   useEffect(() => {
-    loadCalendarStatus();
+    if (user?.uid) {
+      // Initial load ok
+      loadCalendarStatus();
+    }
   }, [user?.uid]);
 
+  // When explicitly refreshed status indicates connection, fetch events once
   useEffect(() => {
     if (calendarStatus.connected) {
       loadCalendarEvents();
@@ -385,6 +390,14 @@ const CalendarManagement: React.FC<CalendarManagementProps> = ({ tenantId }) => 
                     Connect Calendar
                   </Button>
                 )}
+                <Button
+                  variant="outlined"
+                  startIcon={<SyncIcon />}
+                  onClick={loadCalendarStatus}
+                  disabled={loading}
+                >
+                  Refresh Status
+                </Button>
               </Box>
             </Grid>
           </Grid>

@@ -314,7 +314,7 @@ export const dealCoachAnalyzeCallable = onCall({
     const cacheRef = db.collection('ai_cache').doc(cacheKey);
     
     // Check cache first with MUCH longer TTL for analysis results
-    const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours (increased significantly for better cost reduction)
+    const CACHE_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours (increased from 4 hours for better cost reduction)
     const cached = await cacheRef.get();
     const now = Date.now();
     
@@ -332,7 +332,7 @@ export const dealCoachAnalyzeCallable = onCall({
       }
     }
 
-    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 2 hours)
+    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 4 hours)
     // This prevents rapid successive calls for the same entity
     const recentCacheKey = `coach_analyze_recent_${dealId}_${stageKey}`;
     const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
@@ -340,7 +340,7 @@ export const dealCoachAnalyzeCallable = onCall({
     
     if (recentCached.exists) {
       const recentData = recentCached.data() as any;
-      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 2 * 60 * 60 * 1000) { // 2 hours (increased for better cost containment)
+      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 4 * 60 * 60 * 1000) { // 4 hours (increased for better cost containment)
         console.log('⏱️ Recent analysis found, returning cached result to prevent rapid calls');
         try {
           const parsed = AnalyzeResponse.parse(recentData.payload);
@@ -349,18 +349,34 @@ export const dealCoachAnalyzeCallable = onCall({
       }
     }
 
-    // ADDITIONAL RATE LIMITING: Check if this deal has been analyzed too recently
+    // STRICTER RATE LIMITING: Check if this deal has been analyzed too recently
     const rateLimitKey = `coach_analyze_ratelimit_${dealId}`;
     const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
     const rateLimitCached = await rateLimitRef.get();
     
     if (rateLimitCached.exists) {
       const rateLimitData = rateLimitCached.data() as any;
-      if (rateLimitData.updatedAt && (now - rateLimitData.updatedAt.toMillis()) < 30 * 60 * 1000) { // 30 minutes rate limit
+      if (rateLimitData.updatedAt && (now - rateLimitData.updatedAt.toMillis()) < 60 * 60 * 1000) { // 1 hour rate limit (increased from 30 minutes)
         console.log('🚫 Rate limit hit for deal:', dealId, 'returning cached result');
         try {
           const parsed = AnalyzeResponse.parse(rateLimitData.payload);
           return { ...parsed, threadId: dealId, cacheHit: true, rateLimited: true };
+        } catch {}
+      }
+    }
+
+    // ADDITIONAL COST CONTAINMENT: Check if this is a duplicate request within 5 minutes
+    const duplicateKey = `coach_analyze_duplicate_${dealId}_${stageKey}`;
+    const duplicateRef = db.collection('ai_cache').doc(duplicateKey);
+    const duplicateCached = await duplicateRef.get();
+    
+    if (duplicateCached.exists) {
+      const duplicateData = duplicateCached.data() as any;
+      if (duplicateData.updatedAt && (now - duplicateData.updatedAt.toMillis()) < 5 * 60 * 1000) { // 5 minutes duplicate check
+        console.log('🔄 Duplicate request detected, returning cached result');
+        try {
+          const parsed = AnalyzeResponse.parse(duplicateData.payload);
+          return { ...parsed, threadId: dealId, cacheHit: true, duplicate: true };
         } catch {}
       }
     }
@@ -443,14 +459,17 @@ export const dealCoachAnalyzeCallable = onCall({
     const parsed = AnalyzeResponse.parse(result);
 
     // ENHANCED CACHING: Store in all cache locations with longer TTL
-    // Main cache (4 hours)
+    // Main cache (8 hours)
     await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     
-    // Recent cache (2 hours) to prevent rapid successive calls
+    // Recent cache (4 hours) to prevent rapid successive calls
     await recentCacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
-    // Rate limit cache (30 minutes) to enforce minimum time between calls
+    // Rate limit cache (1 hour) to enforce minimum time between calls
     await rateLimitRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
+    // Duplicate cache (5 minutes) to prevent rapid duplicate requests
+    await duplicateRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
     // Log telemetry (best-effort)
     try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}

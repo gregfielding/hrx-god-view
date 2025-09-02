@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert, CircularProgress } from '@mui/material';
-import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon, SmartToy as AIIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -32,15 +32,15 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
   const [analyzing, setAnalyzing] = useState(false);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success'|'error'|'info' } | null>(null);
   const [conversations, setConversations] = useState<Array<{ id: string; title: string; at: Date; messages: any[] }>>([]);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
   
   // Debounce analysis to prevent rapid successive calls
   const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
 
-
-
   const threadKey = useMemo(() => `coach.thread.${dealId}`, [dealId]);
+  const analysisCacheKey = useMemo(() => `coach.analysis.${dealId}.${stageKey}`, [dealId, stageKey]);
 
   useEffect(() => {
     // restore thread
@@ -51,7 +51,26 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
         setMessages(parsed);
       } catch {}
     }
-    analyze();
+    
+    // Check if we have cached analysis results first
+    const cachedAnalysis = localStorage.getItem(analysisCacheKey);
+    if (cachedAnalysis) {
+      try {
+        const parsed = JSON.parse(cachedAnalysis);
+        const now = Date.now();
+        // Cache analysis for 2 hours (less than backend 4-hour cache to ensure freshness)
+        if (now - parsed.timestamp < 2 * 60 * 60 * 1000) {
+          setSummary(parsed.summary || '');
+          setSuggestions(parsed.suggestions || []);
+          setHasAnalyzed(true);
+          return;
+        }
+      } catch {}
+    }
+    
+    // Don't auto-analyze - let user trigger it manually
+    setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
+    
     loadConversations();
     
     // Proactive conversation check disabled - function not available
@@ -88,7 +107,7 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
     // const timer = setTimeout(checkForProactiveConversation, 2000);
     // return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealId, stageKey]);
+  }, [dealId, stageKey, hasAnalyzed, analysisCacheKey]);
 
   // Effect to handle new conversation when key changes
   useEffect(() => {
@@ -108,7 +127,7 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
   }, [messages, threadKey]);
 
   // Debounce analysis to prevent rapid successive calls
-  const ANALYZE_DEBOUNCE_DELAY = 15000; // 15 seconds debounce (increased for better cost containment)
+  const ANALYZE_DEBOUNCE_DELAY = 30000; // Increased to 30 seconds for better cost containment
 
   const analyze = async () => {
     // Debounce rapid analyze calls
@@ -124,8 +143,23 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
       const functions = getFunctions(undefined, 'us-central1');
       const analyzeFn = httpsCallable(functions, 'dealCoachAnalyzeCallable');
       const { data }: any = await analyzeFn({ dealId, stageKey, tenantId });
-      setSummary(data.summary || '');
-      setSuggestions(data.suggestions || []);
+      
+      const newSummary = data.summary || '';
+      const newSuggestions = data.suggestions || [];
+      
+      setSummary(newSummary);
+      setSuggestions(newSuggestions);
+      setHasAnalyzed(true);
+      
+      // Cache the analysis result locally
+      try {
+        localStorage.setItem(analysisCacheKey, JSON.stringify({
+          summary: newSummary,
+          suggestions: newSuggestions,
+          timestamp: now
+        }));
+      } catch {}
+      
     } catch (e) {
       console.log('Deal Coach analyze feature not available:', e);
       // Don't show error toast since this is optional functionality
@@ -304,20 +338,48 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
   };
 
     return (
-    <Box sx={{ p: 0 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+    <Box sx={{ 
+      height: '100%', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      bgcolor: 'background.paper',
+      borderRadius: 0,
+      border: '1px solid',
+      borderColor: 'divider'
+    }}>
+      {/* Header */}
+      <Box sx={{ 
+        p: 2, 
+        borderBottom: '1px solid', 
+        borderColor: 'divider',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
         <Typography variant="h6" fontWeight={700}>
           Deal Coach
         </Typography>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={analyze}
-          disabled={analyzing}
-          startIcon={analyzing ? <CircularProgress size={16} /> : <RefreshIcon />}
-        >
-          {analyzing ? 'Analyzing...' : 'Refresh Analysis'}
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {!hasAnalyzed && (
+            <Button
+              size="small"
+              variant="contained"
+              onClick={analyze}
+              disabled={analyzing}
+              startIcon={analyzing ? <CircularProgress size={16} /> : <RefreshIcon />}
+            >
+              Analyze Deal
+            </Button>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => startNewConversation()}
+            startIcon={<AddIcon />}
+          >
+            New Chat
+          </Button>
+        </Box>
       </Box>
 
         {/* Suggestions */}

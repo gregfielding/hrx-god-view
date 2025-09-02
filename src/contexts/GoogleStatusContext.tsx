@@ -58,10 +58,23 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   
   const DEBOUNCE_DELAY = 5 * 60 * 1000; // 5 minutes debounce (aggressively increased)
 
+  // Lightweight in-memory cache to dedupe calls across components
+  const STATUS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  let lastStatusCache: { data: GoogleStatus; at: number; userId: string } | null = null;
+
   // Load Google status with debouncing
   const loadGoogleStatus = useCallback(async () => {
     if (!user?.uid) return;
-    
+
+    // Serve from cache when fresh
+    if (
+      lastStatusCache &&
+      lastStatusCache.userId === user.uid &&
+      Date.now() - lastStatusCache.at < STATUS_CACHE_TTL_MS
+    ) {
+      setGoogleStatus(lastStatusCache.data);
+      return;
+    }
     // Debounce rapid calls
     const now = Date.now();
     if (now - lastLoadTime < DEBOUNCE_DELAY) {
@@ -69,39 +82,41 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       return;
     }
     setLastLoadTime(now);
-    
+
     setLoading(true);
     setError(null);
-    
+
     try {
-      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatus');
-      const getGmailStatus = httpsCallable(functions, 'getGmailStatus');
-      
+      // Use optimized functions
+      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
+      const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+
       const [calendarResult, gmailResult] = await Promise.all([
         getCalendarStatus({ userId: user.uid }),
         getGmailStatus({ userId: user.uid })
       ]);
-      
+
       const calendarData = calendarResult.data as any;
       const gmailData = gmailResult.data as any;
-      
-      const newStatus = {
+
+      const newStatus: GoogleStatus = {
         gmail: {
-          connected: gmailData?.connected || false,
+          connected: !!(gmailData?.connected),
           email: gmailData?.email,
           lastSync: gmailData?.lastSync,
           syncStatus: gmailData?.syncStatus || 'not_synced'
         },
         calendar: {
-          connected: calendarData?.connected || false,
+          connected: !!(calendarData?.connected),
           email: calendarData?.email,
           lastSync: calendarData?.lastSync,
           syncStatus: calendarData?.syncStatus || 'not_synced'
         }
       };
-      
+
       setGoogleStatus(newStatus);
-      
+      lastStatusCache = { data: newStatus, at: Date.now(), userId: user.uid };
+
       // If OAuth was in progress and we detect a successful connection, stop polling
       if (isOAuthInProgress && (newStatus.gmail.connected || newStatus.calendar.connected)) {
         setIsOAuthInProgress(false);
@@ -110,7 +125,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
           pollingIntervalRef.current = null;
         }
       }
-      
+
     } catch (error) {
       console.error('Error loading Google status:', error);
       setError('Failed to load Google connection status');
@@ -119,21 +134,19 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
     }
   }, [user?.uid, tenantId, isOAuthInProgress, lastLoadTime, functions]);
 
-  // Start polling for status updates during OAuth
+  // Only poll during OAuth. Otherwise, no background polling.
   const startStatusPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
     }
-    
-    // Poll every 15 seconds for up to 2 minutes (reduced frequency and duration)
+
+    // Poll every 20 seconds for up to 2 minutes (reduced again)
     let pollCount = 0;
-    const maxPolls = 8; // 2 minutes max (8 * 15 seconds)
-    
+    const maxPolls = 6; // 2 minutes max (6 * 20 seconds)
+
     pollingIntervalRef.current = setInterval(async () => {
       pollCount++;
-      
       if (pollCount >= maxPolls) {
-        // Stop polling after 1 minute
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
@@ -141,9 +154,8 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
         setIsOAuthInProgress(false);
         return;
       }
-      
       await loadGoogleStatus();
-    }, 15000);
+    }, 20000);
   }, [loadGoogleStatus]);
 
   // Refresh status function for manual refresh

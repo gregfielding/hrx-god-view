@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert, CircularProgress } from '@mui/material';
-import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon, SmartToy as AIIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -58,10 +58,12 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
   const [analyzing, setAnalyzing] = useState(false);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success'|'error'|'info' } | null>(null);
   const [conversations, setConversations] = useState<Array<{ id: string; title: string; at: Date; messages: any[] }>>([]);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
 
   const threadKey = useMemo(() => `coach.thread.${entityId}`, [entityId]);
+  const analysisCacheKey = useMemo(() => `coach.analysis.${entityId}.${dealStage}`, [entityId, dealStage]);
 
   useEffect(() => {
     // restore thread
@@ -73,13 +75,29 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
       } catch {}
     }
     
-    // Only analyze if we have a valid entityId
-    if (entityId && entityId !== 'dashboard' && entityId !== 'unknown' && entityId.length >= 3) {
-      analyze();
+    // Check if we have cached analysis results first
+    const cachedAnalysis = localStorage.getItem(analysisCacheKey);
+    if (cachedAnalysis) {
+      try {
+        const parsed = JSON.parse(cachedAnalysis);
+        const now = Date.now();
+        // Cache analysis for 2 hours (less than backend 4-hour cache to ensure freshness)
+        if (now - parsed.timestamp < 2 * 60 * 60 * 1000) {
+          setSummary(parsed.summary || '');
+          setHasAnalyzed(true);
+          return;
+        }
+      } catch {}
+    }
+    
+    // Only analyze if we have a valid entityId AND haven't analyzed yet
+    if (entityId && entityId !== 'dashboard' && entityId !== 'unknown' && entityId.length >= 3 && !hasAnalyzed) {
+      // Don't auto-analyze - let user trigger it manually
+      setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
     }
     
     loadConversations();
-  }, [entityId, entityType]);
+  }, [entityId, entityType, dealStage, hasAnalyzed, analysisCacheKey]);
 
   // Listen for new conversation events
   useEffect(() => {
@@ -107,6 +125,11 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
     if (onStartNew) {
       onStartNew();
     }
+    
+    // Reset analysis state when entityId changes (new deal/contact/company)
+    setHasAnalyzed(false);
+    setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
+    
     // Removed automatic startNewConversation() call - only start new conversation when explicitly requested
   }, [entityId]); // This will trigger when the entityId changes (which happens when key changes)
 
@@ -124,7 +147,7 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
 
   // Debounce analysis to prevent rapid successive calls
   const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
-  const ANALYZE_DEBOUNCE_DELAY = 10000; // 10 seconds debounce
+  const ANALYZE_DEBOUNCE_DELAY = 30000; // Increased to 30 seconds for better cost containment
 
   const analyze = async () => {
     // Debounce rapid analyze calls
@@ -160,7 +183,18 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
       console.log('Sales Coach analyze params:', params);
       
       const { data }: any = await analyzeFn(params);
-      setSummary(data?.summary || '');
+      const newSummary = data?.summary || '';
+      setSummary(newSummary);
+      setHasAnalyzed(true);
+      
+      // Cache the analysis result locally
+      try {
+        localStorage.setItem(analysisCacheKey, JSON.stringify({
+          summary: newSummary,
+          timestamp: now
+        }));
+      } catch {}
+      
     } catch (e) {
       console.error('Sales Coach analyze error:', e);
       
@@ -408,10 +442,30 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
         
         // Clear current messages immediately after saving
         setMessages([]);
+        
+        // Reset analysis state and trigger new analysis for the new conversation
+        setHasAnalyzed(false);
+        setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
+        
+        // Auto-analyze on new conversation after a short delay
+        setTimeout(() => {
+          try { analyze(); } catch {}
+        }, 300);
+        
         setToast({ open: true, message: 'Started new conversation', severity: 'info' });
         
       } else {
         console.log('No messages to save');
+        
+        // Reset analysis state for new conversation
+        setHasAnalyzed(false);
+        setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
+        
+        // Auto-analyze on new conversation after a short delay
+        setTimeout(() => {
+          try { analyze(); } catch {}
+        }, 300);
+        
         setToast({ open: true, message: 'Started new conversation', severity: 'info' });
       }
     } catch (e) {
@@ -426,7 +480,12 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
       const selected = conversations.find((c) => c.id === eventId);
       if (selected) {
         setMessages(selected.messages || []);
-        setToast({ open: true, message: 'Conversation loaded', severity: 'success' });
+        
+        // Reset analysis state when loading a conversation
+        setHasAnalyzed(false);
+        setSummary('Click "Analyze Deal" to get AI-powered insights and suggestions.');
+        
+        setToast({ open: true, message: 'Conversation loaded', severity: 'info' });
       } else {
         setToast({ open: true, message: 'Conversation not found', severity: 'error' });
       }
@@ -437,23 +496,52 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
   };
 
   return (
-    <Box sx={{ p: 0 }}>
-        {/* Chat */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: compact ? '300px' : height, minHeight: compact ? 250 : 350 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6" fontWeight={700}>
-              Sales Coach
-            </Typography>
+    <Box sx={{ 
+      height, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      bgcolor: 'background.paper',
+      borderRadius: 0,
+      border: '1px solid',
+      borderColor: 'divider'
+    }}>
+      {/* Header */}
+      <Box sx={{ 
+        p: 2, 
+        borderBottom: '1px solid', 
+        borderColor: 'divider',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <Typography variant="h6" fontWeight={700}>
+          Sales Coach
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {!hasAnalyzed && (
             <Button
-              variant="outlined"
               size="small"
+              variant="contained"
               onClick={analyze}
               disabled={analyzing}
               startIcon={analyzing ? <CircularProgress size={16} /> : <RefreshIcon />}
             >
-              {analyzing ? 'Analyzing...' : 'Refresh Analysis'}
+              Analyze Deal
             </Button>
-          </Box>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => startNewConversation()}
+            startIcon={<AddIcon />}
+          >
+            New Chat
+          </Button>
+        </Box>
+      </Box>
+
+        {/* Chat */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: compact ? '300px' : height, minHeight: compact ? 250 : 350 }}>
           <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
             {messages.map((m, i) => (
               <Box key={i} sx={{ mb: 1, textAlign: m.role === 'user' ? 'right' : 'left' }}>

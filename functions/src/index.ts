@@ -42,19 +42,22 @@ import { extractCompanyInfoFromUrls } from './extractCompanyInfoFromUrls';
 import { manageAssociations } from './manageAssociations';
 import { fixContactAssociations } from './fixContactAssociations';
 import { findContactInfo } from './findContactEmail';
-import { updateCompanyPipelineTotals, onDealUpdated } from './updateCompanyPipelineTotals';
+import { updateCompanyPipelineTotals } from './updateCompanyPipelineTotals';
+import { onDealUpdated } from './onDealUpdatedDisabled';
 import { generateDealAISummary } from './generateDealAISummary';
 import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
 import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
 import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
-import { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
+import { onCompanyLocationCreated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
+import { onCompanyLocationUpdated } from './onCompanyLocationUpdatedDisabled';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { cleanupUndefinedValues } from './cleanupUndefinedValues';
 import { bulkEmailDomainMatching } from './bulkEmailDomainMatching';
 import { firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
-import { firestoreCompanySnapshotFanout } from './safeFirestoreCompanySnapshotFanout';
+import { firestoreCompanySnapshotFanout } from './firestoreCompanySnapshotFanoutDisabled';
+import { companySnapshotFanoutCallable, batchCompanySnapshotFanoutCallable } from './companySnapshotFanoutOptimized';
 
 // Safe AI log updated trigger with field filters
 export { firestoreLogAILogUpdated } from './safeFirestoreAILogUpdated';
@@ -107,10 +110,16 @@ export {
 
 // Export association snapshot fan-out triggers
 export {
-  firestoreCompanySnapshotFanout, // RE-ENABLED WITH FIXES
+  firestoreCompanySnapshotFanout, // DISABLED - Using optimized callable functions
   firestoreContactSnapshotFanout,
   firestoreLocationSnapshotFanout,
   firestoreSalespersonSnapshotFanout
+};
+
+// Export optimized company snapshot fanout functions
+export {
+  companySnapshotFanoutCallable,
+  batchCompanySnapshotFanoutCallable
 };
 
 // Associations telemetry and rebuilders
@@ -124,6 +133,8 @@ export { getEmailLogBody };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
+export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
+export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
@@ -183,6 +194,9 @@ export {
   generateTaskContent,
   createNextRepeatingTask
 };
+
+// Export optimized task functions
+export { updateTaskOptimized, batchUpdateTasksOptimized } from './updateTaskOptimized';
 
 // Export deal association functions
 export {
@@ -10358,8 +10372,12 @@ export {
 
 // Safe, cached calendar status endpoint
 export { getCalendarStatus } from './directCalendarEmailFunctions';
+export { getCalendarStatusOptimized, batchGetCalendarStatusOptimized } from './getCalendarStatusOptimized';
+export { listCalendarEventsOptimized, batchListCalendarEventsOptimized } from './listCalendarEventsOptimized';
+export { createTaskOptimized, batchCreateTasksOptimized } from './createTaskOptimized';
 // Safe, cached Gmail status endpoint
 export { getGmailStatus } from './directCalendarEmailFunctions';
+export { getGmailStatusOptimized, batchGetGmailStatusOptimized } from './getGmailStatusOptimized';
 // Safe, cached calendar events endpoint
 export { listCalendarEvents } from './directCalendarEmailFunctions';
 
@@ -10452,7 +10470,8 @@ export { app_ai_generateResponse } from './appAi';
 // Apollo scaffolding will use utils; callables/triggers to be added next iteration
 export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRecommendedContacts, apolloPing, apolloPingHttp } from './apolloIntegration';
 // RE-ENABLED WITH FIXES - USING SAFE VERSION
-export { syncApolloHeadquartersLocation } from './safeSyncApolloHeadquartersLocation';
+export { syncApolloHeadquartersLocation } from './syncApolloHeadquartersLocationDisabled';
+export { syncApolloHeadquartersLocationCallable } from './syncApolloHeadquartersLocationCallable';
 export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
@@ -10468,7 +10487,7 @@ export {
   getCircuitBreakerStatus
 } from './emergencyTriggerDisable';
 // Safe version of AI log trigger to prevent infinite loops
-export { firestoreLogAILogCreated } from './emergencyTriggerDisable';
+export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 // Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED
 // export { processAILog } from './safeAiEngineProcessor';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';

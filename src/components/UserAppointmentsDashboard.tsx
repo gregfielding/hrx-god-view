@@ -98,7 +98,7 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
       
       // First, try to get Google Calendar events
       try {
-        const listCalendarEvents = httpsCallable(functions, 'listCalendarEvents');
+        const listCalendarEvents = httpsCallable(functions, 'listCalendarEventsOptimized');
         const calendarResult = await listCalendarEvents({
           userId,
           maxResults: 50,
@@ -282,7 +282,7 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
     try {
       // First check if user is connected to Google Calendar
       console.log('🔍 Checking calendar status...');
-      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatus');
+      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
       const statusResult = await getCalendarStatus({ userId });
       const statusData = statusResult.data as any;
       

@@ -83,9 +83,11 @@ import {
   Close as CloseIcon,
   RocketLaunch as RocketLaunchIcon,
   AccountTree as AccountTreeIcon,
+  CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import SalesCoach from '../../components/SalesCoach';
+import LogActivityDialog from '../../components/LogActivityDialog';
 import {
   collection,
   doc,
@@ -298,7 +300,6 @@ const getActivityTypeColor = (type: string): string => {
   };
   return colors[type] || '#6B7280'; // Gray fallback
 };
-
 const CompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
   const { tenantId, currentUser } = useAuth();
@@ -345,6 +346,8 @@ const CompanyDetails: React.FC = () => {
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
   const [patternAlerts, setPatternAlerts] = useState<Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}>>([]);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
+  const [logActivityLoading, setLogActivityLoading] = useState(false);
 
   // Apollo data processing function
   const processApolloData = useCallback(async (apolloData: any) => {
@@ -622,15 +625,16 @@ const CompanyDetails: React.FC = () => {
       const loadSalespeople = async () => {
         setSalespeopleLoading(true);
         try {
-          // Use Firebase Function to get salespeople (has admin privileges)
-          const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
-          const result = await getSalespeople({ tenantId });
-          const data = result.data as { salespeople: any[] };
-          setSalespeople(data.salespeople || []);
+          // Direct Firestore query instead of callable to avoid function overuse
+          const usersRef = collection(db, 'users');
+          const q = query(usersRef as any, where('crm_sales', '==', true));
+          const snap = await getDocs(q as any);
+          const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+          // Optional: filter to tenant if user records carry tenantIds map
+          const filtered = list.filter((u: any) => !u.tenantIds || u.tenantIds[tenantId]);
+          setSalespeople(filtered);
         } catch (err) {
           console.error('Error loading salespeople:', err);
-          // If we can't load salespeople, just set an empty array
-          // This prevents the error from breaking the entire component
           setSalespeople([]);
         } finally {
           setSalespeopleLoading(false);
@@ -821,6 +825,30 @@ const CompanyDetails: React.FC = () => {
         
         if (resultData.status === 'ok') {
           setSuccess('Company enhanced with Apollo data successfully!');
+          
+          // Now manually trigger headquarters location sync since the Firestore trigger is disabled
+          try {
+            console.log('🔄 Triggering manual headquarters location sync after successful enrichment');
+            const syncHeadquarters = httpsCallable(functions, 'syncApolloHeadquartersLocationCallable');
+            const syncResult = await syncHeadquarters({
+              tenantId,
+              companyId: company.id
+            });
+            
+            const syncData = syncResult.data as any;
+            if (syncData.success) {
+              console.log('✅ Headquarters location sync completed:', syncData.message);
+              // Optionally show success message for location sync
+              // setSuccess(prev => prev + ' Headquarters location created.');
+            } else {
+              console.log('ℹ️ Headquarters location sync result:', syncData.message);
+              // Don't show error since this is optional and the main enrichment succeeded
+            }
+          } catch (syncError) {
+            console.log('ℹ️ Headquarters location sync failed (non-critical):', syncError);
+            // Don't show error since this is optional and the main enrichment succeeded
+          }
+          
         } else if (resultData.status === 'error') {
           setError(resultData.message || 'Failed to enhance company with Apollo data');
         } else {
@@ -848,6 +876,43 @@ const CompanyDetails: React.FC = () => {
       setError('Failed to enhance company with AI. Please try again.');
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  // Log Activity Handler
+  const handleLogActivity = async (taskData: any) => {
+    setLogActivityLoading(true);
+    try {
+      // Import TaskService dynamically to avoid circular dependencies
+      const { TaskService } = await import('../../utils/taskService');
+      const taskService = TaskService.getInstance();
+      
+      // Ensure the company is always associated with the activity
+      const activityData = {
+        ...taskData,
+        tenantId,
+        status: 'completed',
+        completedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        associations: {
+          ...taskData.associations,
+          companies: [company.id], // Always associate with the current company
+          // Keep any other associations (contacts, salespeople, etc.) that were selected
+        }
+      };
+      
+      // Create the task as completed
+      await taskService.createTask(activityData);
+      
+      setShowLogActivityDialog(false);
+      // Optionally refresh any task-related data
+      setSuccess('Activity logged successfully');
+    } catch (error) {
+      console.error('Error logging activity:', error);
+      setError('Failed to log activity');
+    } finally {
+      setLogActivityLoading(false);
     }
   };
 
@@ -891,7 +956,6 @@ const CompanyDetails: React.FC = () => {
       </Box>
     );
   }
-
   return (
     <Box sx={{ p: 0 }}>
       {/* Breadcrumbs */}
@@ -1327,6 +1391,19 @@ const CompanyDetails: React.FC = () => {
               </Button>
               <Button
                 variant="contained"
+                startIcon={<CheckCircleIcon />}
+                onClick={() => setShowLogActivityDialog(true)}
+                sx={{ 
+                  bgcolor: 'primary.main',
+                  '&:hover': {
+                    bgcolor: 'primary.dark'
+                  }
+                }}
+              >
+                Log Activity
+              </Button>
+              <Button
+                variant="contained"
                 startIcon={<RocketLaunchIcon />}
                 onClick={handleEnhanceWithAI}
                 disabled={aiLoading}
@@ -1577,12 +1654,6 @@ const CompanyDetails: React.FC = () => {
 />
       )}
       
-      {tabValue === 1 && (
-        <Box sx={{ mt: 0, mb: 0 }}>
-          <LocationsTab company={company} currentTab={tabValue} />
-        </Box>
-      )}
-      
       {tabValue === 2 && (
         <ContactsTab contacts={contacts} company={company} locations={[]} />
       )}
@@ -1686,6 +1757,18 @@ const CompanyDetails: React.FC = () => {
           // Optionally refresh notes or trigger any updates
           console.log('Note added successfully');
         }}
+      />
+
+      {/* Log Activity Dialog */}
+      <LogActivityDialog
+        open={showLogActivityDialog}
+        onClose={() => setShowLogActivityDialog(false)}
+        onSubmit={handleLogActivity}
+        loading={logActivityLoading}
+        salespeople={salespeople}
+        contacts={contacts}
+        currentUserId={currentUser?.uid || ''}
+        tenantId={tenantId}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -2353,7 +2436,6 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
     <Box>{children}</Box>
   </Box>
 );
-
 // Component to get company name for display
 const CompanyNameDisplay: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
   const [name, setName] = useState<string>('');
@@ -3460,7 +3542,6 @@ const CompanyDashboardTab: React.FC<{
       </Grid>
   );
 };
-
 const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, tenantId }) => {
   const [aiLoading, setAiLoading] = useState(false);
   const [logoLoading, setLogoLoading] = useState(false);
@@ -3842,7 +3923,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
           const discoverUrls = httpsCallable(functions, 'discoverCompanyUrls');
           const urlResult = await discoverUrls({
             companyName,
-            companyId: company.id,
+          companyId: company.id,
             tenantId
           });
           
@@ -3933,7 +4014,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
           enhancedData.industry = '44';
           sizeGuess = '51-100';
           revenueGuess = '$10M-$50M';
-        } else {
+            } else {
           // Default for general business
           enhancedData.industry = '55'; // Professional, Scientific, and Technical Services
           sizeGuess = '51-100';
@@ -4069,9 +4150,8 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       console.error('Error enhancing with AI:', err);
       setError('Failed to enhance with AI. Please try again.');
     }
-    setAiLoading(false);
+      setAiLoading(false);
   };
-
   return (
     <Grid container spacing={3}>
       {/* Core Identity */}
@@ -5044,7 +5124,6 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
           </Box>
         </Box>
       )}
-
       {/* Locations Table */}
       {locations.length > 0 ? (
         <Box px={0} pb={3}>
@@ -5494,8 +5573,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
         setError(errorMessage);
       }
     }
-  };
-  
+};
   return (
     <>
       <Box px={0} pb={4}>

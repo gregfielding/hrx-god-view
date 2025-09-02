@@ -39,7 +39,7 @@ const GoogleCalendarConnection: React.FC<GoogleCalendarConnectionProps> = ({
   const [authUrl, setAuthUrl] = useState<string | null>(null);
 
   const functions = getFunctions();
-  const getCalendarStatus = httpsCallable(functions, 'getCalendarStatus');
+  const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
   const getCalendarAuthUrl = httpsCallable(functions, 'getCalendarAuthUrl');
   const disconnectCalendar = httpsCallable(functions, 'disconnectCalendar');
 

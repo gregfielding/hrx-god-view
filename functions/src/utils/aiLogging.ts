@@ -1,4 +1,5 @@
 import * as admin from 'firebase-admin';
+import { logAIActionOptimized, shouldLogEvent, checkRateLimiting } from '../aiLoggingOptimization';
 
 const db = admin.firestore();
 
@@ -25,7 +26,7 @@ function sanitizeForFirestore(input: any): any {
 
 /**
  * AI Logging Utility - Creates AI logs for processing by the AI engine
- * This function is used by various AI engines to log their activities
+ * This function is now optimized to prevent loops and reduce unnecessary logging
  */
 export const logAIAction = async (logData: {
   eventType: string;
@@ -53,97 +54,20 @@ export const logAIAction = async (logData: {
   tokensOut?: number;
   cacheHit?: boolean;
   requestId?: string;
-  sourceModule?: string; // Added for cost containment
+  sourceModule?: string;
 }): Promise<string> => {
-  // 🚨 EMERGENCY COST CONTAINMENT: Aggressive sampling to reduce logs by 99%
-  
-  // 1. Skip low-urgency events entirely (urgencyScore < 7)
-  if (logData.urgencyScore < 7) {
-    console.log(`🚨 AI Logging blocked: Low urgency score ${logData.urgencyScore} for ${logData.eventType}`);
-    return 'blocked_low_urgency';
-  }
-  
-  // 2. Skip non-critical event types
-  const criticalEvents = [
-    'dealCoach.analyze',
-    'dealCoach.chat',
-    'ai_log.created',
-    'ai_log.updated',
-    'ai_log.deleted'
-  ];
-  
-  if (!criticalEvents.some(event => logData.eventType?.includes(event))) {
-    console.log(`🚨 AI Logging blocked: Non-critical event type ${logData.eventType}`);
-    return 'blocked_non_critical';
-  }
-  
-  // 3. Aggressive sampling: only log 1% of events (99% blocked)
-  if (Math.random() > 0.01) {
-    console.log(`🚨 AI Logging sampled out: ${logData.eventType} (1% sampling)`);
-    return 'sampled_out';
-  }
-  
-  // 4. Skip if sourceModule is FirestoreTrigger to prevent loops
-  if (logData.sourceModule === 'FirestoreTrigger') {
-    console.log(`🚨 AI Logging blocked: FirestoreTrigger source to prevent loops`);
-    return 'blocked_firestore_trigger';
-  }
-  
+  // Use the new optimized logging system
   try {
-    const logId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    const aiLogDataRaw = {
-      eventType: logData.eventType,
-      targetType: logData.targetType,
-      targetId: logData.targetId,
-      reason: logData.reason,
-      contextType: logData.contextType,
-      aiTags: logData.aiTags,
-      urgencyScore: logData.urgencyScore,
-      inputPrompt: logData.inputPrompt || '',
-      composedPrompt: logData.composedPrompt || '',
-      aiResponse: logData.aiResponse || '',
-      success: logData.success !== undefined ? logData.success : true,
-      latencyMs: logData.latencyMs || 0,
-      errorMessage: logData.errorMessage || '',
-      tenantId: logData.tenantId || '',
-      userId: logData.userId || '',
-      associations: logData.associations || {},
-      metadata: logData.metadata || {},
-      aiRelevant: true,
-      processed: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      processingStartedAt: null,
-      processingCompletedAt: null,
-      engineTouched: [],
-      processingResults: [],
-      errors: [],
-      promptHash: logData.promptHash || '',
-      promptVersion: logData.promptVersion || '',
-      schemaVersion: logData.schemaVersion || '',
-      model: logData.model || '',
-      tokensIn: logData.tokensIn || 0,
-      tokensOut: logData.tokensOut || 0,
-      cacheHit: logData.cacheHit ?? false,
-      requestId: logData.requestId || '',
-      _costContainment: {
-        sampled: true,
-        originalUrgencyScore: logData.urgencyScore,
-        timestamp: new Date().toISOString()
-      }
-    };
-
-    // Sanitize to remove undefined values while preserving serverTimestamp sentinel
-    const aiLogData = sanitizeForFirestore(aiLogDataRaw);
-
-    await db.collection('ai_logs').doc(logId).set(aiLogData);
-    
-    console.log(`✅ AI log created (EMERGENCY MODE): ${logId} - ${logData.eventType}`);
-    return logId;
-    
+    const logId = await logAIActionOptimized(logData);
+    if (logId) {
+      return logId;
+    } else {
+      // If optimized logging filtered it out, return a blocked identifier
+      return 'blocked_optimized_filtering';
+    }
   } catch (error) {
-    console.error('❌ Error creating AI log:', error);
-    throw error;
+    console.error('Error in optimized AI logging:', error);
+    return 'error_optimized_logging';
   }
 };
 

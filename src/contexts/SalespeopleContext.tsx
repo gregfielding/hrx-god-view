@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { collection, query, where, getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from './AuthContext';
 
 interface Salesperson {
@@ -29,16 +30,145 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
   const { activeTenant } = useAuth();
   const tenantId = activeTenant?.id;
   const [salespeople, setSalespeople] = useState<Salesperson[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [cache, setCache] = useState<Map<string, { data: Salesperson[]; timestamp: number }>>(new Map());
-  const [lastFetch, setLastFetch] = useState<number>(0);
+  const [unsubscribe, setUnsubscribe] = useState<Unsubscribe | null>(null);
 
-  const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache (increased)
-  const MIN_FETCH_INTERVAL = 60 * 1000; // 60 seconds minimum between fetches (increased)
+  const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes cache (much longer since we're using real-time updates)
+  const MIN_FETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes minimum between manual fetches
 
-  const functions = getFunctions();
-  const getSalespeopleForTenantFunction = httpsCallable(functions, 'getSalespeopleForTenant');
+  // Simple Firestore query function - no more expensive Firebase function calls
+  const fetchSalespeopleFromFirestore = async (targetTenantId: string): Promise<Salesperson[]> => {
+    try {
+      console.log('🔍 Fetching salespeople from Firestore for tenant:', targetTenantId);
+      
+      // Simple query: get all users with crm_sales: true
+      const usersRef = collection(db, 'users');
+      const q = query(
+        usersRef,
+        where('crm_sales', '==', true)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const allUsers = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Filter for users in this tenant (in memory filtering is fast for reasonable user counts)
+      const salespeople = allUsers.filter((user: any) => {
+        // Check if user has direct tenantId match
+        if (user.tenantId === targetTenantId) return true;
+        
+        // Check if user has tenantId in tenantIds array
+        if (user.tenantIds && Array.isArray(user.tenantIds) && user.tenantIds.includes(targetTenantId)) {
+          return true;
+        }
+        
+        // Check if user has tenantId in tenantIds object (new structure)
+        if (user.tenantIds && typeof user.tenantIds === 'object' && !Array.isArray(user.tenantIds) && user.tenantIds[targetTenantId]) {
+          return true;
+        }
+        
+        return false;
+      });
+      
+      console.log(`✅ Found ${salespeople.length} salespeople for tenant ${targetTenantId}`);
+      
+      // Map to response format
+      const result = salespeople.map((user: any) => ({
+        id: user.id,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || '',
+        jobTitle: user.jobTitle || '',
+        crm_sales: user.crm_sales || false
+      }));
+      
+      return result;
+      
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch salespeople from Firestore';
+      console.error('❌ Error fetching salespeople from Firestore:', errorMessage);
+      throw new Error(errorMessage);
+    }
+  };
+
+  // Set up real-time listener for salespeople changes
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    console.log('🔄 Setting up real-time listener for salespeople in tenant:', tenantId);
+    
+    // Clean up previous listener
+    if (unsubscribe) {
+      unsubscribe();
+    }
+    
+    try {
+      // Query for salespeople in this tenant
+      const usersRef = collection(db, 'users');
+      const q = query(
+        usersRef,
+        where('crm_sales', '==', true)
+      );
+      
+      // Set up real-time listener
+      const unsubscribeFn = onSnapshot(q, (querySnapshot) => {
+        const allUsers = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Filter for users in this tenant
+        const salespeople = allUsers.filter((user: any) => {
+          if (user.tenantId === tenantId) return true;
+          if (user.tenantIds && Array.isArray(user.tenantIds) && user.tenantIds.includes(tenantId)) {
+            return true;
+          }
+          if (user.tenantIds && typeof user.tenantIds === 'object' && !Array.isArray(user.tenantIds) && user.tenantIds[tenantId]) {
+            return true;
+          }
+          return false;
+        });
+        
+        // Map to response format
+        const result = salespeople.map((user: any) => ({
+          id: user.id,
+          firstName: user.firstName || '',
+          lastName: user.lastName || '',
+          email: user.email || '',
+          jobTitle: user.jobTitle || '',
+          crm_sales: user.crm_sales || false
+        }));
+        
+        console.log(`🔄 Real-time update: ${result.length} salespeople for tenant ${tenantId}`);
+        setSalespeople(result);
+        setLoading(false);
+        setError(null);
+        
+        // Update cache
+        setCache(prev => new Map(prev).set(tenantId, {
+          data: result,
+          timestamp: Date.now()
+        }));
+        
+      }, (error) => {
+        console.error('❌ Real-time listener error:', error);
+        setError('Failed to listen for salespeople updates');
+        setLoading(false);
+      });
+      
+      setUnsubscribe(() => unsubscribeFn);
+      
+    } catch (error) {
+      console.error('❌ Error setting up real-time listener:', error);
+      setError('Failed to set up real-time listener');
+      setLoading(false);
+    }
+    
+    // Cleanup function
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [tenantId]);
 
   const fetchSalespeople = async (targetTenantId: string): Promise<Salesperson[]> => {
     const now = Date.now();
@@ -50,37 +180,23 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
       return cached.data;
     }
 
-    // Check if we recently fetched (rate limiting)
-    if (now - lastFetch < MIN_FETCH_INTERVAL) {
-      console.log('⏱️ Rate limiting: skipping fetch, using cached data');
-      return cached?.data || [];
-    }
-
     try {
       setLoading(true);
       setError(null);
       
-      console.log('🔍 Fetching salespeople for tenant:', targetTenantId);
+      // Use simple Firestore query instead of expensive Firebase function
+      const salespeopleData = await fetchSalespeopleFromFirestore(targetTenantId);
       
-      const result = await getSalespeopleForTenantFunction({ tenantId: targetTenantId });
-      const data = result.data as any;
+      // Update cache
+      setCache(prev => new Map(prev).set(targetTenantId, {
+        data: salespeopleData,
+        timestamp: now
+      }));
       
-      if (data.salespeople) {
-        const salespeopleData = data.salespeople as Salesperson[];
-        
-        // Update cache
-        setCache(prev => new Map(prev).set(targetTenantId, {
-          data: salespeopleData,
-          timestamp: now
-        }));
-        
-        setLastFetch(now);
-        console.log('✅ Salespeople fetched and cached:', salespeopleData.length, 'people');
-        
-        return salespeopleData;
-      } else {
-        throw new Error('Invalid response format');
-      }
+      console.log('✅ Salespeople fetched and cached:', salespeopleData.length, 'people');
+      
+      return salespeopleData;
+      
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch salespeople';
       console.error('❌ Error fetching salespeople:', errorMessage);
@@ -106,8 +222,8 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
       return cached.data;
     }
     
-    // Otherwise fetch it
-    return await fetchSalespeople(targetTenantId);
+    // Otherwise fetch it using simple Firestore query
+    return await fetchSalespeopleFromFirestore(targetTenantId);
   };
 
   const refreshSalespeople = async (): Promise<void> => {
@@ -119,18 +235,11 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
         return newCache;
       });
       
-      // Fetch fresh data
-      const freshData = await fetchSalespeople(tenantId);
+      // Fetch fresh data using simple Firestore query
+      const freshData = await fetchSalespeopleFromFirestore(tenantId);
       setSalespeople(freshData);
     }
   };
-
-  // Auto-fetch when tenantId changes
-  useEffect(() => {
-    if (tenantId) {
-      fetchSalespeople(tenantId).then(setSalespeople);
-    }
-  }, [tenantId]);
 
   const value: SalespeopleContextType = {
     salespeople,

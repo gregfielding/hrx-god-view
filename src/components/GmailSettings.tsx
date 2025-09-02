@@ -54,7 +54,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
   const [authUrl, setAuthUrl] = useState<string>('');
 
   // Firebase Functions
-  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatus');
+  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const syncGmailEmailsFn = httpsCallable(functions, 'syncGmailEmails');

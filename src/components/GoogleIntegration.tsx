@@ -98,12 +98,12 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   });
 
   // Firebase Functions
-  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatus');
-  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatus');
+  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
+  const getCalendarStatusFn = httpsCallable(functions, 'getCalendarStatusOptimized');
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const disconnectCalendarFn = httpsCallable(functions, 'disconnectCalendar');
-  const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEvents');
+  const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEventsOptimized');
   const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
   
   // Sync functions
@@ -208,7 +208,9 @@ const GoogleIntegration: React.FC<GoogleIntegrationProps> = ({ tenantId }) => {
   };
 
   useEffect(() => {
-    loadGoogleStatus();
+    if (user?.uid) {
+      loadGoogleStatus();
+    }
   }, [user?.uid]);
 
   useEffect(() => {
