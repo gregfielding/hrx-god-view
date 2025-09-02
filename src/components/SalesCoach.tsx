@@ -28,6 +28,7 @@ interface SalesCoachProps {
   key?: string; // Add key prop to detect when to start new conversation
   height?: string | number; // Allow custom height for widget usage
   compact?: boolean; // Compact mode for smaller widgets
+  hideHeader?: boolean; // Hide internal header/buttons when embedded under a parent header
 }
 
 interface CoachMessage {
@@ -48,7 +49,8 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
   associations, 
   onStartNew,
   height = '450px',
-  compact = false
+  compact = false,
+  hideHeader = false
 }) => {
   const { user } = useAuth();
   const [summary, setSummary] = useState<string>('');
@@ -506,6 +508,7 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
       borderColor: 'divider'
     }}>
       {/* Header */}
+      {!hideHeader && (
       <Box sx={{ 
         p: 2, 
         borderBottom: '1px solid', 
@@ -539,6 +542,7 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
           </Button>
         </Box>
       </Box>
+      )}
 
         {/* Chat */}
         <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: compact ? '300px' : height, minHeight: compact ? 250 : 350 }}>

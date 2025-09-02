@@ -838,11 +838,18 @@ const CompanyDetails: React.FC = () => {
             const syncData = syncResult.data as any;
             if (syncData.success) {
               console.log('✅ Headquarters location sync completed:', syncData.message);
-              // Optionally show success message for location sync
-              // setSuccess(prev => prev + ' Headquarters location created.');
+              setSuccess('Company enhanced with Apollo data and headquarters location created successfully!');
+              
+              // Trigger a page refresh to show the new headquarters location
+              setTimeout(() => {
+                window.location.reload();
+              }, 2000);
+              
             } else {
               console.log('ℹ️ Headquarters location sync result:', syncData.message);
-              // Don't show error since this is optional and the main enrichment succeeded
+              if (syncData.message?.includes('already exists')) {
+                setSuccess('Company enhanced with Apollo data successfully! (Headquarters location already exists)');
+              }
             }
           } catch (syncError) {
             console.log('ℹ️ Headquarters location sync failed (non-critical):', syncError);
@@ -3002,22 +3009,7 @@ const CompanyDashboardTab: React.FC<{
 
           {/* Sales Coach */}
           <Card>
-            <CardHeader 
-              title="Sales Coach" 
-              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              action={
-                <IconButton size="small" onClick={() => {
-                  // This will trigger a new conversation in the SalesCoach component
-                  const event = new CustomEvent('startNewSalesCoachConversation', {
-                    detail: { entityId: company.id }
-                  });
-                  window.dispatchEvent(event);
-                }}>
-                  <AddIcon />
-                </IconButton>
-              }
-            />
-            <CardContent sx={{ p: 0, pt: 0 }}>
+            <CardContent sx={{ p: 0 }}>
               <Box sx={{ height: 650 }}>
                 <SalesCoach 
                   entityType="company"
@@ -3031,6 +3023,7 @@ const CompanyDashboardTab: React.FC<{
                     salespeople: [],
                     locations: []
                   }}
+                  hideHeader
                 />
               </Box>
             </CardContent>

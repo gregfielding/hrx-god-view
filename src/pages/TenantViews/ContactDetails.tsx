@@ -2497,20 +2497,21 @@ const ContactDetails: React.FC = () => {
                   }
                   sx={{ pb: 1 }}
                 />
-                <CardContent sx={{ p: 0, pt: 0 }}>
-                  <Box sx={{ height: 850 }}>
-                    <SalesCoach 
-                      entityType="contact"
-                      entityId={contact.id}
-                      entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
-                      tenantId={tenantId}
-                      contactCompany={company?.companyName || company?.name}
-                      contactTitle={contact.jobTitle || contact.title}
-                      associations={contact.associations}
-                    />
-                  </Box>
-                </CardContent>
-              </Card>
+                <CardContent sx={{ p: 0 }}>
+                 <Box sx={{ height: 850 }}>
+                   <SalesCoach 
+                     entityType="contact"
+                     entityId={contact.id}
+                     entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
+                     tenantId={tenantId}
+                     contactCompany={company?.companyName || company?.name}
+                     contactTitle={contact.jobTitle || contact.title}
+                     associations={contact.associations}
+                     hideHeader
+                   />
+                 </Box>
+                 </CardContent>
+               </Card>
 
               {/* Contact Intelligence */}
               {/* Contact Intelligence - Hidden for now */}
@@ -2702,6 +2703,25 @@ const ContactDetails: React.FC = () => {
           {/* Right Column - Active Salespeople + Recent Activity + Associations */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Professional Summary (shows only if content exists) */}
+              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
+                <Card>
+                  <CardHeader 
+                    title="Professional Summary" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary" 
+                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
+                    >
+                      {String(contact.professionalSummary)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Active Salespeople */}
               <Card>
                 <CardHeader 
