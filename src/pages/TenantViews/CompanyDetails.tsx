@@ -3009,6 +3009,21 @@ const CompanyDashboardTab: React.FC<{
 
           {/* Sales Coach */}
           <Card>
+            <CardHeader 
+              title="Sales Coach" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              action={
+                <IconButton size="small" onClick={() => {
+                  // This will trigger a new conversation in the SalesCoach component
+                  const event = new CustomEvent('startNewSalesCoachConversation', {
+                    detail: { entityId: company.id }
+                  });
+                  window.dispatchEvent(event);
+                }}>
+                  <AddIcon />
+                </IconButton>
+              }
+            />
             <CardContent sx={{ p: 0 }}>
               <Box sx={{ height: 650 }}>
                 <SalesCoach 
