@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert } from '@mui/material';
-import { Close as CloseIcon, Add as AddIcon } from '@mui/icons-material';
+import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert, CircularProgress } from '@mui/material';
+import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -305,6 +305,20 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
 
     return (
     <Box sx={{ p: 0 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h6" fontWeight={700}>
+          Deal Coach
+        </Typography>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={analyze}
+          disabled={analyzing}
+          startIcon={analyzing ? <CircularProgress size={16} /> : <RefreshIcon />}
+        >
+          {analyzing ? 'Analyzing...' : 'Refresh Analysis'}
+        </Button>
+      </Box>
 
         {/* Suggestions */}
         {suggestions.length > 0 && (

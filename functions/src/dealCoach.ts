@@ -299,7 +299,7 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
 // Callable equivalents for easy client access without hosting rewrites
 export const dealCoachAnalyzeCallable = onCall({ 
   cors: true,
-  maxInstances: 2, // Added for cost containment
+  maxInstances: 1, // Reduced from 2 to 1 for cost containment
   timeoutSeconds: 120,
   memory: '512MiB'
 }, async (request) => {
@@ -313,8 +313,8 @@ export const dealCoachAnalyzeCallable = onCall({
     const cacheKey = `coach_analyze_${Buffer.from(paramString).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 32)}`;
     const cacheRef = db.collection('ai_cache').doc(cacheKey);
     
-    // Check cache first with longer TTL for analysis results
-    const CACHE_TTL_MS = 90 * 60 * 1000; // 90 minutes (increased for better cost reduction)
+    // Check cache first with MUCH longer TTL for analysis results
+    const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours (increased significantly for better cost reduction)
     const cached = await cacheRef.get();
     const now = Date.now();
     
@@ -332,7 +332,7 @@ export const dealCoachAnalyzeCallable = onCall({
       }
     }
 
-    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 20 minutes)
+    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 2 hours)
     // This prevents rapid successive calls for the same entity
     const recentCacheKey = `coach_analyze_recent_${dealId}_${stageKey}`;
     const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
@@ -340,11 +340,27 @@ export const dealCoachAnalyzeCallable = onCall({
     
     if (recentCached.exists) {
       const recentData = recentCached.data() as any;
-      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 20 * 60 * 1000) { // 20 minutes (increased for better cost containment)
+      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 2 * 60 * 60 * 1000) { // 2 hours (increased for better cost containment)
         console.log('⏱️ Recent analysis found, returning cached result to prevent rapid calls');
         try {
           const parsed = AnalyzeResponse.parse(recentData.payload);
           return { ...parsed, threadId: dealId, cacheHit: true, recent: true };
+        } catch {}
+      }
+    }
+
+    // ADDITIONAL RATE LIMITING: Check if this deal has been analyzed too recently
+    const rateLimitKey = `coach_analyze_ratelimit_${dealId}`;
+    const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
+    const rateLimitCached = await rateLimitRef.get();
+    
+    if (rateLimitCached.exists) {
+      const rateLimitData = rateLimitCached.data() as any;
+      if (rateLimitData.updatedAt && (now - rateLimitData.updatedAt.toMillis()) < 30 * 60 * 1000) { // 30 minutes rate limit
+        console.log('🚫 Rate limit hit for deal:', dealId, 'returning cached result');
+        try {
+          const parsed = AnalyzeResponse.parse(rateLimitData.payload);
+          return { ...parsed, threadId: dealId, cacheHit: true, rateLimited: true };
         } catch {}
       }
     }
@@ -359,95 +375,65 @@ export const dealCoachAnalyzeCallable = onCall({
     await threadRef.set({
       id: dealId,
       stageKey,
-      model: 'gpt-5-mini',
+      model: 'gpt-4o-mini',
       messages: existingMessages,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
-    // Determine entity type and get appropriate data
-    const isContact = entityType === 'contact';
-    const isCompany = entityType === 'company';
-    
-    let entityData: any = null;
-    let snapshot: any = null;
-
-    if (isContact) {
-      // Get contact data
-      const contactRef = db.doc(`tenants/${tenantId}/crm_contacts/${dealId}`);
-      const contactSnap = await contactRef.get();
-      if (!contactSnap.exists) throw new Error('Contact not found');
-      entityData = contactSnap.data() as any;
-
-      // Build contact snapshot
-      snapshot = {
-        contact: entityData,
-        contactName: entityName || entityData.fullName || entityData.firstName || entityData.lastName,
-        contactCompany: contactCompany || entityData.companyName,
-        contactTitle: contactTitle || entityData.jobTitle || entityData.title,
-        stage: stageKey,
-        messages: existingMessages.slice(-10) // last 10 messages for context
-      };
-    } else if (isCompany) {
-      // Get company data
-      const companyRef = db.doc(`tenants/${tenantId}/crm_companies/${dealId}`);
-      const companySnap = await companyRef.get();
-      if (!companySnap.exists) throw new Error('Company not found');
-      entityData = companySnap.data() as any;
-
-      // Build company snapshot
-      snapshot = {
-        company: entityData,
-        companyName: entityName || entityData.companyName || entityData.name,
-        stage: stageKey,
-        messages: existingMessages.slice(-10) // last 10 messages for context
-      };
-    } else {
-      // Get deal data (default)
-      const dealRef = db.doc(`tenants/${tenantId}/crm_deals/${dealId}`);
-      const dealSnap = await dealRef.get();
-      if (!dealSnap.exists) throw new Error('Deal not found');
-      entityData = dealSnap.data() as any;
-
-      // Build deal snapshot
-      snapshot = {
-        deal: entityData,
-        stage: stageKey,
-        messages: existingMessages.slice(-10) // last 10 messages for context
-      };
+    // Fetch minimal deal snapshot
+    const dealSnap = await db.doc(`tenants/${tenantId}/crm_deals/${dealId}`).get();
+    const deal = dealSnap.exists ? dealSnap.data() : {};
+    const companyId = (deal as any)?.companyId;
+    let company: any = null;
+    if (companyId) {
+      const companySnap = await db.doc(`tenants/${tenantId}/crm_companies/${companyId}`).get();
+      company = companySnap.exists ? companySnap.data() : null;
     }
 
-    // Call OpenAI
-    const apiKey = OPENAI_KEY;
-    let result: any = { summary: `Summary for ${stageKey}.`, suggestions: [] };
-    if (apiKey) {
-      let system = '';
-      if (isContact) {
-        system = 'You are the Sales Coach AI. Analyze the current contact and provide actionable suggestions for engagement. Focus on relationship building, communication strategies, and specific actions the salesperson can take. Keep suggestions practical and specific to the staffing industry.';
-      } else if (isCompany) {
-        system = 'You are the Company Coach AI. Analyze the current company and provide actionable suggestions for business development and relationship building. Focus on company engagement strategies, partnership opportunities, and specific actions the salesperson can take to grow the relationship. Keep suggestions practical and specific to the staffing industry.';
-      } else {
-        system = 'You are the Deal Coach AI. Analyze the current deal stage and provide actionable suggestions. Focus on next steps, potential roadblocks, and specific actions the salesperson can take. Keep suggestions practical and specific to the staffing industry.';
+    // Build snapshot from compact context helper
+    // Reuse compact context from GPT gateway to enrich analysis
+    let compactContext = '';
+    try {
+      const mod = await import('./gptGateway');
+      // @ts-ignore access internal helper
+      if (typeof (mod as any).buildCompactContext === 'function') {
+        compactContext = await (mod as any).buildCompactContext(tenantId, 'system', []);
       }
-      
-      const r = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-5-mini',
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: `Stage: ${stageKey}\nSnapshot: ${JSON.stringify(snapshot)}` }
-          ],
-          temperature: 0.3
-        })
-      });
-      const data: any = await r.json();
-      const raw = data?.choices?.[0]?.message?.content;
+    } catch {}
+    const snapshot = { deal: { id: dealId, stage: stageKey, name: (deal as any)?.name }, company, compactContext };
+    const system = `You are the Deal Coach AI. Given a JSON deal snapshot (deal metadata, stage values, contacts, last activities, AI summary) return a concise summary for the current stage and up to 3 suggestions that push the deal forward. Output strictly valid JSON.`;
+
+    // Call OpenAI with JSON schema
+    let result: any;
+    const apiKey = OPENAI_KEY;
+    if (apiKey) {
       try {
-        result = JSON.parse(raw);
-      } catch {
-        result = { summary: 'No summary available.', suggestions: [] };
+        const r = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: `Stage: ${stageKey}\nSnapshot: ${JSON.stringify(snapshot)}` }
+            ],
+            temperature: 0.3
+          })
+        });
+        const data: any = await r.json();
+        const raw = data?.choices?.[0]?.message?.content;
+        try {
+          result = JSON.parse(raw);
+        } catch {
+          result = { summary: 'No summary available.', suggestions: [] };
+        }
+      } catch (e) {
+        console.error('OpenAI API error:', e);
+        result = { summary: 'Unable to generate analysis at this time.', suggestions: [] };
       }
     } else {
       result = { summary: `Summary for ${stageKey}.`, suggestions: [] };
@@ -456,12 +442,15 @@ export const dealCoachAnalyzeCallable = onCall({
     // Validate via zod
     const parsed = AnalyzeResponse.parse(result);
 
-    // ENHANCED CACHING: Store in both cache locations
-    // Main cache (30 minutes)
+    // ENHANCED CACHING: Store in all cache locations with longer TTL
+    // Main cache (4 hours)
     await cacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     
-    // Recent cache (5 minutes) to prevent rapid successive calls
+    // Recent cache (2 hours) to prevent rapid successive calls
     await recentCacheRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
+    // Rate limit cache (30 minutes) to enforce minimum time between calls
+    await rateLimitRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
     // Log telemetry (best-effort)
     try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}

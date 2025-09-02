@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert } from '@mui/material';
-import { Close as CloseIcon, Add as AddIcon } from '@mui/icons-material';
+import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Button, TextField, Snackbar, Alert, CircularProgress } from '@mui/material';
+import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -440,6 +440,20 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
     <Box sx={{ p: 0 }}>
         {/* Chat */}
         <Box sx={{ display: 'flex', flexDirection: 'column', border: '1px solid', borderColor: 'divider', borderRadius: 1, height: compact ? '300px' : height, minHeight: compact ? 250 : 350 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" fontWeight={700}>
+              Sales Coach
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={analyze}
+              disabled={analyzing}
+              startIcon={analyzing ? <CircularProgress size={16} /> : <RefreshIcon />}
+            >
+              {analyzing ? 'Analyzing...' : 'Refresh Analysis'}
+            </Button>
+          </Box>
           <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
             {messages.map((m, i) => (
               <Box key={i} sx={{ mb: 1, textAlign: m.role === 'user' ? 'right' : 'left' }}>
