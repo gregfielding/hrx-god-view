@@ -297,17 +297,24 @@ export const dealCoachAction = onRequest({ cors: true, region: 'us-central1' }, 
 });
 
 // Callable equivalents for easy client access without hosting rewrites
-export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) => {
+export const dealCoachAnalyzeCallable = onCall({ 
+  cors: true,
+  maxInstances: 2, // Added for cost containment
+  timeoutSeconds: 120,
+  memory: '512MiB'
+}, async (request) => {
   try {
     const { dealId, stageKey, tenantId, entityType, entityName, contactCompany, contactTitle } = request.data || {};
     if (!dealId || !stageKey || !tenantId) throw new Error('Missing dealId, stageKey or tenantId');
 
     // ENHANCED CACHING: Use a more sophisticated cache key that includes all parameters
-    const cacheKey = `coach_analyze_${dealId}_${stageKey}_${entityType || 'deal'}_${entityName || 'default'}_${contactCompany || 'default'}_${contactTitle || 'default'}`;
+    // Hash the parameters to create a shorter, more efficient cache key
+    const paramString = `${dealId}_${stageKey}_${entityType || 'deal'}_${entityName || 'default'}_${contactCompany || 'default'}_${contactTitle || 'default'}`;
+    const cacheKey = `coach_analyze_${Buffer.from(paramString).toString('base64').replace(/[^a-zA-Z0-9]/g, '').substring(0, 32)}`;
     const cacheRef = db.collection('ai_cache').doc(cacheKey);
     
     // Check cache first with longer TTL for analysis results
-    const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes (longer since analysis doesn't change frequently)
+    const CACHE_TTL_MS = 90 * 60 * 1000; // 90 minutes (increased for better cost reduction)
     const cached = await cacheRef.get();
     const now = Date.now();
     
@@ -325,7 +332,7 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
       }
     }
 
-    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 5 minutes)
+    // OPTIMIZATION: Check if we have recent analysis for this entity (within last 20 minutes)
     // This prevents rapid successive calls for the same entity
     const recentCacheKey = `coach_analyze_recent_${dealId}_${stageKey}`;
     const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
@@ -333,7 +340,7 @@ export const dealCoachAnalyzeCallable = onCall({ cors: true }, async (request) =
     
     if (recentCached.exists) {
       const recentData = recentCached.data() as any;
-      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 5 * 60 * 1000) { // 5 minutes
+      if (recentData.updatedAt && (now - recentData.updatedAt.toMillis()) < 20 * 60 * 1000) { // 20 minutes (increased for better cost containment)
         console.log('⏱️ Recent analysis found, returning cached result to prevent rapid calls');
         try {
           const parsed = AnalyzeResponse.parse(recentData.payload);

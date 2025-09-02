@@ -115,6 +115,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, storage , functions } from '../../firebase';
 import FastAssociationsCard from '../../components/FastAssociationsCard';
 import { useAuth } from '../../contexts/AuthContext';
+import { auth } from '../../firebase';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
 import IndustrySelector from '../../components/IndustrySelector';
 import { geocodeAddress } from '../../utils/geocodeAddress';
@@ -799,8 +800,16 @@ const CompanyDetails: React.FC = () => {
 
       // Use the Apollo-powered company enrichment function
       try {
-        const enrichCompany = httpsCallable(functions, 'enrichCompanyOnDemand');
-        const result = await enrichCompany({
+        // Get the current user's ID token for authentication
+        if (!currentUser) {
+          throw new Error('User not authenticated');
+        }
+        
+        const idToken = await currentUser.getIdToken();
+        
+        // Use the callable function
+        const enrichCompanyOnDemand = httpsCallable(functions, 'enrichCompanyOnDemand');
+        const result = await enrichCompanyOnDemand({
           tenantId,
           companyId: company.id,
           mode: 'full', // Use full enrichment mode for Apollo data
@@ -5071,6 +5080,17 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                     borderBottom: '1px solid #E5E7EB',
                     py: 1.5
                   }}>
+                    Code
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
                     Address
                   </TableCell>
                   <TableCell sx={{
@@ -5152,6 +5172,27 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                       }}>
                         {location.name}
                       </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      {location.code ? (
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#374151",
+                          fontSize: '0.875rem',
+                          fontWeight: 500,
+                          fontFamily: 'monospace'
+                        }}>
+                          {location.code}
+                        </Typography>
+                      ) : (
+                        <Typography sx={{
+                          variant: "body2",
+                          color: "#9CA3AF",
+                          fontSize: '0.875rem'
+                        }}>
+                          -
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
                       <Typography sx={{
@@ -5637,7 +5678,11 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                       {(() => {
                         if (contact.locationId) {
                           const location = companyLocations.find(loc => loc.id === contact.locationId);
-                          return location?.nickname || location?.name || 'Unknown Location';
+                          if (location) {
+                            const locationName = location?.nickname || location?.name || 'Unknown Location';
+                            const locationCode = location.code ? ` [${location.code}]` : '';
+                            return `${locationName}${locationCode}`;
+                          }
                         }
                         return 'No location';
                       })()}
@@ -6310,7 +6355,11 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                           
                           if (locationId) {
                             const location = companyLocations.find(loc => loc.id === locationId);
-                            return location?.nickname || location?.name || 'Unknown Location';
+                            if (location) {
+                              const locationName = location?.nickname || location?.name || 'Unknown Location';
+                              const locationCode = location.code ? ` [${location.code}]` : '';
+                              return `${locationName}${locationCode}`;
+                            }
                           }
                           return 'No location';
                         })()}
@@ -6427,7 +6476,7 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                   </MenuItem>
                   {companyLocations.map((location) => (
                     <MenuItem key={location.id} value={location.id}>
-                      {location.name}
+                      {location.name}{location.code ? ` [${location.code}]` : ''}
                     </MenuItem>
                   ))}
                 </Select>

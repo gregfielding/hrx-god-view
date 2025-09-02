@@ -34,6 +34,9 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
   const [conversations, setConversations] = useState<Array<{ id: string; title: string; at: Date; messages: any[] }>>([]);
 
   const listRef = useRef<HTMLDivElement>(null);
+  
+  // Debounce analysis to prevent rapid successive calls
+  const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
 
 
 
@@ -105,8 +108,7 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
   }, [messages, threadKey]);
 
   // Debounce analysis to prevent rapid successive calls
-  const [lastAnalyzeTime, setLastAnalyzeTime] = useState(0);
-  const ANALYZE_DEBOUNCE_DELAY = 10000; // 10 seconds debounce
+  const ANALYZE_DEBOUNCE_DELAY = 15000; // 15 seconds debounce (increased for better cost containment)
 
   const analyze = async () => {
     // Debounce rapid analyze calls

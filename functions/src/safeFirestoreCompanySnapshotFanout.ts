@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import * as functionsV1 from 'firebase-functions';
-import { createSafeFirestoreTrigger, SafeFunctionUtils, CostTracker } from './utils/safeFunctionTemplate';
+import { createSafeFirestoreTrigger, SafeFunctionUtils, CostTracker, onlyIgnoredFieldsChanged } from './utils/safeFunctionTemplate';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -14,8 +14,15 @@ const SAFE_CONFIG = {
   MAX_EXECUTION_TIME_MS: 55000, // 55 seconds (under 60s limit)
   MAX_RECURSIVE_CALLS: 3,
   BATCH_DELAY_MS: 200, // Small backoff between batches
-  RELEVANT_FIELDS: ['companyName', 'name', 'industry', 'city', 'state', 'companyPhone', 'phone', 'companyUrl', 'website', 'logo'],
-  TAG: 'firestoreCompanySnapshotFanout@v2'
+  // EMERGENCY: More restrictive field filtering to prevent excessive triggers
+  RELEVANT_FIELDS: ['companyName', 'name', 'industry'], // Reduced from 10 fields to 3 most important
+  TAG: 'firestoreCompanySnapshotFanout@v3',
+  // EMERGENCY: Aggressive filtering to stop runaway costs
+  ENABLED: false, // TEMPORARILY DISABLED - enable only when needed
+  // Sampling: only process 10% of company updates
+  SAMPLING_RATE: 0.1, // 10% sampling
+  // Ignore fields that don't require fanout updates
+  IGNORE_FIELDS: ['updatedAt', 'lastUpdated', '_processingBy', '_processingAt', 'activeSalespeopleUpdatedAt', 'lastEnrichedAt', 'enrichmentVersion', 'leadScore', 'leadSignals']
 };
 
 /**
@@ -187,6 +194,18 @@ const safeTrigger = createSafeFirestoreTrigger(
     const abort = AbortSignal.timeout(SAFE_CONFIG.MAX_EXECUTION_TIME_MS);
 
     try {
+      // EMERGENCY: Function is temporarily disabled
+      if (!SAFE_CONFIG.ENABLED) {
+        console.log('Company snapshot fanout is temporarily disabled');
+        return;
+      }
+
+      // Apply sampling: only process 10% of company updates
+      if (Math.random() > SAFE_CONFIG.SAMPLING_RATE) {
+        console.log('Skipping company snapshot fanout due to sampling');
+        return;
+      }
+
       // Check if dual write is enabled
       if (!isDualWriteEnabled()) {
         console.log('Dual write disabled, skipping company snapshot fanout');
@@ -206,6 +225,12 @@ const safeTrigger = createSafeFirestoreTrigger(
       // Self-write ignore per playbook §2.3
       if (after._processedBy === SAFE_CONFIG.TAG) {
         console.log('Ignoring self-write for company snapshot fanout');
+        return;
+      }
+      
+      // Ignore fields that don't require fanout updates
+      if (onlyIgnoredFieldsChanged(before, after, SAFE_CONFIG.IGNORE_FIELDS)) {
+        console.log('Only ignored fields changed, skipping company snapshot fanout');
         return;
       }
 
@@ -245,7 +270,7 @@ const safeTrigger = createSafeFirestoreTrigger(
   {
     timeoutSeconds: Math.floor(SAFE_CONFIG.MAX_EXECUTION_TIME_MS / 1000),
     memory: '512MiB',
-    maxInstances: 2
+    maxInstances: 1 // Reduced from 2 to prevent concurrent executions
   }
 );
 

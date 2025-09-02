@@ -315,8 +315,22 @@ async function updateCompanyDataSafely(
   return { updatedFields, snapshotId: snapId };
 }
 
+// Cache for firmographics queries
+const firmographicsCache = new Map<string, { data: any; timestamp: number }>();
+const FIRMOGRAPHICS_CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes cache
+
+// Cleanup cache every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of firmographicsCache.entries()) {
+    if (now - value.timestamp > FIRMOGRAPHICS_CACHE_DURATION_MS) {
+      firmographicsCache.delete(key);
+    }
+  }
+}, 10 * 60 * 1000);
+
 /**
- * Safe version of getFirmographics with hardening playbook compliance
+ * Safe version of getFirmographics with hardening playbook compliance and caching
  */
 export const getFirmographics = onCall(
   {
@@ -342,6 +356,17 @@ export const getFirmographics = onCall(
 
       // Validate input
       const { tenantId, companyId } = validateInput(request.data);
+
+      // Create cache key
+      const cacheKey = `firmographics_${tenantId}_${companyId}`;
+      
+      // Check cache first
+      const cached = firmographicsCache.get(cacheKey);
+      const now = Date.now();
+      if (cached && (now - cached.timestamp) < FIRMOGRAPHICS_CACHE_DURATION_MS) {
+        console.log('Firmographics served from cache for company:', companyId);
+        return cached.data;
+      }
 
       // Check abort signal
       if (abort.aborted) {
@@ -400,7 +425,7 @@ export const getFirmographics = onCall(
       const costSummary = CostTracker.getCostSummary();
       console.log(`Firmographics retrieved for ${tenantId}, CompanyId: ${companyId}, Cost: $${costSummary.estimatedCost.toFixed(4)}`);
 
-      return { 
+      const result = { 
         ok: true, 
         updatedFields, 
         snapshotId,
@@ -412,6 +437,11 @@ export const getFirmographics = onCall(
           cost: costSummary.estimatedCost
         }
       };
+
+      // Cache the result
+      firmographicsCache.set(cacheKey, { data: result, timestamp: now });
+
+      return result;
 
     } catch (error) {
       console.error('Error in getFirmographics:', error);

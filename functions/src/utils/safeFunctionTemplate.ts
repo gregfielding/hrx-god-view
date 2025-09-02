@@ -198,6 +198,37 @@ export class SafeFunctionUtils {
   }
 }
 
+// Remote control (kill switch) with short-lived cache
+class RemoteControl {
+  private static lastFetchedAt = 0;
+  private static cachedBreaker = false;
+  private static readonly CACHE_TTL_MS = 30_000; // 30s
+  private static readonly DOC_PATH = { collection: 'runtime', doc: 'control' };
+
+  static async isCircuitBreakerOn(): Promise<boolean> {
+    // Environment override always wins
+    if (process.env.CIRCUIT_BREAKER === 'on') return true;
+
+    const now = Date.now();
+    if (now - this.lastFetchedAt < this.CACHE_TTL_MS) {
+      return this.cachedBreaker;
+    }
+
+    try {
+      const snap = await db.collection(this.DOC_PATH.collection).doc(this.DOC_PATH.doc).get();
+      const on = !!snap.data()?.circuitBreaker;
+      this.cachedBreaker = on;
+      this.lastFetchedAt = now;
+      return on;
+    } catch (err) {
+      // Fail-safe: if we cannot read remote control, default to previous cached value (usually false)
+      console.warn('RemoteControl read failed; using cached breaker state:', (err as any)?.message || err);
+      this.lastFetchedAt = now;
+      return this.cachedBreaker;
+    }
+  }
+}
+
 // Safe callable function wrapper
 export function createSafeCallableFunction<T = any, R = any>(
   handler: (data: T, context: any) => Promise<R>
@@ -205,16 +236,25 @@ export function createSafeCallableFunction<T = any, R = any>(
   return onCall({
     timeoutSeconds: SAFETY_CONFIG.MAX_EXECUTION_TIME,
     memory: '256MiB',
-    maxInstances: 10
+    maxInstances: 2
   }, async (request) => {
     SafeFunctionUtils.resetCounters();
     
     try {
+      // Remote kill switch
+      if (await RemoteControl.isCircuitBreakerOn()) {
+        throw new HttpsError('unavailable', 'Service temporarily paused');
+      }
       SafeFunctionUtils.checkSafetyLimits();
       return await handler(request.data, request);
     } catch (error) {
       console.error('Safe function error:', error);
-      throw new HttpsError('internal', 'Function execution failed');
+      // Preserve structured HttpsError; otherwise surface message to the client
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      const message = (error as any)?.message || 'Function execution failed';
+      throw new HttpsError('internal', message);
     }
   });
 }
@@ -231,7 +271,7 @@ export function createSafeFirestoreTrigger<T = any>(
   const defaultOptions = {
     timeoutSeconds: SAFETY_CONFIG.MAX_EXECUTION_TIME,
     memory: '256MiB',
-    maxInstances: 10,
+    maxInstances: 2,
     ...options
   };
 
@@ -241,6 +281,7 @@ export function createSafeFirestoreTrigger<T = any>(
       const callCount = SafeFunctionUtils.incrementRecursiveCallCount();
       
       try {
+        if (await RemoteControl.isCircuitBreakerOn()) { return; }
         SafeFunctionUtils.checkSafetyLimits();
         await handler(event);
       } catch (error) {
@@ -254,6 +295,7 @@ export function createSafeFirestoreTrigger<T = any>(
       const callCount = SafeFunctionUtils.incrementRecursiveCallCount();
       
       try {
+        if (await RemoteControl.isCircuitBreakerOn()) { return; }
         SafeFunctionUtils.checkSafetyLimits();
         await handler(event);
       } catch (error) {
@@ -267,6 +309,7 @@ export function createSafeFirestoreTrigger<T = any>(
       const callCount = SafeFunctionUtils.incrementRecursiveCallCount();
       
       try {
+        if (await RemoteControl.isCircuitBreakerOn()) { return; }
         SafeFunctionUtils.checkSafetyLimits();
         await handler(event);
       } catch (error) {
@@ -306,4 +349,12 @@ export class CostTracker {
     this.operations = 0;
     this.estimatedCost = 0;
   }
+}
+
+// Utility: determine if only ignored fields changed
+export function onlyIgnoredFieldsChanged(before: any, after: any, ignoreFields: string[]): boolean {
+  if (!before || !after) return false;
+  const changed = Object.keys(after).filter(k => JSON.stringify(after[k]) !== JSON.stringify(before[k]));
+  if (changed.length === 0) return true;
+  return changed.every(k => ignoreFields.includes(k));
 }

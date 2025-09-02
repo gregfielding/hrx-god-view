@@ -56,7 +56,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   const [lastLoadTime, setLastLoadTime] = useState(0);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  const DEBOUNCE_DELAY = 2000; // 2 seconds debounce
+  const DEBOUNCE_DELAY = 5 * 60 * 1000; // 5 minutes debounce (aggressively increased)
 
   // Load Google status with debouncing
   const loadGoogleStatus = useCallback(async () => {
@@ -78,8 +78,8 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       const getGmailStatus = httpsCallable(functions, 'getGmailStatus');
       
       const [calendarResult, gmailResult] = await Promise.all([
-        getCalendarStatus({ userId: user.uid, tenantId }),
-        getGmailStatus({ userId: user.uid, tenantId })
+        getCalendarStatus({ userId: user.uid }),
+        getGmailStatus({ userId: user.uid })
       ]);
       
       const calendarData = calendarResult.data as any;
@@ -125,9 +125,9 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       clearInterval(pollingIntervalRef.current);
     }
     
-    // Poll every 5 seconds for up to 1 minute (reduced frequency and duration)
+    // Poll every 15 seconds for up to 2 minutes (reduced frequency and duration)
     let pollCount = 0;
-    const maxPolls = 12; // 1 minute max (12 * 5 seconds)
+    const maxPolls = 8; // 2 minutes max (8 * 15 seconds)
     
     pollingIntervalRef.current = setInterval(async () => {
       pollCount++;
@@ -143,7 +143,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       }
       
       await loadGoogleStatus();
-    }, 5000);
+    }, 15000);
   }, [loadGoogleStatus]);
 
   // Refresh status function for manual refresh

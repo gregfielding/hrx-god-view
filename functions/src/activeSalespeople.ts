@@ -472,6 +472,212 @@ export const updateActiveSalespeopleOnEmailLog = onDocumentCreated('tenants/{ten
   ]);
 });
 
+// Trigger updates when activity logs are created (for email activities)
+export const updateActiveSalespeopleOnActivityLog = onDocumentCreated('tenants/{tenantId}/activity_logs/{activityId}', async (event) => {
+  const data = event.data?.data();
+  if (!data) return;
+  
+  const tenantId = event.params.tenantId as string;
+  const activityType = data.activityType || data.type;
+  const entityType = data.entityType;
+  const entityId = data.entityId;
+  const userId = data.userId;
+  
+  // Only process email activities for contacts
+  if (activityType !== 'email' || entityType !== 'contact' || !entityId || !userId) {
+    return;
+  }
+  
+  try {
+    // Get contact data to find associated entities
+    const contactDoc = await db.collection('tenants').doc(tenantId)
+      .collection('crm_contacts')
+      .doc(entityId)
+      .get();
+    
+    if (!contactDoc.exists) return;
+    
+    const contactData = contactDoc.data();
+    const associatedEntities = {
+      companies: new Set<string>(),
+      locations: new Set<string>(),
+      deals: new Set<string>()
+    };
+
+    // Collect company associations
+    if (contactData.companyId) {
+      associatedEntities.companies.add(contactData.companyId);
+    }
+    if (contactData.associations?.companies) {
+      contactData.associations.companies.forEach((company: any) => {
+        const companyId = typeof company === 'string' ? company : company?.id;
+        if (companyId) associatedEntities.companies.add(companyId);
+      });
+    }
+
+    // Collect location associations
+    if (contactData.locationId) {
+      associatedEntities.locations.add(contactData.locationId);
+    }
+    if (contactData.associations?.locations) {
+      contactData.associations.locations.forEach((location: any) => {
+        const locationId = typeof location === 'string' ? location : location?.id;
+        if (locationId) associatedEntities.locations.add(locationId);
+      });
+    }
+
+    // Collect deal associations
+    if (contactData.associations?.deals) {
+      contactData.associations.deals.forEach((deal: any) => {
+        const dealId = typeof deal === 'string' ? deal : deal?.id;
+        if (dealId) associatedEntities.deals.add(dealId);
+      });
+    }
+
+    // Update contact's active salespeople
+    const currentActiveSalespeople = contactData?.activeSalespeople || {};
+    const updatedActiveSalespeople = {
+      ...currentActiveSalespeople,
+      [userId]: {
+        id: userId,
+        displayName: data.userName || 'Unknown',
+        email: data.metadata?.emailFrom || '',
+        lastActiveAt: data.timestamp?.toMillis?.() || Date.now(),
+        _processedBy: 'activity_log_trigger',
+        _processedAt: admin.firestore.FieldValue.serverTimestamp()
+      }
+    };
+    
+    await db.collection('tenants').doc(tenantId)
+      .collection('crm_contacts')
+      .doc(entityId)
+      .set({
+        activeSalespeople: updatedActiveSalespeople,
+        activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+    // Update active salespeople for associated companies
+    for (const companyId of associatedEntities.companies) {
+      try {
+        const companyDoc = await db.collection('tenants').doc(tenantId)
+          .collection('crm_companies')
+          .doc(companyId)
+          .get();
+        
+        if (companyDoc.exists) {
+          const companyData = companyDoc.data();
+          const currentActiveSalespeople = companyData?.activeSalespeople || {};
+          
+          const updatedActiveSalespeople = {
+            ...currentActiveSalespeople,
+            [userId]: {
+              id: userId,
+              displayName: data.userName || 'Unknown',
+              email: data.metadata?.emailFrom || '',
+              lastActiveAt: data.timestamp?.toMillis?.() || Date.now(),
+              _processedBy: 'activity_log_trigger',
+              _processedAt: admin.firestore.FieldValue.serverTimestamp()
+            }
+          };
+          
+          await db.collection('tenants').doc(tenantId)
+            .collection('crm_companies')
+            .doc(companyId)
+            .set({
+              activeSalespeople: updatedActiveSalespeople,
+              activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+      } catch (companyError) {
+        console.warn(`Failed to update active salespeople for company ${companyId}:`, companyError);
+      }
+    }
+
+    // Update active salespeople for associated locations
+    for (const locationId of associatedEntities.locations) {
+      try {
+        const locationDoc = await db.collection('tenants').doc(tenantId)
+          .collection('crm_companies')
+          .doc(contactData.companyId || '')
+          .collection('locations')
+          .doc(locationId)
+          .get();
+        
+        if (locationDoc.exists) {
+          const locationData = locationDoc.data();
+          const currentActiveSalespeople = locationData?.activeSalespeople || {};
+          
+          const updatedActiveSalespeople = {
+            ...currentActiveSalespeople,
+            [userId]: {
+              id: userId,
+              displayName: data.userName || 'Unknown',
+              email: data.metadata?.emailFrom || '',
+              lastActiveAt: data.timestamp?.toMillis?.() || Date.now(),
+              _processedBy: 'activity_log_trigger',
+              _processedAt: admin.firestore.FieldValue.serverTimestamp()
+            }
+          };
+          
+          await db.collection('tenants').doc(tenantId)
+            .collection('crm_companies')
+            .doc(contactData.companyId || '')
+            .collection('locations')
+            .doc(locationId)
+            .set({
+              activeSalespeople: updatedActiveSalespeople,
+              activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+      } catch (locationError) {
+        console.warn(`Failed to update active salespeople for location ${locationId}:`, locationError);
+      }
+    }
+
+    // Update active salespeople for associated deals
+    for (const dealId of associatedEntities.deals) {
+      try {
+        const dealDoc = await db.collection('tenants').doc(tenantId)
+          .collection('crm_deals')
+          .doc(dealId)
+          .get();
+        
+        if (dealDoc.exists) {
+          const dealData = dealDoc.data();
+          const currentActiveSalespeople = dealData?.activeSalespeople || {};
+          
+          const updatedActiveSalespeople = {
+            ...currentActiveSalespeople,
+            [userId]: {
+              id: userId,
+              displayName: data.userName || 'Unknown',
+              email: data.metadata?.emailFrom || '',
+              lastActiveAt: data.timestamp?.toMillis?.() || Date.now(),
+              _processedBy: 'activity_log_trigger',
+              _processedAt: admin.firestore.FieldValue.serverTimestamp()
+            }
+          };
+          
+          await db.collection('tenants').doc(tenantId)
+            .collection('crm_deals')
+            .doc(dealId)
+            .set({
+              activeSalespeople: updatedActiveSalespeople,
+              activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+      } catch (dealError) {
+        console.warn(`Failed to update active salespeople for deal ${dealId}:`, dealError);
+      }
+    }
+    
+    console.log(`✅ Activity log trigger: Updated active salespeople for contact ${entityId} and ${associatedEntities.companies.size} companies, ${associatedEntities.locations.size} locations, ${associatedEntities.deals.size} deals to include user ${userId}`);
+  } catch (error) {
+    console.warn(`Failed to update active salespeople for contact ${entityId} via activity log trigger:`, error);
+    // Continue processing - this is not critical
+  }
+});
+
 // Batch rebuild for all companies in a tenant (or all tenants if none provided)
 export const rebuildAllCompanyActiveSalespeople = onCall(async (request) => {
   const { tenantIds } = request.data;
@@ -531,9 +737,28 @@ export const rebuildAllCompanyActiveSalespeople = onCall(async (request) => {
   }
 });
 
-// Trigger updates when deals change
+// Trigger updates when deals change - EMERGENCY: Aggressive filtering to prevent runaway costs
 export const updateActiveSalespeopleOnDeal = onDocumentUpdated('tenants/{tenantId}/crm_deals/{dealId}', async (event) => {
+  // EMERGENCY: Apply sampling to prevent excessive calls
+  if (Math.random() > 0.1) { // Only process 10% of deal updates
+    return;
+  }
+  
+  const before = event.data?.before?.data();
   const after = event.data?.after?.data();
+  
+  // Skip if no relevant changes to associations
+  if (before && after) {
+    const beforeAssociations = JSON.stringify(before.associations || {});
+    const afterAssociations = JSON.stringify(after.associations || {});
+    const beforeCompanyId = before.companyId;
+    const afterCompanyId = after.companyId;
+    
+    if (beforeAssociations === afterAssociations && beforeCompanyId === afterCompanyId) {
+      return; // No relevant changes, skip processing
+    }
+  }
+  
   if (!after) return;
   const tenantId = event.params.tenantId as string;
   const companyIds: string[] = [];
@@ -559,9 +784,26 @@ export const updateActiveSalespeopleOnDeal = onDocumentUpdated('tenants/{tenantI
   }));
 });
 
-// Trigger updates when tasks change
+// Trigger updates when tasks change - EMERGENCY: Aggressive filtering to prevent runaway costs
 export const updateActiveSalespeopleOnTask = onDocumentUpdated('tenants/{tenantId}/tasks/{taskId}', async (event) => {
+  // EMERGENCY: Apply sampling to prevent excessive calls
+  if (Math.random() > 0.1) { // Only process 10% of task updates
+    return;
+  }
+  
+  const before = event.data?.before?.data();
   const after = event.data?.after?.data();
+  
+  // Skip if no relevant changes to associations
+  if (before && after) {
+    const beforeAssociations = JSON.stringify(before.associations || {});
+    const afterAssociations = JSON.stringify(after.associations || {});
+    
+    if (beforeAssociations === afterAssociations) {
+      return; // No relevant changes, skip processing
+    }
+  }
+  
   if (!after) return;
   const tenantId = event.params.tenantId as string;
   const companyIds: any[] = Array.isArray(after.associations?.companies) ? after.associations.companies : [];

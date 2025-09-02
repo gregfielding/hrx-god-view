@@ -188,6 +188,10 @@ async function logIntegrationAction(
   }
 }
 
+// Cache for SSO config
+const ssoConfigCache = new Map<string, { data: any; timestamp: number }>();
+const SSO_CONFIG_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache
+
 // SSO Integration Functions
 export const getSSOConfig = onCall({
   cors: true,
@@ -205,11 +209,23 @@ export const getSSOConfig = onCall({
   }
 
   try {
+    // Create cache key
+    const cacheKey = `sso_config_${tenantId}`;
+    
+    // Check cache first
+    const cached = ssoConfigCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < SSO_CONFIG_CACHE_DURATION) {
+      console.log('SSO config served from cache for tenant:', tenantId);
+      return cached.data;
+    }
+
     const doc = await db.collection('tenants').doc(tenantId)
       .collection('integrations').doc('sso').get();
     
+    let result;
     if (doc.exists) {
-      return { config: doc.data() };
+      result = { config: doc.data() };
     } else {
       // Return default config
       const defaultConfig: SSOConfig = {
@@ -217,8 +233,13 @@ export const getSSOConfig = onCall({
         provider: 'saml',
         status: 'inactive'
       };
-      return { config: defaultConfig };
+      result = { config: defaultConfig };
     }
+    
+    // Cache the result
+    ssoConfigCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new HttpsError('internal', `Failed to get SSO config: ${error.message}`);
   }
@@ -313,6 +334,10 @@ export const testSSOConnection = onCall({
   }
 });
 
+// Cache for SCIM config
+const scimConfigCache = new Map<string, { data: any; timestamp: number }>();
+const SCIM_CONFIG_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache
+
 // SCIM Integration Functions
 export const getSCIMConfig = onCall({
   cors: true,
@@ -330,19 +355,36 @@ export const getSCIMConfig = onCall({
   }
 
   try {
+    // Create cache key
+    const cacheKey = `scim_config_${tenantId}`;
+    
+    // Check cache first
+    const cached = scimConfigCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < SCIM_CONFIG_CACHE_DURATION) {
+      console.log('SCIM config served from cache for tenant:', tenantId);
+      return cached.data;
+    }
+
     const doc = await db.collection('tenants').doc(tenantId)
       .collection('integrations').doc('scim').get();
     
+    let result;
     if (doc.exists) {
-      return { config: doc.data() };
+      result = { config: doc.data() };
     } else {
       const defaultConfig: SCIMConfig = {
         enabled: false,
         syncInterval: 60,
         status: 'inactive'
       };
-      return { config: defaultConfig };
+      result = { config: defaultConfig };
     }
+    
+    // Cache the result
+    scimConfigCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new HttpsError('internal', `Failed to get SCIM config: ${error.message}`);
   }
@@ -611,6 +653,10 @@ export const syncHRISData = onCall({
   }
 });
 
+// Cache for Slack config
+const slackConfigCache = new Map<string, { data: any; timestamp: number }>();
+const SLACK_CONFIG_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache
+
 // Slack Integration Functions
 export const getSlackConfig = onCall({
   cors: true,
@@ -628,11 +674,23 @@ export const getSlackConfig = onCall({
   }
 
   try {
+    // Create cache key
+    const cacheKey = `slack_config_${tenantId}`;
+    
+    // Check cache first
+    const cached = slackConfigCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < SLACK_CONFIG_CACHE_DURATION) {
+      console.log('Slack config served from cache for tenant:', tenantId);
+      return cached.data;
+    }
+
     const doc = await db.collection('tenants').doc(tenantId)
       .collection('integrations').doc('slack').get();
     
+    let result;
     if (doc.exists) {
-      return { config: doc.data() };
+      result = { config: doc.data() };
     } else {
       const defaultConfig: SlackConfig = {
         enabled: false,
@@ -640,8 +698,13 @@ export const getSlackConfig = onCall({
         companionAIEnabled: false,
         status: 'inactive'
       };
-      return { config: defaultConfig };
+      result = { config: defaultConfig };
     }
+    
+    // Cache the result
+    slackConfigCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new HttpsError('internal', `Failed to get Slack config: ${error.message}`);
   }
@@ -876,6 +939,10 @@ export const manualSync = onCall({
   }
 });
 
+// Cache for integration statuses
+const integrationStatusCache = new Map<string, { data: any; timestamp: number }>();
+const INTEGRATION_STATUS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
+
 // Get all integration statuses for dashboard
 export const getIntegrationStatuses = onCall({
   cors: true,
@@ -892,6 +959,17 @@ export const getIntegrationStatuses = onCall({
     throw new HttpsError('permission-denied', 'Access denied');
   }
 
+  // Create cache key
+  const cacheKey = `integration_statuses_${tenantId}`;
+  
+  // Check cache first
+  const cached = integrationStatusCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp) < INTEGRATION_STATUS_CACHE_DURATION) {
+    console.log('Integration statuses served from cache for tenant:', tenantId);
+    return cached.data;
+  }
+
   try {
     const integrationsRef = db.collection('tenants').doc(tenantId).collection('integrations');
     const snapshot = await integrationsRef.get();
@@ -904,7 +982,12 @@ export const getIntegrationStatuses = onCall({
       };
     });
 
-    return { statuses };
+    const result = { statuses };
+    
+    // Cache the result
+    integrationStatusCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new HttpsError('internal', `Failed to get integration statuses: ${error.message}`);
   }

@@ -306,6 +306,265 @@ export const processUserEmails = onTaskDispatched({
               .collection('activity_logs')
               .add(activityLogData);
             
+            // Get all associated entities for comprehensive "filter up" functionality
+            const associatedEntities = {
+              companies: new Set<string>(),
+              locations: new Set<string>(),
+              deals: new Set<string>()
+            };
+
+            // Collect company associations
+            if (contact.companyId) {
+              associatedEntities.companies.add(contact.companyId);
+            }
+            if (contact.associations?.companies) {
+              contact.associations.companies.forEach((company: any) => {
+                const companyId = typeof company === 'string' ? company : company?.id;
+                if (companyId) associatedEntities.companies.add(companyId);
+              });
+            }
+
+            // Collect location associations
+            if (contact.locationId) {
+              associatedEntities.locations.add(contact.locationId);
+            }
+            if (contact.associations?.locations) {
+              contact.associations.locations.forEach((location: any) => {
+                const locationId = typeof location === 'string' ? location : location?.id;
+                if (locationId) associatedEntities.locations.add(locationId);
+              });
+            }
+
+            // Collect deal associations
+            if (contact.associations?.deals) {
+              contact.associations.deals.forEach((deal: any) => {
+                const dealId = typeof deal === 'string' ? deal : deal?.id;
+                if (dealId) associatedEntities.deals.add(dealId);
+              });
+            }
+
+            // Update active salespeople for contact
+            try {
+              const contactDoc = await db.collection('tenants').doc(tenantId)
+                .collection('crm_contacts')
+                .doc(contact.id)
+                .get();
+              
+              if (contactDoc.exists) {
+                const contactData = contactDoc.data();
+                const currentActiveSalespeople = contactData?.activeSalespeople || {};
+                
+                const updatedActiveSalespeople = {
+                  ...currentActiveSalespeople,
+                  [userId]: {
+                    id: userId,
+                    displayName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
+                    email: userData?.email || '',
+                    lastActiveAt: new Date(date).getTime(),
+                    _processedBy: 'gmail_bulk_import',
+                    _processedAt: admin.firestore.FieldValue.serverTimestamp()
+                  }
+                };
+                
+                await db.collection('tenants').doc(tenantId)
+                  .collection('crm_contacts')
+                  .doc(contact.id)
+                  .set({
+                    activeSalespeople: updatedActiveSalespeople,
+                    activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+                  }, { merge: true });
+                
+                console.log(`✅ Updated active salespeople for contact ${contact.id} to include user ${userId}`);
+              }
+            } catch (salespersonError) {
+              console.warn(`Failed to update active salespeople for contact ${contact.id}:`, salespersonError);
+            }
+
+            // Update active salespeople for associated companies
+            for (const companyId of associatedEntities.companies) {
+              try {
+                const companyDoc = await db.collection('tenants').doc(tenantId)
+                  .collection('crm_companies')
+                  .doc(companyId)
+                  .get();
+                
+                if (companyDoc.exists) {
+                  const companyData = companyDoc.data();
+                  const currentActiveSalespeople = companyData?.activeSalespeople || {};
+                  
+                  const updatedActiveSalespeople = {
+                    ...currentActiveSalespeople,
+                    [userId]: {
+                      id: userId,
+                      displayName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
+                      email: userData?.email || '',
+                      lastActiveAt: new Date(date).getTime(),
+                      _processedBy: 'gmail_bulk_import',
+                      _processedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }
+                  };
+                  
+                  await db.collection('tenants').doc(tenantId)
+                    .collection('crm_companies')
+                    .doc(companyId)
+                    .set({
+                      activeSalespeople: updatedActiveSalespeople,
+                      activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                  
+                  console.log(`✅ Updated active salespeople for company ${companyId} to include user ${userId}`);
+                }
+              } catch (companyError) {
+                console.warn(`Failed to update active salespeople for company ${companyId}:`, companyError);
+              }
+            }
+
+            // Update active salespeople for associated locations
+            for (const locationId of associatedEntities.locations) {
+              try {
+                const locationDoc = await db.collection('tenants').doc(tenantId)
+                  .collection('crm_companies')
+                  .doc(contact.companyId || '')
+                  .collection('locations')
+                  .doc(locationId)
+                  .get();
+                
+                if (locationDoc.exists) {
+                  const locationData = locationDoc.data();
+                  const currentActiveSalespeople = locationData?.activeSalespeople || {};
+                  
+                  const updatedActiveSalespeople = {
+                    ...currentActiveSalespeople,
+                    [userId]: {
+                      id: userId,
+                      displayName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
+                      email: userData?.email || '',
+                      lastActiveAt: new Date(date).getTime(),
+                      _processedBy: 'gmail_bulk_import',
+                      _processedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }
+                  };
+                  
+                  await db.collection('tenants').doc(tenantId)
+                    .collection('crm_companies')
+                    .doc(contact.companyId || '')
+                    .collection('locations')
+                    .doc(locationId)
+                    .set({
+                      activeSalespeople: updatedActiveSalespeople,
+                      activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                  
+                  console.log(`✅ Updated active salespeople for location ${locationId} to include user ${userId}`);
+                }
+              } catch (locationError) {
+                console.warn(`Failed to update active salespeople for location ${locationId}:`, locationError);
+              }
+            }
+
+            // Update active salespeople for associated deals
+            for (const dealId of associatedEntities.deals) {
+              try {
+                const dealDoc = await db.collection('tenants').doc(tenantId)
+                  .collection('crm_deals')
+                  .doc(dealId)
+                  .get();
+                
+                if (dealDoc.exists) {
+                  const dealData = dealDoc.data();
+                  const currentActiveSalespeople = dealData?.activeSalespeople || {};
+                  
+                  const updatedActiveSalespeople = {
+                    ...currentActiveSalespeople,
+                    [userId]: {
+                      id: userId,
+                      displayName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
+                      email: userData?.email || '',
+                      lastActiveAt: new Date(date).getTime(),
+                      _processedBy: 'gmail_bulk_import',
+                      _processedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }
+                  };
+                  
+                  await db.collection('tenants').doc(tenantId)
+                    .collection('crm_deals')
+                    .doc(dealId)
+                    .set({
+                      activeSalespeople: updatedActiveSalespeople,
+                      activeSalespeopleUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                  
+                  console.log(`✅ Updated active salespeople for deal ${dealId} to include user ${userId}`);
+                }
+              } catch (dealError) {
+                console.warn(`Failed to update active salespeople for deal ${dealId}:`, dealError);
+              }
+            }
+
+            // Create email logs for all associated entities to enable "filter up" functionality
+            const emailLogBase = {
+              gmailMessageId: message.id,
+              subject,
+              to,
+              from,
+              date: new Date(date),
+              processedAt: new Date(),
+              userId,
+              userEmail: userData.email,
+              matchingContacts: [contact.id],
+              emailAddresses: [contact.email]
+            };
+
+            // Create email log for contact (primary)
+            const contactEmailLog = {
+              ...emailLogBase,
+              contactId: contact.id,
+              companyId: contact.companyId
+            };
+            await db.collection('tenants').doc(tenantId)
+              .collection('email_logs')
+              .add(contactEmailLog);
+
+            // Create email logs for associated companies
+            for (const companyId of associatedEntities.companies) {
+              const companyEmailLog = {
+                ...emailLogBase,
+                contactId: contact.id,
+                companyId
+              };
+              await db.collection('tenants').doc(tenantId)
+                .collection('email_logs')
+                .add(companyEmailLog);
+            }
+
+            // Create email logs for associated locations
+            for (const locationId of associatedEntities.locations) {
+              const locationEmailLog = {
+                ...emailLogBase,
+                contactId: contact.id,
+                companyId: contact.companyId,
+                locationId
+              };
+              await db.collection('tenants').doc(tenantId)
+                .collection('email_logs')
+                .add(locationEmailLog);
+            }
+
+            // Create email logs for associated deals
+            for (const dealId of associatedEntities.deals) {
+              const dealEmailLog = {
+                ...emailLogBase,
+                contactId: contact.id,
+                companyId: contact.companyId,
+                dealId
+              };
+              await db.collection('tenants').doc(tenantId)
+                .collection('email_logs')
+                .add(dealEmailLog);
+            }
+
+            console.log(`✅ Created email logs for contact ${contact.id} and ${associatedEntities.companies.size} companies, ${associatedEntities.locations.size} locations, ${associatedEntities.deals.size} deals`);
+            
             activityLogsCreated++;
           }
           

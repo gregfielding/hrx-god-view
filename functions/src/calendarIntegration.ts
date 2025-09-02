@@ -55,7 +55,10 @@ interface CalendarEvent {
 
 
 // Create calendar event from CRM task
-export const createCalendarEventFromTask = onCall(async (request) => {
+export const createCalendarEventFromTask = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   if (!request.auth) {
     throw new Error('User must be authenticated');
   }
@@ -590,15 +593,40 @@ export const syncCalendarEventsToCRM = onCall({
 
 // Get user's calendar availability
 export const getCalendarAvailability = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 5
 }, async (request) => {
-  if (!request.auth) {
-    throw new Error('User must be authenticated');
+  // Precondition guards
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'User must be authenticated');
   }
 
   const { tenantId, startDate, endDate } = request.data;
-  if (!tenantId || !startDate || !endDate) {
-    throw new Error('Tenant ID, start date, and end date are required');
+  
+  // Validate required parameters
+  if (!tenantId) {
+    throw new HttpsError('invalid-argument', 'Tenant ID is required');
+  }
+  if (!startDate) {
+    throw new HttpsError('invalid-argument', 'Start date is required');
+  }
+  if (!endDate) {
+    throw new HttpsError('invalid-argument', 'End date is required');
+  }
+
+  // Validate date format and logic
+  try {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new HttpsError('invalid-argument', 'Invalid date format');
+    }
+    if (start >= end) {
+      throw new HttpsError('invalid-argument', 'Start date must be before end date');
+    }
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError('invalid-argument', 'Invalid date format');
   }
 
   try {
@@ -648,7 +676,28 @@ export const getCalendarAvailability = onCall({
 
   } catch (error) {
     console.error('Error getting calendar availability:', error);
-    throw new Error('Failed to get calendar availability');
+    
+    // Provide specific error messages for different failure modes
+    if (error instanceof HttpsError) {
+      throw error; // Re-throw HttpsErrors as-is
+    }
+    
+    if (error instanceof Error) {
+      if (error.message.includes('not found')) {
+        throw new HttpsError('not-found', 'Gmail/Calendar integration not configured');
+      }
+      if (error.message.includes('not enabled') || error.message.includes('not authenticated')) {
+        throw new HttpsError('failed-precondition', 'Gmail/Calendar integration not enabled or not authenticated');
+      }
+      if (error.message.includes('quota') || error.message.includes('rate limit')) {
+        throw new HttpsError('resource-exhausted', 'Calendar API rate limit exceeded');
+      }
+      if (error.message.includes('invalid_grant') || error.message.includes('token')) {
+        throw new HttpsError('unauthenticated', 'Calendar authentication expired - please reconnect');
+      }
+    }
+    
+    throw new HttpsError('internal', 'Failed to get calendar availability');
   }
 }); 
 

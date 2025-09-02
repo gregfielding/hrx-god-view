@@ -160,7 +160,10 @@ export const submitFeedbackResponse = onCall(async (request) => {
   }
 });
 
-export const getFeedbackResults = onCall(async (request) => {
+export const getFeedbackResults = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   const { campaignId } = request.data;
   // TODO: Add auth/role checks for manager access
   const snap = await db.collection('feedbackResponses').where('campaignId', '==', campaignId).get();
@@ -168,7 +171,10 @@ export const getFeedbackResults = onCall(async (request) => {
   return { results };
 });
 
-export const generateFeedbackPrompts = onCall(async (request) => {
+export const generateFeedbackPrompts = onCall({
+  maxInstances: 3,
+  timeoutSeconds: 60
+}, async (request) => {
   const { topic } = request.data;
   const start = Date.now();
   let success = false;
@@ -917,6 +923,23 @@ export async function logAIAction(log: {
   urgencyScore?: any,
   [key: string]: any
 }) {
+  // EMERGENCY: AI Logging temporarily disabled for cost containment
+  if (process.env.AI_LOGGING_DISABLED === 'true') {
+    console.log('AI Logging disabled - skipping log entry');
+    return;
+  }
+
+  // EMERGENCY: Extremely aggressive sampling - only log 0.1% of events (1 in 1000)
+  if (Math.random() > 0.001) {
+    console.log('AI Logging sampled out - skipping log entry');
+    return;
+  }
+  
+  // Additional filter: only log high-urgency events (urgencyScore >= 8)
+  if (log.urgencyScore && log.urgencyScore < 8) {
+    console.log('AI Logging filtered out - low urgency score');
+    return;
+  }
   // Backward compatibility: map old fields to new schema
   const data: any = {
     timestamp: admin.firestore.FieldValue.serverTimestamp(),
@@ -965,8 +988,24 @@ export async function logAIAction(log: {
   console.log('AI LOG WRITTEN, DOC ID:', ref.id);
 }
 
+// Cache for AI logs queries
+const aiLogsCache = new Map<string, { data: any; timestamp: number }>();
+const AI_LOGS_CACHE_DURATION = 60 * 1000; // 1 minute cache
+
 export const listAILogs = onCall(async (request) => {
   const { module, outcome, workerId, startDate, endDate, limit = 50 } = request.data || {};
+  
+  // Create cache key based on query parameters
+  const cacheKey = `ai_logs_${module || 'all'}_${outcome || 'all'}_${workerId || 'all'}_${startDate || 'all'}_${endDate || 'all'}_${limit}`;
+  
+  // Check cache first
+  const cached = aiLogsCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp) < AI_LOGS_CACHE_DURATION) {
+    console.log('AI logs served from cache for query:', cacheKey);
+    return cached.data;
+  }
+  
   let query = db.collection('ai_logs').orderBy('timestamp', 'desc');
   if (module) query = query.where('module', '==', module);
   if (outcome) query = query.where('outcome', '==', outcome);
@@ -975,5 +1014,11 @@ export const listAILogs = onCall(async (request) => {
   if (endDate) query = query.where('timestamp', '<=', new Date(endDate));
   const snap = await query.limit(limit).get();
   const logs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  return { logs };
+  
+  const result = { logs };
+  
+  // Cache the result
+  aiLogsCache.set(cacheKey, { data: result, timestamp: now });
+  
+  return result;
 }); 

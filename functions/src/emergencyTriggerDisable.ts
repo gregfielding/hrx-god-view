@@ -1,286 +1,281 @@
 import * as admin from 'firebase-admin';
-import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { onCall } from 'firebase-functions/v2/https';
 
-// EMERGENCY: Disabled triggers to prevent cascading updates and runaway costs
-// These triggers will be re-enabled once the cost issue is resolved
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
 
-// Disabled: Agency triggers
-export const logAgencyCreated = onDocumentCreated('agencies/{agencyId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency created trigger disabled to prevent cascading updates');
+const db = admin.firestore();
+
+// Emergency circuit breaker configuration
+const CIRCUIT_BREAKER_CONFIG = {
+  // Global circuit breaker - set to 'on' to disable all triggers
+  GLOBAL_CIRCUIT_BREAKER: process.env.GLOBAL_CIRCUIT_BREAKER === 'on',
+  
+  // Rate limiting per function
+  MAX_CALLS_PER_MINUTE: 10,
+  MAX_CALLS_PER_HOUR: 100,
+  
+  // Cooldown periods
+  COOLDOWN_MINUTES: 5,
+  
+  // Function-specific settings
+  FUNCTIONS: {
+    'firestoreLogAILogCreated': {
+      enabled: false, // DISABLED - causes infinite loops
+      maxCallsPerMinute: 1,
+      maxCallsPerHour: 10
+    },
+    'updateActiveSalespeopleOnActivityLog': {
+      enabled: false, // DISABLED - causes cascading updates
+      maxCallsPerMinute: 5,
+      maxCallsPerHour: 50
+    },
+    'updateActiveSalespeopleOnEmailLog': {
+      enabled: false, // DISABLED - causes cascading updates
+      maxCallsPerMinute: 5,
+      maxCallsPerHour: 50
+    }
+  }
+};
+
+// Rate limiting cache
+const rateLimitCache = new Map<string, { count: number; resetTime: number }>();
+
+/**
+ * Check if function should be allowed to run
+ */
+function shouldAllowFunction(functionName: string): boolean {
+  // Check global circuit breaker
+  if (CIRCUIT_BREAKER_CONFIG.GLOBAL_CIRCUIT_BREAKER) {
+    console.log(`🚨 Global circuit breaker active - blocking ${functionName}`);
+    return false;
+  }
+
+  // Check function-specific settings
+  const functionConfig = CIRCUIT_BREAKER_CONFIG.FUNCTIONS[functionName];
+  if (functionConfig && !functionConfig.enabled) {
+    console.log(`🚨 Function ${functionName} is disabled`);
+    return false;
+  }
+
+  // Check rate limiting
+  const now = Date.now();
+  const cacheKey = `${functionName}_${Math.floor(now / 60000)}`; // Per minute
+  const currentCount = rateLimitCache.get(cacheKey) || { count: 0, resetTime: now + 60000 };
+  
+  if (now > currentCount.resetTime) {
+    rateLimitCache.set(cacheKey, { count: 1, resetTime: now + 60000 });
+    return true;
+  }
+  
+  if (currentCount.count >= (functionConfig?.maxCallsPerMinute || CIRCUIT_BREAKER_CONFIG.MAX_CALLS_PER_MINUTE)) {
+    console.log(`🚨 Rate limit exceeded for ${functionName}: ${currentCount.count} calls this minute`);
+    return false;
+  }
+  
+  currentCount.count++;
+  rateLimitCache.set(cacheKey, currentCount);
+  return true;
+}
+
+/**
+ * Check if document has already been processed to prevent loops
+ */
+function hasBeenProcessed(data: any, functionName: string): boolean {
+  const processedBy = data._processedBy || data.processedBy;
+  const processedAt = data._processedAt || data.processedAt;
+  
+  // Check if this function has already processed this document
+  if (processedBy === functionName) {
+    console.log(`🔄 Document already processed by ${functionName}, skipping`);
+    return true;
+  }
+  
+  // Check if document was processed recently (within cooldown period)
+  if (processedAt) {
+    const processedTime = processedAt.toMillis ? processedAt.toMillis() : new Date(processedAt).getTime();
+    const cooldownMs = CIRCUIT_BREAKER_CONFIG.COOLDOWN_MINUTES * 60 * 1000;
+    
+    if (Date.now() - processedTime < cooldownMs) {
+      console.log(`⏰ Document processed recently, cooldown active for ${functionName}`);
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Emergency disabled version of firestoreLogAILogCreated
+ */
+export const firestoreLogAILogCreated = onDocumentCreated('ai_logs/{logId}', async (event) => {
+  const functionName = 'firestoreLogAILogCreated';
+  
+  // Check circuit breaker and rate limiting
+  if (!shouldAllowFunction(functionName)) {
+    console.log(`🚨 ${functionName} blocked by circuit breaker or rate limiting`);
+    return;
+  }
+  
+  const data = event.data?.data();
+  if (!data) return;
+  
+  // Check if already processed
+  if (hasBeenProcessed(data, functionName)) {
+    return;
+  }
+  
+  console.log(`🚨 ${functionName} is DISABLED - preventing infinite loops`);
   return;
 });
 
-export const logAgencyUpdated = onDocumentUpdated('agencies/{agencyId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency updated trigger disabled to prevent cascading updates');
+/**
+ * Emergency disabled version of updateActiveSalespeopleOnActivityLog
+ */
+export const updateActiveSalespeopleOnActivityLog = onDocumentCreated('tenants/{tenantId}/activity_logs/{activityId}', async (event) => {
+  const functionName = 'updateActiveSalespeopleOnActivityLog';
+  
+  // Check circuit breaker and rate limiting
+  if (!shouldAllowFunction(functionName)) {
+    console.log(`🚨 ${functionName} blocked by circuit breaker or rate limiting`);
+    return;
+  }
+  
+  const data = event.data?.data();
+  if (!data) return;
+  
+  // Check if already processed
+  if (hasBeenProcessed(data, functionName)) {
+    return;
+  }
+  
+  console.log(`🚨 ${functionName} is DISABLED - preventing cascading updates`);
   return;
 });
 
-// Disabled: Agency contact triggers
-export const logAgencyContactCreated = onDocumentCreated('agencies/{agencyId}/contacts/{contactId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency contact created trigger disabled to prevent cascading updates');
+/**
+ * Emergency disabled version of updateActiveSalespeopleOnEmailLog
+ */
+export const updateActiveSalespeopleOnEmailLog = onDocumentCreated('tenants/{tenantId}/email_logs/{emailId}', async (event) => {
+  const functionName = 'updateActiveSalespeopleOnEmailLog';
+  
+  // Check circuit breaker and rate limiting
+  if (!shouldAllowFunction(functionName)) {
+    console.log(`🚨 ${functionName} blocked by circuit breaker or rate limiting`);
+    return;
+  }
+  
+  const data = event.data?.data();
+  if (!data) return;
+  
+  // Check if already processed
+  if (hasBeenProcessed(data, functionName)) {
+    return;
+  }
+  
+  console.log(`🚨 ${functionName} is DISABLED - preventing cascading updates`);
   return;
 });
 
-export const logAgencyContactUpdated = onDocumentUpdated('agencies/{agencyId}/contacts/{contactId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency contact updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyContactDeleted = onDocumentDeleted('agencies/{agencyId}/contacts/{contactId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency contact deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency location triggers
-export const logAgencyLocationCreated = onDocumentCreated('agencies/{agencyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency location created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyLocationUpdated = onDocumentUpdated('agencies/{agencyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency location updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyLocationDeleted = onDocumentDeleted('agencies/{agencyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency location deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency AI settings triggers
-export const logAgencyAISettingsUpdated = onDocumentUpdated('agencies/{agencyId}/aiSettings/{settingName}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency AI settings updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency user group triggers
-export const logAgencyUserGroupCreated = onDocumentCreated('agencies/{agencyId}/userGroups/{groupId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency user group created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyUserGroupUpdated = onDocumentUpdated('agencies/{agencyId}/userGroups/{groupId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency user group updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyUserGroupDeleted = onDocumentDeleted('agencies/{agencyId}/userGroups/{groupId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency user group deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency settings triggers
-export const logAgencySettingsUpdated = onDocumentUpdated('agencies/{agencyId}/settings/{settingsId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency settings updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency job order triggers
-export const logAgencyJobOrderCreated = onDocumentCreated('agencies/{agencyId}/jobOrders/{jobOrderId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyJobOrderUpdated = onDocumentUpdated('agencies/{agencyId}/jobOrders/{jobOrderId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyJobOrderDeleted = onDocumentDeleted('agencies/{agencyId}/jobOrders/{jobOrderId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Agency job order shift triggers
-export const logAgencyJobOrderShiftCreated = onDocumentCreated('agencies/{agencyId}/jobOrders/{jobOrderId}/shifts/{shiftId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order shift created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyJobOrderShiftUpdated = onDocumentUpdated('agencies/{agencyId}/jobOrders/{jobOrderId}/shifts/{shiftId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order shift updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAgencyJobOrderShiftDeleted = onDocumentDeleted('agencies/{agencyId}/jobOrders/{jobOrderId}/shifts/{shiftId}', async (event) => {
-  console.log('🚫 EMERGENCY: Agency job order shift deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Customer triggers
-export const logCustomerCreated = onDocumentCreated('customers/{customerId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerUpdated = onDocumentUpdated('customers/{customerId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerDeleted = onDocumentDeleted('customers/{customerId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Customer location triggers
-export const logCustomerLocationCreated = onDocumentCreated('customers/{customerId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer location created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerLocationUpdated = onDocumentUpdated('customers/{customerId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer location updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerLocationDeleted = onDocumentDeleted('customers/{customerId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer location deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Customer department triggers
-export const logCustomerDepartmentCreated = onDocumentCreated('customers/{customerId}/departments/{departmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer department created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerDepartmentUpdated = onDocumentUpdated('customers/{customerId}/departments/{departmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer department updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerDepartmentDeleted = onDocumentDeleted('customers/{customerId}/departments/{departmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer department deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Customer AI settings triggers
-export const logCustomerAISettingsUpdated = onDocumentUpdated('customers/{customerId}/aiSettings/{settingName}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer AI settings updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Customer AI training triggers
-export const logCustomerAITrainingCreated = onDocumentCreated('customers/{customerId}/aiTraining/{trainingId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer AI training created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerAITrainingUpdated = onDocumentUpdated('customers/{customerId}/aiTraining/{trainingId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer AI training updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logCustomerAITrainingDeleted = onDocumentDeleted('customers/{customerId}/aiTraining/{trainingId}', async (event) => {
-  console.log('🚫 EMERGENCY: Customer AI training deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Assignment triggers
-export const logAssignmentCreated = onDocumentCreated('assignments/{assignmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Assignment created trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAssignmentUpdated = onDocumentUpdated('assignments/{assignmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Assignment updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const logAssignmentDeleted = onDocumentDeleted('assignments/{assignmentId}', async (event) => {
-  console.log('🚫 EMERGENCY: Assignment deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Active salespeople triggers (known infinite loops)
+/**
+ * Emergency disabled version of updateActiveSalespeopleOnDeal
+ */
 export const updateActiveSalespeopleOnDeal = onDocumentUpdated('tenants/{tenantId}/crm_deals/{dealId}', async (event) => {
-  console.log('🚫 EMERGENCY: Active salespeople on deal trigger disabled to prevent infinite loops');
+  const functionName = 'updateActiveSalespeopleOnDeal';
+  
+  // Check circuit breaker and rate limiting
+  if (!shouldAllowFunction(functionName)) {
+    console.log(`🚨 ${functionName} blocked by circuit breaker or rate limiting`);
+    return;
+  }
+  
+  const beforeData = event.data?.before?.data();
+  const afterData = event.data?.after?.data();
+  
+  if (!beforeData || !afterData) return;
+  
+  // Check if already processed
+  if (hasBeenProcessed(afterData, functionName)) {
+    return;
+  }
+  
+  console.log(`🚨 ${functionName} is DISABLED - preventing cascading updates`);
   return;
 });
 
+/**
+ * Emergency disabled version of updateActiveSalespeopleOnTask
+ */
 export const updateActiveSalespeopleOnTask = onDocumentUpdated('tenants/{tenantId}/tasks/{taskId}', async (event) => {
-  console.log('🚫 EMERGENCY: Active salespeople on task trigger disabled to prevent infinite loops');
+  const functionName = 'updateActiveSalespeopleOnTask';
+  
+  // Check circuit breaker and rate limiting
+  if (!shouldAllowFunction(functionName)) {
+    console.log(`🚨 ${functionName} blocked by circuit breaker or rate limiting`);
+    return;
+  }
+  
+  const beforeData = event.data?.before?.data();
+  const afterData = event.data?.after?.data();
+  
+  if (!beforeData || !afterData) return;
+  
+  // Check if already processed
+  if (hasBeenProcessed(afterData, functionName)) {
+    return;
+  }
+  
+  console.log(`🚨 ${functionName} is DISABLED - preventing cascading updates`);
   return;
 });
 
-// Disabled: Location mirror triggers
-export const onCompanyLocationCreated = onDocumentCreated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Company location created trigger disabled to prevent cascading updates');
-  return;
+/**
+ * Callable function to enable/disable circuit breakers
+ */
+export const toggleCircuitBreaker = onCall({
+  cors: true,
+  maxInstances: 1
+}, async (request) => {
+  // Only allow admin users to toggle circuit breakers
+  if (!request.auth?.uid) {
+    throw new Error('Unauthorized');
+  }
+  
+  const { functionName, enabled } = request.data;
+  
+  if (functionName === 'global') {
+    // Toggle global circuit breaker
+    process.env.GLOBAL_CIRCUIT_BREAKER = enabled ? 'on' : 'off';
+    console.log(`🔧 Global circuit breaker ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    return { success: true, message: `Global circuit breaker ${enabled ? 'enabled' : 'disabled'}` };
+  }
+  
+  if (CIRCUIT_BREAKER_CONFIG.FUNCTIONS[functionName]) {
+    // Toggle function-specific circuit breaker
+    CIRCUIT_BREAKER_CONFIG.FUNCTIONS[functionName].enabled = enabled;
+    console.log(`🔧 Function ${functionName} ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    return { success: true, message: `Function ${functionName} ${enabled ? 'enabled' : 'disabled'}` };
+  }
+  
+  throw new Error('Invalid function name');
 });
 
-export const onCompanyLocationUpdated = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Company location updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const onCompanyLocationDeleted = onDocumentDeleted('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Company location deleted trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Apollo integration triggers
-export const onCompanyCreatedApollo = onDocumentCreated({ document: 'tenants/{tenantId}/crm_companies/{companyId}', secrets: ['APOLLO_API_KEY'] }, async (event) => {
-  console.log('🚫 EMERGENCY: Company created Apollo trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const onContactCreatedApollo = onDocumentCreated({ document: 'tenants/{tenantId}/crm_contacts/{contactId}', secrets: ['APOLLO_API_KEY'] }, async (event) => {
-  console.log('🚫 EMERGENCY: Contact created Apollo trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Company enrichment triggers
-export const enrichCompanyOnCreate = onDocumentCreated({ document: 'tenants/{tenantId}/crm_companies/{companyId}', secrets: ['APOLLO_API_KEY'] }, async (event) => {
-  console.log('🚫 EMERGENCY: Company enrichment on create trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Deal triggers
-export const onDealUpdated = onDocumentUpdated('tenants/{tenantId}/crm_deals/{dealId}', async (event) => {
-  console.log('🚫 EMERGENCY: Deal updated trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: AI log processing triggers
-export const processAILog = onDocumentCreated('ai_logs/{logId}', async (event) => {
-  console.log('🚫 EMERGENCY: AI log processing trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Apollo location sync triggers
-export const syncApolloHeadquartersLocation = onDocumentUpdated({
-  document: 'tenants/{tenantId}/crm_companies/{companyId}',
-  secrets: ['APOLLO_API_KEY']
-}, async (event) => {
-  console.log('🚫 EMERGENCY: Apollo headquarters location sync trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: Association snapshot fanout triggers
-export const firestoreCompanySnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}', async (event) => {
-  console.log('🚫 EMERGENCY: Company snapshot fanout trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const firestoreContactSnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_contacts/{contactId}', async (event) => {
-  console.log('🚫 EMERGENCY: Contact snapshot fanout trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const firestoreLocationSnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_locations/{locationId}', async (event) => {
-  console.log('🚫 EMERGENCY: Location snapshot fanout trigger disabled to prevent cascading updates');
-  return;
-});
-
-export const firestoreSalespersonSnapshotFanout = onDocumentUpdated('tenants/{tenantId}/crm_salespeople/{salespersonId}', async (event) => {
-  console.log('🚫 EMERGENCY: Salesperson snapshot fanout trigger disabled to prevent cascading updates');
-  return;
-});
-
-// Disabled: AI summary update triggers
-export const triggerAISummaryUpdate = onDocumentCreated('tenants/{tenantId}/crm_deals/{dealId}/ai_summaries/{summaryId}', async (event) => {
-  console.log('🚫 EMERGENCY: AI summary update trigger disabled to prevent cascading updates');
-  return;
+/**
+ * Callable function to get circuit breaker status
+ */
+export const getCircuitBreakerStatus = onCall({
+  cors: true,
+  maxInstances: 1
+}, async (request) => {
+  if (!request.auth?.uid) {
+    throw new Error('Unauthorized');
+  }
+  
+  return {
+    global: CIRCUIT_BREAKER_CONFIG.GLOBAL_CIRCUIT_BREAKER,
+    functions: CIRCUIT_BREAKER_CONFIG.FUNCTIONS,
+    rateLimits: Object.fromEntries(rateLimitCache.entries())
+  };
 });

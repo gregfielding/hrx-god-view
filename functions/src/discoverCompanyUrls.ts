@@ -10,7 +10,10 @@ const openai = new OpenAI({
   apiKey: openaiApiKey.value() || '',
 });
 
-export const discoverCompanyUrls = onCall(async (request) => {
+export const discoverCompanyUrls = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 120
+}, async (request) => {
   try {
     const { companyName, companyId, tenantId } = request.data;
 

@@ -11,30 +11,61 @@ const db = admin.firestore();
 const SAFE_CONFIG = {
   MAX_EXECUTION_TIME_MS: 55000, // 55 seconds (under 60s limit)
   MAX_RECURSIVE_CALLS: 3,
-  TAG: 'firestoreLogAILogCreated@v2',
-  // Selective logging - only log high-urgency events
-  MIN_URGENCY_SCORE: 7, // Only log events with urgency score >= 7
-  // Skip certain event types entirely
+  TAG: 'firestoreLogAILogCreated@v3',
+  // EMERGENCY: Aggressive filtering to stop runaway costs
+  ENABLED: false, // TEMPORARILY DISABLED - enable only for critical events
+  // Selective logging - only log critical events
+  MIN_URGENCY_SCORE: 9, // Only log events with urgency score >= 9 (critical only)
+  // Skip most event types entirely
   SKIP_EVENT_TYPES: [
     'ai_log.created',
     'ai_log.updated', 
     'ai_log.deleted',
     'meta_logging',
     'cache_hit',
-    'system.heartbeat'
+    'system.heartbeat',
+    'user.updated',
+    'user.created',
+    'user.deleted',
+    'conversation.updated',
+    'conversation.created',
+    'message.updated',
+    'message.created',
+    'task.updated',
+    'task.created',
+    'customer.updated',
+    'customer.created',
+    'agency_contact.updated',
+    'agency_contact.created',
+    'tenant_contact.updated',
+    'tenant_contact.created'
   ],
-  // Skip certain context types
+  // Skip most context types
   SKIP_CONTEXT_TYPES: [
     'meta_logging',
     'system',
-    'debug'
+    'debug',
+    'user',
+    'conversation',
+    'customer',
+    'agency',
+    'tenant'
   ],
-  // Skip certain source modules to prevent loops
+  // Skip most source modules to prevent loops
   SKIP_SOURCE_MODULES: [
     'FirestoreTrigger',
     'firestoreLogAILogCreated',
-    'safeFirestoreLogAILogCreated'
-  ]
+    'safeFirestoreLogAILogCreated',
+    'firestoreLogUserUpdated',
+    'firestoreLogConversationUpdated',
+    'firestoreLogMessageUpdated',
+    'firestoreLogTaskUpdated',
+    'firestoreLogCustomerUpdated',
+    'firestoreLogAgencyContactUpdated',
+    'firestoreLogTenantContactUpdated'
+  ],
+  // Sampling: only process 0.1% of events (extremely aggressive)
+  SAMPLING_RATE: 0.001 // 0.1% sampling (1 in 1000 events)
 };
 
 /**
@@ -50,6 +81,16 @@ function checkCircuitBreaker(): void {
  * Check if we should log this event based on selective logging rules
  */
 function shouldLogEvent(logData: any): boolean {
+  // EMERGENCY: Function is temporarily disabled
+  if (!SAFE_CONFIG.ENABLED) {
+    return false;
+  }
+
+  // Apply sampling: only process 1% of events
+  if (Math.random() > SAFE_CONFIG.SAMPLING_RATE) {
+    return false;
+  }
+
   // Prevent feedback loop: skip any log where sourceModule is 'FirestoreTrigger'
   if (logData.sourceModule === 'FirestoreTrigger') {
     return false;
@@ -172,7 +213,7 @@ const safeTrigger = createSafeFirestoreTrigger(
   {
     timeoutSeconds: Math.floor(SAFE_CONFIG.MAX_EXECUTION_TIME_MS / 1000),
     memory: '256MiB',
-    maxInstances: 2
+    maxInstances: 1 // Reduced from 2 for cost containment
   }
 );
 

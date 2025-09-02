@@ -16,7 +16,7 @@ const SAFE_CONFIG = {
   MAX_EVENTS_PER_REQUEST: 50,
   MAX_EMAILS_PER_REQUEST: 20,
   API_TIMEOUT_MS: 30000, // 30 seconds
-  CACHE_DURATION_MS: 5 * 60 * 1000, // 5 minutes
+  CACHE_DURATION_MS: 10 * 60 * 1000, // 10 minutes (increased from 5 minutes)
   MAX_RETRIES: 3,
   RETRY_DELAY_MS: 1000,
   MAX_EXECUTION_TIME_MS: 55000, // 55 seconds (under 60s limit)
@@ -46,6 +46,10 @@ function cleanupCache(): void {
   }
 }
 
+// Simple per-user anti-burst memory (in-instance)
+const lastCallPerUser: Map<string, number> = new Map();
+const MIN_INTERVAL_MS = 0; // Disabled rate limiting temporarily to fix 429 errors
+
 /**
  * Safe version of getCalendarStatus with hardening playbook compliance
  */
@@ -71,6 +75,22 @@ export const getCalendarStatus = createSafeCallableFunction(async (request) => {
 
     // Clean up cache before checking
     cleanupCache();
+
+    // Rate limiting temporarily disabled to fix 429 errors
+    // Anti-burst: short-circuit if called too frequently
+    if (MIN_INTERVAL_MS > 0) {
+      const prev = lastCallPerUser.get(userId) || 0;
+      const nowTs = Date.now();
+      if (nowTs - prev < MIN_INTERVAL_MS) {
+        const cacheKey = `calendar_status_${userId}`;
+        const cached = apiCache.get(cacheKey);
+        if (cached) {
+          return cached.data;
+        }
+        return { connected: false, email: null, lastSync: null, syncStatus: 'rate_limited' };
+      }
+      lastCallPerUser.set(userId, nowTs);
+    }
 
     // Check cache first
     const cacheKey = `calendar_status_${userId}`;
@@ -377,6 +397,22 @@ export const getGmailStatus = createSafeCallableFunction(async (request) => {
 
     // Clean up cache before checking
     cleanupCache();
+
+    // Rate limiting temporarily disabled to fix 429 errors
+    // Anti-burst: short-circuit if called too frequently
+    if (MIN_INTERVAL_MS > 0) {
+      const prev = lastCallPerUser.get(userId) || 0;
+      const nowTs = Date.now();
+      if (nowTs - prev < MIN_INTERVAL_MS) {
+        const cacheKey = `gmail_status_${userId}`;
+        const cached = apiCache.get(cacheKey);
+        if (cached) {
+          return cached.data;
+        }
+        return { connected: false, email: null, lastSync: null, syncStatus: 'rate_limited' };
+      }
+      lastCallPerUser.set(userId, nowTs);
+    }
 
     // Check cache first
     const cacheKey = `gmail_status_${userId}`;

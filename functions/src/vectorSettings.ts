@@ -106,7 +106,10 @@ export const createVectorChunk = onCall(async (request) => {
 });
 
 // Search vector chunks
-export const searchVectorChunks = onCall(async (request) => {
+export const searchVectorChunks = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   const { 
     query, 
     customerId, 
@@ -358,7 +361,10 @@ export const getChunkingStrategies = onCall(async (request) => {
 });
 
 // Get vector analytics
-export const getVectorAnalytics = onCall(async (request) => {
+export const getVectorAnalytics = onCall({
+  maxInstances: 3,
+  timeoutSeconds: 60
+}, async (request) => {
   const { customerId, timeRange = '7d' } = request.data;
 
   try {

@@ -4103,7 +4103,8 @@ const ContactsTab: React.FC<{
                         if (location) {
                           const locationName = location.name || location.nickname || 'Unknown Location';
                           const cityState = [location.city, location.state].filter(Boolean).join(', ');
-                          return cityState ? `${locationName} (${cityState})` : locationName;
+                          const locationCode = location.code ? ` [${location.code}]` : '';
+                          return cityState ? `${locationName}${locationCode} (${cityState})` : `${locationName}${locationCode}`;
                         }
                         // If locationId exists but location not found, show locationName if available
                         if (contact.locationName) {
@@ -4115,7 +4116,11 @@ const ContactsTab: React.FC<{
                       const assocLocs = (contact.associations?.locations || []) as any[];
                       const obj = assocLocs.find(l => typeof l === 'object');
                       const locName = obj?.snapshot?.name || obj?.name;
-                      if (locName) return locName;
+                      const locCode = obj?.snapshot?.code || obj?.code;
+                      if (locName) {
+                        const codeDisplay = locCode ? ` [${locCode}]` : '';
+                        return `${locName}${codeDisplay}`;
+                      }
                       
                       // Final fallback to contact city/state
                       if (contact.city && contact.state) return `${contact.city}, ${contact.state}`;
@@ -6224,7 +6229,7 @@ const CompaniesTab: React.FC<{
                     <MenuItem value="">Skip Location</MenuItem>
                     {companyLocations.map((location) => (
                       <MenuItem key={location.id} value={location.id}>
-                        {location.name}
+                        {location.name}{location.code ? ` [${location.code}]` : ''}
                       </MenuItem>
                     ))}
                   </Select>

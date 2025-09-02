@@ -55,11 +55,13 @@ import {
   Dashboard as DashboardIcon,
   Stairs as StairsIcon,
   Work as WorkIcon,
+  Description as DescriptionIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 
-import { db } from '../../firebase';
+import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { createUnifiedAssociationService } from '../../utils/unifiedAssociationService';
 import StageChip from '../../components/StageChip';
@@ -80,6 +82,7 @@ import ManageSalespeopleDialog from '../../components/ManageSalespeopleDialog';
 import ManageContactsDialog from '../../components/ManageContactsDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
 import NextStepsWidget from '../../components/NextStepsWidget';
+import RecruiterQuestionnaireTab from '../../components/RecruiterQuestionnaireTab';
 
 interface DealData {
   id: string;
@@ -1870,6 +1873,14 @@ const DealDetails: React.FC = () => {
                   </Box>
                 } 
               />
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <DescriptionIcon fontSize="small" />
+                    Contracts
+                  </Box>
+                } 
+              />
             </Tabs>
           </Paper>
 
@@ -2454,6 +2465,14 @@ const DealDetails: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={5}>
+        <ContractsTab
+          deal={deal}
+          tenantId={tenantId}
+          stageData={stageData}
+        />
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={6}>
         <Card>
           <CardHeader title="Order Defaults" sx={{ p: 0, mb: 2 }} />
           <CardContent>
@@ -2464,7 +2483,7 @@ const DealDetails: React.FC = () => {
         </Card>
       </TabPanel>
 
-      <TabPanel value={tabValue} index={6}>
+      <TabPanel value={tabValue} index={7}>
         <Card>
           <CardHeader title="AI Suggestions" sx={{ p: 0, mb: 2 }} />
           <CardContent>
@@ -2804,287 +2823,236 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
   </Card>
 );
 
-// Recruiter Questionnaire Tab Component
-const RecruiterQuestionnaireTab: React.FC<{
+// Contracts Tab Component
+const ContractsTab: React.FC<{
   deal: any;
   tenantId: string;
   stageData: any;
-  questionnaire: any;
-  onQuestionnaireChange: (data: any) => void;
-  onSubmit: () => void;
-  canSubmit: boolean;
-}> = ({ deal, tenantId, stageData, questionnaire, onQuestionnaireChange, onSubmit, canSubmit }) => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+}> = ({ deal, tenantId, stageData }) => {
+  const { user } = useAuth();
+  const [uploadingContract, setUploadingContract] = useState(false);
 
-  // Populate questionnaire from stage data when component mounts
-  useEffect(() => {
-    if (stageData && Object.keys(stageData).length > 0) {
-      const qualData = stageData.qualification || {};
-      const timeline = qualData.staffPlacementTimeline || {};
-      
-      const populatedQuestionnaire = {
-        readyForRecruiter: questionnaire.readyForRecruiter,
-        jobOrders: [{
-          title: deal.name || '',
-          openings: timeline.starting || 1,
-          payRate: qualData.expectedAveragePayRate || 0,
-          billRate: qualData.expectedAveragePayRate ? 
-            qualData.expectedAveragePayRate * (1 + (qualData.expectedAverageMarkup || 40) / 100) : 0,
-          startDate: qualData.expectedCloseDate || '',
-          shifts: timeline.shifts || [],
-          requirements: {
-            backgroundCheck: qualData.backgroundCheckRequired || false,
-            drugTest: qualData.drugTestRequired || false,
-            certifications: qualData.requiredCertifications || [],
-            minExperience: qualData.minimumExperience || 0
-          }
-        }]
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !deal.id || !tenantId) return;
+
+    // Validate file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Contract file size must be less than 10MB');
+      return;
+    }
+
+    // Validate file type
+    const validTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    if (!validTypes.includes(file.type)) {
+      alert('Please upload a PDF or Word document');
+      return;
+    }
+
+    setUploadingContract(true);
+    try {
+      // Upload to Firebase Storage
+      const fileName = `contract_${Date.now()}_${file.name}`;
+      const storageRef = ref(storage, `deals/${tenantId}/${deal.id}/contracts/${fileName}`);
+      await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(storageRef);
+
+      // Save contract metadata to stage data
+      const contractData = {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        downloadURL: downloadURL,
+        storagePath: storageRef.fullPath,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: user?.uid || 'unknown'
       };
-      
-      onQuestionnaireChange(populatedQuestionnaire);
-    }
-  }, [stageData, deal.name]);
 
-  const handleQuestionnaireChange = (field: string, value: any) => {
-    onQuestionnaireChange({
-      ...questionnaire,
-      [field]: value
-    });
-  };
-
-  const handleJobOrderChange = (index: number, field: string, value: any) => {
-    const updatedJobOrders = [...questionnaire.jobOrders];
-    updatedJobOrders[index] = {
-      ...updatedJobOrders[index],
-      [field]: value
-    };
-    onQuestionnaireChange({
-      ...questionnaire,
-      jobOrders: updatedJobOrders
-    });
-  };
-
-  const addJobOrder = () => {
-    onQuestionnaireChange({
-      ...questionnaire,
-      jobOrders: [...questionnaire.jobOrders, {
-        title: '',
-        openings: 1,
-        payRate: 0,
-        billRate: 0,
-        startDate: '',
-        shifts: [],
-        requirements: {
-          backgroundCheck: false,
-          drugTest: false,
-          certifications: [],
-          minExperience: 0
+      // Update the deal's stage data
+      const updatedStageData = {
+        ...stageData,
+        closedWon: {
+          ...stageData.closedWon,
+          signedContract: contractData
         }
-      }]
-    });
-  };
+      };
 
-  const removeJobOrder = (index: number) => {
-    if (questionnaire.jobOrders.length > 1) {
-      const updatedJobOrders = questionnaire.jobOrders.filter((_: any, i: number) => i !== index);
-      onQuestionnaireChange({
-        ...questionnaire,
-        jobOrders: updatedJobOrders
+      // Save to Firestore
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        stageData: updatedStageData,
+        updatedAt: new Date()
       });
+      
+      // Clear the file input
+      event.target.value = '';
+      alert('Contract uploaded successfully!');
+    } catch (error) {
+      console.error('Error uploading contract:', error);
+      alert('Failed to upload contract. Please try again.');
+    } finally {
+      setUploadingContract(false);
     }
   };
+
+  const handleDeleteContract = async () => {
+    const contract = stageData?.closedWon?.signedContract;
+    if (!contract?.storagePath) return;
+
+    if (!confirm('Are you sure you want to delete this contract?')) return;
+
+    try {
+      // Delete from Firebase Storage
+      const storageRef = ref(storage, contract.storagePath);
+      await deleteObject(storageRef);
+
+      // Remove from stage data
+      const updatedStageData = {
+        ...stageData,
+        closedWon: {
+          ...stageData.closedWon,
+          signedContract: null
+        }
+      };
+
+      // Save to Firestore
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        stageData: updatedStageData,
+        updatedAt: new Date()
+      });
+
+      alert('Contract deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting contract:', error);
+      alert('Failed to delete contract. Please try again.');
+    }
+  };
+
+  const handleDownloadContract = () => {
+    const contract = stageData?.closedWon?.signedContract;
+    if (contract?.downloadURL) {
+      window.open(contract.downloadURL, '_blank');
+    }
+  };
+
+  const contract = stageData?.closedWon?.signedContract;
 
   return (
     <Box sx={{ p: 0 }}>
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6" fontWeight={700} sx={{ mb: 1 }}>
-          Recruiter Questionnaire
+          Contract Management
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Complete this questionnaire to create job orders for the recruiter team. 
-          This information will be used to generate job orders in the Recruiter module.
+          Upload and manage signed contracts for this deal.
         </Typography>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      {/* Ready for Recruiter Toggle */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Box>
-              <Typography variant="h6" fontWeight={600}>
-                Ready for Recruiter
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Toggle this when you're ready to hand off to the recruiter team
-              </Typography>
-            </Box>
-            <Checkbox
-              checked={questionnaire.readyForRecruiter}
-              onChange={(e) => handleQuestionnaireChange('readyForRecruiter', e.target.checked)}
-              color="primary"
-            />
-          </Box>
-        </CardContent>
-      </Card>
-
-      {/* Job Orders */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="h6" fontWeight={600}>
-            Job Orders ({questionnaire.jobOrders.length})
-          </Typography>
-          <Button
-            variant="outlined"
-            startIcon={<AddIcon />}
-            onClick={addJobOrder}
-            size="small"
-          >
-            Add Job Order
-          </Button>
-        </Box>
-
-        {questionnaire.jobOrders.map((jobOrder: any, index: number) => (
-          <Card key={index} sx={{ mb: 2 }}>
-            <CardHeader
-              title={`Job Order ${index + 1}`}
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={8}>
+          <Card>
+            <CardHeader 
+              title="Signed Contract" 
               action={
-                questionnaire.jobOrders.length > 1 && (
-                  <IconButton
-                    size="small"
-                    color="error"
-                    onClick={() => removeJobOrder(index)}
+                !contract && (
+                  <Button
+                    variant="contained"
+                    startIcon={uploadingContract ? <CircularProgress size={16} /> : <UploadIcon />}
+                    disabled={uploadingContract}
+                    onClick={() => document.getElementById('contract-upload')?.click()}
                   >
-                    <DeleteIcon />
-                  </IconButton>
+                    {uploadingContract ? 'Uploading...' : 'Upload Contract'}
+                  </Button>
                 )
               }
             />
             <CardContent>
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Job Title *"
-                    value={jobOrder.title}
-                    onChange={(e) => handleJobOrderChange(index, 'title', e.target.value)}
-                    fullWidth
-                    required
-                    size="small"
+              {!contract ? (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <DescriptionIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                  <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                    No contract uploaded
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                    Upload a signed contract to track this deal's documentation.
+                  </Typography>
+                  <input
+                    id="contract-upload"
+                    accept=".pdf,.doc,.docx"
+                    style={{ display: 'none' }}
+                    type="file"
+                    onChange={handleFileUpload}
+                    disabled={uploadingContract}
                   />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Number of Openings *"
-                    type="number"
-                    value={jobOrder.openings}
-                    onChange={(e) => handleJobOrderChange(index, 'openings', parseInt(e.target.value) || 1)}
-                    fullWidth
-                    required
-                    size="small"
-                    inputProps={{ min: 1 }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Pay Rate ($/hr) *"
-                    type="number"
-                    value={jobOrder.payRate}
-                    onChange={(e) => handleJobOrderChange(index, 'payRate', parseFloat(e.target.value) || 0)}
-                    fullWidth
-                    required
-                    size="small"
-                    inputProps={{ min: 0, step: 0.01 }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Bill Rate ($/hr) *"
-                    type="number"
-                    value={jobOrder.billRate}
-                    onChange={(e) => handleJobOrderChange(index, 'billRate', parseFloat(e.target.value) || 0)}
-                    fullWidth
-                    required
-                    size="small"
-                    inputProps={{ min: 0, step: 0.01 }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Start Date *"
-                    type="date"
-                    value={jobOrder.startDate}
-                    onChange={(e) => handleJobOrderChange(index, 'startDate', e.target.value)}
-                    fullWidth
-                    required
-                    size="small"
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    label="Minimum Experience (years)"
-                    type="number"
-                    value={jobOrder.requirements.minExperience}
-                    onChange={(e) => handleJobOrderChange(index, 'requirements', {
-                      ...jobOrder.requirements,
-                      minExperience: parseFloat(e.target.value) || 0
-                    })}
-                    fullWidth
-                    size="small"
-                    inputProps={{ min: 0, step: 0.5 }}
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                    <Typography variant="subtitle2">Requirements:</Typography>
-                    <Checkbox
-                      checked={jobOrder.requirements.backgroundCheck}
-                      onChange={(e) => handleJobOrderChange(index, 'requirements', {
-                        ...jobOrder.requirements,
-                        backgroundCheck: e.target.checked
-                      })}
-                    />
-                    <Typography variant="body2">Background Check</Typography>
-                    <Checkbox
-                      checked={jobOrder.requirements.drugTest}
-                      onChange={(e) => handleJobOrderChange(index, 'requirements', {
-                        ...jobOrder.requirements,
-                        drugTest: e.target.checked
-                      })}
-                    />
-                    <Typography variant="body2">Drug Test</Typography>
+                  <Button
+                    variant="outlined"
+                    startIcon={<UploadIcon />}
+                    onClick={() => document.getElementById('contract-upload')?.click()}
+                    disabled={uploadingContract}
+                  >
+                    {uploadingContract ? 'Uploading...' : 'Upload Contract'}
+                  </Button>
+                </Box>
+              ) : (
+                <Box sx={{ 
+                  border: '1px solid #e0e0e0', 
+                  borderRadius: 1, 
+                  p: 3, 
+                  bgcolor: 'grey.50'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                    <DescriptionIcon color="primary" sx={{ fontSize: 32 }} />
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="h6" fontWeight="medium">
+                        {contract.fileName}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {(contract.fileSize / 1024 / 1024).toFixed(2)} MB • 
+                        Uploaded {new Date(contract.uploadedAt).toLocaleDateString()} at {new Date(contract.uploadedAt).toLocaleTimeString()}
+                      </Typography>
+                    </Box>
                   </Box>
-                </Grid>
-              </Grid>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    <Button
+                      variant="contained"
+                      startIcon={<UploadIcon />}
+                      onClick={handleDownloadContract}
+                    >
+                      Download Contract
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      startIcon={<DeleteIcon />}
+                      onClick={handleDeleteContract}
+                    >
+                      Delete Contract
+                    </Button>
+                  </Box>
+                </Box>
+              )}
             </CardContent>
           </Card>
-        ))}
-      </Box>
+        </Grid>
 
-      {/* Submit Button */}
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-        <Button
-          variant="contained"
-          size="large"
-          onClick={onSubmit}
-          disabled={!canSubmit || !questionnaire.readyForRecruiter || loading}
-          startIcon={loading ? <CircularProgress size={20} /> : <WorkIcon />}
-        >
-          {loading ? 'Creating Job Orders...' : 'Create Job Orders'}
-        </Button>
-      </Box>
-
-      {!canSubmit && (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          This feature is available once the deal reaches "Verbal Agreement" or "Closed Won" stage.
-        </Alert>
-      )}
+        <Grid item xs={12} md={4}>
+          <Card>
+            <CardHeader title="Contract Information" />
+            <CardContent>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Supported file formats:
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Chip label="PDF (.pdf)" size="small" />
+                <Chip label="Word Document (.doc)" size="small" />
+                <Chip label="Word Document (.docx)" size="small" />
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                Maximum file size: 10MB
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
     </Box>
   );
 };

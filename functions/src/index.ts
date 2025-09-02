@@ -53,16 +53,29 @@ import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { cleanupUndefinedValues } from './cleanupUndefinedValues';
 import { bulkEmailDomainMatching } from './bulkEmailDomainMatching';
-import { firestoreCompanySnapshotFanout, firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
+import { firestoreContactSnapshotFanout, firestoreLocationSnapshotFanout, firestoreSalespersonSnapshotFanout } from './firestoreTriggers';
+import { firestoreCompanySnapshotFanout } from './safeFirestoreCompanySnapshotFanout';
+
+// Safe AI log updated trigger with field filters
+export { firestoreLogAILogUpdated } from './safeFirestoreAILogUpdated';
+
+// Remote kill switch management functions
+export {
+  enableKillSwitchCallable,
+  disableKillSwitchCallable,
+  getKillSwitchStatusCallable,
+  updateKillSwitchConfigCallable
+} from './killSwitchManagement';
 import { logContactEnhanced } from './activityLogCallables';
-import { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
+import { enrichCompanyOnCreate, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch } from './companyEnrichment';
+import { enrichCompanyOnDemand } from './simpleEnrichCompanyOnDemand';
 import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
 // 🎯 RECRUITER MODULE IMPORTS
-import * as RecruiterFunctions from './recruiter';
+// import * as RecruiterFunctions from './recruiter';
 
 // 📅 CALENDAR WEBHOOKS IMPORTS
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
@@ -138,6 +151,7 @@ import {
   getTasksForDate,
   getTaskDashboard,
   getAITaskSuggestions,
+  getUnifiedAISuggestions,
   acceptAITaskSuggestion,
   rejectAITaskSuggestion,
   getDealStageAISuggestions,
@@ -162,6 +176,7 @@ export {
   getTasksForDate,
   getTaskDashboard,
   getAITaskSuggestions,
+  getUnifiedAISuggestions,
   acceptAITaskSuggestion,
   rejectAITaskSuggestion,
   getDealStageAISuggestions,
@@ -1369,7 +1384,8 @@ export {
 } from './feedbackEngine';
 
 // Export AI Engine Processor functions
-export { processAILog, reprocessLog } from './aiEngineProcessor';
+// Temporarily disable processAILog to stop high-volume triggers
+// export { processAILog, reprocessLog } from './aiEngineProcessor';
 
 // Export Test Harness functions
 export { 
@@ -5240,9 +5256,24 @@ export const createInviteToken = onCall(async (request) => {
   }
 });
 
+// Cache for help topics
+const helpTopicsCache = new Map<string, { data: any; timestamp: number }>();
+const HELP_TOPICS_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes cache
+
 // Help & Guide System: Fetch Help Topics
 export const getHelpTopics = onCall(async (request) => {
   try {
+    // Create cache key based on query parameters
+    const cacheKey = `help_topics_${request.data.status || 'all'}_${request.data.limit || 100}`;
+    
+    // Check cache first
+    const cached = helpTopicsCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < HELP_TOPICS_CACHE_DURATION) {
+      console.log('Help topics served from cache for query:', cacheKey);
+      return cached.data;
+    }
+    
     let query: FirebaseFirestore.Query = db.collection('help_topics');
     if (request.data.status) {
       query = query.where('status', '==', request.data.status);
@@ -5255,7 +5286,12 @@ export const getHelpTopics = onCall(async (request) => {
       lastUpdated: doc.data().lastUpdated?.toDate?.() || null,
     }));
 
-    return { topics };
+    const result = { topics };
+    
+    // Cache the result
+    helpTopicsCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new Error(error.message || 'Failed to fetch help topics');
   }
@@ -7909,9 +7945,9 @@ export {
   firestoreLogSettingCreated,
   firestoreLogSettingUpdated,
   firestoreLogSettingDeleted,
-  // firestoreLogAILogCreated, // DISABLED - Using safe version to prevent infinite loops
-  firestoreLogAILogUpdated,
-  firestoreLogAILogDeleted,
+  // firestoreLogAILogCreated, // DISABLED - Using emergency disabled version to prevent infinite loops
+  // firestoreLogAILogUpdated, // DISABLED - Using safe version with field filters
+  // firestoreLogAILogDeleted, // DISABLED - Emergency cost containment
   firestoreLogTaskCreated,
   firestoreLogTaskUpdated,
   firestoreLogTenantContactCreated,
@@ -8587,6 +8623,10 @@ export const updateHelloMessageSettings = onCall(async (request) => {
   }
 });
 
+// Cache for mobile chat data
+const mobileChatDataCache = new Map<string, { data: any; timestamp: number }>();
+const MOBILE_CHAT_CACHE_DURATION = 30 * 1000; // 30 seconds cache
+
 // Mobile API Endpoints for Chat Data Retrieval
 export const getMobileChatData = onCall(async (request) => {
   const { userId, language = 'en' } = request.data;
@@ -8595,6 +8635,17 @@ export const getMobileChatData = onCall(async (request) => {
   try {
     if (!userId) {
       throw new Error('userId is required');
+    }
+    
+    // Create cache key
+    const cacheKey = `mobile_chat_${userId}_${language}`;
+    
+    // Check cache first
+    const cached = mobileChatDataCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < MOBILE_CHAT_CACHE_DURATION) {
+      console.log('Mobile chat data served from cache for user:', userId);
+      return cached.data;
     }
     
     // Get user data
@@ -8656,7 +8707,7 @@ export const getMobileChatData = onCall(async (request) => {
       urgencyScore: 3
     });
     
-    return {
+    const result = {
       success: true,
       primaryChat,
       broadcastCount: broadcasts.length,
@@ -8666,6 +8717,11 @@ export const getMobileChatData = onCall(async (request) => {
       lastLoginAt: userData?.lastLoginAt?.toDate(),
       loginCount: userData?.loginCount || 0
     };
+    
+    // Cache the result
+    mobileChatDataCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     await logAIAction({
       userId: request.auth?.uid || 'system',
@@ -9572,7 +9628,11 @@ async function calculateTraitImpact(campaign: any, interactions: any[]): Promise
 }
 
 // Cloud function: Toggle HRX Flex for existing tenant
-export const toggleHrxFlex = onCall({ maxInstances: 10 }, async (request) => {
+export const toggleHrxFlex = onCall({ 
+  maxInstances: 2, // Reduced for cost containment
+  timeoutSeconds: 300, // 5 minutes
+  memory: '512MiB'
+}, async (request) => {
   const { tenantId, enabled } = request.data;
   
   if (!tenantId || typeof enabled !== 'boolean') {
@@ -10267,7 +10327,6 @@ export {
   gmailOAuthCallback,
   syncGmailEmails,
   disconnectGmail,
-  getGmailStatus,
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
@@ -10290,14 +10349,19 @@ export {
   syncTaskToCalendar,
   updateGoogleSync,
   deleteGoogleSync,
-  getCalendarStatus,
   disconnectCalendar,
   disconnectAllGoogleServices,
   clearExpiredTokens,
   enableCalendarSync,
-  listCalendarEvents,
   createCalendarEvent
 } from './googleCalendarIntegration';
+
+// Safe, cached calendar status endpoint
+export { getCalendarStatus } from './directCalendarEmailFunctions';
+// Safe, cached Gmail status endpoint
+export { getGmailStatus } from './directCalendarEmailFunctions';
+// Safe, cached calendar events endpoint
+export { listCalendarEvents } from './directCalendarEmailFunctions';
 
 // Calendar Integration Functions
 export {
@@ -10325,7 +10389,7 @@ export { discoverCompanyUrls };
 
 // User Management Functions
 export { getSalespeople };
-export { getSalespeopleForTenant } from './getSalespeopleForTenant';
+export { getSalespeopleForTenant } from './simpleGetSalespeopleForTenant';
 export { fixPendingUser } from './fixPendingUser';
 
 // Job Scraping Functions
@@ -10389,14 +10453,24 @@ export { app_ai_generateResponse } from './appAi';
 export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRecommendedContacts, apolloPing, apolloPingHttp } from './apolloIntegration';
 // RE-ENABLED WITH FIXES - USING SAFE VERSION
 export { syncApolloHeadquartersLocation } from './safeSyncApolloHeadquartersLocation';
+export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
 // Active Salespeople (Company) - SAFE VERSIONS
-export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, updateActiveSalespeopleOnDeal, updateActiveSalespeopleOnTask, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
-// Safe version of email log trigger to prevent excessive calls
-export { updateActiveSalespeopleOnEmailLog } from './safeUpdateActiveSalespeopleOnEmailLog';
+export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
+// Emergency disabled versions to prevent cascading updates
+export { 
+  updateActiveSalespeopleOnEmailLog,
+  updateActiveSalespeopleOnActivityLog,
+  updateActiveSalespeopleOnDeal,
+  updateActiveSalespeopleOnTask,
+  toggleCircuitBreaker,
+  getCircuitBreakerStatus
+} from './emergencyTriggerDisable';
 // Safe version of AI log trigger to prevent infinite loops
-export { firestoreLogAILogCreated } from './safeFirestoreLogAILogCreated';
+export { firestoreLogAILogCreated } from './emergencyTriggerDisable';
+// Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED
+// export { processAILog } from './safeAiEngineProcessor';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
 
 // Auto Activity Logger
@@ -10432,8 +10506,8 @@ export {
 // Prospecting Functions
 export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList };
 
-// 🎯 RECRUITER MODULE FUNCTIONS
-export {
+// 🎯 RECRUITER MODULE FUNCTIONS - temporarily disabled for targeted deploy
+/* export {
   // Event Bus Functions
   createEventFunction,
   processEventsScheduled,
@@ -10482,5 +10556,5 @@ export {
   updateOfferStatus,
   getOffers,
   getPlacements,
-  updatePlacementStatus,
-} from './recruiter';
+  updatePlacementStatus
+} from './recruiter'; */

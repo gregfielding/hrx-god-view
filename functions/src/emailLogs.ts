@@ -17,7 +17,12 @@ const redirectUri = defineString('GOOGLE_REDIRECT_URI');
  * Input: { tenantId: string, emailLogId: string }
  * Returns: { bodyHtml?: string, bodySnippet?: string }
  */
-export const getEmailLogBody = onCall({ cors: true, timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
+export const getEmailLogBody = onCall({ 
+  cors: true, 
+  timeoutSeconds: 60, 
+  memory: '256MiB',
+  maxInstances: 2 // Added for cost containment
+}, async (request) => {
   const { tenantId, emailLogId } = request.data || {};
   if (!tenantId || !emailLogId) {
     throw new Error('tenantId and emailLogId are required');

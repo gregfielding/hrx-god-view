@@ -1,4 +1,5 @@
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { onlyIgnoredFieldsChanged } from './utils/safeFunctionTemplate';
 import { logAIAction } from './feedbackEngine';
 import * as admin from 'firebase-admin';
 import * as functionsV1 from 'firebase-functions';
@@ -239,6 +240,7 @@ export const firestoreLogCustomerUpdated = onDocumentUpdated('customers/{custome
   const customerId = event.params.customerId;
   
   if (!beforeData || !afterData) return;
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, ['updatedAt', 'lastUpdated', '_processingBy', '_processingAt'])) return;
   
   try {
     // Determine what fields changed
@@ -431,12 +433,16 @@ export const firestoreLogConversationCreated = onDocumentCreated('conversations/
 });
 
 // Firestore trigger: Log conversation updates
+const IGNORE_FIELDS_COMMON = ['updatedAt', 'lastUpdated', '_processingBy', '_processingAt'];
+
 export const firestoreLogConversationUpdated = onDocumentUpdated('conversations/{conversationId}', async (event) => {
   const beforeData = event.data?.before.data();
   const afterData = event.data?.after.data();
   const conversationId = event.params.conversationId;
   
   if (!beforeData || !afterData) return;
+  // Skip updates that only changed bookkeeping/meta fields
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, IGNORE_FIELDS_COMMON)) return;
   
   try {
     // Determine what fields changed
@@ -833,6 +839,7 @@ export const firestoreLogMessageUpdated = onDocumentUpdated('conversations/{conv
   const conversationId = event.params.conversationId;
   
   if (!beforeData || !afterData) return;
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, IGNORE_FIELDS_COMMON)) return;
   
   try {
     // Determine what fields changed
@@ -1439,6 +1446,7 @@ export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async
   const taskId = event.params.taskId;
   
   if (!beforeData || !afterData) return;
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, [...IGNORE_FIELDS_COMMON, 'processingStartedAt', 'processingCompletedAt'])) return;
   
   try {
     // Determine what changed
@@ -1624,6 +1632,7 @@ export const firestoreLogAgencyContactUpdated = onDocumentUpdated('agencies/{age
   const agencyId = event.params.agencyId;
   
   if (!beforeData || !afterData) return;
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, ['updatedAt', 'lastUpdated', '_processingBy', '_processingAt'])) return;
   
   try {
     // Determine what fields changed
@@ -2418,6 +2427,7 @@ export const firestoreLogTenantContactUpdated = onDocumentUpdated('tenants/{tena
   const contactId = event.params.contactId;
   
   if (!beforeData || !afterData) return;
+  if (onlyIgnoredFieldsChanged(beforeData, afterData, ['updatedAt', 'lastUpdated', '_processingBy', '_processingAt'])) return;
   
   try {
     // Determine what fields changed

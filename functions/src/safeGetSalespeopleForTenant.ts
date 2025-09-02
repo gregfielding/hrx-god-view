@@ -86,10 +86,8 @@ async function getSalespeopleForTenantSafely(tenantId: string): Promise<any[]> {
 
   console.log(`🔍 Getting salespeople for tenant: ${tenantId}`);
 
-  // Use a more efficient approach - query users with a compound filter
-  // Note: This assumes tenantIds is a map/object field
-  // If tenantIds is an array, we'd need a different approach
-  
+  // Get all users and filter in memory since tenantIds can be array or object
+  // This is more reliable than complex queries
   let allSalespeople: any[] = [];
   let lastDoc: any = null;
   let queryCount = 0;
@@ -98,9 +96,7 @@ async function getSalespeopleForTenantSafely(tenantId: string): Promise<any[]> {
   while (queryCount < 10) { // Max 10 queries to prevent runaway
     SafeFunctionUtils.checkSafetyLimits();
     
-    let query = db.collection('users')
-      .where('crm_sales', '==', true)
-      .limit(SAFE_CONFIG.MAX_USERS_PER_QUERY);
+    let query = db.collection('users').limit(SAFE_CONFIG.MAX_USERS_PER_QUERY);
 
     if (lastDoc) {
       query = query.startAfter(lastDoc);
@@ -118,7 +114,23 @@ async function getSalespeopleForTenantSafely(tenantId: string): Promise<any[]> {
     
     // Filter for users in this tenant (in memory for this batch)
     const batchSalespeople = batchUsers.filter((user: any) => {
-      return user.tenantIds && user.tenantIds[tenantId];
+      // Check if user has crm_sales flag
+      if (!user.crm_sales) return false;
+      
+      // Check if user has direct tenantId match
+      if (user.tenantId === tenantId) return true;
+      
+      // Check if user has tenantId in tenantIds array
+      if (user.tenantIds && Array.isArray(user.tenantIds) && user.tenantIds.includes(tenantId)) {
+        return true;
+      }
+      
+      // Check if user has tenantId in tenantIds object (new structure)
+      if (user.tenantIds && typeof user.tenantIds === 'object' && !Array.isArray(user.tenantIds) && user.tenantIds[tenantId]) {
+        return true;
+      }
+      
+      return false;
     });
 
     allSalespeople.push(...batchSalespeople);
@@ -209,8 +221,32 @@ export const getSalespeopleForTenant = onCall(
       };
 
     } catch (error) {
-      console.error('Error in getSalespeopleForTenant:', error);
-      throw new Error(`Failed to get salespeople: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('❌ Error in getSalespeopleForTenant:', error);
+      
+      // Log detailed error information for debugging
+      console.error('Error details:', {
+        errorType: typeof error,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorStack: error instanceof Error ? error.stack : 'No stack trace',
+        tenantId: request.data?.tenantId,
+        userId: request.auth?.uid
+      });
+      
+      if (error instanceof Error) {
+        if (error.message.includes('permission')) {
+          throw new Error('Permission denied: User does not have access to this tenant');
+        } else if (error.message.includes('not found')) {
+          throw new Error('Tenant not found or user not found');
+        } else if (error.message.includes('timeout')) {
+          throw new Error('Request timed out - please try again');
+        } else if (error.message.includes('circuit breaker')) {
+          throw new Error('Service temporarily unavailable - please try again');
+        } else {
+          throw new Error(`Failed to get salespeople: ${error.message}`);
+        }
+      } else {
+        throw new Error('Failed to get salespeople: Unknown error occurred');
+      }
     }
   }
 );

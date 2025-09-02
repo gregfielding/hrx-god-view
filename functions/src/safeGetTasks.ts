@@ -312,8 +312,22 @@ function applyClientFiltersSafely(tasks: any[], filters: any): any[] {
   return filteredTasks;
 }
 
+// Cache for tasks queries
+const tasksCache = new Map<string, { data: any; timestamp: number }>();
+const TASKS_CACHE_DURATION_MS = 2 * 60 * 1000; // 2 minutes cache
+
+// Cleanup cache every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of tasksCache.entries()) {
+    if (now - value.timestamp > TASKS_CACHE_DURATION_MS) {
+      tasksCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
 /**
- * Safe version of getTasks with hardening playbook compliance
+ * Safe version of getTasks with hardening playbook compliance and caching
  */
 export const getTasks = onCall(
   {
@@ -339,6 +353,17 @@ export const getTasks = onCall(
 
       // Validate input
       const validatedFilters = validateInput(request.data);
+
+      // Create cache key
+      const cacheKey = `tasks_${validatedFilters.tenantId}_${JSON.stringify(validatedFilters)}`;
+      
+      // Check cache first
+      const cached = tasksCache.get(cacheKey);
+      const now = Date.now();
+      if (cached && (now - cached.timestamp) < TASKS_CACHE_DURATION_MS) {
+        console.log('Tasks served from cache for tenant:', validatedFilters.tenantId);
+        return cached.data;
+      }
 
       // Check abort signal
       if (abort.aborted) {
@@ -382,7 +407,7 @@ export const getTasks = onCall(
       const costSummary = CostTracker.getCostSummary();
       console.log(`Tasks retrieved for ${validatedFilters.tenantId}, Count: ${tasks.length}, Cost: $${costSummary.estimatedCost.toFixed(4)}`);
 
-      return { 
+      const result = { 
         tasks, 
         success: true,
         _metadata: {
@@ -393,6 +418,11 @@ export const getTasks = onCall(
           cost: costSummary.estimatedCost
         }
       };
+
+      // Cache the result
+      tasksCache.set(cacheKey, { data: result, timestamp: now });
+
+      return result;
 
     } catch (error) {
       console.error('Error in getTasks:', error);

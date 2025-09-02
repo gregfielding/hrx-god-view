@@ -11,18 +11,29 @@ const db = admin.firestore();
 const SAFE_CONFIG = {
   MAX_EXECUTION_TIME_MS: 55000, // 55 seconds (under 60s limit)
   MAX_RECURSIVE_CALLS: 3,
-  TAG: 'updateActiveSalespeopleOnEmailLog@v2',
-  // Rate limiting
-  MAX_EMAILS_PER_MINUTE: 10,
-  MAX_COMPANIES_PER_BATCH: 5,
-  MAX_CONTACTS_PER_BATCH: 10,
-  BATCH_DELAY_MS: 1000, // 1 second between batches
-  // Skip certain email types
+  TAG: 'updateActiveSalespeopleOnEmailLog@v3',
+  // EMERGENCY: Aggressive rate limiting to stop runaway costs
+  ENABLED: false, // TEMPORARILY DISABLED - enable only when needed
+  // Rate limiting - much more aggressive
+  MAX_EMAILS_PER_MINUTE: 2, // Reduced from 10
+  MAX_COMPANIES_PER_BATCH: 2, // Reduced from 5
+  MAX_CONTACTS_PER_BATCH: 3, // Reduced from 10
+  BATCH_DELAY_MS: 2000, // Increased from 1 second to 2 seconds
+  // Skip certain email types - expanded list
   SKIP_EMAIL_TYPES: [
     'system',
     'notification',
-    'automated'
-  ]
+    'automated',
+    'bulk',
+    'marketing',
+    'newsletter',
+    'digest',
+    'report',
+    'alert',
+    'reminder'
+  ],
+  // Sampling: only process 5% of email logs
+  SAMPLING_RATE: 0.05 // 5% sampling
 };
 
 /**
@@ -38,6 +49,16 @@ function checkCircuitBreaker(): void {
  * Check if we should process this email log
  */
 function shouldProcessEmailLog(data: any): boolean {
+  // EMERGENCY: Function is temporarily disabled
+  if (!SAFE_CONFIG.ENABLED) {
+    return false;
+  }
+
+  // Apply sampling: only process 5% of email logs
+  if (Math.random() > SAFE_CONFIG.SAMPLING_RATE) {
+    return false;
+  }
+
   // Skip system emails
   if (data.type && SAFE_CONFIG.SKIP_EMAIL_TYPES.includes(data.type)) {
     return false;
@@ -401,7 +422,7 @@ const safeTrigger = createSafeFirestoreTrigger(
   {
     timeoutSeconds: Math.floor(SAFE_CONFIG.MAX_EXECUTION_TIME_MS / 1000),
     memory: '256MiB',
-    maxInstances: 3
+    maxInstances: 1 // Reduced from 3 for cost containment
   }
 );
 

@@ -1,12 +1,27 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 
+// Cache for salespeople queries
+const salespeopleCache = new Map<string, { data: any; timestamp: number }>();
+const SALESPEOPLE_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes cache
+
 export const getSalespeople = onCall(async (request) => {
   try {
     const { tenantId, activeTenantId } = request.data;
 
     if (!tenantId) {
       throw new Error('Missing required parameter: tenantId');
+    }
+
+    // Create cache key
+    const cacheKey = `salespeople_${tenantId}_${activeTenantId || 'all'}`;
+    
+    // Check cache first
+    const cached = salespeopleCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < SALESPEOPLE_CACHE_DURATION) {
+      console.log('Salespeople served from cache for tenant:', tenantId);
+      return cached.data;
     }
 
     console.log(`🔍 getSalespeople called with tenantId: ${tenantId}, activeTenantId: ${activeTenantId}`);
@@ -66,7 +81,12 @@ export const getSalespeople = onCall(async (request) => {
     console.log(`🔍 Found ${salespeople.length} salespeople with crm_sales: true:`, 
       salespeople.map((s: any) => ({ id: s.id, firstName: s.firstName, lastName: s.lastName, email: s.email })));
 
-    return { salespeople };
+    const result = { salespeople };
+    
+    // Cache the result
+    salespeopleCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
 
   } catch (error) {
     console.error('❌ Error in getSalespeople:', error);

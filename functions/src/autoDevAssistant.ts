@@ -471,8 +471,23 @@ export const generateAndDeployFix = onCall(async (request) => {
   }
 });
 
+// Cache for AutoDev fixes
+const autoDevFixesCache = new Map<string, { data: any; timestamp: number }>();
+const AUTODEV_FIXES_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
+
 export const getAutoDevFixes = onCall(async (request) => {
   const { status, limit = 50 } = request.data;
+  
+  // Create cache key
+  const cacheKey = `autodev_fixes_${status || 'all'}_${limit}`;
+  
+  // Check cache first
+  const cached = autoDevFixesCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp) < AUTODEV_FIXES_CACHE_DURATION) {
+    console.log('AutoDev fixes served from cache for query:', cacheKey);
+    return cached.data;
+  }
   
   try {
     let query = db.collection('autoDevFixes').orderBy('createdAt', 'desc');
@@ -487,7 +502,12 @@ export const getAutoDevFixes = onCall(async (request) => {
       ...doc.data()
     }));
     
-    return { success: true, fixes };
+    const result = { success: true, fixes };
+    
+    // Cache the result
+    autoDevFixesCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
   } catch (error: any) {
     throw new Error(`Failed to get AutoDev fixes: ${error.message}`);
   }

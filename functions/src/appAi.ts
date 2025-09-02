@@ -10,7 +10,13 @@ if (!admin.apps.length) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
-export const app_ai_generateResponse = onCall({ cors: true, region: 'us-central1', timeoutSeconds: 60, memory: '512MiB' }, async (request) => {
+export const app_ai_generateResponse = onCall({ 
+  cors: true, 
+  region: 'us-central1', 
+  timeoutSeconds: 60, 
+  memory: '512MiB',
+  maxInstances: 2 // Added for cost containment
+}, async (request) => {
   try {
     const { prompt, conversationId, model = 'gpt-5', temperature = 0.7, maxTokens = 1000, context, metadata } = request.data || {};
 

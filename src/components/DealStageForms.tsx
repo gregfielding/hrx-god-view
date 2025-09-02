@@ -60,13 +60,15 @@ import {
   Bedtime as BedtimeIcon,
   Cancel as CancelIcon,
   CloudUpload as CloudUploadIcon,
-  Undo as UndoIcon
+  Undo as UndoIcon,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 
 
 interface Contact {
@@ -220,24 +222,35 @@ interface VerbalAgreementData {
   notes?: string;
 }
 
- interface ClosedWonData {
-   status?: 'won' | 'lost';
-   signedContractFile?: File | null;
-   signedContractUrl?: string;
-   dateSigned?: string;
-   expirationDate?: string;
-   rateSheetOnFile?: boolean;
-   msaSigned?: boolean;
-   notes?: string;
-   // Lost deal fields
-   lostReason?: string;
-   competitor?: string;
-   lostTo?: string;
-   priceDifference?: number;
-   decisionMaker?: string;
-   feedback?: string;
-   lessonsLearned?: string;
- }
+ interface ContractData {
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  downloadURL: string;
+  storagePath: string;
+  uploadedAt: string;
+  uploadedBy: string;
+}
+
+interface ClosedWonData {
+  status?: 'won' | 'lost';
+  signedContractFile?: File | null;
+  signedContractUrl?: string;
+  signedContract?: ContractData | null;
+  dateSigned?: string;
+  expirationDate?: string;
+  rateSheetOnFile?: boolean;
+  msaSigned?: boolean;
+  notes?: string;
+  // Lost deal fields
+  lostReason?: string;
+  competitor?: string;
+  lostTo?: string;
+  priceDifference?: number;
+  decisionMaker?: string;
+  feedback?: string;
+  lessonsLearned?: string;
+}
 
 interface OnboardingData {
   onboardingStartDate?: string;
@@ -331,6 +344,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const [toastMessage, setToastMessage] = useState('');
   const [toastSeverity, setToastSeverity] = useState<'success' | 'error' | 'warning' | 'info'>('success');
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [uploadingContract, setUploadingContract] = useState(false);
 
   useEffect(() => {
     // Find the current stage index, default to 0 (Discovery) if not found
@@ -2610,12 +2624,73 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const renderClosedWonForm = () => {
     const data = stageData.closedWon || {};
 
-    const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (file) {
-        handleStageDataChange('closedWon', 'signedContractFile', file);
-        // In a real implementation, you would upload the file to storage and get a URL
-        // For now, we'll just store the file object
+      if (!file || !dealId || !tenantId) return;
+
+      // Validate file size (10MB max)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Contract file size must be less than 10MB');
+        return;
+      }
+
+      // Validate file type
+      const validTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+      if (!validTypes.includes(file.type)) {
+        alert('Please upload a PDF or Word document');
+        return;
+      }
+
+      setUploadingContract(true);
+      try {
+        // Upload to Firebase Storage
+        const fileName = `contract_${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, `deals/${tenantId}/${dealId}/contracts/${fileName}`);
+        await uploadBytes(storageRef, file);
+        const downloadURL = await getDownloadURL(storageRef);
+
+        // Save contract metadata to stage data
+        const contractData = {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          downloadURL: downloadURL,
+          storagePath: storageRef.fullPath,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: user?.uid || 'unknown'
+        };
+
+        handleStageDataChange('closedWon', 'signedContract', contractData);
+        
+        // Clear the file input
+        event.target.value = '';
+      } catch (error) {
+        console.error('Error uploading contract:', error);
+        alert('Failed to upload contract. Please try again.');
+      } finally {
+        setUploadingContract(false);
+      }
+    };
+
+    const handleDeleteContract = async () => {
+      if (!data.signedContract?.storagePath) return;
+
+      try {
+        // Delete from Firebase Storage
+        const storageRef = ref(storage, data.signedContract.storagePath);
+        await deleteObject(storageRef);
+
+        // Remove from stage data
+        handleStageDataChange('closedWon', 'signedContract', null);
+      } catch (error) {
+        console.error('Error deleting contract:', error);
+        alert('Failed to delete contract. Please try again.');
+      }
+    };
+
+    const handleDownloadContract = () => {
+      if (data.signedContract?.downloadURL) {
+        window.open(data.signedContract.downloadURL, '_blank');
       }
     };
 
@@ -2643,42 +2718,72 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Signed Contract</Typography>
             
             <Box sx={{ mb: 3 }}>
-              <input
-                accept=".pdf,.doc,.docx"
-                style={{ display: 'none' }}
-                id="signed-contract-upload"
-                type="file"
-                onChange={handleFileUpload}
-              />
-              <label htmlFor="signed-contract-upload">
-                <Button
-                  variant="outlined"
-                  component="span"
-                  startIcon={<CloudUploadIcon />}
-                  sx={{ mb: 2 }}
-                >
-                  Upload Signed Contract
-                </Button>
-              </label>
-              
-              {data.signedContractFile && (
-                <Box sx={{ mt: 1 }}>
-                  <Chip
-                    label={data.signedContractFile.name}
-                    onDelete={() => handleStageDataChange('closedWon', 'signedContractFile', null)}
-                    color="primary"
-                    variant="outlined"
+              {!data.signedContract ? (
+                <>
+                  <input
+                    accept=".pdf,.doc,.docx"
+                    style={{ display: 'none' }}
+                    id="signed-contract-upload"
+                    type="file"
+                    onChange={handleFileUpload}
+                    disabled={uploadingContract}
                   />
-                </Box>
-              )}
-              
-              {data.signedContractUrl && !data.signedContractFile && (
-                <Box sx={{ mt: 1 }}>
-                  <Chip
-                    label="Contract uploaded"
-                    color="success"
-                    variant="outlined"
-                  />
+                  <label htmlFor="signed-contract-upload">
+                    <Button
+                      variant="outlined"
+                      component="span"
+                      startIcon={uploadingContract ? <CircularProgress size={16} /> : <CloudUploadIcon />}
+                      sx={{ mb: 2 }}
+                      disabled={uploadingContract}
+                    >
+                      {uploadingContract ? 'Uploading...' : 'Upload Signed Contract'}
+                    </Button>
+                  </label>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Supported formats: PDF, DOC, DOCX (max 10MB)
+                  </Typography>
+                </>
+              ) : (
+                <Box sx={{ 
+                  border: '1px solid #e0e0e0', 
+                  borderRadius: 1, 
+                  p: 2, 
+                  bgcolor: 'grey.50',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <DescriptionIcon color="primary" />
+                    <Box>
+                      <Typography variant="body2" fontWeight="medium">
+                        {data.signedContract.fileName}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {(data.signedContract.fileSize / 1024 / 1024).toFixed(2)} MB • 
+                        Uploaded {new Date(data.signedContract.uploadedAt).toLocaleDateString()}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={handleDownloadContract}
+                      startIcon={<CloudUploadIcon />}
+                    >
+                      Download
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                      onClick={handleDeleteContract}
+                      startIcon={<DeleteIcon />}
+                    >
+                      Delete
+                    </Button>
+                  </Box>
                 </Box>
               )}
             </Box>

@@ -639,8 +639,13 @@ export const deleteTask = onCall({
   }
 });
 
+// Cache for tasks queries
+const tasksCache = new Map<string, { data: any; timestamp: number }>();
+const TASKS_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes cache
+
 export const getTasks = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 5
 }, async (request) => {
   const { 
     tenantId, 
@@ -667,6 +672,21 @@ export const getTasks = onCall({
   try {
     if (!tenantId) {
       throw new Error('Missing required field: tenantId');
+    }
+
+    // Create cache key from request parameters
+    const cacheKey = `tasks_${tenantId}_${JSON.stringify({
+      userId, status, type, category, priority, startDate, endDate, dueDate, 
+      aiGenerated, quotaCategory, orderBy, orderDirection, limit, dealId, 
+      companyId, contactId, salespersonId, tags
+    })}`;
+    
+    // Check cache first
+    const cached = tasksCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < TASKS_CACHE_DURATION) {
+      console.log('Tasks served from cache for tenant:', tenantId);
+      return cached.data;
     }
 
     let tasks: any[] = [];
@@ -754,7 +774,12 @@ export const getTasks = onCall({
       );
     }
 
-    return { tasks, success: true };
+    const result = { tasks, success: true };
+    
+    // Cache the result
+    tasksCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
 
   } catch (error) {
     console.error('❌ Error fetching tasks:', error);
@@ -796,14 +821,30 @@ export const getTasksForDate = onCall({
   }
 });
 
+// Cache for task dashboard queries
+const taskDashboardCache = new Map<string, { data: any; timestamp: number }>();
+const TASK_DASHBOARD_CACHE_DURATION = 1 * 60 * 1000; // 1 minute cache
+
 export const getTaskDashboard = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 5
 }, async (request) => {
   const { userId, date, tenantId, filters } = request.data;
 
   try {
     if (!userId || !date || !tenantId) {
       throw new Error('Missing required fields: userId, date, tenantId');
+    }
+
+    // Create cache key
+    const cacheKey = `task_dashboard_${tenantId}_${userId}_${date}_${JSON.stringify(filters || {})}`;
+    
+    // Check cache first
+    const cached = taskDashboardCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < TASK_DASHBOARD_CACHE_DURATION) {
+      console.log('Task dashboard served from cache for user:', userId);
+      return cached.data;
     }
 
     let todayTasks: any[] = [];
@@ -920,7 +961,7 @@ export const getTaskDashboard = onCall({
       target: 30 // Default daily quota
     };
 
-    return {
+    const result = {
       today: {
         totalTasks: todayTasks.length,
         completedTasks: todayTasks.filter((t: any) => t.status === 'completed').length,
@@ -942,6 +983,11 @@ export const getTaskDashboard = onCall({
       types
     };
 
+    // Cache the result
+    taskDashboardCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
+
   } catch (error) {
     console.error('❌ Error fetching task dashboard:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -949,14 +995,30 @@ export const getTaskDashboard = onCall({
   }
 });
 
+// Cache for AI task suggestions
+const aiTaskSuggestionsCache = new Map<string, { data: any; timestamp: number }>();
+const AI_TASK_SUGGESTIONS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes cache
+
 export const getAITaskSuggestions = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 3
 }, async (request) => {
   const { userId, tenantId, filters } = request.data;
 
   try {
     if (!userId || !tenantId) {
       throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    // Create cache key
+    const cacheKey = `ai_task_suggestions_${userId}_${tenantId}_${JSON.stringify(filters || {})}`;
+    
+    // Check cache first
+    const cached = aiTaskSuggestionsCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < AI_TASK_SUGGESTIONS_CACHE_DURATION) {
+      console.log('AI task suggestions served from cache for user:', userId);
+      return cached.data;
     }
 
     // Get user's pipeline data with optional filtering
@@ -983,7 +1045,12 @@ export const getAITaskSuggestions = onCall({
       suggestions.push(...stageSuggestions.stageTasks);
     }
 
-    return suggestions;
+    const result = suggestions;
+    
+    // Cache the result
+    aiTaskSuggestionsCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
 
   } catch (error) {
     console.error('❌ Error fetching AI task suggestions:', error);
@@ -992,14 +1059,30 @@ export const getAITaskSuggestions = onCall({
   }
 });
 
+// Cache for unified AI suggestions
+const unifiedAISuggestionsCache = new Map<string, { data: any; timestamp: number }>();
+const UNIFIED_AI_SUGGESTIONS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes cache
+
 export const getUnifiedAISuggestions = onCall({
-  cors: true
+  cors: true,
+  maxInstances: 3
 }, async (request) => {
   const { userId, tenantId, filters } = request.data;
 
   try {
     if (!userId || !tenantId) {
       throw new Error('Missing required fields: userId, tenantId');
+    }
+
+    // Create cache key
+    const cacheKey = `unified_ai_suggestions_${userId}_${tenantId}_${JSON.stringify(filters || {})}`;
+    
+    // Check cache first
+    const cached = unifiedAISuggestionsCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < UNIFIED_AI_SUGGESTIONS_CACHE_DURATION) {
+      console.log('Unified AI suggestions served from cache for user:', userId);
+      return cached.data;
     }
 
     // Get comprehensive context
@@ -1016,10 +1099,15 @@ export const getUnifiedAISuggestions = onCall({
     // Generate unified suggestions
     const suggestions = await generateUnifiedSuggestions(pipelineData, userContext, dealContext, filters);
 
-    return {
+    const result = {
       success: true,
       suggestions: suggestions
     };
+    
+    // Cache the result
+    unifiedAISuggestionsCache.set(cacheKey, { data: result, timestamp: now });
+    
+    return result;
 
   } catch (error) {
     console.error('❌ Error fetching unified AI suggestions:', error);

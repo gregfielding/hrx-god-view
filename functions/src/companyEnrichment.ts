@@ -444,6 +444,12 @@ export async function runCompanyEnrichment(
         // Persist Apollo firmographics snapshot (non-blocking)
         if (aCompany) {
           console.log('Apollo company data received:', JSON.stringify(aCompany, null, 2));
+          console.log('🔍 Saving Apollo firmographics data to trigger headquarters sync', {
+            tenantId,
+            companyId,
+            hasHeadquarters: !!aCompany.headquarters,
+            headquartersData: aCompany.headquarters
+          });
           await companyRef.set({ firmographics: { apollo: removeUndefinedValues(aCompany) }, metadata: { apolloFetchedAt: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
           
           // Map Apollo data to company fields
@@ -549,6 +555,11 @@ export async function runCompanyEnrichment(
           } else {
             console.log('No Apollo updates to apply - all fields already populated or no mapping found');
           }
+
+          // Create headquarters location directly if Apollo data contains headquarters
+          if (aCompany.headquarters) {
+            await createHeadquartersLocationFromApollo(tenantId, companyId, aCompany.headquarters, companyName);
+          }
         }
       }
     }
@@ -604,7 +615,7 @@ export async function runCompanyEnrichment(
   );
 }
 
-export const enrichCompanyOnCreate = onDocumentCreated({ document: 'tenants/{tenantId}/crm_companies/{companyId}', secrets: [APOLLO_API_KEY] }, async (event) => {
+export const enrichCompanyOnCreate = onDocumentCreated({ document: 'tenants/{tenantId}/crm_companies/{companyId}' }, async (event) => {
   const { tenantId, companyId } = event.params as any;
   try {
     await runCompanyEnrichment(tenantId, companyId, { mode: 'metadata' });
@@ -614,7 +625,6 @@ export const enrichCompanyOnCreate = onDocumentCreated({ document: 'tenants/{ten
 });
 
 export const enrichCompanyOnDemand = onCall({ 
-  secrets: [APOLLO_API_KEY],
   timeoutSeconds: 540, // Increased to 9 minutes
   memory: '1GiB' // Increased memory
 }, async (request) => {
@@ -650,6 +660,83 @@ export const enrichCompanyOnDemand = onCall({
     return { status: 'error', message: e?.message || 'Internal error' };
   }
 });
+
+/**
+ * Create headquarters location directly from Apollo data
+ */
+async function createHeadquartersLocationFromApollo(
+  tenantId: string, 
+  companyId: string, 
+  headquarters: any, 
+  companyName: string
+): Promise<void> {
+  try {
+    const { street_address, city, state, postal_code, country } = headquarters;
+    
+    console.log('🔍 Creating headquarters location from Apollo data', {
+      tenantId,
+      companyId,
+      companyName,
+      street_address,
+      city,
+      state,
+      postal_code,
+      country
+    });
+    
+    // Validate required fields
+    if (!city || !state) {
+      console.log('❌ Incomplete Apollo address data, skipping headquarters location creation');
+      return;
+    }
+    
+    const locationsRef = db.collection(`tenants/${tenantId}/crm_companies/${companyId}/locations`);
+    
+    // Check if headquarters already exists
+    const headquartersQuery = locationsRef.where('type', '==', 'Headquarters');
+    const headquartersSnap = await headquartersQuery.get();
+    
+    if (!headquartersSnap.empty) {
+      console.log('🚫 Headquarters location already exists - skipping creation');
+      return;
+    }
+    
+    // Create headquarters location data
+    const locationData = {
+      name: 'Headquarters',
+      type: 'Headquarters',
+      address: street_address || '',
+      city: city,
+      state: state,
+      zip: postal_code || '',
+      country: country || 'US',
+      isActive: true,
+      isPrimary: true,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: 'apollo_enrichment',
+      metadata: {
+        apolloData: true,
+        createdBy: 'companyEnrichment',
+        companyName: companyName
+      }
+    };
+    
+    // Create new headquarters location
+    await locationsRef.add(locationData);
+    
+    console.log('✅ Created headquarters location from Apollo data', { 
+      companyId, 
+      tenantId,
+      locationName: locationData.name,
+      address: `${locationData.address}, ${locationData.city}, ${locationData.state}`
+    });
+    
+  } catch (error) {
+    console.error('❌ Error creating headquarters location from Apollo data:', error);
+    // Don't throw - this is non-critical functionality
+  }
+}
 
 function getEnvNumber(name: string, def: number): number {
   const raw = process.env[name];

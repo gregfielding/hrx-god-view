@@ -211,7 +211,10 @@ const createTaskFromEmail = async (emailData: any, analysis: EmailAnalysis, tena
 };
 
 // Sync Gmail emails and create tasks
-export const syncGmailAndCreateTasks = onCall(async (request) => {
+export const syncGmailAndCreateTasks = onCall({
+  maxInstances: 3,
+  timeoutSeconds: 300
+}, async (request) => {
   if (!request.auth) {
     throw new Error('User must be authenticated');
   }

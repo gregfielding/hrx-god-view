@@ -25,7 +25,10 @@ interface AISummary {
   };
 }
 
-export const generateDealAISummary = onCall(async (request) => {
+export const generateDealAISummary = onCall({
+  maxInstances: 2,
+  timeoutSeconds: 120
+}, async (request) => {
   try {
     const { tenantId, dealId } = request.data;
 

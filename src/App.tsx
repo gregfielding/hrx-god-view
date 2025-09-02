@@ -11,6 +11,7 @@ import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
+import { SalespeopleProvider } from './contexts/SalespeopleContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
@@ -615,15 +616,17 @@ function App() {
     <Router>
       <AuthProvider>
         <AssociationsCacheProvider>
-          {googleMapsApiKey ? (
-            <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
-              {routes}
-            </LoadScript>
-          ) : (
-            <div>
-              {routes}
-            </div>
-          )}
+          <SalespeopleProvider>
+            {googleMapsApiKey ? (
+              <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
+                {routes}
+              </LoadScript>
+            ) : (
+              <div>
+                {routes}
+              </div>
+            )}
+          </SalespeopleProvider>
         </AssociationsCacheProvider>
       </AuthProvider>
     </Router>

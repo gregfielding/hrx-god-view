@@ -6,7 +6,12 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-export const startAIThread = onCall({ cors: true }, async (request) => {
+export const startAIThread = onCall({ 
+  cors: true,
+  maxInstances: 2, // Added for cost containment
+  timeoutSeconds: 60,
+  memory: '256MiB'
+}, async (request) => {
   const { tenantId, context } = request.data || {};
   const uid = request.auth?.uid || request.data?.userId;
   if (!uid || !tenantId) {
@@ -111,7 +116,12 @@ export const chatWithAI = onRequest(async (req, res) => {
   }
 });
 
-export const logAIUserMessage = onCall({ cors: true }, async (request) => {
+export const logAIUserMessage = onCall({ 
+  cors: true,
+  maxInstances: 2, // Added for cost containment
+  timeoutSeconds: 60,
+  memory: '256MiB'
+}, async (request) => {
   const { tenantId, threadId, content } = request.data || {};
   const uid = request.auth?.uid || request.data?.userId;
   if (!tenantId || !threadId || !uid || !content) {

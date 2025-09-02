@@ -175,7 +175,10 @@ export const createBroadcastMessage = functions.https.onCall(async (request) => 
 });
 
 // Get broadcast messages for a user
-export const getUserBroadcasts = functions.https.onCall(async (request) => {
+export const getUserBroadcasts = functions.https.onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   const { userId, status = 'all', limit = 20, offset = 0 } = request.data;
   const start = Date.now();
   
@@ -265,7 +268,10 @@ export const getUserBroadcasts = functions.https.onCall(async (request) => {
 });
 
 // Mark broadcast as read
-export const markBroadcastRead = functions.https.onCall(async (request) => {
+export const markBroadcastRead = functions.https.onCall({
+  maxInstances: 5,
+  timeoutSeconds: 30
+}, async (request) => {
   const { conversationId, userId } = request.data;
   const start = Date.now();
   
@@ -342,7 +348,10 @@ export const markBroadcastRead = functions.https.onCall(async (request) => {
 });
 
 // Reply to broadcast
-export const replyToBroadcast = functions.https.onCall(async (request) => {
+export const replyToBroadcast = functions.https.onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   const { conversationId, userId, message, language = 'en' } = request.data;
   const start = Date.now();
   

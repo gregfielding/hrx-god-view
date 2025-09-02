@@ -10,7 +10,18 @@ import {
   Alert,
   Grid,
   Avatar,
-  Snackbar
+  Snackbar,
+  TextField,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  IconButton,
+  Tooltip,
+  Divider
 } from '@mui/material';
 import {
   LinkedIn as LinkedInIcon,
@@ -20,7 +31,13 @@ import {
   Save as SaveIcon,
   OpenInNew as OpenInNewIcon,
   TrendingUp as TrendingUpIcon,
-  Work as WorkIcon
+  Work as WorkIcon,
+  Search as SearchIcon,
+  LocationOn as LocationIcon,
+  WorkOutline as WorkOutlineIcon,
+  ExpandMore as ExpandMoreIcon,
+  Clear as ClearIcon,
+  FilterList as FilterListIcon
 } from '@mui/icons-material';
 import { httpsCallable } from 'firebase/functions';
 import { addDoc, collection } from 'firebase/firestore';
@@ -53,6 +70,14 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
   const [savingContact, setSavingContact] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
+  // Search filter states
+  const [locationKeywords, setLocationKeywords] = useState<string>('');
+  const [jobTitleKeywords, setJobTitleKeywords] = useState<string>('');
+  const [seniorityLevel, setSeniorityLevel] = useState<string>('all');
+  const [department, setDepartment] = useState<string>('all');
+  const [showFilters, setShowFilters] = useState<boolean>(false);
+  const [hasActiveFilters, setHasActiveFilters] = useState<boolean>(false);
 
   const fetchDecisionMakers = async (forceRefresh = false) => {
     setLoading(true);
@@ -63,6 +88,10 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         companyName,
         companyId: forceRefresh ? `${companyId}-${Date.now()}` : companyId,
         tenantId,
+        locationKeywords: locationKeywords.trim(),
+        jobTitleKeywords: jobTitleKeywords.trim(),
+        seniorityLevel: seniorityLevel !== 'all' ? seniorityLevel : undefined,
+        department: department !== 'all' ? department : undefined,
       });
       const data = result.data as { success: boolean; decisionMakers: DecisionMaker[]; totalFound: number; message?: string };
       
@@ -94,6 +123,10 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
             companyName,
             companyId: forceRefresh ? `${companyId}-${Date.now()}` : companyId,
             tenantId,
+            locationKeywords: locationKeywords.trim(),
+            jobTitleKeywords: jobTitleKeywords.trim(),
+            seniorityLevel: seniorityLevel !== 'all' ? seniorityLevel : undefined,
+            department: department !== 'all' ? department : undefined,
           })
         });
         
@@ -130,11 +163,31 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
     }
   };
 
+  // Check if any filters are active
+  useEffect(() => {
+    const hasFilters = Boolean(locationKeywords.trim() || 
+                      jobTitleKeywords.trim() || 
+                      seniorityLevel !== 'all' || 
+                      department !== 'all');
+    setHasActiveFilters(hasFilters);
+  }, [locationKeywords, jobTitleKeywords, seniorityLevel, department]);
+
   useEffect(() => {
     if (companyName && companyId && tenantId) {
       fetchDecisionMakers();
     }
   }, [companyName, companyId, tenantId]);
+
+  const clearAllFilters = () => {
+    setLocationKeywords('');
+    setJobTitleKeywords('');
+    setSeniorityLevel('all');
+    setDepartment('all');
+  };
+
+  const handleSearchWithFilters = () => {
+    fetchDecisionMakers(true);
+  };
 
   const handleRefresh = () => {
     fetchDecisionMakers(true);
@@ -308,6 +361,161 @@ Generated on: ${new Date().toLocaleString()}`,
         </Typography>
       )}
 
+      {/* Search Filters Section */}
+      <Box sx={{ px: 3, mb: 2 }}>
+        <Accordion 
+          expanded={showFilters} 
+          onChange={() => setShowFilters(!showFilters)}
+          sx={{ 
+            boxShadow: 'none', 
+            border: '1px solid', 
+            borderColor: hasActiveFilters ? 'primary.main' : 'divider',
+            '&:before': { display: 'none' }
+          }}
+        >
+          <AccordionSummary
+            expandIcon={<ExpandMoreIcon />}
+            sx={{ 
+              minHeight: '48px',
+              '& .MuiAccordionSummary-content': { margin: '8px 0' }
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <FilterListIcon color={hasActiveFilters ? 'primary' : 'action'} />
+              <Typography variant="subtitle2" fontWeight={500}>
+                Search Filters
+              </Typography>
+              {hasActiveFilters && (
+                <Chip 
+                  label="Active" 
+                  size="small" 
+                  color="primary" 
+                  variant="outlined"
+                />
+              )}
+            </Box>
+          </AccordionSummary>
+          
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Grid container spacing={2}>
+              {/* Location Keywords */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Location Keywords"
+                  placeholder="e.g., New York, California, Remote"
+                  value={locationKeywords}
+                  onChange={(e) => setLocationKeywords(e.target.value)}
+                  InputProps={{
+                    startAdornment: <LocationIcon sx={{ mr: 1, color: 'action.active' }} />,
+                    endAdornment: locationKeywords && (
+                      <IconButton
+                        size="small"
+                        onClick={() => setLocationKeywords('')}
+                        edge="end"
+                      >
+                        <ClearIcon />
+                      </IconButton>
+                    )
+                  }}
+                  helperText="Enter locations separated by commas (e.g., New York, California, Remote)"
+                  size="small"
+                />
+              </Grid>
+
+              {/* Job Title Keywords */}
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Job Title Keywords"
+                  placeholder="e.g., Director, Manager, VP"
+                  value={jobTitleKeywords}
+                  onChange={(e) => setJobTitleKeywords(e.target.value)}
+                  InputProps={{
+                    startAdornment: <WorkOutlineIcon sx={{ mr: 1, color: 'action.active' }} />,
+                    endAdornment: jobTitleKeywords && (
+                      <IconButton
+                        size="small"
+                        onClick={() => setJobTitleKeywords('')}
+                        edge="end"
+                      >
+                        <ClearIcon />
+                      </IconButton>
+                    )
+                  }}
+                  helperText="Search for specific job titles or roles"
+                  size="small"
+                />
+              </Grid>
+
+              {/* Seniority Level */}
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Seniority Level</InputLabel>
+                  <Select
+                    value={seniorityLevel}
+                    label="Seniority Level"
+                    onChange={(e) => setSeniorityLevel(e.target.value)}
+                  >
+                    <MenuItem value="all">All Levels</MenuItem>
+                    <MenuItem value="executive">Executive (C-Suite, VP+)</MenuItem>
+                    <MenuItem value="senior">Senior (Director, Senior Manager)</MenuItem>
+                    <MenuItem value="mid">Mid-Level (Manager, Lead)</MenuItem>
+                    <MenuItem value="junior">Junior (Coordinator, Specialist)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {/* Department */}
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Department</InputLabel>
+                  <Select
+                    value={department}
+                    label="Department"
+                    onChange={(e) => setDepartment(e.target.value)}
+                  >
+                    <MenuItem value="all">All Departments</MenuItem>
+                    <MenuItem value="hr">Human Resources</MenuItem>
+                    <MenuItem value="operations">Operations</MenuItem>
+                    <MenuItem value="finance">Finance</MenuItem>
+                    <MenuItem value="sales">Sales</MenuItem>
+                    <MenuItem value="marketing">Marketing</MenuItem>
+                    <MenuItem value="it">IT/Technology</MenuItem>
+                    <MenuItem value="legal">Legal</MenuItem>
+                    <MenuItem value="procurement">Procurement</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+
+            <Divider sx={{ my: 2 }} />
+
+            {/* Filter Actions */}
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={clearAllFilters}
+                disabled={!hasActiveFilters}
+                startIcon={<ClearIcon />}
+              >
+                Clear All
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={handleSearchWithFilters}
+                disabled={loading}
+                startIcon={<SearchIcon />}
+              >
+                {loading ? 'Searching...' : 'Search with Filters'}
+              </Button>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </Box>
+
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
@@ -327,7 +535,55 @@ Generated on: ${new Date().toLocaleString()}`,
       )}
 
       {!loading && decisionMakers.length > 0 && (
-        <Grid container spacing={2}>
+        <>
+          {/* Active Filters Summary */}
+          {hasActiveFilters && (
+            <Box sx={{ px: 3, mb: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                <strong>Active Filters:</strong>
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {locationKeywords.trim() && (
+                  <Chip 
+                    label={`Location: ${locationKeywords}`} 
+                    size="small" 
+                    variant="outlined" 
+                    color="primary"
+                    onDelete={() => setLocationKeywords('')}
+                  />
+                )}
+                {jobTitleKeywords.trim() && (
+                  <Chip 
+                    label={`Title: ${jobTitleKeywords}`} 
+                    size="small" 
+                    variant="outlined" 
+                    color="primary"
+                    onDelete={() => setJobTitleKeywords('')}
+                  />
+                )}
+                {seniorityLevel !== 'all' && (
+                  <Chip 
+                    label={`Seniority: ${seniorityLevel}`} 
+                    size="small" 
+                    variant="outlined" 
+                    color="primary"
+                    onDelete={() => setSeniorityLevel('all')}
+                  />
+                )}
+                {department !== 'all' && (
+                  <Chip 
+                    label={`Department: ${department}`} 
+                    size="small" 
+                    variant="outlined" 
+                    color="primary"
+                    onDelete={() => setDepartment('all')}
+                  />
+                )}
+              </Box>
+            </Box>
+          )}
+          
+          <Grid container spacing={2}>
           {decisionMakers.map((decisionMaker, index) => (
             <Grid item xs={12} md={6} key={index}>
               <Card variant="outlined">
@@ -446,6 +702,7 @@ Generated on: ${new Date().toLocaleString()}`,
             </Grid>
           ))}
         </Grid>
+        </>
       )}
 
       {!loading && decisionMakers.length > 0 && (

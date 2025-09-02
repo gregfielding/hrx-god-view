@@ -3,7 +3,10 @@ import { getFirestore } from 'firebase-admin/firestore';
 
 const db = getFirestore();
 
-export const findContactInfo = onCall(async (request) => {
+export const findContactInfo = onCall({
+  maxInstances: 5,
+  timeoutSeconds: 60
+}, async (request) => {
   try {
     const { firstName, lastName, companyDomain, tenantId, contactId } = request.data;
     
