@@ -781,6 +781,7 @@ const DealDetails: React.FC = () => {
       
       // Prepare the associations update
       const currentAssociations = deal.associations || {};
+      const updatedContactIds = Array.from(new Set(updatedContacts.map(c => c.id).filter(Boolean)));
       const updatedAssociations = {
         ...currentAssociations,
         contacts: updatedContacts.map(contact => ({
@@ -799,11 +800,12 @@ const DealDetails: React.FC = () => {
       // Update the deal document with new associations
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
+        contactIds: updatedContactIds,
         updatedAt: new Date()
       });
       
       // Update local deal state
-      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
+      setDeal(prev => prev ? { ...prev, associations: updatedAssociations, contactIds: updatedContactIds } : null);
       
       console.log('Contacts updated successfully');
     } catch (error) {
