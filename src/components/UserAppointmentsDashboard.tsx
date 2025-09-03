@@ -17,6 +17,7 @@ import {
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../firebase';
+import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import AppointmentCard from './AppointmentCard';
 import TaskDetailsDialog from './TaskDetailsDialog';
 
@@ -74,6 +75,7 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentData | null>(null);
 
   const functions = getFunctions();
+  const { googleStatus } = useGoogleStatus();
 
   // Debounce load appointments to prevent rapid successive calls
   const [lastLoadTime, setLastLoadTime] = useState(0);
@@ -96,68 +98,63 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
       let googleCalendarEvents: AppointmentData[] = [];
       let activityAppointments: AppointmentData[] = [];
       
-      // First, try to get Google Calendar events
-      try {
-        const listCalendarEvents = httpsCallable(functions, 'listCalendarEventsOptimized');
-        const calendarResult = await listCalendarEvents({
-          userId,
-          maxResults: 50,
-          timeMin: new Date().toISOString(),
-          timeMax: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days from now
-        });
-        
-        const calendarData = calendarResult.data as any;
-        
-        if (calendarData.success && calendarData.events) {
-          googleCalendarEvents = calendarData.events.map((event: any) => ({
-            id: event.id,
-            title: event.summary || 'Untitled Event',
-            description: event.description || '',
-            startTime: event.start?.dateTime || event.start?.date,
-            scheduledDate: event.start?.dateTime || event.start?.date,
-            status: 'scheduled',
-            priority: 'medium',
-            type: 'scheduled_meeting_virtual',
-            googleCalendarEventId: event.id,
-            calendarEventLink: event.htmlLink,
-            meetingLink: event.hangoutLink,
-            attendees: event.attendees || [],
-            location: event.location,
-            associations: {
-              contacts: event.attendees?.map((a: any) => a.email).filter(Boolean) || []
-            }
-          }));
-        }
-      } catch (calendarError: any) {
-        console.warn('Google Calendar not accessible:', {
-          code: calendarError?.code,
-          message: calendarError?.message,
-          details: calendarError?.details
-        });
-
-        // Normalize known callable error codes
-        const code: string | undefined = calendarError?.code;
-        const message: string = calendarError?.message || '';
-
-        if (
-          code === 'functions/failed-precondition' ||
-          message.includes('Calendar not connected') ||
-          code === 'functions/not-found' ||
-          message.includes('User not found') ||
-          code === 'unauthenticated'
-        ) {
-          // Expected if calendar isn't connected yet
-          console.log('User not connected to Google Calendar - this is normal');
-          // Do NOT set a blocking error here; let the dashboard show local appointments
-        } else if (
-          message.includes('Google Calendar API has not been used') ||
-          message.includes('API has not been used') ||
-          message.includes('accessNotConfigured')
-        ) {
-          setError('Google Calendar API not enabled. Please contact your administrator to enable Google Calendar integration.');
-        } else {
-          console.error('Unexpected Google Calendar error:', calendarError);
-          setError(`Google Calendar error: ${message}`);
+      // First, try to get Google Calendar events only if connected
+      if (googleStatus.calendar.connected) {
+        try {
+          const listCalendarEvents = httpsCallable(functions, 'listCalendarEventsOptimized');
+          const calendarResult = await listCalendarEvents({
+            userId,
+            maxResults: 50,
+            timeMin: new Date().toISOString(),
+            timeMax: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          });
+          const calendarData = calendarResult.data as any;
+          if (calendarData.success && calendarData.events) {
+            googleCalendarEvents = calendarData.events.map((event: any) => ({
+              id: event.id,
+              title: event.summary || 'Untitled Event',
+              description: event.description || '',
+              startTime: event.start?.dateTime || event.start?.date,
+              scheduledDate: event.start?.dateTime || event.start?.date,
+              status: 'scheduled',
+              priority: 'medium',
+              type: 'scheduled_meeting_virtual',
+              googleCalendarEventId: event.id,
+              calendarEventLink: event.htmlLink,
+              meetingLink: event.hangoutLink,
+              attendees: event.attendees || [],
+              location: event.location,
+              associations: {
+                contacts: event.attendees?.map((a: any) => a.email).filter(Boolean) || []
+              }
+            }));
+          }
+        } catch (calendarError: any) {
+          console.warn('Google Calendar not accessible:', {
+            code: calendarError?.code,
+            message: calendarError?.message,
+            details: calendarError?.details
+          });
+          const code: string | undefined = calendarError?.code;
+          const message: string = calendarError?.message || '';
+          if (
+            code === 'functions/failed-precondition' ||
+            message.includes('Calendar not connected') ||
+            code === 'functions/not-found' ||
+            message.includes('User not found') ||
+            code === 'unauthenticated'
+          ) {
+            console.log('User not connected to Google Calendar - this is normal');
+          } else if (
+            message.includes('Google Calendar API has not been used') ||
+            message.includes('API has not been used') ||
+            message.includes('accessNotConfigured')
+          ) {
+            setError('Google Calendar API not enabled. Please contact your administrator to enable Google Calendar integration.');
+          } else {
+            console.error('Unexpected Google Calendar error:', calendarError);
+            setError(`Google Calendar error: ${message}`);
+          }
         }
       }
 
@@ -345,6 +342,17 @@ const UserAppointmentsDashboard: React.FC<UserAppointmentsDashboardProps> = ({
   }, [userId, tenantId, functions, loadAppointments]);
 
   useEffect(() => {
+    // Only load when tab is visible to avoid background function usage
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') {
+          loadAppointments();
+          document.removeEventListener('visibilitychange', onVisible);
+        }
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
+    }
     loadAppointments();
   }, [loadAppointments]);
 

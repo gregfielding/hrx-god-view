@@ -45,7 +45,7 @@ interface GoogleStatusProviderProps {
 export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ children, tenantId }) => {
   const { user } = useAuth();
   const functions = getFunctions();
-  const clientCacheRef = useRef(new CallableCache(30 * 60 * 1000));
+  const clientCacheRef = useRef(new CallableCache(90 * 60 * 1000));
   
   const [googleStatus, setGoogleStatus] = useState<GoogleStatus>({
     gmail: { connected: false, syncStatus: 'not_synced' },
@@ -58,11 +58,12 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   const [lastLoadTime, setLastLoadTime] = useState(0);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  const DEBOUNCE_DELAY = 5 * 60 * 1000; // 5 minutes debounce (aggressively increased)
+  const DEBOUNCE_DELAY = 60 * 60 * 1000; // 60 minutes debounce (aggressively increased)
 
   // Lightweight in-memory cache to dedupe calls across components
-  const STATUS_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+  const STATUS_CACHE_TTL_MS = 90 * 60 * 1000; // 90 minutes
   let lastStatusCache: { data: GoogleStatus; at: number; userId: string } | null = null;
+  const LS_KEY = 'googleStatus.cache.v1';
 
   // Load Google status with debouncing
   const loadGoogleStatus = useCallback(async () => {
@@ -77,6 +78,21 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       setGoogleStatus(lastStatusCache.data);
       return;
     }
+    // Try persistent cache shared across tabs
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed && parsed.userId === user.uid &&
+          typeof parsed.at === 'number' && Date.now() - parsed.at < STATUS_CACHE_TTL_MS && parsed.data
+        ) {
+          setGoogleStatus(parsed.data as GoogleStatus);
+          lastStatusCache = { data: parsed.data, at: parsed.at, userId: user.uid };
+          return;
+        }
+      }
+    } catch {}
     // Debounce rapid calls
     const now = Date.now();
     if (now - lastLoadTime < DEBOUNCE_DELAY) {
@@ -120,6 +136,9 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
 
       setGoogleStatus(newStatus);
       lastStatusCache = { data: newStatus, at: Date.now(), userId: user.uid };
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify(lastStatusCache));
+      } catch {}
 
       // If OAuth was in progress and we detect a successful connection, stop polling
       if (isOAuthInProgress && (newStatus.gmail.connected || newStatus.calendar.connected)) {

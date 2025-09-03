@@ -10475,17 +10475,11 @@ export { syncApolloHeadquartersLocationCallable } from './syncApolloHeadquarters
 export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
-// Active Salespeople (Company) - SAFE VERSIONS
+// Active Salespeople
 export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
-// Emergency disabled versions to prevent cascading updates
-export { 
-  updateActiveSalespeopleOnEmailLog,
-  updateActiveSalespeopleOnActivityLog,
-  updateActiveSalespeopleOnDeal,
-  updateActiveSalespeopleOnTask,
-  toggleCircuitBreaker,
-  getCircuitBreakerStatus
-} from './emergencyTriggerDisable';
+// Disable Firestore triggers to eliminate redundant invocations; use callable instead
+export { updateActiveSalespeopleOnDealCallable } from './updateActiveSalespeopleOnDealOptimized';
+export { toggleCircuitBreaker, getCircuitBreakerStatus } from './emergencyTriggerDisable';
 // Safe version of AI log trigger to prevent infinite loops
 export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 // Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED

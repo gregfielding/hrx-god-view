@@ -281,15 +281,19 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           return true;
         });
 
-        // Create a combined summary
-        const combinedSummary: ActivitySummary = {
-          totalActivities: crmFilteredActivities.length,
-          todosCompleted: crmFilteredActivities.filter(a => a.type === 'task').length,
-          emailsSent: crmFilteredActivities.filter(a => a.type === 'email').length,
-          appointmentsHeld: crmFilteredActivities.filter(a => a.type === 'task' && a.metadata?.taskType === 'appointment').length,
-          notesCreated: 0, // Notes are no longer included
-          lastActivityDate: crmFilteredActivities.length > 0 ? crmFilteredActivities[0].timestamp : undefined
-        };
+        // Combine summaries using backend definitions (sent emails only, totals = sum of value-driving activities)
+        const combinedSummary: ActivitySummary = allSummaryData.reduce((acc: ActivitySummary, s: any) => {
+          return {
+            totalActivities: (acc.totalActivities || 0) + (s?.totalActivities || 0),
+            todosCompleted: (acc.todosCompleted || 0) + (s?.todosCompleted || 0),
+            emailsSent: (acc.emailsSent || 0) + (s?.emailsSent || 0),
+            appointmentsHeld: (acc.appointmentsHeld || 0) + (s?.appointmentsHeld || 0),
+            notesCreated: (acc.notesCreated || 0) + (s?.notesCreated || 0),
+            lastActivityDate: acc.lastActivityDate && s?.lastActivityDate
+              ? (acc.lastActivityDate > s.lastActivityDate ? acc.lastActivityDate : s.lastActivityDate)
+              : (acc.lastActivityDate || s?.lastActivityDate)
+          } as ActivitySummary;
+        }, { totalActivities: 0, todosCompleted: 0, emailsSent: 0, appointmentsHeld: 0, notesCreated: 0 });
         
         setActivities(combinedActivities);
         setSummary(combinedSummary);
@@ -327,18 +331,8 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
           return true;
         });
 
-        // Update summary to reflect filtered activities
-        const updatedSummary: ActivitySummary = {
-          totalActivities: crmFilteredActivities.length,
-          todosCompleted: crmFilteredActivities.filter(a => a.type === 'task').length,
-          emailsSent: crmFilteredActivities.filter(a => a.type === 'email').length,
-          appointmentsHeld: crmFilteredActivities.filter(a => a.type === 'task' && a.metadata?.taskType === 'appointment').length,
-          notesCreated: 0,
-          lastActivityDate: crmFilteredActivities.length > 0 ? crmFilteredActivities[0].timestamp : undefined
-        };
-
         setActivities(crmFilteredActivities);
-        setSummary(updatedSummary);
+        setSummary(summaryData as unknown as ActivitySummary);
         setIndividualSummaries({}); // Clear individual summaries for single salesperson view
       }
     } catch (error) {
@@ -1043,7 +1037,11 @@ const SalespersonActivityView: React.FC<SalespersonActivityViewProps> = ({
               <Box display="flex" alignItems="center" gap={1}>
                 {selectedActivity && getActivityIcon(selectedActivity.type)}
                 <Typography variant="h6">
-                  {selectedActivity?.title || 'Activity Details'}
+                  {selectedActivity?.type === 'email'
+                    ? ((selectedActivity?.metadata?.direction || 'sent').toLowerCase() === 'outbound' || (selectedActivity?.metadata?.direction || '').toLowerCase() === 'sent'
+                        ? 'Email sent'
+                        : 'Email received')
+                    : (selectedActivity?.title || 'Activity Details')}
                 </Typography>
               </Box>
               <IconButton onClick={handleCloseDialog} size="small">

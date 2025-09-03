@@ -1985,40 +1985,7 @@ const DealDetails: React.FC = () => {
           {/* Center Column - Deal Intelligence */}
           <Grid item xs={12} md={5}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Sales Coach */}
-              <Box sx={{ mb: 0 }}>
-                <SectionCard title="Sales Coach">
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {(() => {
-                      let enable = true;
-                      try { enable = localStorage.getItem('feature.dealCoach') !== 'false'; } catch {}
-                      return enable ? (
-                        <SalesCoach 
-                          key={dealCoachKey}
-                          entityType="deal"
-                          entityId={deal.id}
-                          entityName={deal.name}
-                          tenantId={tenantId}
-                          dealStage={deal.stage}
-                          associations={deal.associations}
-                        />
-                      ) : (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, px: 2 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            AI Stage Suggestions
-                          </Typography>
-                          <DealStageAISuggestions
-                            dealId={deal.id}
-                            tenantId={tenantId}
-                            currentStage={deal.stage}
-                            onTaskCreated={(taskId) => { console.log('Task created from side panel:', taskId); }}
-                          />
-                        </Box>
-                      );
-                    })()}
-                  </Box>
-                </SectionCard>
-              </Box>
+              {/* Sales Coach removed as requested */}
 
               {/* Relationship Map */}
               <Box sx={{ mb: 0 }}>

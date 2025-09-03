@@ -256,10 +256,15 @@ export const getCalendarStatusOptimized = onCall({
       };
     }
     
-    // Check cache first
+    // Hard cap: reject repeated requests within 60 minutes unless force=true (rely on cache)
     const cacheKey = `calendar_status_${userId}`;
     const cached = calendarStatusCache.get(cacheKey);
     const now = Date.now();
+    if (!force && cached && (now - cached.timestamp) < (60 * 60 * 1000)) {
+      cached.lastAccess = now;
+      cached.accessCount++;
+      return { ...cached.data, success: true, cached: true, deduped: true, cacheAge: now - cached.timestamp };
+    }
     
     if (cached && (now - cached.timestamp) < CALENDAR_CONFIG.CACHE_DURATION_MS) {
       // Update access tracking

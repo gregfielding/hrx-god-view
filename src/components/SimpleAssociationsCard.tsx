@@ -299,15 +299,19 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
       let entities: any[] = [];
 
       if (targetType === 'salespeople') {
-        // Use Firebase Function for salespeople
-        const functions = getFunctions();
-        const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
-        
-        const result = await getSalespeople({
-          tenantId: tenantId
+        // Use direct Firestore query instead of callable
+        const { collection, getDocs, query, where } = await import('firebase/firestore');
+        const { db } = await import('../firebase');
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('crm_sales', '==', true));
+        const snap = await getDocs(q);
+        const allUsers = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        entities = allUsers.filter((user: any) => {
+          if (user.tenantId === tenantId) return true;
+          if (user.tenantIds && Array.isArray(user.tenantIds) && user.tenantIds.includes(tenantId)) return true;
+          if (user.tenantIds && typeof user.tenantIds === 'object' && !Array.isArray(user.tenantIds) && user.tenantIds[tenantId]) return true;
+          return false;
         });
-        
-        entities = (result.data as any).salespeople || [];
       } else {
         // Use direct Firestore query for other entity types
         let collectionPath: string;

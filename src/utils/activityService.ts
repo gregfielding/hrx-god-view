@@ -908,12 +908,22 @@ export async function getSalespersonActivitySummary(
     return 'todos';
   };
 
+  const todosCompleted = activities.filter(a => getActivityCategory(a) === 'todos').length;
+  const emailsSent = activities.filter(a => (
+    a.source === 'email_logs' &&
+    typeof a.metadata?.direction === 'string' &&
+    (a.metadata.direction as string).toLowerCase() === 'outbound'
+  )).length;
+  const appointmentsHeld = activities.filter(a => getActivityCategory(a) === 'appointments').length;
+  const notesCreated = activities.filter(a => getActivityCategory(a) === 'notes').length;
+  const totalActivities = todosCompleted + emailsSent + appointmentsHeld;
+
   const summary = {
-    totalActivities: activities.length,
-    todosCompleted: activities.filter(a => getActivityCategory(a) === 'todos').length,
-    emailsSent: activities.filter(a => getActivityCategory(a) === 'emails').length,
-    appointmentsHeld: activities.filter(a => getActivityCategory(a) === 'appointments').length,
-    notesCreated: activities.filter(a => getActivityCategory(a) === 'notes').length,
+    totalActivities,
+    todosCompleted,
+    emailsSent,
+    appointmentsHeld,
+    notesCreated,
     lastActivityDate: activities.length > 0 ? activities[0].timestamp : undefined
   };
 

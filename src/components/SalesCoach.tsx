@@ -3,6 +3,7 @@ import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Butto
 import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon, SmartToy as AIIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getDealCoachService } from '../utils/dealCoachService';
 
 import { useAuth } from '../contexts/AuthContext';
 
@@ -169,9 +170,6 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
         return;
       }
 
-      const functions = getFunctions(undefined, 'us-central1');
-      const analyzeFn = httpsCallable(functions, 'dealCoachAnalyzeCallable');
-      
       const params = {
         dealId: entityId,
         stageKey: dealStage || 'general',
@@ -183,9 +181,8 @@ const SalesCoach: React.FC<SalesCoachProps> = ({
       };
 
       console.log('Sales Coach analyze params:', params);
-      
-      const { data }: any = await analyzeFn(params);
-      const newSummary = data?.summary || '';
+      const service = getDealCoachService();
+      const { summary: newSummary } = await service.analyze(params);
       setSummary(newSummary);
       setHasAnalyzed(true);
       

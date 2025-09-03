@@ -3,6 +3,7 @@ import { Box, Card, CardContent, CardHeader, Chip, IconButton, Typography, Butto
 import { Close as CloseIcon, Add as AddIcon, Refresh as RefreshIcon, SmartToy as AIIcon } from '@mui/icons-material';
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getDealCoachService } from '../utils/dealCoachService';
 
 import { useAuth } from '../contexts/AuthContext';
 
@@ -140,12 +141,8 @@ const DealCoachPanel: React.FC<DealCoachPanelProps> = ({ dealId, stageKey, tenan
 
     setAnalyzing(true);
     try {
-      const functions = getFunctions(undefined, 'us-central1');
-      const analyzeFn = httpsCallable(functions, 'dealCoachAnalyzeCallable');
-      const { data }: any = await analyzeFn({ dealId, stageKey, tenantId });
-      
-      const newSummary = data.summary || '';
-      const newSuggestions = data.suggestions || [];
+      const service = getDealCoachService();
+      const { summary: newSummary, suggestions: newSuggestions } = await service.analyze({ dealId, stageKey, tenantId });
       
       setSummary(newSummary);
       setSuggestions(newSuggestions);

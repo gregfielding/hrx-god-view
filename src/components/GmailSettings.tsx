@@ -23,6 +23,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
+import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 
 interface GmailSettingsProps {
   tenantId: string;
@@ -39,12 +40,9 @@ interface GmailStatus {
 const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
   const { user } = useAuth();
   const functions = getFunctions();
+  const { googleStatus, refreshStatus } = useGoogleStatus();
   
-  // State for Gmail status
-  const [gmailStatus, setGmailStatus] = useState<GmailStatus>({
-    connected: false,
-    syncStatus: 'not_synced'
-  });
+  // Gmail status now provided by context
   
   // UI state
   const [loading, setLoading] = useState(false);
@@ -54,7 +52,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
   const [authUrl, setAuthUrl] = useState<string>('');
 
   // Firebase Functions
-  const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
+  // Status fetched via context; keep other callables
   const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
   const disconnectGmailFn = httpsCallable(functions, 'disconnectGmail');
   const syncGmailEmailsFn = httpsCallable(functions, 'syncGmailEmails');
@@ -65,9 +63,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
     
     setLoading(true);
     try {
-      const result = await getGmailStatusFn({ userId: user.uid });
-      const status = result.data as GmailStatus;
-      setGmailStatus(status);
+      await refreshStatus();
     } catch (error: any) {
       console.error('Error loading Gmail status:', error);
       setError(`Failed to load Gmail status: ${error.message}`);
@@ -137,11 +133,8 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
       window.open(authUrl, '_blank', 'width=600,height=600');
       
       setSuccess('Gmail authentication initiated. Please complete the OAuth flow in the popup window.');
-      
-      // Refresh status after a delay to check if auth was completed
-      setTimeout(() => {
-        loadGmailStatus();
-      }, 5000);
+      // Rely on GoogleStatusContext polling; single refresh is enough as a backup
+      setTimeout(() => { loadGmailStatus(); }, 5000);
       
     } catch (error: any) {
       console.error('Error getting Gmail auth URL:', error);
@@ -174,7 +167,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
       setSuccess(`Successfully synced ${data.emailsSynced || 0} emails from Gmail`);
       
       // Refresh status
-      loadGmailStatus();
+      await loadGmailStatus();
       
     } catch (error: any) {
       console.error('Error syncing Gmail emails:', error);
@@ -259,10 +252,10 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={6}>
               <Box display="flex" alignItems="center" gap={1}>
-                {getStatusIcon(gmailStatus.syncStatus)}
+                {getStatusIcon(googleStatus.gmail.syncStatus)}
                 <Chip 
-                  label={gmailStatus.connected ? 'Connected' : 'Disconnected'} 
-                  color={gmailStatus.connected ? 'success' : 'default'}
+                  label={googleStatus.gmail.connected ? 'Connected' : 'Disconnected'} 
+                  color={googleStatus.gmail.connected ? 'success' : 'default'}
                   size="small"
                 />
               </Box>
@@ -270,7 +263,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
             
             <Grid item xs={12} sm={6}>
               <Box display="flex" justifyContent="flex-end" gap={1}>
-                {gmailStatus.connected ? (
+                {googleStatus.gmail.connected ? (
                   <>
                     <Button
                       variant="outlined"
@@ -303,22 +296,22 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
             </Grid>
           </Grid>
 
-          {gmailStatus.connected && (
+          {googleStatus.gmail.connected && (
             <Box mt={2}>
               <Typography variant="body2" color="text.secondary">
-                <strong>Connected Account:</strong> {gmailStatus.email || 'Unknown'}
+                <strong>Connected Account:</strong> {googleStatus.gmail.email || 'Unknown'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                <strong>Sync Status:</strong> {getSyncStatusText(gmailStatus.syncStatus)}
+                <strong>Sync Status:</strong> {getSyncStatusText(googleStatus.gmail.syncStatus)}
               </Typography>
-              {gmailStatus.lastSync && (
+              {googleStatus.gmail.lastSync && (
                 <Typography variant="body2" color="text.secondary">
-                  <strong>Last Sync:</strong> {new Date(gmailStatus.lastSync).toLocaleString()}
+                  <strong>Last Sync:</strong> {new Date(googleStatus.gmail.lastSync as any).toLocaleString()}
                 </Typography>
               )}
-              {gmailStatus.errorMessage && (
+              {googleStatus.gmail as any && (googleStatus as any).gmail?.errorMessage && (
                 <Typography variant="body2" color="error">
-                  <strong>Error:</strong> {gmailStatus.errorMessage}
+                  <strong>Error:</strong> {(googleStatus as any).gmail.errorMessage}
                 </Typography>
               )}
             </Box>

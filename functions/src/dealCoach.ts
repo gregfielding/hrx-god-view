@@ -304,8 +304,16 @@ export const dealCoachAnalyzeCallable = onCall({
   memory: '512MiB'
 }, async (request) => {
   try {
-    const { dealId, stageKey, tenantId, entityType, entityName, contactCompany, contactTitle } = request.data || {};
+    const { dealId, stageKey, tenantId, entityType, entityName, contactCompany, contactTitle, userId: callerUserId } = request.data || {};
     if (!dealId || !stageKey || !tenantId) throw new Error('Missing dealId, stageKey or tenantId');
+
+    // Caller metadata for tracing frequent sources
+    const callerMeta: any = {
+      userId: (request as any)?.auth?.uid || callerUserId || '',
+      userAgent: ((request as any)?.rawRequest?.headers?.['user-agent'] as string) || '',
+      referer: ((request as any)?.rawRequest?.headers?.referer as string) || '',
+      ip: ((request as any)?.rawRequest?.headers?.['x-forwarded-for'] as string) || ((request as any)?.rawRequest as any)?.ip || ''
+    };
 
     // ENHANCED CACHING: Use a more sophisticated cache key that includes all parameters
     // Hash the parameters to create a shorter, more efficient cache key
@@ -324,7 +332,7 @@ export const dealCoachAnalyzeCallable = onCall({
         try {
           const parsed = AnalyzeResponse.parse(data.payload);
           console.log('✅ Deal Coach analysis served from cache for:', cacheKey);
-          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true }); } catch {}
+          try { await logAIAction({ eventType: 'dealCoach.analyze.cache_hit', targetType: entityType || 'deal', targetId: dealId, reason: 'cache_hit', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 3, tenantId, aiResponse: JSON.stringify(parsed), cacheHit: true, metadata: { callerMeta } }); } catch {}
           return { ...parsed, threadId: dealId, cacheHit: true };
         } catch (parseError) {
           console.log('Cache data invalid, will regenerate:', parseError);
@@ -334,7 +342,7 @@ export const dealCoachAnalyzeCallable = onCall({
 
     // OPTIMIZATION: Check if we have recent analysis for this entity (within last 4 hours)
     // This prevents rapid successive calls for the same entity
-    const recentCacheKey = `coach_analyze_recent_${dealId}_${stageKey}`;
+    const recentCacheKey = `coach_analyze_recent_${tenantId}_${dealId}_${stageKey}`;
     const recentCacheRef = db.collection('ai_cache').doc(recentCacheKey);
     const recentCached = await recentCacheRef.get();
     
@@ -350,7 +358,7 @@ export const dealCoachAnalyzeCallable = onCall({
     }
 
     // STRICTER RATE LIMITING: Check if this deal has been analyzed too recently
-    const rateLimitKey = `coach_analyze_ratelimit_${dealId}`;
+    const rateLimitKey = `coach_analyze_ratelimit_${tenantId}_${dealId}`;
     const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
     const rateLimitCached = await rateLimitRef.get();
     
@@ -365,18 +373,19 @@ export const dealCoachAnalyzeCallable = onCall({
       }
     }
 
-    // ADDITIONAL COST CONTAINMENT: Check if this is a duplicate request within 5 minutes
-    const duplicateKey = `coach_analyze_duplicate_${dealId}_${stageKey}`;
+    // SERVER-SIDE DEDUPE: Strict 10-minute dedupe window per tenant+deal+stage
+    const duplicateKey = `coach_analyze_dedupe_${tenantId}_${dealId}_${stageKey}`;
     const duplicateRef = db.collection('ai_cache').doc(duplicateKey);
     const duplicateCached = await duplicateRef.get();
     
     if (duplicateCached.exists) {
       const duplicateData = duplicateCached.data() as any;
-      if (duplicateData.updatedAt && (now - duplicateData.updatedAt.toMillis()) < 5 * 60 * 1000) { // 5 minutes duplicate check
-        console.log('🔄 Duplicate request detected, returning cached result');
+      if (duplicateData.updatedAt && (now - duplicateData.updatedAt.toMillis()) < 10 * 60 * 1000) { // 10 minutes dedupe window
+        console.log('🔄 DEDUPED duplicate request within 10 min, returning cached result');
         try {
           const parsed = AnalyzeResponse.parse(duplicateData.payload);
-          return { ...parsed, threadId: dealId, cacheHit: true, duplicate: true };
+          try { await logAIAction({ eventType: 'dealCoach.analyze.deduped', targetType: entityType || 'deal', targetId: dealId, reason: 'deduped_10m', contextType: 'dealCoach', aiTags: ['dealCoach','dedupe'], urgencyScore: 2, tenantId, aiResponse: JSON.stringify(parsed), metadata: { deduped: true, callerMeta } }); } catch {}
+          return { ...parsed, threadId: dealId, cacheHit: true, deduped: true };
         } catch {}
       }
     }
@@ -472,7 +481,7 @@ export const dealCoachAnalyzeCallable = onCall({
     await duplicateRef.set({ payload: parsed, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
     // Log telemetry (best-effort)
-    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed) }); } catch {}
+    try { await logAIAction({ eventType: 'dealCoach.analyze', targetType: entityType || 'deal', targetId: dealId, reason: 'analyze', contextType: 'dealCoach', aiTags: ['dealCoach'], urgencyScore: 5, tenantId, aiResponse: JSON.stringify(parsed), metadata: { callerMeta } }); } catch {}
 
     console.log('✅ Deal Coach analysis completed and cached for:', cacheKey);
     return { ...parsed, threadId: dealId, cacheHit: false };

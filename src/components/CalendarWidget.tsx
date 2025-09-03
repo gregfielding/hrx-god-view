@@ -235,16 +235,15 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       try {
         // First try to get Google Calendar events via API (like appointments widget does)
         const functions = getFunctions();
-        const listCalendarEvents = httpsCallable(functions, 'listCalendarEvents');
-        
-        const calendarResult = await listCalendarEvents({
-          userId,
-          maxResults: 50,
-          timeMin: new Date().toISOString(),
-          timeMax: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days from now
-        });
-        
-        const calendarData = calendarResult.data as any;
+        const listCalendarEvents = httpsCallable(functions, 'listCalendarEventsOptimized');
+        // Visibility gating and client cache (90m)
+        const { useGoogleStatus } = await import('../contexts/GoogleStatusContext');
+        const { CallableCache } = await import('../utils/callableCache');
+        const cache = new CallableCache(90 * 60 * 1000);
+        const payload = { userId, maxResults: 50, timeMin: new Date().toISOString(), timeMax: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() };
+        const cacheKey = `listCalendarEvents:${userId}:${payload.timeMin.slice(0,10)}`;
+        const calendarResult: any = await cache.getOrFetch(cacheKey, async () => (await listCalendarEvents(payload)).data as any);
+        const calendarData = calendarResult as any;
         
         if (calendarData.success && calendarData.events) {
           console.log(`📅 Loaded ${calendarData.events.length} Google Calendar events via API for user ${userId}`);
