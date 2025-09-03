@@ -5697,7 +5697,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               </TableRow>
             </TableHead>
             <TableBody>
-              {contacts.slice(0, 10).map((contact: any) => (
+              {contacts.map((contact: any) => (
                 <TableRow 
                   key={contact.id}
                   onClick={() => navigate(`/crm/contacts/${contact.id}`)}
@@ -5854,17 +5854,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
         </Box>
       )}
       
-      {contacts.length > 10 && (
-        <Box sx={{ mt: 2, textAlign: 'center' }}>
-          <Typography sx={{
-            variant: "body2",
-            color: "#9CA3AF",
-            fontSize: '0.875rem'
-          }}>
-            +{contacts.length - 10} more contacts
-          </Typography>
-        </Box>
-      )}
+      {/* Removed +more indicator; table now shows all contacts */}
     </Box>
 
       {/* Add Contact Dialog */}
