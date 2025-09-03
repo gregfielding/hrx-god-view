@@ -1778,6 +1778,7 @@ const CompanyDetails: React.FC = () => {
         loading={logActivityLoading}
         salespeople={salespeople}
         contacts={contacts}
+        preselectContactsFromProps={false}
         currentUserId={currentUser?.uid || ''}
         tenantId={tenantId}
       />

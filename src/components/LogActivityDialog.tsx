@@ -38,6 +38,8 @@ interface LogActivityDialogProps {
   loading?: boolean;
   salespeople?: any[];
   contacts?: any[];
+  // When true, preselect the provided contacts on open. Default: false
+  preselectContactsFromProps?: boolean;
   currentUserId?: string;
   tenantId?: string;
   dealId?: string;
@@ -51,6 +53,7 @@ interface LogActivityDialogProps {
   loading = false,
   salespeople = [],
   contacts = [],
+  preselectContactsFromProps = false,
   currentUserId = '',
   tenantId = '',
   dealId,
@@ -107,7 +110,7 @@ interface LogActivityDialogProps {
       const updates: any = {};
       
       // Pre-populate contacts
-      if (contacts && contacts.length > 0) {
+      if (preselectContactsFromProps && contacts && contacts.length > 0) {
         const contactIds = contacts.map(c => c.id);
         updates.contacts = contactIds;
       }
