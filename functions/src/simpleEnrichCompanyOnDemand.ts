@@ -444,7 +444,7 @@ export async function runCompanyEnrichment(
           console.log('Apollo company data received:', JSON.stringify(aCompany, null, 2));
           await companyRef.set({ firmographics: { apollo: removeUndefinedValues(aCompany) }, metadata: { apolloFetchedAt: admin.firestore.FieldValue.serverTimestamp() } }, { merge: true });
           
-          // Map Apollo data to company fields
+          // Map Apollo data to company fields (skip identity if Apollo domain mismatches queried domain)
           const apolloUpdates: any = {};
           
           // Map employee count to size if company.size missing
@@ -462,11 +462,21 @@ export async function runCompanyEnrichment(
           }
           
           // Map other Apollo fields
-          if (aCompany.name) {
+          const queriedDomain = (() => {
+            try {
+              if (!websiteUrl) return undefined;
+              const u = new URL(websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`);
+              return u.hostname.replace(/^www\./, '').toLowerCase();
+            } catch { return undefined; }
+          })();
+          const apolloDomain = (aCompany?.domain || '').toLowerCase();
+          const domainsMatch = !!(queriedDomain && apolloDomain && queriedDomain === apolloDomain);
+
+          if (aCompany.name && domainsMatch) {
             apolloUpdates.companyName = aCompany.name;
           }
           
-          if (aCompany.domain) {
+          if (aCompany.domain && domainsMatch) {
             apolloUpdates.website = `https://${aCompany.domain}`;
           }
           
@@ -488,11 +498,11 @@ export async function runCompanyEnrichment(
             apolloUpdates.description = aCompany.shortDescription;
           }
           
-          if (aCompany.websiteUrl) {
+          if (aCompany.websiteUrl && domainsMatch) {
             apolloUpdates.website = aCompany.websiteUrl;
           }
           
-          if (aCompany.linkedinUrl) {
+          if (aCompany.linkedinUrl && domainsMatch) {
             apolloUpdates.linkedin = aCompany.linkedinUrl;
           }
           
@@ -604,7 +614,8 @@ export async function runCompanyEnrichment(
 
 export const enrichCompanyOnDemand = onCall({ 
   timeoutSeconds: 540, // Increased to 9 minutes
-  memory: '1GiB' // Increased memory
+  memory: '1GiB', // Increased memory
+  secrets: [APOLLO_API_KEY]
 }, async (request) => {
   const { tenantId, companyId, mode, force } = (request.data || {}) as { tenantId: string; companyId: string; mode?: Mode; force?: boolean };
   if (!request.auth?.uid) throw new Error('Auth required');

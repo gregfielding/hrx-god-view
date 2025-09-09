@@ -340,6 +340,38 @@ const DealDetails: React.FC = () => {
             };
           });
           setAssociatedSalespeople(salespeople);
+        } else if (Array.isArray((dealData as any).salespeopleIds) && (dealData as any).salespeopleIds.length > 0) {
+          // Fallback: legacy/simple storage of salesperson IDs
+          const ids: string[] = (dealData as any).salespeopleIds.filter(Boolean);
+          try {
+            const usersRef = collection(db, 'users');
+            // Firestore 'in' allows up to 10 per query; chunk if needed
+            const chunks: string[][] = [];
+            for (let i = 0; i < ids.length; i += 10) chunks.push(ids.slice(i, i + 10));
+            const results: any[] = [];
+            for (const batch of chunks) {
+              const q = query(usersRef, where('__name__', 'in' as any, batch as any));
+              const snap = await getDocs(q);
+              snap.docs.forEach(d => {
+                const u: any = d.data() || {};
+                const fullName = (u.firstName && u.lastName ? `${u.firstName} ${u.lastName}`.trim() : '') || u.displayName || u.email?.split('@')[0] || 'Unknown Salesperson';
+                results.push({
+                  id: d.id,
+                  fullName,
+                  firstName: u.firstName || '',
+                  lastName: u.lastName || '',
+                  displayName: fullName,
+                  email: u.email || '',
+                  phone: u.phone || '',
+                  title: u.title || ''
+                });
+              });
+            }
+            setAssociatedSalespeople(results);
+          } catch {
+            // If lookup fails, at least show IDs as placeholders
+            setAssociatedSalespeople(ids.map(id => ({ id, fullName: 'Unknown Salesperson', email: '' })) as any);
+          }
         } else {
           setAssociatedSalespeople([]);
         }
@@ -754,15 +786,18 @@ const DealDetails: React.FC = () => {
           }
         }))
       };
+      // Also maintain a simple list of salesperson IDs for fast loading/fallback
+      const salespeopleIds = Array.from(new Set(updatedSalespeople.map(sp => sp.id).filter(Boolean)));
       
       // Update the deal document with new associations
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
+        salespeopleIds,
         updatedAt: new Date()
       });
       
       // Update local deal state
-      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
+      setDeal(prev => prev ? { ...prev, associations: updatedAssociations, salespeopleIds } : null);
       
       console.log('Salespeople updated successfully');
     } catch (error) {

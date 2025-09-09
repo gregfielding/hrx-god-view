@@ -193,8 +193,22 @@ interface LogActivityDialogProps {
   const handleSubmit = () => {
     if (!validateForm()) return;
 
+    // Normalize associations to store only ID arrays for Firestore queries
+    const toIdArray = (arr: any[] | undefined) => {
+      if (!Array.isArray(arr)) return [] as string[];
+      return arr.map((item: any) => (typeof item === 'string' ? item : item?.id)).filter(Boolean);
+    };
+
+    const normalizedAssociations = {
+      companies: toIdArray(formData.associations?.companies),
+      contacts: toIdArray(formData.associations?.contacts),
+      deals: toIdArray(formData.associations?.deals),
+      salespeople: toIdArray(formData.associations?.salespeople)
+    };
+
     const taskData = {
       ...formData,
+      associations: normalizedAssociations,
       // Required fields that might be missing
       tenantId: tenantId || '',
       createdBy: currentUserId || '',

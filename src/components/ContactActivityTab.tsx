@@ -258,9 +258,8 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                 </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
-                    <>
+                    <React.Fragment key={it.id}>
                     <TableRow 
-                      key={it.id}
                       onClick={() => handleRowClick(it)}
                       sx={{
                         height: '48px',
@@ -340,7 +339,7 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                         </TableCell>
                       </TableRow>
                     )}
-                    </>
+                    </React.Fragment>
                   ))}
                 </TableBody>
               </Table>

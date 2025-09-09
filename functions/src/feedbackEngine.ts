@@ -923,6 +923,37 @@ export async function logAIAction(log: {
   urgencyScore?: any,
   [key: string]: any
 }) {
+  // Temporary block for noisy scheduled events (24h from cold start)
+  const TEMP_BLOCKED_EVENT_TYPES = new Set([
+    'growth.weekly_prompts',
+    'learning.weekly_delivery',
+    'balance.weekly_checkins',
+    'birthday.daily_check',
+    'campaign.scheduled_execution'
+  ]);
+  const TEMP_BLOCKED_SOURCE_MODULES = new Set([
+    'BirthdayManager',
+    'MiniLearningBoosts',
+    'ProfessionalGrowth',
+    'WorkLifeBalance',
+    'CampaignsEngine'
+  ]);
+  const TEMP_BLOCK_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+  // Cache the expiry across invocations within the same instance
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g: any = global as any;
+  if (!g.__aiLogTempBlockExpiresAt) {
+    g.__aiLogTempBlockExpiresAt = Date.now() + TEMP_BLOCK_WINDOW_MS;
+  }
+  const tempBlockActive = Date.now() < g.__aiLogTempBlockExpiresAt;
+  if (tempBlockActive) {
+    if ((log.eventType && TEMP_BLOCKED_EVENT_TYPES.has(log.eventType)) ||
+        (log.sourceModule && TEMP_BLOCKED_SOURCE_MODULES.has(log.sourceModule))) {
+      console.log('AI Logging temporarily blocked for scheduled event/sourceModule');
+      return;
+    }
+  }
+
   // EMERGENCY: AI Logging temporarily disabled for cost containment
   if (process.env.AI_LOGGING_DISABLED === 'true') {
     console.log('AI Logging disabled - skipping log entry');

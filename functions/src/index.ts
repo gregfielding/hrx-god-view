@@ -75,6 +75,7 @@ import { enrichCompanyOnDemand } from './simpleEnrichCompanyOnDemand';
 import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
+import { backfillLoggedActivities } from './backfillLoggedActivities';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
 // 🎯 RECRUITER MODULE IMPORTS
@@ -130,6 +131,7 @@ export { logContactEnhanced };
 // Gmail Bulk Import Functions
 export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker };
 export { getEmailLogBody };
+export { backfillLoggedActivities };
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
@@ -227,7 +229,33 @@ const openai = new OpenAI({
 
 export const logAIActionCallable = onCall(async (request) => {
   try {
-    const logData = request.data;
+    const logData = request.data || {};
+
+    // Emergency kill-switch and aggressive sampling already live inside logAIAction
+    // Add lightweight server-side filtering to reduce noisy client calls
+    const blockedEventTypes = new Set([
+      'ai_log.created','ai_log.updated','ai_log.deleted',
+      'system.heartbeat','cache_hit','debug',
+      'user.updated','conversation.updated','message.updated','task.updated'
+    ]);
+    const minUrgency = 7;
+
+    const eventType = logData.eventType || logData.action || '';
+    const urgencyScore = typeof logData.urgencyScore === 'number' ? logData.urgencyScore : null;
+
+    if (eventType && blockedEventTypes.has(eventType)) {
+      return { success: true, skipped: true, reason: 'blocked_event_type' };
+    }
+    if (urgencyScore !== null && urgencyScore < minUrgency) {
+      return { success: true, skipped: true, reason: 'low_urgency' };
+    }
+
+    // Basic sampling for non-critical logs (1%)
+    const isCritical = urgencyScore !== null && urgencyScore >= 9;
+    if (!isCritical && Math.random() > 0.01) {
+      return { success: true, skipped: true, reason: 'sampled_out' };
+    }
+
     await logAIAction(logData);
     return { success: true, message: 'AI action logged successfully' };
   } catch (error) {
@@ -10475,10 +10503,10 @@ export { syncApolloHeadquartersLocationCallable } from './syncApolloHeadquarters
 export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 
-// Active Salespeople
+// Active Salespeople (callables only; triggers disabled or safe variants managed elsewhere)
 export { rebuildCompanyActiveSalespeople, rebuildAllCompanyActiveSalespeople, normalizeCompanySizes, rebuildContactActiveSalespeople } from './activeSalespeople';
-// Disable Firestore triggers to eliminate redundant invocations; use callable instead
 export { updateActiveSalespeopleOnDealCallable } from './updateActiveSalespeopleOnDealOptimized';
+// Do NOT export updateActiveSalespeopleOnEmailLog/updateActiveSalespeopleOnActivityLog triggers
 export { toggleCircuitBreaker, getCircuitBreakerStatus } from './emergencyTriggerDisable';
 // Safe version of AI log trigger to prevent infinite loops
 export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';

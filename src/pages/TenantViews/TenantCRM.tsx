@@ -4240,6 +4240,9 @@ const CompaniesTab: React.FC<{
 }> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals, locationStateFilter, onLocationStateFilterChange }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
+  // Local search state to prevent global tab effects while typing
+  const [localCompanySearch, setLocalCompanySearch] = useState(search);
+  React.useEffect(() => { setLocalCompanySearch(search); }, [search]);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
   const [companyForm, setCompanyForm] = useState({
@@ -4626,8 +4629,18 @@ const CompaniesTab: React.FC<{
             size="small"
             variant="outlined"
             placeholder="Search by company name, URL, or city..."
-            value={search}
-            onChange={e => onSearchChange(e.target.value)}
+            value={localCompanySearch}
+            onChange={e => setLocalCompanySearch(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e as React.KeyboardEvent<HTMLInputElement>).key === 'Enter') {
+                onSearchChange(localCompanySearch);
+              }
+            }}
+            onBlur={() => {
+              if (localCompanySearch !== search) {
+                onSearchChange(localCompanySearch);
+              }
+            }}
             sx={{ 
               width: 280,
               height: 36,
@@ -4646,10 +4659,10 @@ const CompaniesTab: React.FC<{
             }}
             InputProps={{
               startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: search && (
+              endAdornment: localCompanySearch && (
                 <IconButton
                   size="small"
-                  onClick={() => onSearchChange('')}
+                  onClick={() => { setLocalCompanySearch(''); onSearchChange(''); }}
                   sx={{ mr: 0.5, p: 0.5 }}
                 >
                   <ClearIcon fontSize="small" />
@@ -7633,6 +7646,7 @@ const SalesDashboard: React.FC<{
                     preloadedDeals={memoizedMyDeals}
                     preloadedCompanies={memoizedAllCompanies}
                     showOnlyTodos={true}
+                    showCompletedInTodos={false}
                   />
                 </Box>
               </CardContent>

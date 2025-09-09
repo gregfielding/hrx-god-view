@@ -47,6 +47,7 @@ interface TasksDashboardProps {
   preloadedCompanies?: any[];
   onAddTask?: () => void;
   showOnlyTodos?: boolean;
+  showCompletedInTodos?: boolean;
 }
 
 interface AISuggestionsListProps {
@@ -105,7 +106,8 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   preloadedDeals,
   preloadedCompanies,
   onAddTask,
-  showOnlyTodos = false
+  showOnlyTodos = false,
+  showCompletedInTodos = true
 }) => {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState<TaskDashboardData | null>(null);
@@ -242,16 +244,37 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           
           let mainDashboardTasks = Array.from(uniqueTasksMap.values());
 
-          // If To-Dos widget requests all todos, override with all open todos (no time window)
+          // If To-Dos widget requests all todos, override with ALL todos (no date window)
           if (showOnlyTodos) {
-            const openTodos = baseTasks.filter(t => (t.classification || '').toLowerCase() === 'todo' && t.status !== 'completed');
-            mainDashboardTasks = openTodos.sort((a, b) => {
+            // For entity-focused views (like Contact Details), show ALL todos
+            // including future-dated ones. Completed items are excluded from To-Dos.
+            const isTodo = (t: any) => (t.classification || '').toLowerCase() === 'todo';
+            const isCompleted = (t: any) => String(t.status || '').toLowerCase() === 'completed';
+
+            const openTodos = baseTasks.filter(t => isTodo(t) && !isCompleted(t));
+            const completedTodos = baseTasks.filter(t => isTodo(t) && isCompleted(t));
+
+            const sortByDueAsc = (a: any, b: any) => {
               const aDateStr = a.dueDate || a.scheduledDate || '';
               const bDateStr = b.dueDate || b.scheduledDate || '';
               const aDate = aDateStr ? new Date(aDateStr + (aDateStr.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
               const bDate = bDateStr ? new Date(bDateStr + (bDateStr.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
               return aDate - bDate;
-            });
+            };
+
+            const sortCompletedDesc = (a: any, b: any) => {
+              const aTime = (a.completedAt?.toDate?.() || (a.completedAt ? new Date(a.completedAt) : null) ||
+                             a.updatedAt?.toDate?.() || (a.updatedAt ? new Date(a.updatedAt) : null) ||
+                             (a.dueDate ? new Date(a.dueDate) : null))?.getTime?.() || 0;
+              const bTime = (b.completedAt?.toDate?.() || (b.completedAt ? new Date(b.completedAt) : null) ||
+                             b.updatedAt?.toDate?.() || (b.updatedAt ? new Date(b.updatedAt) : null) ||
+                             (b.dueDate ? new Date(b.dueDate) : null))?.getTime?.() || 0;
+              return bTime - aTime;
+            };
+
+            const openSorted = openTodos.sort(sortByDueAsc);
+            const completedSorted = completedTodos.sort(sortCompletedDesc);
+            mainDashboardTasks = showCompletedInTodos ? [...openSorted, ...completedSorted] : openSorted;
           }
           
           console.log('🔍 TasksDashboard: Filtered tasks:', {

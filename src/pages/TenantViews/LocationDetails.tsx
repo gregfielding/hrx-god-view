@@ -60,7 +60,7 @@ import {
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { GoogleMap } from '@react-google-maps/api';
+import { GoogleMap, MarkerF } from '@react-google-maps/api';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -287,8 +287,7 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.Marker | null>(null);
-  const markerClickRef = useRef<google.maps.MapsEventListener | null>(null);
+  // Using MarkerF for reliable rendering within React
   
   // Fallback center (Las Vegas area based on the image)
   const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
@@ -336,45 +335,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     }
   }, [location]);
 
-  // Create/update plain JS marker once the map and center are ready
-  useEffect(() => {
-    const g = (window as any).google as typeof google | undefined;
-    if (!g || !mapInstance || !center) return;
-    // Marker
-    if (!markerRef.current) {
-      markerRef.current = new g.maps.Marker({
-        position: center,
-        map: mapInstance,
-        title: location.name || 'Location',
-        zIndex: 999999,
-        icon: {
-          url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
-          scaledSize: new g.maps.Size(40, 40),
-        },
-      });
-      console.log('Plain JS marker created:', markerRef.current.getPosition()?.toUrlValue());
-    } else {
-      const pos = markerRef.current.getPosition();
-      const lat = pos?.lat();
-      const lng = pos?.lng();
-      if (lat !== center.lat || lng !== center.lng) {
-        markerRef.current.setPosition(center);
-      }
-      if (!markerRef.current.getMap()) markerRef.current.setMap(mapInstance);
-    }
-    // (Re)attach click listener to recenter map when pin is clicked
-    if (markerClickRef.current) {
-      markerClickRef.current.remove();
-      markerClickRef.current = null;
-    }
-    markerClickRef.current = markerRef.current.addListener('click', () => {
-      try {
-        mapInstance.panTo(center);
-        const currentZoom = mapInstance.getZoom() || 12;
-        if (currentZoom < 14) mapInstance.setZoom(14);
-      } catch {}
-    });
-  }, [mapInstance, center, location.name]);
+  // Marker is rendered via MarkerF in JSX
 
   if (!(window as any).google) {
     return (
@@ -408,6 +369,22 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       onLoad={(m) => setMapInstance(m)}
       onUnmount={() => setMapInstance(null)}
     >
+      {/* Render marker at center */}
+      {center && (
+        <MarkerF 
+          key={`${center.lat},${center.lng}`}
+          position={center}
+          onClick={() => {
+            try {
+              if (mapInstance) {
+                mapInstance.panTo(center);
+                const currentZoom = mapInstance.getZoom() || 12;
+                if (currentZoom < 14) mapInstance.setZoom(14);
+              }
+            } catch {}
+          }}
+        />
+      )}
     </GoogleMap>
   );
 };

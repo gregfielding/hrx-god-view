@@ -88,10 +88,24 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
 
   // Cleanup on unmount
   useEffect(() => {
+    // Listen for success message from OAuth callback window to immediately refresh status
+    const onMessage = async (event: MessageEvent) => {
+      try {
+        const data: any = event.data || {};
+        if (data && (data.type === 'google-auth-success' || data.event === 'google-auth-success')) {
+          // Mark OAuth flow complete and force a fresh status fetch (force bypasses debounce/TTL)
+          setIsOAuthInProgress(false);
+          // Clear local ref; popup will self-close from callback page
+          oauthWindowRef.current = null;
+          await refreshStatus(true);
+        }
+      } catch {}
+    };
+    window.addEventListener('message', onMessage);
     return () => {
-      if (oauthWindowRef.current && !oauthWindowRef.current.closed) {
-        oauthWindowRef.current.close();
-      }
+      window.removeEventListener('message', onMessage);
+      // Do not attempt to close cross-origin popup; let it self-close
+      oauthWindowRef.current = null;
     };
   }, []);
 
@@ -101,6 +115,12 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     
     setIsOAuthInProgress(true);
     try {
+      // Ensure fresh status by clearing caches before starting OAuth
+      try {
+        localStorage.removeItem('googleStatus.cache.v1');
+      } catch {}
+      await refreshStatus();
+
       const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
       const result = await getGmailAuthUrlFn({ 
         userId: user.uid,
@@ -144,11 +164,15 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     setBusy(true);
     try {
       const disconnectAllGoogleServices = httpsCallable(functions, 'disconnectAllGoogleServices');
-      await disconnectAllGoogleServices({ userId: user.uid, tenantId });
-      
-      // Reload status
-      await loadGoogleStatus();
-      setShowDialog(false);
+      const resp: any = await disconnectAllGoogleServices({ userId: user.uid, tenantId });
+      // Force status refresh and wait for it to settle before closing
+      await refreshStatus();
+      setSuccessMsg(resp?.data?.message || 'Disconnected');
+      setErrorMsg(null);
+      // small delay so the user sees the success state
+      setTimeout(() => {
+        setShowDialog(false);
+      }, 600);
     } catch (error) {
       console.error('Error disconnecting Google:', error);
       setErrorMsg('Failed to disconnect Google account');
@@ -165,8 +189,8 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     try {
       await clearExpiredTokensFn({ userId: user.uid, tenantId });
       
-      // Reload status
-      await loadGoogleStatus();
+      // Force fresh status
+      await refreshStatus();
       setShowDialog(false);
     } catch (error) {
       console.error('Error clearing expired tokens:', error);
@@ -309,19 +333,26 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     : (!googleStatus.gmail.connected && googleStatus.calendar.connected ? 'Calendar only' : undefined);
 
   // Debug logging - only in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log('GoogleConnectionChip Debug:', {
-      isConnected,
-      connectedEmail,
-      connectionCount,
-      googleStatus,
-      user: user?.uid,
-      isOAuthInProgress
-    });
-  }
+  // Reduce debug spam: log only on significant changes
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('GoogleConnectionChip Debug:', {
+        isConnected,
+        connectedEmail,
+        connectionCount,
+        googleStatus,
+        user: user?.uid,
+        isOAuthInProgress
+      });
+    }
+  }, [isConnected, connectedEmail, connectionCount, googleStatus.gmail.connected, googleStatus.calendar.connected, user?.uid, isOAuthInProgress]);
 
   // Handle chip click
-  const handleChipClick = () => {
+  const handleChipClick = (e: React.MouseEvent) => {
+    // Avoid aria-hidden focus errors by blurring the trigger before opening modal
+    try {
+      (e.currentTarget as HTMLElement).blur();
+    } catch {}
     if (isConnected) {
       setShowDialog(true);
     } else {

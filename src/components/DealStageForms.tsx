@@ -496,13 +496,35 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const handleStageDataChange = (stageKey: string, field: string, value: any) => {
     const stageDataForKey = stageData[stageKey as keyof DealStageData] as Record<string, any> | undefined;
     const oldValue = stageDataForKey ? stageDataForKey[field] : undefined;
-    
+
+    let nextStageObject = {
+      ...(stageDataForKey || {}),
+      [field]: value
+    } as Record<string, any>;
+
+    // If closing status is cleared, also clear dependent fields
+    if (stageKey === 'closedWon' && field === 'status' && (!value || value === '')) {
+      nextStageObject = {
+        ...nextStageObject,
+        signedContract: null,
+        dateSigned: '',
+        expirationDate: '',
+        rateSheetOnFile: false,
+        msaSigned: false,
+        lostReason: '',
+        competitor: '',
+        lostTo: '',
+        priceDifference: undefined,
+        decisionMaker: '',
+        feedback: '',
+        lessonsLearned: '',
+        notes: ''
+      };
+    }
+
     const updatedData = {
       ...stageData,
-      [stageKey]: {
-        ...(stageDataForKey || {}),
-        [field]: value
-      }
+      [stageKey]: nextStageObject
     };
     onStageDataChange(updatedData);
     // Auto-save on change/blur
@@ -2703,14 +2725,30 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
           <InputLabel>Closing Status</InputLabel>
-          <Select
-            value={data.status || ''}
-            onChange={(e) => handleStageDataChange('closedWon', 'status', e.target.value)}
-            label="Closing Status"
-          >
-            <MenuItem value="won">Won</MenuItem>
-            <MenuItem value="lost">Lost</MenuItem>
-          </Select>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Select
+              value={data.status || ''}
+              onChange={(e) => handleStageDataChange('closedWon', 'status', e.target.value)}
+              label="Closing Status"
+              displayEmpty
+              sx={{ flex: 1 }}
+            >
+              <MenuItem value="">
+                <em>None</em>
+              </MenuItem>
+              <MenuItem value="won">Won</MenuItem>
+              <MenuItem value="lost">Lost</MenuItem>
+            </Select>
+            {!!data.status && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => handleStageDataChange('closedWon', 'status', '')}
+              >
+                ✕
+              </Button>
+            )}
+          </Box>
         </FormControl>
 
         {data.status === 'won' && (

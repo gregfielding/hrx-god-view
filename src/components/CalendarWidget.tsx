@@ -271,41 +271,51 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       }
 
       // Also load calendar events that were synced into CRM activities
-      const activitiesRef = collection(db, 'tenants', tenantId, 'activities');
-      const activitiesQuery = query(
-        activitiesRef,
-        where('type', '==', 'calendar_event'),
-        where('createdBy', '==', userId)
-      );
+      // This fallback is disabled by default to avoid permission errors and duplicate renders.
+      // Enable by setting localStorage feature.calendarActivitiesFallback = 'true'
+      let enableActivitiesFallback = false;
+      try {
+        enableActivitiesFallback = localStorage.getItem('feature.calendarActivitiesFallback') === 'true';
+      } catch {}
+      if (enableActivitiesFallback) {
+        const activitiesRef = collection(db, 'tenants', tenantId, 'activities');
+        const activitiesQuery = query(
+          activitiesRef,
+          where('type', '==', 'calendar_event'),
+          where('createdBy', '==', userId)
+        );
 
-      const unsubscribe = onSnapshot(activitiesQuery, (snapshot) => {
-        console.log(`📅 Loaded ${snapshot.docs.length} synced calendar events from activities for user ${userId}`);
-        const syncedEvents: CalendarEvent[] = snapshot.docs.map(doc => {
-          const data = doc.data();
-          const startDate = safeDateConversion(data.date);
-          return {
-            id: data.calendarEventId || doc.id,
-            title: data.title || 'Calendar Event',
-            start: startDate,
-            end: startDate, // Use same time for synced events
-            type: 'google_calendar',
-            description: data.description,
-            location: data.location,
-            attendees: data.attendees || [],
-            color: '#4caf50', // Green for Google Calendar events
-            relatedTo: data.relatedTo,
-          };
+        const unsubscribe = onSnapshot(activitiesQuery, (snapshot) => {
+          console.log(`📅 Loaded ${snapshot.docs.length} synced calendar events from activities for user ${userId}`);
+          const syncedEvents: CalendarEvent[] = snapshot.docs.map(doc => {
+            const data = doc.data();
+            const startDate = safeDateConversion(data.date);
+            return {
+              id: data.calendarEventId || doc.id,
+              title: data.title || 'Calendar Event',
+              start: startDate,
+              end: startDate, // Use same time for synced events
+              type: 'google_calendar',
+              description: data.description,
+              location: data.location,
+              attendees: data.attendees || [],
+              color: '#4caf50', // Green for Google Calendar events
+              relatedTo: data.relatedTo,
+            };
+          });
+          
+          setEvents(prev => {
+            const filtered = prev.filter(e => e.type !== 'google_calendar');
+            return [...filtered, ...syncedEvents];
+          });
+        }, (error) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.info('📅 Calendar activities not accessible (permission-denied):', error.code);
+          }
         });
-        
-        setEvents(prev => {
-          const filtered = prev.filter(e => e.type !== 'google_calendar');
-          return [...filtered, ...syncedEvents];
-        });
-      }, (error) => {
-        console.info('📅 Calendar activities not accessible (permission-denied):', error.code);
-      });
 
-      unsubscribeFunctions.push(unsubscribe);
+        unsubscribeFunctions.push(unsubscribe);
+      }
     };
 
     // Load all event types

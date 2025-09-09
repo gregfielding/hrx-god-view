@@ -19,6 +19,22 @@ export const triggerAINoteReview = onCall({
     const db = admin.firestore();
     const noteRef = db.doc(`tenants/${tenantId}/${entityType}_notes/${noteId}`);
 
+    // Idempotency + debounce: skip if already reviewed recently or processing
+    const noteSnap = await noteRef.get();
+    const data = noteSnap.exists ? noteSnap.data() as any : {};
+    if (data?.aiReviewed === true) {
+      return { success: true, skipped: true, reason: 'already_reviewed' };
+    }
+    if (data?._aiReviewProcessing === true && data?._aiReviewProcessingAt && (Date.now() - data._aiReviewProcessingAt.toMillis?.() || 0) < 60000) {
+      return { success: true, skipped: true, reason: 'in_progress' };
+    }
+
+    // Mark processing (best-effort)
+    await noteRef.set({
+      _aiReviewProcessing: true,
+      _aiReviewProcessingAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
     // Generate AI insights based on note content and context
     const aiInsights = await generateAINoteInsights(content, category, priority, tags, entityType);
 
@@ -26,7 +42,8 @@ export const triggerAINoteReview = onCall({
     await noteRef.update({
       aiReviewed: true,
       aiInsights: aiInsights,
-      aiReviewedAt: admin.firestore.FieldValue.serverTimestamp()
+      aiReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+      _aiReviewProcessing: false
     });
 
     console.log(`✅ AI review completed for note: ${noteId}`);
@@ -77,6 +94,24 @@ export const triggerAINoteReviewHttp = onRequest({
     const db = admin.firestore();
     const noteRef = db.doc(`tenants/${tenantId}/${entityType}_notes/${noteId}`);
 
+    // Idempotency + debounce for HTTP path as well
+    const snap = await noteRef.get();
+    const d = snap.exists ? snap.data() as any : {};
+    if (d?.aiReviewed === true) {
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.status(200).json({ success: true, skipped: true, reason: 'already_reviewed' });
+      return;
+    }
+    if (d?._aiReviewProcessing === true && d?._aiReviewProcessingAt && (Date.now() - d._aiReviewProcessingAt.toMillis?.() || 0) < 60000) {
+      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
+      res.status(200).json({ success: true, skipped: true, reason: 'in_progress' });
+      return;
+    }
+    await noteRef.set({
+      _aiReviewProcessing: true,
+      _aiReviewProcessingAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
     // Generate AI insights based on note content and context
     const aiInsights = await generateAINoteInsights(content, category, priority, tags, entityType);
 
@@ -84,7 +119,8 @@ export const triggerAINoteReviewHttp = onRequest({
     await noteRef.update({
       aiReviewed: true,
       aiInsights: aiInsights,
-      aiReviewedAt: admin.firestore.FieldValue.serverTimestamp()
+      aiReviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+      _aiReviewProcessing: false
     });
 
     console.log(`✅ AI review completed for note: ${noteId}`);

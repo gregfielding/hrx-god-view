@@ -44,10 +44,29 @@ export const firestoreLogUserUpdated = onDocumentUpdated('users/{userId}', async
   if (!beforeData || !afterData) return;
   
   try {
+    // Skip updates that only touched bookkeeping/meta fields
+    const IGNORE_FIELDS_USER = [
+      'updatedAt', 'lastUpdated', '_processingBy', '_processingAt',
+      'lastLoginAt', 'lastActiveAt', 'lastSeenAt', 'lastRefreshedAt',
+      'heartbeat', 'lastHeartbeatAt', 'sessionUpdatedAt',
+      'lastGmailSync', 'lastCalendarSync', 'gmailStatus', 'calendarStatus', 'googleStatus',
+      '_cache', '_tmp', '_lastAIStatusUpdateAt'
+    ];
+    if (onlyIgnoredFieldsChanged(beforeData, afterData, IGNORE_FIELDS_USER)) return;
+
     // Determine what fields changed
     const changedFields = Object.keys(afterData).filter(key => 
       JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
     );
+    // Only proceed if important fields changed
+    const IMPORTANT_FIELDS_USER = [
+      'displayName', 'email', 'phoneNumber', 'avatarUrl', 'timezone',
+      'role', 'roles', 'permissions', 'status', 'disabled',
+      'tenantId', 'agencyId', 'managerId', 'locationId',
+      'notificationPreferences', 'connectedProviders', 'googleAuth'
+    ];
+    const importantChanged = changedFields.filter(f => IMPORTANT_FIELDS_USER.includes(f));
+    if (importantChanged.length === 0) return;
     
     await logAIAction({
       userId: afterData.updatedBy || 'system',
@@ -60,9 +79,9 @@ export const firestoreLogUserUpdated = onDocumentUpdated('users/{userId}', async
       aiRelevant: true,
       contextType: 'user',
       traitsAffected: null,
-      aiTags: ['user', 'update', ...changedFields],
+      aiTags: ['user', 'update', ...importantChanged],
       urgencyScore: 4,
-      reason: `User "${afterData.displayName || afterData.email || 'Unknown'}" updated: ${changedFields.join(', ')}`,
+      reason: `User "${afterData.displayName || afterData.email || 'Unknown'}" updated: ${importantChanged.join(', ')}`,
       versionTag: 'v1',
       latencyMs: 0
     });

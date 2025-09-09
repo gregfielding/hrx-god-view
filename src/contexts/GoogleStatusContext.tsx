@@ -22,7 +22,7 @@ interface GoogleStatusContextType {
   googleStatus: GoogleStatus;
   loading: boolean;
   error: string | null;
-  refreshStatus: () => Promise<void>;
+  refreshStatus: (force?: boolean) => Promise<void>;
   isOAuthInProgress: boolean;
   setIsOAuthInProgress: (value: boolean) => void;
 }
@@ -58,7 +58,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   const [lastLoadTime, setLastLoadTime] = useState(0);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  const DEBOUNCE_DELAY = 60 * 60 * 1000; // 60 minutes debounce (aggressively increased)
+  const DEBOUNCE_DELAY = 90 * 60 * 1000; // 90 minutes debounce
 
   // Lightweight in-memory cache to dedupe calls across components
   const STATUS_CACHE_TTL_MS = 90 * 60 * 1000; // 90 minutes
@@ -66,36 +66,46 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   const LS_KEY = 'googleStatus.cache.v1';
 
   // Load Google status with debouncing
-  const loadGoogleStatus = useCallback(async () => {
+  const loadGoogleStatus = useCallback(async (force = false) => {
     if (!user?.uid) return;
 
-    // Serve from cache when fresh
-    if (
-      lastStatusCache &&
-      lastStatusCache.userId === user.uid &&
-      Date.now() - lastStatusCache.at < STATUS_CACHE_TTL_MS
-    ) {
-      setGoogleStatus(lastStatusCache.data);
-      return;
-    }
-    // Try persistent cache shared across tabs
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (
-          parsed && parsed.userId === user.uid &&
-          typeof parsed.at === 'number' && Date.now() - parsed.at < STATUS_CACHE_TTL_MS && parsed.data
-        ) {
-          setGoogleStatus(parsed.data as GoogleStatus);
-          lastStatusCache = { data: parsed.data, at: parsed.at, userId: user.uid };
-          return;
-        }
+    // If OAuth is in progress, bypass all caches so we reflect status immediately
+    if (isOAuthInProgress || force) {
+      try {
+        clientCacheRef.current.invalidate(`calendar:${user.uid}`);
+        clientCacheRef.current.invalidate(`gmail:${user.uid}`);
+      } catch {}
+      lastStatusCache = null;
+      try { localStorage.removeItem(LS_KEY); } catch {}
+    } else {
+      // Serve from cache when fresh (only if not in OAuth flow)
+      if (
+        lastStatusCache &&
+        lastStatusCache.userId === user.uid &&
+        Date.now() - lastStatusCache.at < STATUS_CACHE_TTL_MS
+      ) {
+        setGoogleStatus(lastStatusCache.data);
+        return;
       }
-    } catch {}
+      // Try persistent cache shared across tabs
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (
+            parsed && parsed.userId === user.uid &&
+            typeof parsed.at === 'number' && Date.now() - parsed.at < STATUS_CACHE_TTL_MS && parsed.data
+          ) {
+            setGoogleStatus(parsed.data as GoogleStatus);
+            lastStatusCache = { data: parsed.data, at: parsed.at, userId: user.uid };
+            return;
+          }
+        }
+      } catch {}
+    }
     // Debounce rapid calls
     const now = Date.now();
-    if (now - lastLoadTime < DEBOUNCE_DELAY) {
+    if (!isOAuthInProgress && !force && now - lastLoadTime < DEBOUNCE_DELAY) {
       console.log('Skipping Google status load - too soon since last call');
       return;
     }
@@ -111,11 +121,11 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
 
       const cache = clientCacheRef.current;
       const calendarData = await cache.getOrFetch<any>(`calendar:${user.uid}`, async () => {
-        const res = await getCalendarStatus({ userId: user.uid });
+        const res = await getCalendarStatus({ userId: user.uid, force });
         return res.data as any;
       });
       const gmailData = await cache.getOrFetch<any>(`gmail:${user.uid}`, async () => {
-        const res = await getGmailStatus({ userId: user.uid });
+        const res = await getGmailStatus({ userId: user.uid, force });
         return res.data as any;
       });
 
@@ -182,7 +192,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   }, [loadGoogleStatus]);
 
   // Refresh status function for manual refresh
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (force = false) => {
     if (user?.uid) {
       // Invalidate client cache to force a fresh fetch
       clientCacheRef.current.invalidate(`calendar:${user.uid}`);
@@ -190,7 +200,7 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
       lastStatusCache = null;
       setLastLoadTime(0);
     }
-    await loadGoogleStatus();
+    await loadGoogleStatus(force);
   }, [loadGoogleStatus, user?.uid]);
 
   // Start polling when OAuth is in progress
@@ -218,7 +228,10 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
     } else {
       run();
     }
-  }, [user?.uid, loadGoogleStatus]);
+    // Intentionally omit loadGoogleStatus from deps to avoid infinite loop
+    // caused by lastLoadTime updates changing its identity across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -264,7 +264,9 @@ const ContactDetails: React.FC = () => {
   const [emailOptions, setEmailOptions] = useState<any[]>([]);
   const [showEmailDialog, setShowEmailDialog] = useState(false);
   const [showTaskDialog, setShowTaskDialog] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [appointmentSubmitting, setAppointmentSubmitting] = useState(false);
   
   // Company association state
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
@@ -656,11 +658,11 @@ const ContactDetails: React.FC = () => {
         associations: updatedAssociations
       } : null);
       
-      // Log the activity
+      // Log the activity (client-side filtered/sampled)
       try {
-        const functions = getFunctions();
-        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
-        await logAIActionCallable({
+        const { logAIActionClient } = await import('../../utils/loggingClient');
+        await logAIActionClient({
+          eventType: 'contact.company_associated',
           action: 'contact_company_associated',
           entityId: contactId,
           entityType: 'contact',
@@ -671,7 +673,8 @@ const ContactDetails: React.FC = () => {
             companyId, 
             companyName: selectedCompany?.companyName || selectedCompany?.name || '',
             previousCompanyId: contact?.companyId || null
-          }
+          },
+          urgencyScore: 7
         });
       } catch (logError) {
         console.warn('Failed to log activity:', logError);
@@ -774,18 +777,19 @@ const ContactDetails: React.FC = () => {
         locationName: selectedLocation.name || selectedLocation.nickname || 'Unknown Location' // Legacy format
       } : null);
       
-      // Log the activity
+      // Log the activity (client-side filtered/sampled)
       try {
-        const functions = getFunctions();
-        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
-        await logAIActionCallable({
+        const { logAIActionClient } = await import('../../utils/loggingClient');
+        await logAIActionClient({
+          eventType: 'contact.location_updated',
           action: 'contact_location_updated',
           entityId: contactId,
           entityType: 'contact',
           reason: `Updated work location to: ${selectedLocation.name || selectedLocation.nickname}`,
           tenantId,
           userId: user.uid,
-          metadata: { locationId, locationName: selectedLocation.name || selectedLocation.nickname }
+          metadata: { locationId, locationName: selectedLocation.name || selectedLocation.nickname },
+          urgencyScore: 7
         });
       } catch (logError) {
         console.warn('Failed to log activity:', logError);
@@ -899,18 +903,19 @@ const ContactDetails: React.FC = () => {
         updatedAt: new Date()
       });
       
-      // Log the activity using the existing AI logging system
+      // Log the activity (client-side filtered/sampled)
       try {
-        const functions = getFunctions();
-        const logAIActionCallable = httpsCallable(functions, 'logAIActionCallable');
-        await logAIActionCallable({
+        const { logAIActionClient } = await import('../../utils/loggingClient');
+        await logAIActionClient({
+          eventType: 'contact.field_updated',
           action: 'contact_updated',
           entityId: contactId,
           entityType: 'contact',
           reason: `Updated ${field}: ${processedValue}`,
           tenantId,
           userId: user.uid,
-          metadata: { field, value: processedValue }
+          metadata: { field, value: processedValue },
+          urgencyScore: 6
         });
       } catch (logError) {
         console.warn('Failed to log activity:', logError);
@@ -3032,6 +3037,7 @@ const ContactDetails: React.FC = () => {
                   preloadedContacts={[contact]}
                   preloadedSalespeople={salespeople}
                   preloadedCompany={company}
+                  showOnlyTodos
                 />
               </CardContent>
             </Card>
@@ -3145,6 +3151,9 @@ const ContactDetails: React.FC = () => {
           open={showTaskDialog}
           onClose={() => setShowTaskDialog(false)}
           onSubmit={async (taskData) => {
+            if (taskSubmitting) return;
+            setTaskSubmitting(true);
+            setShowTaskDialog(false);
             try {
               await taskService.createTask({
                 ...taskData,
@@ -3170,6 +3179,8 @@ const ContactDetails: React.FC = () => {
               setSnackbarMessage('Failed to create task');
               setSnackbarSeverity('error');
               setSnackbarOpen(true);
+            } finally {
+              setTaskSubmitting(false);
             }
           }}
           prefilledData={{
@@ -3188,6 +3199,7 @@ const ContactDetails: React.FC = () => {
           contacts={[contact]}
           salespeople={salespeople}
           currentUserId={user?.uid || ''}
+          loading={taskSubmitting}
         />
       )}
 
@@ -3197,6 +3209,9 @@ const ContactDetails: React.FC = () => {
           open={showAppointmentDialog}
           onClose={() => setShowAppointmentDialog(false)}
           onSubmit={async (taskData) => {
+            if (appointmentSubmitting) return;
+            setAppointmentSubmitting(true);
+            setShowAppointmentDialog(false);
             try {
               await taskService.createTask({
                 ...taskData,
@@ -3223,6 +3238,8 @@ const ContactDetails: React.FC = () => {
               setSnackbarMessage('Failed to create appointment');
               setSnackbarSeverity('error');
               setSnackbarOpen(true);
+            } finally {
+              setAppointmentSubmitting(false);
             }
           }}
           prefilledData={{
@@ -3242,6 +3259,7 @@ const ContactDetails: React.FC = () => {
           contacts={[contact]}
           salespeople={salespeople}
           currentUserId={user?.uid || ''}
+          loading={appointmentSubmitting}
         />
       )}
 
