@@ -76,6 +76,7 @@ import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
 import { backfillLoggedActivities } from './backfillLoggedActivities';
+export { getGoogleStatus, getGoogleStatusHttp } from './getGoogleStatus';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
 // 🎯 RECRUITER MODULE IMPORTS

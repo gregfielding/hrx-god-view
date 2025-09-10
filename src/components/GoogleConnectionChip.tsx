@@ -23,7 +23,7 @@ import {
   LinkOff as LinkOffIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { db } from '../firebase';
@@ -119,7 +119,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       try {
         localStorage.removeItem('googleStatus.cache.v1');
       } catch {}
-      await refreshStatus();
+      await refreshStatus(true);
 
       const getGmailAuthUrlFn = httpsCallable(functions, 'getGmailAuthUrl');
       const result = await getGmailAuthUrlFn({ 
@@ -145,7 +145,7 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       // Open Google OAuth URL in new window
       oauthWindowRef.current = window.open(authUrl, '_blank', 'width=600,height=600');
       
-      // Start polling for status updates
+      // Start short-lived polling to update status quickly
       startStatusPolling();
       
       // Note: We can't check window.closed due to COOP policy, so we'll rely on polling and real-time updates
@@ -166,7 +166,8 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
       const disconnectAllGoogleServices = httpsCallable(functions, 'disconnectAllGoogleServices');
       const resp: any = await disconnectAllGoogleServices({ userId: user.uid, tenantId });
       // Force status refresh and wait for it to settle before closing
-      await refreshStatus();
+      try { localStorage.removeItem('googleStatus.cache.v1'); } catch {}
+      await refreshStatus(true);
       setSuccessMsg(resp?.data?.message || 'Disconnected');
       setErrorMsg(null);
       // small delay so the user sees the success state
@@ -206,39 +207,23 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     
     setBusy(true);
     try {
-      // Test both Calendar and Gmail tokens
-      const [calendarResult, gmailResult] = await Promise.all([
-        testCalendarTokenValidityFn({ userId: user.uid, tenantId }),
-        testGmailTokenValidityFn({ userId: user.uid, tenantId })
-      ]);
-      
-      const calendarData = calendarResult.data as any;
-      const gmailData = gmailResult.data as any;
-      
-      console.log('Calendar token test result:', calendarData);
-      console.log('Gmail token test result:', gmailData);
-      
-      // Check if both tokens are valid
-      if (calendarData.valid && gmailData.valid) {
-        setSuccessMsg('All tokens are valid - no action needed');
+      // Prefer unified status validation (non-destructive)
+      const getGoogleStatus = httpsCallable(functions, 'getGoogleStatus');
+      const res: any = await getGoogleStatus({ userId: user.uid, force: true, testConnection: true });
+      const data = res.data || {};
+      console.log('Unified token test:', data);
+      if (data.gmail?.connected && data.calendar?.connected) {
+        setSuccessMsg('All tokens are valid - Gmail and Calendar are connected.');
         setErrorMsg(null);
-      } else if (calendarData.needsReauth || gmailData.needsReauth) {
-        // Clear the invalid tokens and reload status
-        await clearExpiredTokensFn({ userId: user.uid, tenantId });
-        await loadGoogleStatus();
-        
-        const issues = [];
-        if (calendarData.needsReauth) issues.push('Calendar');
-        if (gmailData.needsReauth) issues.push('Gmail');
-        
-        setErrorMsg(`Invalid ${issues.join(' and ')} tokens cleared. Please reconnect your Google account.`);
-        setSuccessMsg(null);
       } else {
-        const issues = [];
-        if (!calendarData.valid) issues.push(`Calendar: ${calendarData.reason}`);
-        if (!gmailData.valid) issues.push(`Gmail: ${gmailData.reason}`);
-        
-        setErrorMsg(`Token issues: ${issues.join('; ')}`);
+        const parts = [] as string[];
+        if (!data.gmail?.connected) parts.push('Gmail');
+        if (!data.calendar?.connected) parts.push('Calendar');
+        if (parts.length) {
+          setErrorMsg(`${parts.join(' and ')} need reconnection. Click Connect and complete consent.`);
+        } else {
+          setErrorMsg('Unable to validate tokens. Please reconnect.');
+        }
         setSuccessMsg(null);
       }
     } catch (error) {
@@ -257,10 +242,23 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
     setBusy(true);
     setIsOAuthInProgress(true);
     try {
+      // First, prefer the direct Calendar OAuth flow which writes tokens to users/{userId}
+      try {
+        const getCalendarAuthUrl = httpsCallable(functions, 'getCalendarAuthUrl');
+        const resp = await getCalendarAuthUrl({ userId: user.uid, tenantId });
+        const url = (resp.data as any)?.authUrl;
+        if (url) {
+          oauthWindowRef.current = window.open(url, '_blank');
+          startStatusPolling();
+          setErrorMsg('Please complete Google consent to add Calendar access, then click Refresh.');
+          return;
+        }
+      } catch (ignore) {}
+
+      // Fallback for legacy tenants that used the Gmail integration doc
       const enableCalendarSync = httpsCallable(functions, 'enableCalendarSync');
       await enableCalendarSync({ userId: user.uid, tenantId });
-      
-      // Reload status
+
       await loadGoogleStatus();
       setShowDialog(false);
     } catch (error) {
@@ -276,6 +274,20 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           startStatusPolling();
           setErrorMsg('Please complete Google consent to add Calendar access, then click Refresh.');
           return;
+        }
+      } else if (message.includes('Gmail integration not properly configured')) {
+        // Fall back to unified Gmail auth which requests both Gmail + Calendar scopes
+        try {
+          const resp = await getGmailAuthUrlFn({ userId: user!.uid, tenantId });
+          const url = (resp.data as any)?.authUrl;
+          if (url) {
+            oauthWindowRef.current = window.open(url, '_blank');
+            startStatusPolling();
+            setErrorMsg('Please complete Google consent to finish linking Calendar.');
+            return;
+          }
+        } catch (e) {
+          console.error('Fallback unified auth failed:', e);
         }
       }
       setErrorMsg('Failed to enable Calendar sync');
@@ -579,6 +591,16 @@ const GoogleConnectionChip: React.FC<GoogleConnectionChipProps> = ({ tenantId })
           >
             Test & Fix Tokens
           </Button>
+          {!googleStatus.calendar.connected && (
+            <Button 
+              onClick={handleEnableCalendarSync}
+              disabled={busy}
+              color="primary"
+              variant="contained"
+            >
+              Connect Calendar
+            </Button>
+          )}
           <Button 
             onClick={handleDisconnect} 
             disabled={busy}

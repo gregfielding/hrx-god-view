@@ -1040,17 +1040,10 @@ const ContactDetails: React.FC = () => {
 
       // Use the Apollo-powered contact enrichment function
       try {
-        const functions = getFunctions();
+        let resultData: any = null;
         const enrichContact = httpsCallable(functions, 'enrichContactOnDemand');
-        
-        const result = await enrichContact({
-          tenantId,
-          contactId,
-          mode: 'full', // Use full enrichment mode for Apollo data
-          force: false
-        });
-        
-        const resultData = result.data as any;
+        const result = await enrichContact({ tenantId, contactId, mode: 'full', force: false });
+        resultData = result.data as any;
         
         if (resultData.status === 'ok') {
           // Reload the contact to get the enhanced data

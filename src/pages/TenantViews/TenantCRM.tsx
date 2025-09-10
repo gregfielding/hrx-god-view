@@ -713,17 +713,7 @@ const TenantCRM: React.FC = () => {
       
       // Use Firebase Function to get salespeople with proper tenant filtering
       const getSalespeople = httpsCallable(functions, 'getSalespeopleForTenant');
-      
-      const params = { 
-        tenantId,
-        activeTenantId: activeTenant?.id || tenantId
-      };
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log('🔍 Calling getSalespeople with params:', params);
-        console.log('🔍 activeTenant:', activeTenant);
-      }
-      
+      const params = { tenantId, activeTenantId: activeTenant?.id || tenantId };
       const result = await getSalespeople(params);
       const data = result.data as { salespeople: any[] };
       
@@ -3444,9 +3434,30 @@ const ContactsTab: React.FC<{
     
     // Apply company filter if selected
     if (selectedCompanyFilter) {
+      // Map company names to ids for legacy records that only have companyName
+      const nameToId = new Map<string, string>();
+      companies.forEach((c: any) => {
+        const key = String(c.companyName || c.name || '').toLowerCase();
+        if (key) nameToId.set(key, c.id);
+      });
+
       filtered = filtered.filter((contact: any) => {
-        const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
-        return assocCompanies.includes(selectedCompanyFilter);
+        // 1) Legacy direct field
+        if (contact.companyId && contact.companyId === selectedCompanyFilter) return true;
+
+        // 2) Associations array (ids or objects)
+        const assocCompanies = (contact.associations?.companies || []).map((c: any) => {
+          if (typeof c === 'string') return c;
+          return c?.id || c?.companyId || c?.snapshot?.id || null;
+        }).filter(Boolean);
+        if (assocCompanies.includes(selectedCompanyFilter)) return true;
+
+        // 3) Legacy name-only matching
+        if (contact.companyName) {
+          const mappedId = nameToId.get(String(contact.companyName).toLowerCase());
+          if (mappedId === selectedCompanyFilter) return true;
+        }
+        return false;
       });
     }
     

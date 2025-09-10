@@ -69,11 +69,12 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
   const loadGoogleStatus = useCallback(async (force = false) => {
     if (!user?.uid) return;
 
-    // If OAuth is in progress, bypass all caches so we reflect status immediately
+    // If OAuth is in progress or force-refresh requested, bypass all caches so we reflect status immediately
     if (isOAuthInProgress || force) {
       try {
         clientCacheRef.current.invalidate(`calendar:${user.uid}`);
         clientCacheRef.current.invalidate(`gmail:${user.uid}`);
+        clientCacheRef.current.invalidate(`googleStatus:${user.uid}`);
       } catch {}
       lastStatusCache = null;
       try { localStorage.removeItem(LS_KEY); } catch {}
@@ -115,34 +116,64 @@ export const GoogleStatusProvider: React.FC<GoogleStatusProviderProps> = ({ chil
     setError(null);
 
     try {
-      // Use optimized functions with client-side dedupe + TTL
-      const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
-      const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
-
+      // Prefer unified status callable; fall back to legacy if unavailable
+      const getGoogleStatus = httpsCallable(functions, 'getGoogleStatus');
       const cache = clientCacheRef.current;
-      const calendarData = await cache.getOrFetch<any>(`calendar:${user.uid}`, async () => {
-        const res = await getCalendarStatus({ userId: user.uid, force });
-        return res.data as any;
-      });
-      const gmailData = await cache.getOrFetch<any>(`gmail:${user.uid}`, async () => {
-        const res = await getGmailStatus({ userId: user.uid, force });
-        return res.data as any;
+
+      const unified = await cache.getOrFetch<any>(`googleStatus:${user.uid}`, async () => {
+        try {
+          const res = await getGoogleStatus({ userId: user.uid, force: !!force });
+          return res.data as any;
+        } catch (e) {
+          return null; // triggers legacy fallback below
+        }
       });
 
-      const newStatus: GoogleStatus = {
-        gmail: {
-          connected: !!(gmailData?.connected),
-          email: gmailData?.email,
-          lastSync: gmailData?.lastSync,
-          syncStatus: gmailData?.syncStatus || 'not_synced'
-        },
-        calendar: {
-          connected: !!(calendarData?.connected),
-          email: calendarData?.email,
-          lastSync: calendarData?.lastSync,
-          syncStatus: calendarData?.syncStatus || 'not_synced'
-        }
-      };
+      let newStatus: GoogleStatus;
+      if (unified && (typeof unified.gmail === 'object') && (typeof unified.calendar === 'object')) {
+        newStatus = {
+          gmail: {
+            connected: !!unified.gmail.connected,
+            email: unified.gmail.email,
+            lastSync: unified.gmail.lastSync,
+            syncStatus: unified.gmail.syncStatus || 'not_synced'
+          },
+          calendar: {
+            connected: !!unified.calendar.connected,
+            email: unified.calendar.email,
+            lastSync: unified.calendar.lastSync,
+            syncStatus: unified.calendar.syncStatus || 'not_synced'
+          }
+        };
+      } else {
+        // Legacy fallback (separate status functions)
+        const getCalendarStatus = httpsCallable(functions, 'getCalendarStatusOptimized');
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+
+        const calendarData = await cache.getOrFetch<any>(`calendar:${user.uid}`, async () => {
+          const res = await getCalendarStatus({ userId: user.uid, force });
+          return res.data as any;
+        });
+        const gmailData = await cache.getOrFetch<any>(`gmail:${user.uid}`, async () => {
+          const res = await getGmailStatus({ userId: user.uid, force });
+          return res.data as any;
+        });
+
+        newStatus = {
+          gmail: {
+            connected: !!(gmailData?.connected),
+            email: gmailData?.email,
+            lastSync: gmailData?.lastSync,
+            syncStatus: gmailData?.syncStatus || 'not_synced'
+          },
+          calendar: {
+            connected: !!(calendarData?.connected),
+            email: calendarData?.email,
+            lastSync: calendarData?.lastSync,
+            syncStatus: calendarData?.syncStatus || 'not_synced'
+          }
+        };
+      }
 
       setGoogleStatus(newStatus);
       lastStatusCache = { data: newStatus, at: Date.now(), userId: user.uid };

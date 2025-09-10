@@ -63,7 +63,7 @@ const GmailSettings: React.FC<GmailSettingsProps> = ({ tenantId }) => {
     
     setLoading(true);
     try {
-      await refreshStatus();
+      await refreshStatus(true);
     } catch (error: any) {
       console.error('Error loading Gmail status:', error);
       setError(`Failed to load Gmail status: ${error.message}`);

@@ -720,7 +720,12 @@ export const testGmailEmailCapture = onCall({
 
   } catch (error) {
     console.error('Error testing Gmail email capture:', error);
-    throw new Error(`Failed to test Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Return a structured error instead of throwing to avoid 500s on the client
+    const message = `Failed to test Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return {
+      success: false,
+      message
+    };
   }
 }); 
 

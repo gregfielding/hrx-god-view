@@ -195,6 +195,7 @@ function checkForLoop(userId: string): boolean {
  * Get calendar status with comprehensive optimization
  */
 export const getCalendarStatusOptimized = onCall({
+  cors: true,
   timeoutSeconds: Math.floor(CALENDAR_CONFIG.MAX_EXECUTION_TIME_MS / 1000),
   memory: '256MiB',
   maxInstances: 5
