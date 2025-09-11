@@ -129,6 +129,9 @@ import CRMNotesTab from '../../components/CRMNotesTab';
 import { getStageHexColor, getTextContrastColor } from '../../utils/crmStageColors';
 import AIAssistantChat from '../../components/AIAssistantChat';
 import AddNoteDialog from '../../components/AddNoteDialog';
+import DealAgeChip from '../../components/DealAgeChip';
+import HealthBadge from '../../components/HealthBadge';
+import { calculateDealHealth, calculateDealAge } from '../../utils/dealHealthCalculator';
 
 // AngelList and Crunchbase Icon Components
 const AngelListIcon = ({ hasUrl }: { hasUrl: boolean }) => (
@@ -6028,6 +6031,31 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
   const [companyLocations, setCompanyLocations] = useState<any[]>(locations);
   const [loadingDivisions, setLoadingDivisions] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
+
+  // Deal Age & Health Helper Functions (using centralized calculator)
+  const getDealAge = useCallback((createdAt: any) => {
+    return calculateDealAge(createdAt);
+  }, []);
+
+  const getDealHealth = useCallback((deal: any) => {
+    return calculateDealHealth(deal);
+  }, []);
+
+  const getDealStatus = useCallback((deal: any) => {
+    // Check if deal has a status field, otherwise default to 'open'
+    const status = deal.status || 'open';
+    
+    const statusMap = {
+      open: { label: 'Open', color: 'default', emoji: '⚪' },
+      won: { label: 'Won', color: 'success', emoji: '🟢' },
+      lost: { label: 'Lost', color: 'error', emoji: '🔴' },
+      on_hold: { label: 'On Hold', color: 'warning', emoji: '⏸️' },
+      canceled: { label: 'Canceled', color: 'error', emoji: '⚫' },
+      dormant: { label: 'Dormant', color: 'default', emoji: '🟣' }
+    };
+    
+    return statusMap[status as keyof typeof statusMap] || statusMap.open;
+  }, []);
   
   // Calculate expected revenue range from qualification data
   const calculateExpectedRevenueRange = (deal: any) => {
@@ -6339,7 +6367,29 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                     borderBottom: '1px solid #E5E7EB',
                     py: 1.5
                   }}>
-                    Close Date
+                    Age
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Status
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Health
                   </TableCell>
                   <TableCell sx={{
                     fontSize: '0.75rem',
@@ -6408,24 +6458,56 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#6B7280",
-                        fontSize: '0.875rem'
-                      }}>
-                        {(() => {
-                          const expectedCloseDate = getExpectedCloseDate(deal);
-                          if (expectedCloseDate) {
-                            return expectedCloseDate.toLocaleDateString();
-                          }
-                          // Fallback to regular closeDate if no qualification date
-                          if (deal.closeDate) {
-                            console.log('Using fallback closeDate:', deal.closeDate);
-                            return new Date(deal.closeDate).toLocaleDateString();
-                          }
-                          return 'Not set';
-                        })()}
-                      </Typography>
+                      {(() => {
+                        const age = getDealAge(deal?.createdAt);
+                        if (!age) return <Typography variant="body2" color="#6B7280">-</Typography>;
+                        
+                        return (
+                          <DealAgeChip 
+                            ageDays={age.days} 
+                            createdAt={age.date}
+                            showEmoji={true}
+                            variant="compact"
+                          />
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      {(() => {
+                        const status = getDealStatus(deal);
+                        return (
+                          <Chip
+                            label={status.label}
+                            size="small"
+                            sx={{
+                              bgcolor: status.color === 'success' ? 'success.light' : 
+                                      status.color === 'warning' ? 'warning.light' : 
+                                      status.color === 'error' ? 'error.light' : 'default.light',
+                              color: status.color === 'success' ? 'success.dark' : 
+                                     status.color === 'warning' ? 'warning.dark' : 
+                                     status.color === 'error' ? 'error.dark' : 'default.dark',
+                              fontWeight: 500,
+                              fontSize: '0.75rem'
+                            }}
+                            icon={<span style={{ fontSize: '0.75rem' }}>{status.emoji}</span>}
+                          />
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      {(() => {
+                        const health = getDealHealth(deal);
+                        
+                        return (
+                          <HealthBadge 
+                            bucket={health.bucket as any}
+                            score={health.score}
+                            reasons={health.reasons}
+                            showScore={false}
+                            variant="compact"
+                          />
+                        );
+                      })()}
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
                       <Typography sx={{

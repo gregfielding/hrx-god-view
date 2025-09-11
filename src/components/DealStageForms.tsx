@@ -54,10 +54,7 @@ import {
   RateReview as RateReviewIcon,
   Gavel as GavelIcon,
   Handshake as HandshakeIcon,
-  Assignment as AssignmentIcon,
-  PlayArrow as PlayArrowIcon,
   Check as CheckIcon,
-  Bedtime as BedtimeIcon,
   Cancel as CancelIcon,
   CloudUpload as CloudUploadIcon,
   Undo as UndoIcon,
@@ -88,9 +85,6 @@ interface DealStageData {
   negotiation?: NegotiationData;
   verbalAgreement?: VerbalAgreementData;
   closedWon?: ClosedWonData;
-  onboarding?: OnboardingData;
-  liveAccount?: LiveAccountData;
-  dormant?: DormantData;
 }
 
 interface DiscoveryData {
@@ -252,33 +246,6 @@ interface ClosedWonData {
   lessonsLearned?: string;
 }
 
-interface OnboardingData {
-  onboardingStartDate?: string;
-  onboardingContacts?: Contact[];
-  recruitingIntroduced?: boolean;
-  checklistGenerated?: boolean;
-  convertedToJobOrder?: boolean;
-  insuranceSubmitted?: boolean;
-  notes?: string;
-}
-
-interface LiveAccountData {
-  // Future tracking fields - placeholder for future implementation
-  _placeholder?: boolean;
-  notes?: string;
-}
-
-interface DormantData {
-  lastOrderDate?: string;
-  daysSinceLastOrder?: number;
-  dormantReason?: 'no_orders' | 'cold_pipeline' | 'win_back_campaign' | 'other';
-  winBackAttempts?: number;
-  lastContactDate?: string;
-  contactMethod?: 'phone' | 'email' | 'in_person' | 'other';
-  notes?: string;
-  reengagementPlan?: string;
-  assignedTo?: string; // salesperson ID
-}
 
 // Wrap MUI TextField to commit changes on blur and maintain local input while typing
 const TextField = (props: any) => {
@@ -319,10 +286,7 @@ const STAGES = [
   { key: 'proposalReview', label: 'Proposal Review', icon: <RateReviewIcon /> },
   { key: 'negotiation', label: 'Negotiation', icon: <GavelIcon /> },
   { key: 'verbalAgreement', label: 'Verbal Agreement', icon: <HandshakeIcon /> },
-  { key: 'closedWon', label: 'Closing', icon: <CheckIcon /> },
-  { key: 'onboarding', label: 'Onboarding', icon: <AssignmentIcon /> },
-  { key: 'liveAccount', label: 'Live Account', icon: <PlayArrowIcon /> },
-  { key: 'dormant', label: 'Dormant', icon: <BedtimeIcon /> }
+  { key: 'closedWon', label: 'Closing', icon: <CheckIcon /> }
 ];
 
 const DealStageForms: React.FC<DealStageFormsProps> = ({
@@ -427,12 +391,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         return '#228B22'; // dark green
       case 'closedLost':
         return '#DC143C'; // red
-      case 'onboarding':
-        return '#9370DB'; // purple
-      case 'liveAccount':
-        return '#4B0082'; // dark purple/indigo
-      case 'dormant':
-        return '#000000'; // black
       default:
         return '#666666'; // default gray
     }
@@ -474,15 +432,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         break;
       case 'closedLost':
         // Closed Lost stage is optional - no required fields for now
-        break;
-      case 'onboarding':
-        // Onboarding stage is optional - no required fields for now
-        break;
-      case 'liveAccount':
-        // Live Account stage is optional - no required fields for now
-        break;
-      case 'dormant':
-        // Dormant stage is optional - no required fields for now
         break;
       default:
         // Unknown stage - no validation
@@ -527,18 +476,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
       [stageKey]: nextStageObject
     };
     onStageDataChange(updatedData);
-    // Auto-save on change/blur
-    (async () => {
-      try {
-        await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId), {
-          stageData: updatedData,
-          updatedAt: serverTimestamp()
-        });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn('Auto-save failed', e);
-      }
-    })();
 
     // TODO: Re-enable AI logging once Cloud Function is properly configured
     // Log field change for AI analysis (fire-and-forget)
@@ -1412,116 +1349,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     );
   };
 
-  const renderDormantForm = () => {
-    const data = stageData.dormant || {};
-    
-    return (
-      <Box sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>Dormant Account Management</Typography>
-        
-        <Alert severity="info" sx={{ mb: 3 }}>
-          This account has been marked as dormant. Use this stage to track reengagement efforts and win-back campaigns.
-        </Alert>
-
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={6}>
-            <TextField
-              label="Last Order Date"
-              type="date"
-              value={data.lastOrderDate || ''}
-              onChange={(e) => handleStageDataChange('dormant', 'lastOrderDate', e.target.value)}
-              fullWidth
-              size="small"
-            />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField
-              label="Days Since Last Order"
-              type="number"
-              value={data.daysSinceLastOrder || ''}
-              onChange={(e) => handleStageDataChange('dormant', 'daysSinceLastOrder', parseInt(e.target.value))}
-              fullWidth
-              size="small"
-            />
-          </Grid>
-        </Grid>
-
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel>Dormant Reason</InputLabel>
-          <Select
-            value={data.dormantReason || ''}
-            label="Dormant Reason"
-            onChange={(e) => handleStageDataChange('dormant', 'dormantReason', e.target.value)}
-          >
-            <MenuItem value="no_orders">No orders in 60+ days</MenuItem>
-            <MenuItem value="cold_pipeline">Pipeline went cold after onboarding</MenuItem>
-            <MenuItem value="win_back_campaign">Win-back campaign initiated</MenuItem>
-            <MenuItem value="other">Other</MenuItem>
-          </Select>
-        </FormControl>
-
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={6}>
-            <TextField
-              label="Win-back Attempts"
-              type="number"
-              value={data.winBackAttempts || ''}
-              onChange={(e) => handleStageDataChange('dormant', 'winBackAttempts', parseInt(e.target.value))}
-              fullWidth
-              size="small"
-            />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField
-              label="Last Contact Date"
-              type="date"
-              value={data.lastContactDate || ''}
-              onChange={(e) => handleStageDataChange('dormant', 'lastContactDate', e.target.value)}
-              fullWidth
-              size="small"
-            />
-          </Grid>
-        </Grid>
-
-        <FormControl fullWidth sx={{ mb: 3 }}>
-          <InputLabel>Last Contact Method</InputLabel>
-          <Select
-            value={data.contactMethod || ''}
-            label="Last Contact Method"
-            onChange={(e) => handleStageDataChange('dormant', 'contactMethod', e.target.value)}
-          >
-            <MenuItem value="phone">Phone</MenuItem>
-            <MenuItem value="email">Email</MenuItem>
-            <MenuItem value="in_person">In Person</MenuItem>
-            <MenuItem value="other">Other</MenuItem>
-          </Select>
-        </FormControl>
-
-        <TextField
-          label="Reengagement Plan"
-          value={data.reengagementPlan || ''}
-          onChange={(e) => handleStageDataChange('dormant', 'reengagementPlan', e.target.value)}
-          fullWidth
-          multiline
-          rows={4}
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="Describe the strategy for reengaging this account"
-        />
-
-        <TextField
-          label="Notes"
-          value={data.notes || ''}
-          onBlur={(e) => handleStageDataChange('dormant', 'notes', e.target.value)}
-          fullWidth
-          multiline
-          rows={3}
-          size="small"
-          sx={{ mb: 2 }}
-        />
-      </Box>
-    );
-  };
 
 
 
@@ -2665,9 +2492,20 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
       setUploadingContract(true);
       try {
+        // Debug: Check authentication status
+        console.log('Upload attempt - User:', user?.uid, 'Tenant:', tenantId, 'Deal:', dealId);
+        
+        // Ensure user is authenticated
+        if (!user?.uid) {
+          throw new Error('User not authenticated');
+        }
+        
         // Upload to Firebase Storage
         const fileName = `contract_${Date.now()}_${file.name}`;
         const storageRef = ref(storage, `deals/${tenantId}/${dealId}/contracts/${fileName}`);
+        console.log('Storage path:', storageRef.fullPath);
+        console.log('Storage bucket:', storageRef.bucket);
+        console.log('Storage full path:', storageRef.fullPath);
         await uploadBytes(storageRef, file);
         const downloadURL = await getDownloadURL(storageRef);
 
@@ -2736,8 +2574,36 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <MenuItem value="">
                 <em>None</em>
               </MenuItem>
-              <MenuItem value="won">Won</MenuItem>
-              <MenuItem value="lost">Lost</MenuItem>
+              <MenuItem value="open">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>⚪</span>
+                  <span>Open</span>
+                </Box>
+              </MenuItem>
+              <MenuItem value="won">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>🟢</span>
+                  <span>Won</span>
+                </Box>
+              </MenuItem>
+              <MenuItem value="lost">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>🔴</span>
+                  <span>Lost</span>
+                </Box>
+              </MenuItem>
+              <MenuItem value="on_hold">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>⏸️</span>
+                  <span>On Hold</span>
+                </Box>
+              </MenuItem>
+              <MenuItem value="canceled">
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <span>⚫</span>
+                  <span>Canceled</span>
+                </Box>
+              </MenuItem>
             </Select>
             {!!data.status && (
               <Button
@@ -2993,80 +2859,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     );
   };
 
-  const renderOnboardingForm = () => {
-    const data = (stageData.onboarding || {}) as OnboardingData;
-    return (
-      <Box sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>Onboarding Plan</Typography>
-
-        <TextField
-          label="Onboarding Start Date"
-          type="date"
-          value={data.onboardingStartDate || ''}
-          onChange={(e) => handleStageDataChange('onboarding', 'onboardingStartDate', e.target.value)}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-          InputLabelProps={{ shrink: true }}
-        />
-
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.recruitingIntroduced || false}
-              onChange={(e) => handleStageDataChange('onboarding', 'recruitingIntroduced', e.target.checked)}
-            />
-          }
-          label="Recruiting team introduced"
-          sx={{ mb: 1 }}
-        />
-
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.checklistGenerated || false}
-              onChange={(e) => handleStageDataChange('onboarding', 'checklistGenerated', e.target.checked)}
-            />
-          }
-          label="Onboarding checklist generated"
-          sx={{ mb: 1 }}
-        />
-
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.convertedToJobOrder || false}
-              onChange={(e) => handleStageDataChange('onboarding', 'convertedToJobOrder', e.target.checked)}
-            />
-          }
-          label="Converted to Job Order"
-          sx={{ mb: 1 }}
-        />
-
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={data.insuranceSubmitted || false}
-              onChange={(e) => handleStageDataChange('onboarding', 'insuranceSubmitted', e.target.checked)}
-            />
-          }
-          label="Insurance Submitted"
-          sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label="Onboarding Notes"
-          value={data.notes || ''}
-          onBlur={(e) => handleStageDataChange('onboarding', 'notes', e.target.value)}
-          fullWidth
-          multiline
-          rows={3}
-          size="small"
-          helperText="Add any additional onboarding notes"
-        />
-      </Box>
-    );
-  };
 
   const renderStageForm = (stageKey: string) => {
     switch (stageKey) {
@@ -3084,12 +2876,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         return renderNegotiationForm();
       case 'verbalAgreement':
         return renderVerbalAgreementForm();
-      case 'onboarding':
-        return renderOnboardingForm();
       case 'closedWon':
         return renderClosedWonForm();
-      case 'dormant':
-        return renderDormantForm();
       default:
         return (
           <Box sx={{ p: 2 }}>

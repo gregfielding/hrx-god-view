@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "Field filter had an invalid value of \"metric.type=\"firestore.googleapis.com/document/write_count\" AND resource.type=\"firestore_database\"\": The filter contains unknown resource type: firestore_database",
+    "status": "INVALID_ARGUMENT"
+  }
+}

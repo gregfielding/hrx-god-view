@@ -503,7 +503,9 @@ export async function loadSalespersonActivities(
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       const contactsSnapshot = await getDocs(contactsRef);
       const crmContactIds = new Set(contactsSnapshot.docs.map(doc => doc.id));
-      console.log(`📧 Found ${crmContactIds.size} CRM contacts in tenant`);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`CRM contacts in tenant: ${crmContactIds.size}`);
+      }
       
       // Track processed emails to prevent duplicates
       const processedEmails = new Set<string>();
@@ -513,7 +515,7 @@ export async function loadSalespersonActivities(
       // Use pagination to handle large email collections
       const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
       let lastDoc = null;
-      const batchSize = 1000; // Stay well under Firestore's 10k limit
+      const batchSize = 250; // smaller batches to reduce UI stall
       
       while (totalEmailsProcessed < 5000) { // Cap at 5000 emails to prevent infinite loops
         const emailsQuery = query(
@@ -532,19 +534,20 @@ export async function loadSalespersonActivities(
           break; // No more emails to process
         }
         
-        console.log(`📧 Processing batch of ${emailsSnapshot.docs.length} emails (total processed: ${totalEmailsProcessed})`);
+        if (process.env.NODE_ENV === 'development') {
+          console.debug(`Email batch: ${emailsSnapshot.docs.length} (processed: ${totalEmailsProcessed})`);
+        }
         
         emailsSnapshot.docs.forEach(doc => {
           const data = doc.data();
           totalEmailsProcessed++;
           
-          // Debug logging for first few emails
-          if (totalEmailsProcessed <= 10) {
-            console.log(`📧 Email ${totalEmailsProcessed}: contactId="${data.contactId}", subject="${data.subject}", included=${data.contactId && data.contactId !== null && data.contactId !== 'null' && crmContactIds.has(data.contactId)}`);
+          // Minimal sample log in dev only
+          if (process.env.NODE_ENV === 'development' && totalEmailsProcessed === 1) {
+            console.debug(`First email sample: contactId="${data.contactId}", subject="${data.subject}"`);
           }
           
           // Only include emails that have a valid contactId that matches a CRM contact
-          // Exclude emails with contactId: null, undefined, or 'null' string
           if (data.contactId && 
               data.contactId !== null && 
               data.contactId !== undefined &&
@@ -553,14 +556,11 @@ export async function loadSalespersonActivities(
               crmContactIds.has(data.contactId)) {
             
             // Create a more sophisticated unique key for deduplication
-            // Use messageId if available, otherwise create a composite key
             let emailKey: string;
             
             if (data.messageId) {
-              // If we have a messageId, use it as the primary key
               emailKey = data.messageId;
             } else {
-              // Create a composite key using multiple fields to ensure uniqueness
               const timestamp = data.timestamp ? new Date(data.timestamp).getTime() : 0;
               const subject = (data.subject || '').trim().toLowerCase();
               const from = (data.from || '').trim().toLowerCase();
@@ -596,8 +596,6 @@ export async function loadSalespersonActivities(
                 },
                 source: 'email_logs'
               });
-            } else {
-              console.log(`📧 Skipping duplicate email: ${data.subject} (${data.timestamp})`);
             }
           }
         });
@@ -611,7 +609,9 @@ export async function loadSalespersonActivities(
         }
       }
       
-      console.log(`📧 Total emails processed: ${totalEmailsProcessed}, included ${totalEmailsIncluded} emails with valid CRM contactId`);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`Emails processed: ${totalEmailsProcessed}, included: ${totalEmailsIncluded}`);
+      }
     } catch (error) {
       console.warn('Failed to load emails for salesperson:', error);
     }

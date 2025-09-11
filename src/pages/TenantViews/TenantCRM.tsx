@@ -115,6 +115,9 @@ import PipelineBubbleChart from '../../components/PipelineBubbleChart';
 import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
 import UserAppointmentsDashboard from '../../components/UserAppointmentsDashboard';
+import DealAgeChip from '../../components/DealAgeChip';
+import HealthBadge from '../../components/HealthBadge';
+import { calculateDealHealth, getDealHealthLegacy, calculateDealAge } from '../../utils/dealHealthCalculator';
 import CalendarWidget from '../../components/CalendarWidget';
 import ProspectingHub from './ProspectingHub';
 import SalespersonActivityView from '../../components/SalespersonActivityView';
@@ -5265,6 +5268,31 @@ const CompaniesTab: React.FC<{
   const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const [companyDivisions, setCompanyDivisions] = useState<any[]>([]);
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
+
+  // Deal Age & Health Helper Functions (using centralized calculator)
+  const getDealAge = useCallback((createdAt: any) => {
+    return calculateDealAge(createdAt);
+  }, []);
+
+  const getDealHealth = useCallback((deal: any) => {
+    return calculateDealHealth(deal);
+  }, []);
+
+  const getDealStatus = useCallback((deal: any) => {
+    // Check if deal has a status field, otherwise default to 'open'
+    const status = deal.status || 'open';
+    
+    const statusMap = {
+      open: { label: 'Open', color: 'default', emoji: '⚪' },
+      won: { label: 'Won', color: 'success', emoji: '🟢' },
+      lost: { label: 'Lost', color: 'error', emoji: '🔴' },
+      on_hold: { label: 'On Hold', color: 'warning', emoji: '⏸️' },
+      canceled: { label: 'Canceled', color: 'error', emoji: '⚫' },
+      dormant: { label: 'Dormant', color: 'default', emoji: '🟣' }
+    };
+    
+    return statusMap[status as keyof typeof statusMap] || statusMap.open;
+  }, []);
   const [loadingDivisions, setLoadingDivisions] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
   
@@ -5517,6 +5545,19 @@ const CompaniesTab: React.FC<{
         // Extract numeric value for sorting (remove $ and commas)
         const numericValue = valueStr.replace(/[$,]/g, '').replace(/\s*-\s*.*/, '');
         return parseFloat(numericValue) || 0;
+      }
+      case 'createdAt': {
+        // Sort by age (days since creation)
+        const age = getDealAge(deal?.createdAt);
+        return age ? age.days : 0;
+      }
+      case 'status': {
+        const status = getDealStatus(deal);
+        return status.label?.toLowerCase() || '';
+      }
+      case 'health': {
+        const health = getDealHealth(deal);
+        return health.score;
       }
       case 'closeDate': {
         const closeDate = getDealCloseDate(deal);
@@ -5825,7 +5866,7 @@ const CompaniesTab: React.FC<{
           borderRadius: '8px',
           boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
         }} data-testid="customers-list">
-          <Table sx={{ minWidth: 1400 }} data-testid="customers-table">
+          <Table sx={{ minWidth: 1520 }} data-testid="customers-table">
           <TableHead>
             <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
               <TableCell sx={{ 
@@ -5927,6 +5968,81 @@ const CompaniesTab: React.FC<{
                   }}
                 >
                   Value
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ 
+                width: 100,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                <TableSortLabel
+                  active={sortField === 'createdAt'}
+                  direction={sortField === 'createdAt' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('createdAt')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Age
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ 
+                width: 100,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                <TableSortLabel
+                  active={sortField === 'status'}
+                  direction={sortField === 'status' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('status')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Status
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ 
+                width: 100,
+                fontSize: '0.75rem',
+                fontWeight: 600, 
+                color: '#374151',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                borderBottom: '1px solid #E5E7EB',
+                py: 1.5
+              }}>
+                <TableSortLabel
+                  active={sortField === 'health'}
+                  direction={sortField === 'health' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('health')}
+                  sx={{ 
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em'
+                  }}
+                >
+                  Health
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ 
@@ -6059,6 +6175,58 @@ const CompaniesTab: React.FC<{
                   >
                     {getDealEstimatedValue(deal)}
                   </Typography>
+                </TableCell>
+                <TableCell sx={{ py: 1 }}>
+                  {(() => {
+                    const age = getDealAge(deal?.createdAt);
+                    if (!age) return <Typography variant="body2" color="#6B7280">-</Typography>;
+                    
+                    return (
+                      <DealAgeChip 
+                        ageDays={age.days} 
+                        createdAt={age.date}
+                        showEmoji={true}
+                        variant="compact"
+                      />
+                    );
+                  })()}
+                </TableCell>
+                <TableCell sx={{ py: 1 }}>
+                  {(() => {
+                    const status = getDealStatus(deal);
+                    return (
+                      <Chip
+                        label={status.label}
+                        size="small"
+                        sx={{
+                          bgcolor: status.color === 'success' ? 'success.light' : 
+                                  status.color === 'warning' ? 'warning.light' : 
+                                  status.color === 'error' ? 'error.light' : 'default.light',
+                          color: status.color === 'success' ? 'success.dark' : 
+                                 status.color === 'warning' ? 'warning.dark' : 
+                                 status.color === 'error' ? 'error.dark' : 'default.dark',
+                          fontWeight: 500,
+                          fontSize: '0.75rem'
+                        }}
+                        icon={<span style={{ fontSize: '0.75rem' }}>{status.emoji}</span>}
+                      />
+                    );
+                  })()}
+                </TableCell>
+                <TableCell sx={{ py: 1 }}>
+                  {(() => {
+                    const health = getDealHealth(deal);
+                    
+                    return (
+                      <HealthBadge 
+                        bucket={health.bucket as any}
+                        score={health.score}
+                        reasons={health.reasons}
+                        showScore={false}
+                        variant="compact"
+                      />
+                    );
+                  })()}
                 </TableCell>
                 <TableCell sx={{ py: 1 }}>
                   <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
@@ -6826,33 +6994,7 @@ const PipelineTab: React.FC<{
   };
 
   const getDealHealth = (deal: any): 'green' | 'yellow' | 'red' => {
-    const prob = getDealProbability(deal);
-    const updated = getDealUpdatedAt(deal)?.getTime() || 0;
-    const days = updated ? Math.floor((Date.now() - updated) / (24 * 60 * 60 * 1000)) : 999;
-    const activityBonus = getActivityBonus(deal);
-
-    // Dynamic recency gates influenced by activity
-    let greenDays = 7;
-    let yellowDays = 14;
-    if (activityBonus >= 10) {
-      greenDays += 7; // more forgiving when very active
-      yellowDays += 7;
-    } else if (activityBonus <= -10) {
-      greenDays = Math.max(2, greenDays - 3);
-      yellowDays = Math.max(7, yellowDays - 7);
-    }
-
-    let status: 'green' | 'yellow' | 'red';
-    if (days <= greenDays && prob >= 50) status = 'green';
-    else if (days <= yellowDays && prob >= 30) status = 'yellow';
-    else status = 'red';
-
-    // Upgrade/downgrade one band based on strong activity signals
-    if (activityBonus >= 10 && status === 'yellow') status = 'green';
-    if (activityBonus <= -10 && status === 'green') status = 'yellow';
-    if (activityBonus <= -10 && status === 'yellow') status = 'red';
-
-    return status;
+    return getDealHealthLegacy(deal);
   };
   return (
     <Box>

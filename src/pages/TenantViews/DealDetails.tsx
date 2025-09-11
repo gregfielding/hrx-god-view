@@ -28,6 +28,10 @@ import {
   Chip,
   Breadcrumbs,
   Link as MUILink,
+  Select,
+  MenuItem,
+  FormControl,
+  Tooltip,
 } from '@mui/material';
 
 import {
@@ -74,6 +78,8 @@ import SalesCoach from '../../components/SalesCoach';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import DealAISummary from '../../components/DealAISummary';
+import DealAgeChip from '../../components/DealAgeChip';
+import HealthBadge from '../../components/HealthBadge';
 
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
@@ -92,6 +98,7 @@ interface DealData {
   locationId?: string;
   locationName?: string;
   stage: string;
+  status?: 'open' | 'won' | 'lost' | 'on_hold' | 'canceled' | 'dormant';
   estimatedRevenue: number;
   closeDate: string;
   owner: string;
@@ -100,6 +107,18 @@ interface DealData {
   stageData?: any;
   createdAt?: any;
   updatedAt?: any;
+  dealStatusUpdated?: {
+    fromStatus: string;
+    toStatus: string;
+    changedBy: {
+      uid: string;
+      firstName: string;
+      lastName: string;
+      displayName: string;
+    };
+    changedAt: Date;
+    timestamp: number;
+  };
   associations?: {
     companies?: string[];
     locations?: string[];
@@ -262,6 +281,141 @@ const DealDetails: React.FC = () => {
     patternAlerts: localStorage.getItem('feature.patternAlerts') !== 'false',
     pinnedWidgets: localStorage.getItem('feature.pinnedWidgets') !== 'false'
   };
+
+  // Deal Age & Health Helper Functions
+  const getDealAge = useCallback((createdAt: any) => {
+    let createdAtDate: Date | null = null;
+    if (createdAt?.toDate) {
+      createdAtDate = createdAt.toDate();
+    } else if (createdAt instanceof Date) {
+      createdAtDate = createdAt;
+    } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+      const parsed = new Date(createdAt);
+      createdAtDate = isNaN(parsed.getTime()) ? null : parsed;
+    }
+    
+    if (!createdAtDate) return null;
+    
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - createdAtDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    return {
+      days: diffDays,
+      date: createdAtDate
+    };
+  }, []);
+
+  const getAgeColor = useCallback((days: number) => {
+    if (days <= 30) return 'success'; // Green
+    if (days <= 60) return 'warning'; // Yellow
+    if (days <= 90) return 'error'; // Orange (using error for orange)
+    return 'error'; // Red
+  }, []);
+
+  const getAgeEmoji = useCallback((days: number) => {
+    if (days <= 30) return '🟢';
+    if (days <= 60) return '🟡';
+    if (days <= 90) return '🟠';
+    return '🔴';
+  }, []);
+
+  // Stage-specific SLA thresholds (in days)
+  const stageSLAThresholds = {
+    discovery: 7,
+    qualification: 15,
+    scoping: 30,
+    proposalDrafted: 20,
+    proposalReview: 20,
+    negotiation: 30,
+    verbalAgreement: 15,
+    closedWon: 15
+  };
+
+  const computeHealthScore = useCallback((deal: DealData, age: { days: number; date: Date } | null) => {
+    if (!age) return { score: 0, bucket: 'stale', reasons: ['No creation date'] };
+    
+    const { days: ageDays } = age;
+    const stage = deal.stage;
+    
+    // Calculate days since last touch (using updatedAt as proxy for now)
+    const lastTouch = deal.updatedAt;
+    let daysSinceLastTouch = 0;
+    if (lastTouch) {
+      const lastTouchDate = lastTouch instanceof Date ? lastTouch : 
+                           lastTouch?.toDate ? lastTouch.toDate() : new Date(lastTouch);
+      daysSinceLastTouch = Math.floor((Date.now() - lastTouchDate.getTime()) / (1000 * 60 * 60 * 24));
+    } else {
+      daysSinceLastTouch = ageDays; // If no update time, assume it's been as long as the deal age
+    }
+    
+    // Calculate target close date overdue (if available)
+    const targetCloseOverdueDays = 0; // TODO: Implement when targetCloseDate is available
+    
+    // Check for missing critical data
+    const missingCriticalData = !deal.associations?.contacts?.length || 
+                               !deal.associations?.salespeople?.length ||
+                               !deal.notes;
+    
+    // Start with perfect score
+    let score = 100;
+    
+    // Inactivity decay (3 points per day after 3 days of no activity)
+    score -= Math.max(0, daysSinceLastTouch - 3) * 3;
+    
+    // Aging decay (1 point per day after 14 days)
+    score -= Math.max(0, ageDays - 14) * 1;
+    
+    // Target close overdue penalty
+    score -= Math.max(0, targetCloseOverdueDays) * 2;
+    
+    // Missing critical data penalty
+    if (missingCriticalData) score -= 10;
+    
+    // Stalled in mid/late stages penalty
+    const earlyStages = ['discovery', 'qualification'];
+    if (!earlyStages.includes(stage) && ageDays > 21) {
+      score -= 5;
+    }
+    
+    // Clamp score between 0 and 100
+    score = Math.min(100, Math.max(0, score));
+    
+    // Determine health bucket
+    let bucket: 'healthy' | 'watch' | 'at_risk' | 'stale';
+    if (score >= 75) bucket = 'healthy';
+    else if (score >= 55) bucket = 'watch';
+    else if (score >= 35) bucket = 'at_risk';
+    else bucket = 'stale';
+    
+    // Generate reasons
+    const reasons: string[] = [];
+    if (daysSinceLastTouch > 7) reasons.push(`No activity ${daysSinceLastTouch}d`);
+    if (ageDays > 30) reasons.push(`Open ${ageDays}d`);
+    if (targetCloseOverdueDays > 0) reasons.push(`Past target by ${targetCloseOverdueDays}d`);
+    if (missingCriticalData) reasons.push('Missing required data');
+    if (!earlyStages.includes(stage) && ageDays > 21) reasons.push('Stalled in mid-stage');
+    
+    return { score, bucket, reasons };
+  }, []);
+
+  const getDealHealth = useCallback((deal: DealData, age: { days: number; date: Date } | null) => {
+    const { score, bucket, reasons } = computeHealthScore(deal, age);
+    
+    const healthMap = {
+      healthy: { status: 'Healthy', color: 'success', emoji: '🟢' },
+      watch: { status: 'Watch', color: 'warning', emoji: '🟡' },
+      at_risk: { status: 'At Risk', color: 'error', emoji: '🟠' },
+      stale: { status: 'Stale', color: 'error', emoji: '🔴' }
+    };
+    
+    return {
+      ...healthMap[bucket],
+      bucket,
+      score,
+      reasons
+    };
+  }, [computeHealthScore]);
 
   // FOUNDATIONAL: Load deal and associations first - everything else waits for this
   useEffect(() => {
@@ -437,21 +591,122 @@ const DealDetails: React.FC = () => {
     }
   }, [deal?.id, tenantId]);
 
+  // Function to get the current status, prioritizing stageData.closedWon.status
+  const getCurrentStatus = useCallback(() => {
+    // If we have a closedWon status, use that (it takes precedence)
+    if (stageData?.closedWon?.status && stageData.closedWon.status !== '') {
+      return stageData.closedWon.status;
+    }
+    // Otherwise, use the top-level status
+    return deal?.status || 'open';
+  }, [deal?.status, stageData?.closedWon?.status]);
+
+  const handleStatusChange = useCallback(async (newStatus: 'open' | 'won' | 'lost' | 'on_hold' | 'canceled' | 'dormant') => {
+    if (!deal || !tenantId || !user) return;
+    
+    try {
+      const currentStatus = getCurrentStatus();
+      
+      // Update the top-level status
+      const updatedDeal = { ...deal, status: newStatus };
+      setDeal(updatedDeal);
+      
+      // Also update stageData.closedWon.status for all status types
+      const updatedStageData = {
+        ...stageData,
+        closedWon: {
+          ...stageData.closedWon,
+          status: newStatus
+        }
+      };
+      setStageData(updatedStageData);
+      
+      // Prepare update data
+      const updateData: any = {
+        status: newStatus,
+        stageData: updatedStageData,
+        updatedAt: new Date()
+      };
+      
+      // If status changed from "open" to something else, track the status change
+      if (currentStatus === 'open' && newStatus !== 'open') {
+        const statusChangeRecord = {
+          fromStatus: currentStatus,
+          toStatus: newStatus,
+          changedBy: {
+            uid: user.uid,
+            firstName: (user as any).firstName || '',
+            lastName: (user as any).lastName || '',
+            displayName: user.displayName || `${(user as any).firstName || ''} ${(user as any).lastName || ''}`.trim() || user.email?.split('@')[0] || 'Unknown User'
+          },
+          changedAt: new Date(),
+          timestamp: Date.now()
+        };
+        
+        updateData.dealStatusUpdated = statusChangeRecord;
+      }
+      
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), updateData);
+    } catch (err) {
+      console.error('Error updating deal status:', err);
+      // Revert the local state if update fails
+      setDeal(deal);
+      setStageData(stageData);
+    }
+  }, [deal?.id, tenantId, stageData, user, getCurrentStatus]);
+
+  // Helper function to recursively remove undefined values from an object
+  const removeUndefinedValues = (obj: any): any => {
+    if (obj === null || obj === undefined) return obj;
+    if (Array.isArray(obj)) {
+      return obj.map(removeUndefinedValues).filter(item => item !== undefined);
+    }
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined) {
+          cleaned[key] = removeUndefinedValues(value);
+        }
+      }
+      return cleaned;
+    }
+    return obj;
+  };
+
   const handleStageDataChange = useCallback(async (newStageData: any) => {
-    setStageData(newStageData);
+    // Clean the stage data to remove undefined values
+    const cleanedStageData = removeUndefinedValues(newStageData);
+    setStageData(cleanedStageData);
+    
+    // Check if closedWon.status changed and sync with header status
+    const oldClosedWonStatus = stageData?.closedWon?.status;
+    const newClosedWonStatus = cleanedStageData?.closedWon?.status;
+    
+    if (oldClosedWonStatus !== newClosedWonStatus && (newClosedWonStatus === 'won' || newClosedWonStatus === 'lost' || newClosedWonStatus === 'open' || newClosedWonStatus === 'on_hold' || newClosedWonStatus === 'canceled' || newClosedWonStatus === 'dormant')) {
+      // Update the header status to match the stageData status
+      const updatedDeal = { ...deal, status: newClosedWonStatus };
+      setDeal(updatedDeal);
+    }
     
     // Save stage data to Firestore
     if (deal && tenantId) {
       try {
-        await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
-          stageData: newStageData,
+        const updateData: any = {
+          stageData: cleanedStageData,
           updatedAt: new Date()
-        });
+        };
+        
+        // Also update the top-level status if closedWon.status changed
+        if (oldClosedWonStatus !== newClosedWonStatus && (newClosedWonStatus === 'won' || newClosedWonStatus === 'lost' || newClosedWonStatus === 'open' || newClosedWonStatus === 'on_hold' || newClosedWonStatus === 'canceled' || newClosedWonStatus === 'dormant')) {
+          updateData.status = newClosedWonStatus;
+        }
+        
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), updateData);
       } catch (error) {
         console.error('❌ Error saving stage data:', error);
       }
     }
-  }, [deal?.id, tenantId]);
+  }, [deal?.id, tenantId, stageData, deal]);
 
   const handleStageAdvance = useCallback(async (newStage: string) => {
     if (!deal || !tenantId) return;
@@ -1620,18 +1875,34 @@ const DealDetails: React.FC = () => {
                 </IconButton>
               </Box>
               
-              {/* Deal Value Range */}
-              {(() => {
-                const revenueRange = calculateExpectedRevenueRange();
-                return revenueRange.hasData ? (
-                  <Box sx={{ mt: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                      ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
-                    </Typography>
-                  </Box>
-                ) : null;
-              })()}
+              {/* Deal Value Range and Est Close Date */}
+              <Box sx={{ mt: 0, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
+                {(() => {
+                  const revenueRange = calculateExpectedRevenueRange();
+                  return revenueRange.hasData ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
+                      </Typography>
+                    </Box>
+                  ) : null;
+                })()}
+                
+                {/* Est Close Date */}
+                {(() => {
+                  const qualData = stageData?.qualification;
+                  const expectedCloseDate = qualData?.expectedCloseDate;
+                  return expectedCloseDate ? (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Est. Close:</Typography>
+                      <Typography variant="body2" color="text.primary">
+                        {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
+                      </Typography>
+                    </Box>
+                  ) : null;
+                })()}
+              </Box>
 
               {/* Deal Stats */}
               <Box 
@@ -1653,46 +1924,15 @@ const DealDetails: React.FC = () => {
                   <StageChip stage={deal.stage} size="small" useCustomColors={true} />
                 </Box>
 
-                {/* Status - Show Won/Lost when Closing stage is complete */}
-                {(() => {
-                  const closingData = stageData?.closedWon;
-                  const isClosingComplete = deal.stage === 'onboarding' || deal.stage === 'liveAccount' || deal.stage === 'dormant';
-                  const closingStatus = closingData?.status;
-                  
-                  if (isClosingComplete && closingStatus) {
-                    return (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
-                        <Chip
-                          label={closingStatus === 'won' ? 'Won' : 'Lost'}
-                          size="small"
-                          sx={{
-                            bgcolor: closingStatus === 'won' ? 'success.light' : 'error.light',
-                            color: closingStatus === 'won' ? 'success.dark' : 'error.dark',
-                            fontWeight: 500,
-                            fontSize: '0.75rem',
-                            height: 20
-                          }}
-                        />
-                      </Box>
-                    );
-                  }
-                  return null;
-                })()}
+                {/* Status */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
+                  <StatusChip 
+                    status={getCurrentStatus()} 
+                    onStatusChange={handleStatusChange}
+                  />
+                </Box>
 
-                {/* Close Date */}
-                {(() => {
-                  const qualData = stageData?.qualification;
-                  const expectedCloseDate = qualData?.expectedCloseDate;
-                  return expectedCloseDate ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Est. Close:</Typography>
-                      <Typography variant="body2" color="text.primary">
-                        {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
 
                 {/* Owner */}
                 {deal.owner && (
@@ -1702,6 +1942,15 @@ const DealDetails: React.FC = () => {
                   </Box>
                 )}
               </Box>
+
+              {/* Status Change Information */}
+              {deal?.dealStatusUpdated && getCurrentStatus() !== 'open' && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                    Status changed to {deal.dealStatusUpdated.toStatus} by {deal.dealStatusUpdated.changedBy.displayName} on {new Date(deal.dealStatusUpdated.changedAt).toLocaleDateString()}
+                  </Typography>
+                </Box>
+              )}
 
               {/* Company and Location */}
               {company && (
@@ -1801,8 +2050,39 @@ const DealDetails: React.FC = () => {
                 </Box>
               )}
 
-                              {/* Deal Health Indicators */}
+                              {/* Deal Age & Health Indicators */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
+                  {/* Deal Age */}
+                  {(() => {
+                    const age = getDealAge((deal as any)?.createdAt);
+                    if (!age) return null;
+                    
+                    return (
+                      <DealAgeChip 
+                        ageDays={age.days} 
+                        createdAt={age.date}
+                        showEmoji={true}
+                        variant="default"
+                      />
+                    );
+                  })()}
+                  
+                  {/* Deal Health */}
+                  {(() => {
+                    const age = getDealAge((deal as any)?.createdAt);
+                    const health = getDealHealth(deal, age);
+                    
+                    return (
+                      <HealthBadge 
+                        bucket={health.bucket as any}
+                        score={health.score}
+                        reasons={health.reasons}
+                        showScore={true}
+                        variant="default"
+                      />
+                    );
+                  })()}
+                  
                   {/* Deal Priority */}
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
@@ -1906,7 +2186,7 @@ const DealDetails: React.FC = () => {
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <WorkIcon fontSize="small" />
-                    Recruiter Questionnaire
+                    Draft Job Order
                   </Box>
                 } 
               />
@@ -2022,7 +2302,41 @@ const DealDetails: React.FC = () => {
           {/* Center Column - Deal Intelligence */}
           <Grid item xs={12} md={5}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Sales Coach removed as requested */}
+              {/* Sales Coach */}
+              <Card>
+                <CardHeader 
+                  title="Sales Coach" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <IconButton size="small" onClick={() => {
+                      const event = new CustomEvent('startNewSalesCoachConversation', {
+                        detail: { entityId: deal.id }
+                      });
+                      window.dispatchEvent(event);
+                    }}>
+                      <AddIcon />
+                    </IconButton>
+                  }
+                />
+                <CardContent sx={{ p: 0 }}>
+                  <Box sx={{ height: 650 }}>
+                    <SalesCoach 
+                      entityType="deal"
+                      entityId={deal.id}
+                      entityName={deal.name || 'Deal'}
+                      tenantId={tenantId}
+                      associations={{
+                        companies: company ? [company] : [],
+                        contacts: associatedContacts,
+                        deals: [deal],
+                        salespeople: associatedSalespeople,
+                        locations: (deal as any)?.associations?.locations || []
+                      }}
+                      hideHeader
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
 
               {/* Relationship Map */}
               <Box sx={{ mb: 0 }}>
@@ -2809,6 +3123,70 @@ const DealDetails: React.FC = () => {
         </DialogActions>
       </Dialog>
     </Box>
+  );
+};
+
+// StatusChip component with dropdown functionality
+const StatusChip: React.FC<{
+  status: string;
+  onStatusChange: (newStatus: 'open' | 'won' | 'lost' | 'on_hold' | 'canceled' | 'dormant') => void;
+}> = ({ status, onStatusChange }) => {
+  const statusConfig = {
+    open: { label: 'Open', emoji: '⚪', color: 'default' as const, bgcolor: 'grey.100', textColor: 'text.primary' },
+    won: { label: 'Won', emoji: '🟢', color: 'success' as const, bgcolor: 'success.light', textColor: 'success.dark' },
+    lost: { label: 'Lost', emoji: '🔴', color: 'error' as const, bgcolor: 'error.light', textColor: 'error.dark' },
+    on_hold: { label: 'On Hold', emoji: '⏸️', color: 'warning' as const, bgcolor: 'warning.light', textColor: 'warning.dark' },
+    canceled: { label: 'Canceled', emoji: '⚫', color: 'default' as const, bgcolor: 'grey.800', textColor: 'white' },
+    dormant: { label: 'Dormant', emoji: '🟣', color: 'secondary' as const, bgcolor: 'secondary.light', textColor: 'secondary.dark' }
+  };
+
+  const currentConfig = statusConfig[status as keyof typeof statusConfig] || statusConfig.open;
+
+  return (
+    <FormControl size="small" sx={{ minWidth: 120 }}>
+      <Select
+        value={status}
+        onChange={(e) => onStatusChange(e.target.value as 'open' | 'won' | 'lost' | 'on_hold' | 'canceled' | 'dormant')}
+        displayEmpty
+        sx={{
+          '& .MuiSelect-select': {
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            py: 0.5,
+            px: 1,
+            fontSize: '0.75rem',
+            fontWeight: 500,
+            height: 'auto',
+            minHeight: 20,
+            bgcolor: currentConfig.bgcolor,
+            color: currentConfig.textColor,
+            borderRadius: 1,
+            '&:hover': {
+              bgcolor: currentConfig.bgcolor,
+            }
+          },
+          '& .MuiOutlinedInput-notchedOutline': {
+            border: 'none',
+          },
+          '&:hover .MuiOutlinedInput-notchedOutline': {
+            border: 'none',
+          },
+          '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+            border: 'none',
+          }
+        }}
+      >
+        {Object.entries(statusConfig).map(([key, config]) => (
+          <MenuItem key={key} value={key} sx={{ fontSize: '0.75rem', py: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <span>{config.emoji}</span>
+              <span>{config.label}</span>
+            </Box>
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
   );
 };
 
