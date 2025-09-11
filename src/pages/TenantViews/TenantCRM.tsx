@@ -6718,7 +6718,7 @@ const PipelineTab: React.FC<{
   
   // Column visibility state
   const [visibleColumns, setVisibleColumns] = React.useState<string[]>([
-    'deal', 'company', 'owner', 'stage', 'value', 'probability', 'aiHealth', 'lastActivity'
+    'deal', 'company', 'owner', 'stage', 'value', 'age', 'status', 'probability', 'aiHealth', 'lastActivity'
   ]);
   
   // Sorting state
@@ -6733,6 +6733,8 @@ const PipelineTab: React.FC<{
     { key: 'stage', label: 'Stage' },
     { key: 'value', label: 'Value' },
     { key: 'valueRange', label: 'Value Range' },
+    { key: 'age', label: 'Age' },
+    { key: 'status', label: 'Status' },
     { key: 'probability', label: 'Probability' },
     { key: 'aiHealth', label: 'AI Health' },
     { key: 'lastActivity', label: 'Last Activity' }
@@ -6858,6 +6860,17 @@ const PipelineTab: React.FC<{
         return deal.stage?.toLowerCase() || '';
       case 'value':
         return getDealValueForPipeline(deal);
+      case 'age': {
+        const createdAt = deal.createdAt;
+        if (!createdAt) return 0;
+        const createdDate = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+        return Date.now() - createdDate.getTime();
+      }
+      case 'status': {
+        const status = deal.status || 'Open';
+        const statusOrder = { 'Open': 1, 'On Hold': 2, 'Won': 3, 'Lost': 4, 'Canceled': 5, 'Dormant': 6 };
+        return statusOrder[status as keyof typeof statusOrder] || 1;
+      }
       case 'probability':
         return getDealProbability(deal);
       case 'aiHealth': {
@@ -7274,6 +7287,14 @@ const PipelineTab: React.FC<{
                       case 'stage': return d.stage;
                       case 'value': return getDealValueForPipeline(d);
                       case 'valueRange': return getDealValueRange(d);
+                      case 'age': {
+                        const createdAt = d.createdAt;
+                        if (!createdAt) return 'N/A';
+                        const createdDate = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+                        const days = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
+                        return `${days}d`;
+                      }
+                      case 'status': return d.status || 'Open';
                       case 'probability': return prob;
                       case 'aiHealth': return health;
                       case 'lastActivity': return dt ? dt.toISOString() : '';
@@ -7360,6 +7381,28 @@ const PipelineTab: React.FC<{
                     onClick={() => handleSort('valueRange')}
                   >
                     Value Range
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('age') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'age'}
+                    direction={sortBy === 'age' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('age')}
+                  >
+                    Age
+                  </TableSortLabel>
+                </TableCell>
+              )}
+              {visibleColumns.includes('status') && (
+                <TableCell>
+                  <TableSortLabel
+                    active={sortBy === 'status'}
+                    direction={sortBy === 'status' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('status')}
+                  >
+                    Status
                   </TableSortLabel>
                 </TableCell>
               )}
@@ -7482,6 +7525,42 @@ const PipelineTab: React.FC<{
                       <Typography variant="body2" color="text.secondary">
                         {getDealValueRange(d)}
                       </Typography>
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('age') && (
+                    <TableCell>
+                      {(() => {
+                        const createdAt = d.createdAt;
+                        if (!createdAt) return <Typography variant="body2">-</Typography>;
+                        const createdDate = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+                        const ageDays = Math.floor((Date.now() - createdDate.getTime()) / (24 * 60 * 60 * 1000));
+                        return <DealAgeChip ageDays={ageDays} createdAt={createdDate} />;
+                      })()}
+                    </TableCell>
+                  )}
+                  {visibleColumns.includes('status') && (
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        label={d.status || 'Open'}
+                        color={
+                          d.status === 'Won' ? 'success' :
+                          d.status === 'Lost' ? 'error' :
+                          d.status === 'On Hold' ? 'warning' :
+                          d.status === 'Canceled' ? 'default' :
+                          d.status === 'Dormant' ? 'secondary' : 'default'
+                        }
+                        sx={{ 
+                          fontWeight: 500,
+                          backgroundColor: 
+                            d.status === 'Won' ? '#4CAF50' :
+                            d.status === 'Lost' ? '#F44336' :
+                            d.status === 'On Hold' ? '#FF9800' :
+                            d.status === 'Canceled' ? '#424242' :
+                            d.status === 'Dormant' ? '#9C27B0' : '#E0E0E0',
+                          color: 'white'
+                        }}
+                      />
                     </TableCell>
                   )}
                   {visibleColumns.includes('probability') && (
