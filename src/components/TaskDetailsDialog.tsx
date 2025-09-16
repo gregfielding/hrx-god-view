@@ -22,7 +22,8 @@ import {
   CircularProgress,
   LinearProgress,
   Chip,
-  Autocomplete
+  Autocomplete,
+  Tooltip
 } from '@mui/material';
 import {
   Schedule as ScheduleIcon,
@@ -770,12 +771,25 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   }}
                   renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
-                      <Chip 
-                        {...getTagProps({ index })} 
-                        key={option.id} 
-                        label={option.fullName || option.name || option.email || option.id} 
-                        size="small" 
-                      />
+                      <Tooltip key={option.id} title={`Click to view ${option.fullName || option.name || option.email || option.id}'s contact details`} arrow>
+                        <Chip 
+                          {...getTagProps({ index })} 
+                          label={option.fullName || option.name || option.email || option.id} 
+                          size="small"
+                          clickable
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`/tenant/crm/contacts/${option.id}`, '_blank');
+                          }}
+                          sx={{ 
+                            cursor: 'pointer',
+                            '&:hover': { 
+                              backgroundColor: 'primary.light',
+                              color: 'primary.contrastText'
+                            }
+                          }}
+                        />
+                      </Tooltip>
                     ))
                   }
                   renderInput={(params) => (
@@ -807,12 +821,27 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   }}
                   renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
-                      <Chip 
-                        {...getTagProps({ index })} 
-                        key={option.id} 
-                        label={option.fullName || option.name || option.displayName || option.email || option.id} 
-                        size="small" 
-                      />
+                      <Tooltip key={option.id} title={`Click to search for ${option.fullName || option.name || option.displayName || option.email || option.id} in contacts`} arrow>
+                        <Chip 
+                          {...getTagProps({ index })} 
+                          label={option.fullName || option.name || option.displayName || option.email || option.id} 
+                          size="small"
+                          clickable
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // For salespeople, we might want to open a user profile or just show a tooltip
+                            // For now, let's open the CRM contacts page in case the salesperson is also a contact
+                            window.open(`/tenant/crm/contacts?search=${encodeURIComponent(option.email || option.fullName || option.name)}`, '_blank');
+                          }}
+                          sx={{ 
+                            cursor: 'pointer',
+                            '&:hover': { 
+                              backgroundColor: 'primary.light',
+                              color: 'primary.contrastText'
+                            }
+                          }}
+                        />
+                      </Tooltip>
                     ))
                   }
                   renderInput={(params) => (
