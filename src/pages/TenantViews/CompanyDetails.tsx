@@ -925,7 +925,8 @@ const CompanyDetails: React.FC = () => {
       });
       
       // Create the task as completed
-      await taskService.createTask(activityData);
+      const result = await taskService.createTask(activityData);
+      console.log('🔍 Task creation result:', result);
       
       setShowLogActivityDialog(false);
       // Optionally refresh any task-related data
@@ -934,6 +935,7 @@ const CompanyDetails: React.FC = () => {
       // Force refresh of activity data by triggering a re-render
       // This will cause the CompanyActivityTab to reload its data
       setTimeout(() => {
+        console.log('🔍 Dispatching refresh event for company:', company.id);
         window.dispatchEvent(new CustomEvent('refreshCompanyActivity', { 
           detail: { companyId: company.id } 
         }));
@@ -2207,15 +2209,150 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
     const handleRefresh = (event: any) => {
       if (event.detail?.companyId === company?.id) {
         console.log('🔍 Refreshing company activity due to new activity logged');
-        // Trigger a reload by updating a dependency
-        setPage(prev => prev + 1);
-        setTimeout(() => setPage(prev => prev - 1), 100);
+        // Force a complete reload by clearing items and reloading
+        setItems([]);
+        setLoading(true);
+        // Trigger the load function again
+        setTimeout(() => {
+          const load = async () => {
+            if (!company?.id || !tenantId) return;
+            setLoading(true);
+            setError('');
+            try {
+              const companyId: string = company.id;
+              const contactIds: string[] = Array.isArray(company.associations?.contacts) ? company.associations.contacts : [];
+              const dealIds: string[] = Array.isArray(company.associations?.deals) ? company.associations.deals : [];
+
+              const aggregated: CompanyActivityItem[] = [];
+
+              // Tasks: completed tasks associated to this company
+              try {
+                const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+                const tq = query(
+                  tasksRef,
+                  where('associations.companies', 'array-contains', companyId),
+                  where('status', '==', 'completed'),
+                  orderBy('updatedAt', 'desc'),
+                  limit(200)
+                );
+                const ts = await getDocs(tq);
+                console.log(`🔍 CompanyActivityTab REFRESH: Found ${ts.docs.length} completed tasks for company ${companyId}`);
+                ts.forEach((docSnap) => {
+                  const d = docSnap.data() as any;
+                  console.log(`🔍 Task found on refresh: ${d.title} - associations:`, d.associations);
+                  aggregated.push({
+                    id: `task_${docSnap.id}`,
+                    type: 'task',
+                    timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+                    title: d.title || 'Task completed',
+                    description: d.description || '',
+                    metadata: { priority: d.priority, taskType: d.type }
+                  });
+                });
+              } catch (error) {
+                console.error('Error loading tasks for company activity on refresh:', error);
+              }
+
+              // Notes: company + contact + deal notes
+              const notesScopes = [
+                { coll: 'company_notes', ids: [companyId] },
+                { coll: 'contact_notes', ids: contactIds },
+                { coll: 'deal_notes', ids: dealIds },
+              ];
+              for (const scope of notesScopes) {
+                for (const id of scope.ids) {
+                  try {
+                    const notesRef = collection(db, 'tenants', tenantId, scope.coll);
+                    const nq = query(notesRef, where('entityId', '==', id), orderBy('timestamp', 'desc'), limit(200));
+                    const ns = await getDocs(nq);
+                    ns.forEach((docSnap) => {
+                      const d = docSnap.data() as any;
+                      aggregated.push({
+                        id: `note_${scope.coll}_${docSnap.id}`,
+                        type: 'note',
+                        timestamp: d.timestamp?.toDate?.() || new Date(),
+                        title: d.category ? `Note (${d.category})` : 'Note',
+                        description: d.content,
+                        metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+                      });
+                    });
+                  } catch {}
+                }
+              }
+
+              // Deal stage progression: subcollection stage_history under each deal
+              for (const dealId of dealIds) {
+                try {
+                  const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+                  const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+                  const ss = await getDocs(sq);
+                  ss.forEach((docSnap) => {
+                    const d = docSnap.data() as any;
+                    aggregated.push({
+                      id: `dealstage_${dealId}_${docSnap.id}`,
+                      type: 'deal_stage',
+                      timestamp: d.timestamp?.toDate?.() || new Date(),
+                      title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+                      description: d.reason || 'Stage updated',
+                      metadata: { dealId }
+                    });
+                  });
+                } catch {}
+              }
+
+              // Emails: email_logs filtered by companyId and by each contactId
+              try {
+                const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+                const cq = query(emailsRef, where('companyId', '==', companyId), orderBy('timestamp', 'desc'), limit(200));
+                const cs = await getDocs(cq);
+                cs.forEach((docSnap) => {
+                  const d = docSnap.data() as any;
+                  aggregated.push({
+                    id: `email_company_${docSnap.id}`,
+                    type: 'email',
+                    timestamp: d.timestamp?.toDate?.() || new Date(),
+                    title: `Email: ${d.subject || '(no subject)'}`,
+                    description: d.bodySnippet,
+                    metadata: { from: d.from, to: d.to, direction: d.direction }
+                  });
+                });
+                for (const contactId of contactIds) {
+                  try {
+                    const cq2 = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+                    const cs2 = await getDocs(cq2);
+                    cs2.forEach((docSnap) => {
+                      const d = docSnap.data() as any;
+                      aggregated.push({
+                        id: `email_contact_${contactId}_${docSnap.id}`,
+                        type: 'email',
+                        timestamp: d.timestamp?.toDate?.() || new Date(),
+                        title: `Email: ${d.subject || '(no subject)'}`,
+                        description: d.bodySnippet,
+                        metadata: { from: d.from, to: d.to, direction: d.direction }
+                      });
+                    });
+                  } catch {}
+                }
+              } catch {}
+
+              // Sort newest first
+              aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+              setItems(aggregated);
+              setPage(1);
+            } catch (e: any) {
+              setError(e?.message || 'Failed to load activity');
+            } finally {
+              setLoading(false);
+            }
+          };
+          load();
+        }, 500); // Wait a bit for the task to be saved
       }
     };
 
     window.addEventListener('refreshCompanyActivity', handleRefresh);
     return () => window.removeEventListener('refreshCompanyActivity', handleRefresh);
-  }, [company?.id]);
+  }, [company?.id, tenantId]);
 
   // Derived list after filters
   const filtered = items.filter((it) => {
@@ -2239,6 +2376,151 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
       <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
         <Box display="flex" alignItems="center" gap={1}>
           <TimelineIcon /><Typography variant="h6">Company Activity</Typography>
+          <IconButton 
+            size="small" 
+            onClick={() => {
+              console.log('🔍 Manual refresh triggered');
+              setItems([]);
+              setLoading(true);
+              // Trigger the main load function
+              const load = async () => {
+                if (!company?.id || !tenantId) return;
+                setLoading(true);
+                setError('');
+                try {
+                  const companyId: string = company.id;
+                  const contactIds: string[] = Array.isArray(company.associations?.contacts) ? company.associations.contacts : [];
+                  const dealIds: string[] = Array.isArray(company.associations?.deals) ? company.associations.deals : [];
+
+                  const aggregated: CompanyActivityItem[] = [];
+
+                  // Tasks: completed tasks associated to this company
+                  try {
+                    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+                    const tq = query(
+                      tasksRef,
+                      where('associations.companies', 'array-contains', companyId),
+                      where('status', '==', 'completed'),
+                      orderBy('updatedAt', 'desc'),
+                      limit(200)
+                    );
+                    const ts = await getDocs(tq);
+                    console.log(`🔍 CompanyActivityTab MANUAL REFRESH: Found ${ts.docs.length} completed tasks for company ${companyId}`);
+                    ts.forEach((docSnap) => {
+                      const d = docSnap.data() as any;
+                      console.log(`🔍 Task found on manual refresh: ${d.title} - associations:`, d.associations);
+                      aggregated.push({
+                        id: `task_${docSnap.id}`,
+                        type: 'task',
+                        timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+                        title: d.title || 'Task completed',
+                        description: d.description || '',
+                        metadata: { priority: d.priority, taskType: d.type }
+                      });
+                    });
+                  } catch (error) {
+                    console.error('Error loading tasks for company activity on manual refresh:', error);
+                  }
+
+                  // Notes: company + contact + deal notes
+                  const notesScopes = [
+                    { coll: 'company_notes', ids: [companyId] },
+                    { coll: 'contact_notes', ids: contactIds },
+                    { coll: 'deal_notes', ids: dealIds },
+                  ];
+                  for (const scope of notesScopes) {
+                    for (const id of scope.ids) {
+                      try {
+                        const notesRef = collection(db, 'tenants', tenantId, scope.coll);
+                        const nq = query(notesRef, where('entityId', '==', id), orderBy('timestamp', 'desc'), limit(200));
+                        const ns = await getDocs(nq);
+                        ns.forEach((docSnap) => {
+                          const d = docSnap.data() as any;
+                          aggregated.push({
+                            id: `note_${scope.coll}_${docSnap.id}`,
+                            type: 'note',
+                            timestamp: d.timestamp?.toDate?.() || new Date(),
+                            title: d.category ? `Note (${d.category})` : 'Note',
+                            description: d.content,
+                            metadata: { authorName: d.authorName, priority: d.priority, source: d.source }
+                          });
+                        });
+                      } catch {}
+                    }
+                  }
+
+                  // Deal stage progression: subcollection stage_history under each deal
+                  for (const dealId of dealIds) {
+                    try {
+                      const stageRef = collection(db, 'tenants', tenantId, 'crm_deals', dealId, 'stage_history');
+                      const sq = query(stageRef, orderBy('timestamp', 'desc'), limit(100));
+                      const ss = await getDocs(sq);
+                      ss.forEach((docSnap) => {
+                        const d = docSnap.data() as any;
+                        aggregated.push({
+                          id: `dealstage_${dealId}_${docSnap.id}`,
+                          type: 'deal_stage',
+                          timestamp: d.timestamp?.toDate?.() || new Date(),
+                          title: `Deal stage: ${d.fromStage || '?'} → ${d.toStage || d.stage || '?'}`,
+                          description: d.reason || 'Stage updated',
+                          metadata: { dealId }
+                        });
+                      });
+                    } catch {}
+                  }
+
+                  // Emails: email_logs filtered by companyId and by each contactId
+                  try {
+                    const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+                    const cq = query(emailsRef, where('companyId', '==', companyId), orderBy('timestamp', 'desc'), limit(200));
+                    const cs = await getDocs(cq);
+                    cs.forEach((docSnap) => {
+                      const d = docSnap.data() as any;
+                      aggregated.push({
+                        id: `email_company_${docSnap.id}`,
+                        type: 'email',
+                        timestamp: d.timestamp?.toDate?.() || new Date(),
+                        title: `Email: ${d.subject || '(no subject)'}`,
+                        description: d.bodySnippet,
+                        metadata: { from: d.from, to: d.to, direction: d.direction }
+                      });
+                    });
+                    for (const contactId of contactIds) {
+                      try {
+                        const cq2 = query(emailsRef, where('contactId', '==', contactId), orderBy('timestamp', 'desc'), limit(200));
+                        const cs2 = await getDocs(cq2);
+                        cs2.forEach((docSnap) => {
+                          const d = docSnap.data() as any;
+                          aggregated.push({
+                            id: `email_contact_${contactId}_${docSnap.id}`,
+                            type: 'email',
+                            timestamp: d.timestamp?.toDate?.() || new Date(),
+                            title: `Email: ${d.subject || '(no subject)'}`,
+                            description: d.bodySnippet,
+                            metadata: { from: d.from, to: d.to, direction: d.direction }
+                          });
+                        });
+                      } catch {}
+                    }
+                  } catch {}
+
+                  // Sort newest first
+                  aggregated.sort((a, b) => (b.timestamp?.getTime?.() || 0) - (a.timestamp?.getTime?.() || 0));
+                  setItems(aggregated);
+                  setPage(1);
+                } catch (e: any) {
+                  setError(e?.message || 'Failed to load activity');
+                } finally {
+                  setLoading(false);
+                }
+              };
+              load();
+            }}
+            title="Refresh Activity"
+            sx={{ ml: 1 }}
+          >
+            <RefreshIcon />
+          </IconButton>
         </Box>
         {/* Filters */}
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
