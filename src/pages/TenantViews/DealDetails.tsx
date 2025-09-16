@@ -88,7 +88,7 @@ import ManageSalespeopleDialog from '../../components/ManageSalespeopleDialog';
 import ManageContactsDialog from '../../components/ManageContactsDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
 import NextStepsWidget from '../../components/NextStepsWidget';
-import RecruiterQuestionnaireTab from '../../components/RecruiterQuestionnaireTab';
+import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
 
 interface DealData {
   id: string;
@@ -252,26 +252,6 @@ const DealDetails: React.FC = () => {
   const foundationalDataLoadedRef = useRef(false);
   const secondaryDataLoadedRef = useRef<string | null>(null);
   
-  // Recruiter Questionnaire state
-  const [recruiterQuestionnaire, setRecruiterQuestionnaire] = useState({
-    readyForRecruiter: false,
-    jobOrders: [{
-      title: '',
-      openings: 1,
-      payRate: 0,
-      billRate: 0,
-      startDate: '',
-      shifts: [],
-      requirements: {
-        backgroundCheck: false,
-        drugTest: false,
-        certifications: [],
-        minExperience: 0
-      }
-    }]
-  });
-  const [showRecruiterSubmitDialog, setShowRecruiterSubmitDialog] = useState(false);
-  const [submittingToRecruiter, setSubmittingToRecruiter] = useState(false);
   
   // Feature Flags
   const featureFlags = {
@@ -1194,106 +1174,6 @@ const DealDetails: React.FC = () => {
     }
   };
 
-  const handleCreateJobOrders = async () => {
-    if (!deal || !tenantId || !recruiterQuestionnaire.readyForRecruiter) return;
-    
-    setSubmittingToRecruiter(true);
-    try {
-      // Get the deal's associated location
-      const locations = (deal as any)?.associations?.locations || [];
-      const locationId = locations.length > 0 ? 
-        (typeof locations[0] === 'string' ? locations[0] : locations[0].id) : null;
-      
-      // Create job orders
-      const jobOrderPromises = recruiterQuestionnaire.jobOrders.map(async (jobOrder: any) => {
-        const jobOrderData = {
-          tenantId,
-          crmCompanyId: getDealPrimaryCompanyId(deal),
-          crmDealId: deal.id,
-          worksiteId: locationId,
-          title: jobOrder.title,
-          roleCategory: 'General',
-          openings: jobOrder.openings,
-          remainingOpenings: jobOrder.openings,
-          startDate: jobOrder.startDate,
-          payRate: jobOrder.payRate,
-          billRate: jobOrder.billRate,
-          backgroundCheck: {
-            required: jobOrder.requirements.backgroundCheck,
-            package: jobOrder.requirements.backgroundCheck ? 'Standard' : undefined,
-            vendor: jobOrder.requirements.backgroundCheck ? 'Checkr' : undefined
-          },
-          drugTest: {
-            required: jobOrder.requirements.drugTest,
-            panel: jobOrder.requirements.drugTest ? '5-Panel' : undefined,
-            vendor: jobOrder.requirements.drugTest ? 'Quest' : undefined
-          },
-          minExperience: jobOrder.requirements.minExperience,
-          certifications: jobOrder.requirements.certifications,
-          status: 'open',
-          priority: 'medium',
-          urgencyScore: 50,
-          recruiterOwnerId: user?.uid || '',
-          teamIds: [],
-          autoPostToJobsBoard: false,
-          submittalLimit: 10,
-          internalOnly: false,
-          allowOverfill: false,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          createdBy: user?.uid || '',
-          updatedBy: user?.uid || '',
-          searchKeywords: [jobOrder.title.toLowerCase(), 'job order', 'recruitment'],
-          tags: [],
-          notes: `Created from deal: ${deal.name}`,
-          metrics: {
-            submittals: 0,
-            interviews: 0,
-            offers: 0,
-            placements: 0,
-            jobAgingDays: 0
-          }
-        };
-
-        // Add to recruiter_jobOrders collection
-        const { addDoc, collection } = await import('firebase/firestore');
-        const { db } = await import('../../firebase');
-        
-        const jobOrdersRef = collection(db, 'tenants', tenantId, 'recruiter_jobOrders');
-        const docRef = await addDoc(jobOrdersRef, jobOrderData);
-        
-        return {
-          id: docRef.id,
-          ...jobOrderData
-        };
-      });
-
-      const createdJobOrders = await Promise.all(jobOrderPromises);
-      
-      // Update the deal to mark it as handed off to recruiter
-      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
-        readyForRecruiter: true,
-        recruiterHandoffDate: new Date(),
-        recruiterJobOrderIds: createdJobOrders.map(jo => jo.id),
-        updatedAt: new Date()
-      });
-
-      // Close dialog and show success
-      setShowRecruiterSubmitDialog(false);
-      
-      // Show success message (you might want to add a success state)
-      console.log('Job orders created successfully:', createdJobOrders);
-      
-      // Optionally navigate to recruiter dashboard
-      // navigate('/recruiter');
-      
-    } catch (error) {
-      console.error('Error creating job orders:', error);
-      // You might want to show an error message
-    } finally {
-      setSubmittingToRecruiter(false);
-    }
-  };
 
   // Canonical Stage State Management
   const initializeStageState = (currentStage: string): StageState => {
@@ -2127,6 +2007,30 @@ const DealDetails: React.FC = () => {
               >
                 Log Activity
               </Button>
+              <GenerateJobOrderButton
+                dealId={deal.id}
+                dealName={deal.name}
+                companyId={deal.companyId}
+                companyName={deal.companyName}
+                onJobOrderCreated={(jobOrderId) => {
+                  // Optionally navigate to the job order or show success message
+                  console.log('Job Order created:', jobOrderId);
+                }}
+                disabled={deal.stage !== 'closed_won' && deal.stage !== 'verbal_agreement'}
+                variant="contained"
+                size="small"
+                sx={{
+                  bgcolor: deal.stage === 'closed_won' || deal.stage === 'verbal_agreement' ? 'success.main' : 'grey.400',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: deal.stage === 'closed_won' || deal.stage === 'verbal_agreement' ? 'success.dark' : 'grey.500'
+                  },
+                  '&:disabled': {
+                    bgcolor: 'grey.400',
+                    color: 'grey.600'
+                  }
+                }}
+              />
             </Box>
           </Box>
         </Box>
@@ -2771,15 +2675,127 @@ const DealDetails: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={4}>
-        <RecruiterQuestionnaireTab
-          deal={deal}
-          tenantId={tenantId}
-          stageData={stageData}
-          questionnaire={recruiterQuestionnaire}
-          onQuestionnaireChange={setRecruiterQuestionnaire}
-          onSubmit={() => setShowRecruiterSubmitDialog(true)}
-          canSubmit={deal.stage === 'verbal_agreement' || deal.stage === 'closed_won'}
-        />
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" fontWeight={700} sx={{ mb: 1 }}>
+            Job Order Generation
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Generate job orders directly from the deal stage data. All necessary information is collected through the deal stages above.
+          </Typography>
+          
+          {/* Action Status Card */}
+          <Card sx={{ mb: 3, bgcolor: deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' ? 'success.light' : 'warning.light' }}>
+            <CardContent sx={{ py: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <WorkIcon color={deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' ? 'success' : 'warning'} />
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="subtitle1" fontWeight={600}>
+                    {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' 
+                      ? 'Ready to Generate Job Orders' 
+                      : 'Complete Deal Stages First'
+                    }
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won'
+                      ? 'This deal is ready for job order creation. Use the "Generate Job Order" button above to create job orders from the deal stage data.'
+                      : `This deal must reach "Verbal Agreement" or "Closed Won" stage before job orders can be created. Current stage: ${deal.stage}`
+                    }
+                  </Typography>
+                </Box>
+                {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' && (
+                  <Button
+                    variant="contained"
+                    startIcon={<WorkIcon />}
+                    onClick={() => {
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    sx={{ minWidth: 180 }}
+                  >
+                    Generate Job Order
+                  </Button>
+                )}
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Job Order Data Preview */}
+        <Card>
+          <CardHeader 
+            title="Job Order Data Preview" 
+            titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+          />
+          <CardContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              The following data will be used to create job orders:
+            </Typography>
+            
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                    Company Information
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Company: {company?.companyName || company?.name || 'Not specified'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Location: {(() => {
+                      const locations = (deal as any)?.associations?.locations || [];
+                      if (locations.length > 0) {
+                        const locationEntry = locations[0];
+                        const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
+                        return locationName;
+                      }
+                      return 'Not specified';
+                    })()}
+                  </Typography>
+                </Box>
+              </Grid>
+              
+              <Grid item xs={12} md={6}>
+                <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                    Job Requirements
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Job Titles: {stageData?.discovery?.jobTitles?.join(', ') || 'Not specified'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Shifts: {stageData?.discovery?.shifts?.join(', ') || 'Not specified'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Pay Rate: ${stageData?.qualification?.expectedAveragePayRate || 'Not specified'}/hr
+                  </Typography>
+                </Box>
+              </Grid>
+              
+              <Grid item xs={12}>
+                <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                    Timeline & Staffing
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Starting Staff: {stageData?.qualification?.staffPlacementTimeline?.starting || 'Not specified'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    After 180 Days: {stageData?.qualification?.staffPlacementTimeline?.after180Days || 'Not specified'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Expected Close: {stageData?.qualification?.expectedCloseDate || 'Not specified'}
+                  </Typography>
+                </Box>
+              </Grid>
+            </Grid>
+            
+            <Alert severity="info" sx={{ mt: 2 }}>
+              <Typography variant="body2">
+                <strong>Note:</strong> Complete the deal stages above to ensure all job order data is captured. 
+                The "Generate Job Order" button will create job orders using this information.
+              </Typography>
+            </Alert>
+          </CardContent>
+        </Card>
       </TabPanel>
 
       <TabPanel value={tabValue} index={5}>
@@ -3067,61 +3083,6 @@ const DealDetails: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Recruiter Submit Dialog */}
-      <Dialog open={showRecruiterSubmitDialog} onClose={() => setShowRecruiterSubmitDialog(false)} maxWidth="md" fullWidth>
-        <DialogTitle>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <WorkIcon />
-            Create Job Orders
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body1" sx={{ mb: 2 }}>
-            You're about to create {recruiterQuestionnaire.jobOrders.length} job order(s) for the recruiter team.
-          </Typography>
-          
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="h6" fontWeight={600} sx={{ mb: 1 }}>
-              Job Orders to be created:
-            </Typography>
-            {recruiterQuestionnaire.jobOrders.map((jobOrder: any, index: number) => (
-              <Card key={index} variant="outlined" sx={{ mb: 1 }}>
-                <CardContent sx={{ py: 1 }}>
-                  <Typography variant="subtitle1" fontWeight={600}>
-                    {jobOrder.title || `Job Order ${index + 1}`}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {jobOrder.openings} opening(s) • ${jobOrder.payRate}/hr pay • ${jobOrder.billRate}/hr bill rate
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Start: {jobOrder.startDate} • Requirements: {jobOrder.requirements.backgroundCheck ? 'Background Check' : ''} {jobOrder.requirements.drugTest ? 'Drug Test' : ''}
-                  </Typography>
-                </CardContent>
-              </Card>
-            ))}
-          </Box>
-
-          <Alert severity="info">
-            <Typography variant="body2">
-              This will create job orders in the Recruiter module and link them to this deal. 
-              The recruiter team will be notified and can begin sourcing candidates.
-            </Typography>
-          </Alert>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowRecruiterSubmitDialog(false)}>
-            Cancel
-          </Button>
-          <Button 
-            variant="contained" 
-            onClick={handleCreateJobOrders}
-            disabled={submittingToRecruiter}
-            startIcon={submittingToRecruiter ? <CircularProgress size={20} /> : <WorkIcon />}
-          >
-            {submittingToRecruiter ? 'Creating...' : 'Create Job Orders'}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };

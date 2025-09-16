@@ -46,6 +46,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import TasksDashboard from '../components/TasksDashboard';
 import CalendarWidget from '../components/CalendarWidget';
+import JobOrdersManagement from '../components/recruiter/JobOrdersManagement';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -1003,18 +1004,7 @@ const RecruiterDashboard: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={1}>
-        <Box>
-          <Typography variant="h5" gutterBottom>
-            Job Orders
-          </Typography>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Job Orders management interface will be implemented here. 
-            This will include creating, editing, and managing job orders.
-          </Alert>
-          <Button variant="contained" startIcon={<AddIcon />}>
-            Create New Job Order
-          </Button>
-        </Box>
+        <JobOrdersManagement />
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>

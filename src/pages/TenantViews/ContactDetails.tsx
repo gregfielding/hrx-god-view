@@ -256,6 +256,7 @@ const ContactDetails: React.FC = () => {
   // Company and location are managed via associations; no local pickers
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<any[]>([]);
+  const [locationDropdownValue, setLocationDropdownValue] = useState<any>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
@@ -872,17 +873,22 @@ const ContactDetails: React.FC = () => {
 
   // Initialize selected locations when contact or companyLocations change
   useEffect(() => {
+    console.log('🔍 useEffect triggered - contact:', !!contact, 'companyLocations.length:', companyLocations.length);
+    
     if (!contact || companyLocations.length === 0) {
+      console.log('🔍 No contact or companyLocations, setting selectedLocations to []');
       setSelectedLocations([]);
       return;
     }
 
     const assocLocations = contact.associations?.locations || [];
+    console.log('🔍 assocLocations:', assocLocations);
     const locations = [];
     
     // First, try to get locations from associations
     for (const locationId of assocLocations) {
       const location = companyLocations.find(loc => loc.id === locationId);
+      console.log('🔍 Looking for locationId:', locationId, 'found:', !!location);
       if (location) {
         locations.push(location);
       }
@@ -890,13 +896,15 @@ const ContactDetails: React.FC = () => {
     
     // If no locations found in associations, check legacy locationId
     if (locations.length === 0 && contact.locationId) {
+      console.log('🔍 No locations in associations, checking legacy locationId:', contact.locationId);
       const legacyLocation = companyLocations.find(loc => loc.id === contact.locationId);
+      console.log('🔍 Legacy location found:', !!legacyLocation);
       if (legacyLocation) {
         locations.push(legacyLocation);
       }
     }
     
-    console.log('🔍 Initializing selected locations:', locations);
+    console.log('🔍 Final locations to set:', locations);
     setSelectedLocations(locations);
   }, [contact, companyLocations]);
 
@@ -2397,56 +2405,103 @@ const ContactDetails: React.FC = () => {
                       size="small"
                     />
 
-                    <Autocomplete
-                      multiple
-                      options={companyLocations}
-                      getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
-                      isOptionEqualToValue={(option, value) => option.id === value.id}
-                      value={selectedLocations}
-                      onChange={(event, newValue) => {
-                        console.log('🔍 Autocomplete onChange:', newValue);
-                        handleLocationAssociationUpdate(newValue);
-                      }}
-                      disabled={companyLocations.length === 0}
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label="Work Locations"
-                          placeholder="Select locations..."
-                          size="small"
-                          InputProps={{
-                            ...params.InputProps,
-                            startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
-                          }}
-                        />
-                      )}
-                      renderTags={(value, getTagProps) => {
-                        console.log('🔍 renderTags called with value:', value);
-                        return value.map((option, index) => (
-                          <Chip
-                            {...getTagProps({ index })}
-                            key={option.id}
-                            label={option.nickname || option.name || option.title || 'Unknown Location'}
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        Work Locations
+                      </Typography>
+                      
+                      {/* Add Location Dropdown */}
+                      <Autocomplete
+                        options={companyLocations.filter(loc => !selectedLocations.some(selected => selected.id === loc.id))}
+                        getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
+                        value={locationDropdownValue}
+                        onChange={(event, newValue) => {
+                          if (newValue) {
+                            const newLocations = [...selectedLocations, newValue];
+                            setSelectedLocations(newLocations);
+                            handleLocationAssociationUpdate(newLocations);
+                            // Clear the dropdown
+                            setLocationDropdownValue(null);
+                          }
+                        }}
+                        disabled={companyLocations.length === 0}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label={selectedLocations.length > 0 ? "Add another location" : "Add work location"}
+                            placeholder="Select a location to add..."
                             size="small"
-                            color="primary"
-                            variant="outlined"
+                            InputProps={{
+                              ...params.InputProps,
+                              startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
+                            }}
                           />
-                        ));
-                      }}
-                      renderOption={(props, option) => (
-                        <Box component="li" {...props}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <LocationIcon fontSize="small" color="action" />
-                            <Typography variant="body2">
-                              {option.nickname || option.name || option.title || 'Unknown Location'}
-                            </Typography>
-                            {option.code && (
-                              <Chip label={option.code} size="small" variant="outlined" />
-                            )}
+                        )}
+                        renderOption={(props, option) => (
+                          <Box component="li" {...props}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <LocationIcon fontSize="small" color="action" />
+                              <Typography variant="body2">
+                                {option.nickname || option.name || option.title || 'Unknown Location'}
+                              </Typography>
+                              {option.code && (
+                                <Chip label={option.code} size="small" variant="outlined" />
+                              )}
+                            </Box>
                           </Box>
-                        </Box>
+                        )}
+                      />
+                      
+                      {/* Current Locations Table */}
+                      {selectedLocations.length > 0 && (
+                        <TableContainer component={Paper} variant="outlined" sx={{ mt: 2, maxHeight: 200 }}>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Location</TableCell>
+                                <TableCell align="right">Actions</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {selectedLocations.map((location) => (
+                                <TableRow key={location.id}>
+                                  <TableCell>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                      <LocationIcon fontSize="small" color="action" />
+                                      <Typography variant="body2">
+                                        {location.nickname || location.name || location.title || 'Unknown Location'}
+                                      </Typography>
+                                      {location.code && (
+                                        <Chip label={location.code} size="small" variant="outlined" />
+                                      )}
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => {
+                                        const newLocations = selectedLocations.filter(loc => loc.id !== location.id);
+                                        setSelectedLocations(newLocations);
+                                        handleLocationAssociationUpdate(newLocations);
+                                      }}
+                                      color="error"
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
                       )}
-                    />
+                      
+                      {selectedLocations.length === 0 && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                          No work locations assigned. Use the dropdown above to add locations.
+                        </Typography>
+                      )}
+                    </Box>
 
                     {/* Contact Address Information */}
                     {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (

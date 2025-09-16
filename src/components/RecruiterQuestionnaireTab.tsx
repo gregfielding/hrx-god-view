@@ -28,6 +28,7 @@ interface RecruiterQuestionnaireTabProps {
   onQuestionnaireChange: (data: any) => void;
   onSubmit: () => void;
   canSubmit: boolean;
+  showSubmitButton?: boolean;
 }
 
 const RecruiterQuestionnaireTab: React.FC<RecruiterQuestionnaireTabProps> = ({ 
@@ -37,7 +38,8 @@ const RecruiterQuestionnaireTab: React.FC<RecruiterQuestionnaireTabProps> = ({
   questionnaire, 
   onQuestionnaireChange, 
   onSubmit, 
-  canSubmit 
+  canSubmit,
+  showSubmitButton = true
 }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -509,23 +511,36 @@ const RecruiterQuestionnaireTab: React.FC<RecruiterQuestionnaireTabProps> = ({
         </CardContent>
       </Card>
 
-      {/* Submit Button */}
-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4, mb: 4 }}>
-        <Button
-          variant="contained"
-          size="large"
-          onClick={handleSubmit}
-          disabled={!canSubmit || !formData.readyForRecruiter || loading}
-          startIcon={loading ? <CircularProgress size={20} /> : <WorkIcon />}
-          sx={{ minWidth: 200 }}
-        >
-          {loading ? 'Submitting...' : 'Submit to Recruiter'}
-        </Button>
-      </Box>
+      {/* Submit Button - Only show if showSubmitButton is true */}
+      {showSubmitButton && (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4, mb: 4 }}>
+            <Button
+              variant="contained"
+              size="large"
+              onClick={handleSubmit}
+              disabled={!canSubmit || !formData.readyForRecruiter || loading}
+              startIcon={loading ? <CircularProgress size={20} /> : <WorkIcon />}
+              sx={{ minWidth: 200 }}
+            >
+              {loading ? 'Submitting...' : 'Submit to Recruiter'}
+            </Button>
+          </Box>
 
-      {!canSubmit && (
-        <Alert severity="info" sx={{ mt: 2 }}>
-          This feature is available once the deal reaches "Verbal Agreement" or "Closed Won" stage.
+          {!canSubmit && (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              This feature is available once the deal reaches "Verbal Agreement" or "Closed Won" stage.
+            </Alert>
+          )}
+        </>
+      )}
+
+      {/* Helpful message when submit button is hidden */}
+      {!showSubmitButton && (
+        <Alert severity="info" sx={{ mt: 4, mb: 2 }}>
+          <Typography variant="body2">
+            <strong>Next Step:</strong> Use the "Generate Job Order" button at the top of the page to create job orders from this questionnaire data.
+          </Typography>
         </Alert>
       )}
     </Box>

@@ -15,114 +15,93 @@ import {
   Select,
   MenuItem,
   Alert,
+  CircularProgress,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule } from '@mui/icons-material';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
-
-import { db } from '../../firebase';
+import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People } from '@mui/icons-material';
+import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
-
-interface JobOrder {
-  id: string;
-  title: string;
-  description: string;
-  location: string;
-  customer: string;
-  startDate: string;
-  endDate: string;
-  status: string;
-  type: string;
-  hourlyRate?: number;
-  requirements?: string[];
-}
 
 const JobsBoard: React.FC = () => {
   const { tenantId } = useAuth();
-  const [jobOrders, setJobOrders] = useState<JobOrder[]>([]);
-  const [filteredJobs, setFilteredJobs] = useState<JobOrder[]>([]);
+  const [posts, setPosts] = useState<JobsBoardPost[]>([]);
+  const [filteredJobs, setFilteredJobs] = useState<JobsBoardPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all');
+  const [locationFilter, setLocationFilter] = useState('all');
+  const [companyFilter, setCompanyFilter] = useState('all');
 
-  // Load job orders from Firestore
+  const jobsBoardService = JobsBoardService.getInstance();
+
+  // Load jobs board posts from Firestore
   useEffect(() => {
-    if (!tenantId) return;
-
-    const jobOrdersRef = collection(db, 'tenants', tenantId, 'jobOrders');
-    const q = query(
-      jobOrdersRef,
-      where('status', 'in', ['open', 'active', 'pending']),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const jobs: JobOrder[] = [];
-      snapshot.forEach((doc) => {
-        jobs.push({ id: doc.id, ...doc.data() } as JobOrder);
-      });
-      setJobOrders(jobs);
-      setFilteredJobs(jobs);
-      setLoading(false);
-    }, (error) => {
-      console.error('Error loading job orders:', error);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
+    loadPosts();
   }, [tenantId]);
 
-  // Filter jobs based on search and filters
-  useEffect(() => {
-    let filtered = jobOrders;
-
-    // Search filter
-    if (searchTerm) {
-      filtered = filtered.filter(job =>
-        job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        job.customer.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    // Status filter
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(job => job.status === statusFilter);
-    }
-
-    // Type filter
-    if (typeFilter !== 'all') {
-      filtered = filtered.filter(job => job.type === typeFilter);
-    }
-
-    setFilteredJobs(filtered);
-  }, [jobOrders, searchTerm, statusFilter, typeFilter]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'open': return 'success';
-      case 'active': return 'primary';
-      case 'pending': return 'warning';
-      default: return 'default';
+  const loadPosts = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoading(true);
+      const postsData = await jobsBoardService.getPublicPosts(tenantId);
+      setPosts(postsData);
+      setFilteredJobs(postsData);
+    } catch (err: any) {
+      console.error('Error loading jobs board posts:', err);
+      setError(err.message || 'Failed to load jobs board posts');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'full-time': return 'primary';
-      case 'part-time': return 'secondary';
-      case 'contract': return 'info';
-      case 'temporary': return 'warning';
-      default: return 'default';
+  // Filter jobs based on search and filters
+  useEffect(() => {
+    let filtered = posts;
+
+    // Search filter
+    if (searchTerm) {
+      filtered = filtered.filter(post =>
+        post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.companyName.toLowerCase().includes(searchTerm.toLowerCase())
+      );
     }
+
+    // Location filter
+    if (locationFilter !== 'all') {
+      filtered = filtered.filter(post => post.location === locationFilter);
+    }
+
+    // Company filter
+    if (companyFilter !== 'all') {
+      filtered = filtered.filter(post => post.companyName === companyFilter);
+    }
+
+    setFilteredJobs(filtered);
+  }, [posts, searchTerm, locationFilter, companyFilter]);
+
+  const getUniqueLocations = () => {
+    return Array.from(new Set(posts.map(post => post.location))).sort();
+  };
+
+  const getUniqueCompanies = () => {
+    return Array.from(new Set(posts.map(post => post.companyName))).sort();
   };
 
   if (loading) {
     return (
-      <Box sx={{ p: 3 }}>
-        <Typography>Loading jobs board...</Typography>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
       </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert severity="error" sx={{ mb: 2 }}>
+        {error}
+      </Alert>
     );
   }
 
@@ -152,32 +131,31 @@ const JobsBoard: React.FC = () => {
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth>
-              <InputLabel>Status</InputLabel>
+              <InputLabel>Location</InputLabel>
               <Select
-                value={statusFilter}
-                label="Status"
-                onChange={(e) => setStatusFilter(e.target.value)}
+                value={locationFilter}
+                label="Location"
+                onChange={(e) => setLocationFilter(e.target.value)}
               >
-                <MenuItem value="all">All Statuses</MenuItem>
-                <MenuItem value="open">Open</MenuItem>
-                <MenuItem value="active">Active</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
+                <MenuItem value="all">All Locations</MenuItem>
+                {getUniqueLocations().map(location => (
+                  <MenuItem key={location} value={location}>{location}</MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={3}>
             <FormControl fullWidth>
-              <InputLabel>Type</InputLabel>
+              <InputLabel>Company</InputLabel>
               <Select
-                value={typeFilter}
-                label="Type"
-                onChange={(e) => setTypeFilter(e.target.value)}
+                value={companyFilter}
+                label="Company"
+                onChange={(e) => setCompanyFilter(e.target.value)}
               >
-                <MenuItem value="all">All Types</MenuItem>
-                <MenuItem value="full-time">Full Time</MenuItem>
-                <MenuItem value="part-time">Part Time</MenuItem>
-                <MenuItem value="contract">Contract</MenuItem>
-                <MenuItem value="temporary">Temporary</MenuItem>
+                <MenuItem value="all">All Companies</MenuItem>
+                {getUniqueCompanies().map(company => (
+                  <MenuItem key={company} value={company}>{company}</MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -196,71 +174,75 @@ const JobsBoard: React.FC = () => {
         </Alert>
       ) : (
         <Grid container spacing={3}>
-          {filteredJobs.map((job) => (
-            <Grid item xs={12} md={6} lg={4} key={job.id}>
+          {filteredJobs.map((post) => (
+            <Grid item xs={12} md={6} lg={4} key={post.id}>
               <Card elevation={2} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                     <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
-                      {job.title}
+                      {post.title}
                     </Typography>
                     <Chip
-                      label={job.status}
-                      color={getStatusColor(job.status) as any}
+                      label="OPEN"
+                      color="success"
                       size="small"
                     />
                   </Box>
 
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2, flexGrow: 1 }}>
-                    {job.description.length > 150 
-                      ? `${job.description.substring(0, 150)}...` 
-                      : job.description
+                    {post.description.length > 150 
+                      ? `${post.description.substring(0, 150)}...` 
+                      : post.description
                     }
                   </Typography>
 
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                     <Business sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                     <Typography variant="body2" color="text.secondary">
-                      {job.customer}
+                      {post.companyName}
                     </Typography>
                   </Box>
 
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                     <LocationOn sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                     <Typography variant="body2" color="text.secondary">
-                      {job.location}
+                      {post.location}
                     </Typography>
                   </Box>
 
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <Schedule sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
-                    <Typography variant="body2" color="text.secondary">
-                      {new Date(job.startDate).toLocaleDateString()} - {new Date(job.endDate).toLocaleDateString()}
-                    </Typography>
-                  </Box>
-
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Chip
-                      label={job.type}
-                      color={getTypeColor(job.type) as any}
-                      size="small"
-                    />
-                    {job.hourlyRate && (
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        ${job.hourlyRate}/hr
+                  {post.startDate && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <Schedule sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
+                      <Typography variant="body2" color="text.secondary">
+                        Starts: {new Date(post.startDate).toLocaleDateString()}
                       </Typography>
+                    </Box>
+                  )}
+
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <People sx={{ fontSize: 16, color: 'text.secondary' }} />
+                      <Typography variant="body2" color="text.secondary">
+                        {post.applicationCount} applications
+                      </Typography>
+                    </Box>
+                    {post.payRate && post.showPayRate && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <AttachMoney sx={{ fontSize: 16, color: 'primary.main' }} />
+                        <Typography variant="h6" color="primary" sx={{ fontWeight: 600 }}>
+                          ${post.payRate}/hr
+                        </Typography>
+                      </Box>
                     )}
                   </Box>
 
-                  <Box sx={{ mt: 2 }}>
-                    <Button
-                      variant="contained"
-                      fullWidth
-                      size="small"
-                    >
-                      View Details
-                    </Button>
-                  </Box>
+                  <Button 
+                    variant="contained" 
+                    fullWidth
+                    sx={{ mt: 'auto' }}
+                  >
+                    Apply Now
+                  </Button>
                 </CardContent>
               </Card>
             </Grid>
