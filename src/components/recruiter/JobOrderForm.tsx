@@ -173,15 +173,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const companiesData = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setLoadedCompanies(companiesData);
 
-      // Load all locations from crm_locations (we'll filter by company when needed)
-      const locationsRef = collection(db, 'tenants', tenantId, 'crm_locations');
-      const locationsSnapshot = await getDocs(locationsRef);
-      const locationsData = locationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLoadedLocations(locationsData);
+      // Don't load all locations upfront - we'll load them per company when needed
+      setLoadedLocations([]);
 
       console.log('✅ Loaded data for JobOrderForm:', {
         companies: companiesData.length,
-        locations: locationsData.length
+        locations: 'Will load per company'
       });
     } catch (error) {
       console.error('Error loading JobOrderForm data:', error);
@@ -205,6 +202,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     } catch (error) {
       console.error('Error loading company contacts:', error);
       setLoadedContacts([]);
+    }
+  };
+
+  // Load locations for a specific company
+  const loadCompanyLocations = async (companyId: string) => {
+    if (!companyId || !tenantId) return;
+    
+    try {
+      // Load locations from the company's subcollection
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
+      const locationsSnapshot = await getDocs(locationsRef);
+      const locationsData = locationsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        companyId,
+        ...doc.data() 
+      }));
+      setLoadedLocations(locationsData);
+      
+      console.log('✅ Loaded locations for company:', { companyId, locations: locationsData.length });
+    } catch (error) {
+      console.error('Error loading company locations:', error);
+      setLoadedLocations([]);
     }
   };
 
@@ -305,8 +324,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         companyName: company.companyName || company.name
       }));
       
-      // Load contacts for this company
+      // Load contacts and locations for this company
       loadCompanyContacts(companyId);
+      loadCompanyLocations(companyId);
       
       // Clear worksite selection when company changes
       setFormData(prev => ({
@@ -322,26 +342,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         }
       }));
     }
-  };
-
-  // Filter locations by selected company
-  const getFilteredLocations = () => {
-    if (!formData.companyId) return [];
-    
-    // Filter locations that are associated with the selected company
-    return loadedLocations.filter(location => {
-      // Check if location has companyId field
-      if (location.companyId === formData.companyId) return true;
-      
-      // Check if location is in company's associations
-      if (location.associations?.companies?.includes(formData.companyId)) return true;
-      
-      // Check if company has this location in its associations
-      const company = loadedCompanies.find(c => c.id === formData.companyId);
-      if (company?.associations?.locations?.includes(location.id)) return true;
-      
-      return false;
-    });
   };
 
   const handleLocationChange = (locationId: string) => {
@@ -524,9 +524,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
             <Grid item xs={12} md={6}>
               <Autocomplete
-                options={getFilteredLocations()}
+                options={loadedLocations}
                 getOptionLabel={(option) => option.nickname || option.name || option.title || ''}
-                value={getFilteredLocations().find(l => l.id === formData.worksiteId) || null}
+                value={loadedLocations.find(l => l.id === formData.worksiteId) || null}
                 onChange={(_, newValue) => handleLocationChange(newValue?.id || '')}
                 loading={dataLoading}
                 disabled={!formData.companyId}
@@ -594,37 +594,54 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     <Typography variant="body2" color="text.secondary" gutterBottom>
                       Available contacts from {formData.companyName || 'Selected Company'}:
                     </Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {loadedContacts
-                        .filter(contact => !formData.companyContacts.some(c => c.id === contact.id))
-                        .map((contact) => (
-                        <Chip
-                          key={contact.id}
-                          avatar={
-                            <Avatar sx={{ bgcolor: 'primary.main' }}>
-                              {(contact.fullName || contact.name).charAt(0).toUpperCase()}
-                            </Avatar>
-                          }
-                          label={`${contact.fullName || contact.name} (${contact.title || 'No Title'})`}
-                          onClick={() => {
-                            const jobOrderContact: JobOrderContact = {
-                              id: contact.id,
-                              name: contact.fullName || contact.name,
-                              email: contact.email,
-                              phone: contact.phone,
-                              role: 'hiring_manager', // Default role
-                              notes: contact.title || ''
-                            };
-                            setFormData(prev => ({
-                              ...prev,
-                              companyContacts: [...prev.companyContacts, jobOrderContact]
-                            }));
-                          }}
-                          variant="outlined"
-                          sx={{ cursor: 'pointer' }}
+                    <Autocomplete
+                      options={loadedContacts.filter(contact => !formData.companyContacts.some(c => c.id === contact.id))}
+                      getOptionLabel={(option) => `${option.fullName || option.name} (${option.title || 'No Title'})`}
+                      value={null}
+                      onChange={(_, newValue) => {
+                        if (newValue) {
+                          const jobOrderContact: JobOrderContact = {
+                            id: newValue.id,
+                            name: newValue.fullName || newValue.name,
+                            email: newValue.email,
+                            phone: newValue.phone,
+                            role: 'hiring_manager', // Default role
+                            notes: newValue.title || ''
+                          };
+                          setFormData(prev => ({
+                            ...prev,
+                            companyContacts: [...prev.companyContacts, jobOrderContact]
+                          }));
+                        }
+                      }}
+                      renderOption={(props, option) => (
+                        <Box component="li" {...props} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Avatar sx={{ bgcolor: 'primary.main', width: 24, height: 24, fontSize: '0.75rem' }}>
+                            {(option.fullName || option.name).charAt(0).toUpperCase()}
+                          </Avatar>
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {option.fullName || option.name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {option.title || 'No Title'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      )}
+                      renderInput={(params) => (
+                        <TextField 
+                          {...params} 
+                          label="Select Contact to Add" 
+                          placeholder="Search contacts..."
+                          size="small"
                         />
-                      ))}
-                    </Box>
+                      )}
+                      noOptionsText="No contacts available"
+                      clearOnEscape
+                      selectOnFocus
+                      handleHomeEndKeys
+                    />
                   </Box>
                 )}
                 
