@@ -436,9 +436,6 @@ const TenantCRM: React.FC = () => {
 
       // If filtering by user associations, load ALL companies and filter client-side
       if (filterByUser && currentUser?.uid) {
-        console.log('🔍 Loading companies where user is in salespeople array:', currentUser.uid);
-        console.log('🔍 Current user:', currentUser);
-        
         // Load ALL companies to ensure we find all user-associated companies
         const allCompaniesQuery = query(
           companiesRef,
@@ -448,25 +445,18 @@ const TenantCRM: React.FC = () => {
         try {
           const allSnapshot = await getDocs(allCompaniesQuery);
           const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          console.log('🔍 Loaded', allCompanies.length, 'total companies for user filtering');
           
           // Filter companies using the new unified association logic
           const companiesData = allCompanies.filter((company: any) => {
             const isAssociated = AssociationUtils.isCompanyAssociatedWithUser(company, currentUser.uid);
             
-            if (isAssociated) {
-              console.log('🔍 Company', company.id, company.companyName || company.name, 'is associated with current user');
-              
-              // Debug logging in development
-              if (process.env.NODE_ENV === 'development') {
-                AssociationUtils.debugAssociation(company, currentUser.uid, 'company');
-              }
+            // Debug logging in development only
+            if (process.env.NODE_ENV === 'development' && isAssociated) {
+              AssociationUtils.debugAssociation(company, currentUser.uid, 'company');
             }
             
             return isAssociated;
           });
-          
-          console.log('🔍 Found', companiesData.length, 'companies associated with current user');
           
           // Apply pagination to the filtered results
           const limitedData = companiesData.slice(0, companiesPageSize);

@@ -90,7 +90,7 @@ interface LogActivityDialogProps {
     completedDate: new Date().toISOString().split('T')[0],
     assignedTo: currentUserId ? [currentUserId] : [],
     estimatedDuration: 30,
-    category: 'general' as TaskCategory,
+    category: 'follow_up' as TaskCategory,
     quotaCategory: 'business_generating',
     notes: '',
     tags: ['logged-activity'] as string[],
@@ -235,7 +235,7 @@ interface LogActivityDialogProps {
       completedDate: new Date().toISOString().split('T')[0],
       assignedTo: currentUserId ? [currentUserId] : [],
       estimatedDuration: 30,
-      category: 'general' as TaskCategory,
+      category: 'follow_up' as TaskCategory,
       quotaCategory: 'business_generating',
       notes: '',
       tags: ['logged-activity'],
@@ -251,7 +251,15 @@ interface LogActivityDialogProps {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
+    <Dialog 
+      open={open} 
+      onClose={handleClose} 
+      maxWidth="md" 
+      fullWidth
+      disableEnforceFocus
+      disableAutoFocus
+      disableRestoreFocus
+    >
       <DialogTitle>
         <Box display="flex" alignItems="center" gap={1}>
           <CheckCircleIcon />
@@ -331,8 +339,8 @@ interface LogActivityDialogProps {
           <FormControl fullWidth>
             <InputLabel>Category</InputLabel>
             <Select
-              value={formData.category}
-              onChange={(e) => handleInputChange('category', e.target.value)}
+              value={formData.quotaCategory}
+              onChange={(e) => handleInputChange('quotaCategory', e.target.value)}
               label="Category"
             >
               <MenuItem value="business_generating">Business Generating</MenuItem>

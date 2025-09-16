@@ -912,12 +912,27 @@ const CompanyDetails: React.FC = () => {
         }
       };
       
+      console.log('🔍 Logging activity with data:', {
+        title: activityData.title,
+        companyId: company.id,
+        associations: activityData.associations,
+        status: activityData.status
+      });
+      
       // Create the task as completed
       await taskService.createTask(activityData);
       
       setShowLogActivityDialog(false);
       // Optionally refresh any task-related data
       setSuccess('Activity logged successfully');
+      
+      // Force refresh of activity data by triggering a re-render
+      // This will cause the CompanyActivityTab to reload its data
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('refreshCompanyActivity', { 
+          detail: { companyId: company.id } 
+        }));
+      }, 1000);
     } catch (error) {
       console.error('Error logging activity:', error);
       setError('Failed to log activity');
@@ -2070,8 +2085,10 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
             limit(200)
           );
           const ts = await getDocs(tq);
+          console.log(`🔍 CompanyActivityTab: Found ${ts.docs.length} completed tasks for company ${companyId}`);
           ts.forEach((docSnap) => {
             const d = docSnap.data() as any;
+            console.log(`🔍 Task found: ${d.title} - associations:`, d.associations);
             aggregated.push({
               id: `task_${docSnap.id}`,
               type: 'task',
@@ -2081,7 +2098,9 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
               metadata: { priority: d.priority, taskType: d.type }
             });
           });
-        } catch {}
+        } catch (error) {
+          console.error('Error loading tasks for company activity:', error);
+        }
 
         // Notes: company + contact + deal notes
         const notesScopes = [
@@ -2177,6 +2196,21 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
     };
     load();
   }, [company?.id, tenantId]);
+
+  // Listen for refresh events
+  useEffect(() => {
+    const handleRefresh = (event: any) => {
+      if (event.detail?.companyId === company?.id) {
+        console.log('🔍 Refreshing company activity due to new activity logged');
+        // Trigger a reload by updating a dependency
+        setPage(prev => prev + 1);
+        setTimeout(() => setPage(prev => prev - 1), 100);
+      }
+    };
+
+    window.addEventListener('refreshCompanyActivity', handleRefresh);
+    return () => window.removeEventListener('refreshCompanyActivity', handleRefresh);
+  }, [company?.id]);
 
   // Derived list after filters
   const filtered = items.filter((it) => {
