@@ -22,7 +22,8 @@ import {
   Divider,
   IconButton,
   Alert,
-  CircularProgress
+  CircularProgress,
+  Avatar
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -539,95 +540,105 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid item xs={12}>
               <Typography variant="h6" gutterBottom>Company Contacts</Typography>
               
-              {/* Existing Company Contacts */}
-              {loadedContacts.length > 0 && (
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Available Contacts from {formData.companyName || 'Selected Company'}:
+              {/* Current Contacts */}
+              {formData.companyContacts.length > 0 && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
+                    Current Contacts ({formData.companyContacts.length}):
                   </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                    {loadedContacts.map((contact) => (
-                      <Chip
-                        key={contact.id}
-                        label={`${contact.fullName || contact.name} (${contact.title || 'No Title'})`}
-                        onClick={() => {
-                          const jobOrderContact: JobOrderContact = {
-                            id: contact.id,
-                            name: contact.fullName || contact.name,
-                            email: contact.email,
-                            phone: contact.phone,
-                            role: 'hiring_manager', // Default role
-                            notes: contact.title || ''
-                          };
-                          setFormData(prev => ({
-                            ...prev,
-                            companyContacts: [...prev.companyContacts, jobOrderContact]
-                          }));
-                        }}
-                        variant="outlined"
-                        size="small"
-                      />
-                    ))}
-                  </Box>
+                  {formData.companyContacts.map((contact) => (
+                    <Box
+                      key={contact.id}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        p: 2,
+                        mb: 1,
+                        border: '1px solid',
+                        borderColor: 'grey.200',
+                        borderRadius: 1,
+                        bgcolor: 'grey.50'
+                      }}
+                    >
+                      <Avatar sx={{ mr: 2, bgcolor: 'primary.main' }}>
+                        {contact.name.charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Box sx={{ flexGrow: 1 }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                          {contact.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {contact.email}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {contact.phone} • {contact.role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        </Typography>
+                      </Box>
+                      <IconButton onClick={() => removeContact(contact.id)} color="error" size="small">
+                        <DeleteIcon />
+                      </IconButton>
+                    </Box>
+                  ))}
                 </Box>
               )}
               
-              {formData.companyContacts.map((contact) => (
-                <Card key={contact.id} sx={{ mb: 2 }}>
-                  <CardContent>
-                    <Grid container spacing={2} alignItems="center">
-                      <Grid item xs={12} md={3}>
-                        <TextField
-                          fullWidth
-                          label="Name"
-                          value={contact.name}
-                          size="small"
-                          disabled
+              {/* Add Contacts Section */}
+              <Box>
+                <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
+                  Add Contacts:
+                </Typography>
+                
+                {/* Available Contacts from CRM */}
+                {loadedContacts.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Available contacts from {formData.companyName || 'Selected Company'}:
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {loadedContacts
+                        .filter(contact => !formData.companyContacts.some(c => c.id === contact.id))
+                        .map((contact) => (
+                        <Chip
+                          key={contact.id}
+                          avatar={
+                            <Avatar sx={{ bgcolor: 'primary.main' }}>
+                              {(contact.fullName || contact.name).charAt(0).toUpperCase()}
+                            </Avatar>
+                          }
+                          label={`${contact.fullName || contact.name} (${contact.title || 'No Title'})`}
+                          onClick={() => {
+                            const jobOrderContact: JobOrderContact = {
+                              id: contact.id,
+                              name: contact.fullName || contact.name,
+                              email: contact.email,
+                              phone: contact.phone,
+                              role: 'hiring_manager', // Default role
+                              notes: contact.title || ''
+                            };
+                            setFormData(prev => ({
+                              ...prev,
+                              companyContacts: [...prev.companyContacts, jobOrderContact]
+                            }));
+                          }}
+                          variant="outlined"
+                          sx={{ cursor: 'pointer' }}
                         />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Role</InputLabel>
-                          <Select value={contact.role} label="Role" disabled>
-                            <MenuItem value="hiring_manager">Hiring Manager</MenuItem>
-                            <MenuItem value="supervisor">Supervisor</MenuItem>
-                            <MenuItem value="hr_contact">HR Contact</MenuItem>
-                            <MenuItem value="safety_contact">Safety Contact</MenuItem>
-                            <MenuItem value="other">Other</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <TextField
-                          fullWidth
-                          label="Email"
-                          value={contact.email}
-                          size="small"
-                          disabled
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <TextField
-                          fullWidth
-                          label="Phone"
-                          value={contact.phone}
-                          size="small"
-                          disabled
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={2}>
-                        <IconButton onClick={() => removeContact(contact.id)} color="error">
-                          <DeleteIcon />
-                        </IconButton>
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
-              ))}
-              
-              {/* Add New Contact */}
-              <Card sx={{ border: '2px dashed', borderColor: 'grey.300' }}>
-                <CardContent>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+                
+                {/* Manual Contact Entry */}
+                <Box sx={{ 
+                  border: '2px dashed', 
+                  borderColor: 'grey.300', 
+                  borderRadius: 1, 
+                  p: 2,
+                  bgcolor: 'grey.50'
+                }}>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Or add a new contact manually:
+                  </Typography>
                   <Grid container spacing={2} alignItems="center">
                     <Grid item xs={12} md={3}>
                       <TextField
@@ -673,13 +684,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       />
                     </Grid>
                     <Grid item xs={12} md={2}>
-                      <IconButton onClick={addContact} color="primary">
-                        <AddIcon />
-                      </IconButton>
+                      <Button
+                        variant="contained"
+                        startIcon={<AddIcon />}
+                        onClick={addContact}
+                        disabled={!newContact.name.trim()}
+                        size="small"
+                      >
+                        Add
+                      </Button>
                     </Grid>
                   </Grid>
-                </CardContent>
-              </Card>
+                </Box>
+              </Box>
             </Grid>
           </Grid>
         </AccordionDetails>
