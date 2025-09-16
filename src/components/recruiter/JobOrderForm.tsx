@@ -38,7 +38,7 @@ import {
   Security as SecurityIcon,
   Notes as NotesIcon
 } from '@mui/icons-material';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { JobOrderFormData, JobOrderContact, TimesheetMethod, JobsBoardVisibility } from '../../types/recruiter/jobOrder';
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
@@ -154,6 +154,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     role: 'hiring_manager',
     notes: ''
   });
+  const [contactDropdownValue, setContactDropdownValue] = useState<any>(null);
 
   // Load data on component mount
   useEffect(() => {
@@ -196,9 +197,64 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const contactsQuery = query(contactsRef, where('companyId', '==', companyId));
       const contactsSnapshot = await getDocs(contactsQuery);
       const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setLoadedContacts(contactsData);
       
-      console.log('✅ Loaded contacts for company:', { companyId, contacts: contactsData.length });
+      // Load worksite information for each contact
+      const contactsWithWorksites = await Promise.all(
+        contactsData.map(async (contact: any) => {
+          const worksites = [];
+          
+          // Check if contact has locationId
+          if (contact.locationId) {
+            try {
+              const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', contact.locationId);
+              const locationDoc = await getDoc(locationRef);
+              if (locationDoc.exists()) {
+                worksites.push({
+                  id: contact.locationId,
+                  name: locationDoc.data().nickname || locationDoc.data().name || contact.locationName || 'Unknown Location'
+                });
+              }
+            } catch (error) {
+              console.warn('Error loading location for contact:', contact.id, error);
+            }
+          }
+          
+          // Check if contact has associations.locations
+          if (contact.associations?.locations?.length > 0) {
+            try {
+              const locationPromises = contact.associations.locations.map(async (locationId) => {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+                const locationDoc = await getDoc(locationRef);
+                if (locationDoc.exists()) {
+                  return {
+                    id: locationId,
+                    name: locationDoc.data().nickname || locationDoc.data().name || 'Unknown Location'
+                  };
+                }
+                return null;
+              });
+              
+              const additionalWorksites = (await Promise.all(locationPromises)).filter(Boolean);
+              worksites.push(...additionalWorksites);
+            } catch (error) {
+              console.warn('Error loading associated locations for contact:', contact.id, error);
+            }
+          }
+          
+          return {
+            ...contact,
+            worksites: worksites
+          };
+        })
+      );
+      
+      setLoadedContacts(contactsWithWorksites);
+      
+      console.log('✅ Loaded contacts with worksites for company:', { 
+        companyId, 
+        contacts: contactsWithWorksites.length,
+        contactsWithWorksites: contactsWithWorksites.filter(c => c.worksites.length > 0).length
+      });
     } catch (error) {
       console.error('Error loading company contacts:', error);
       setLoadedContacts([]);
@@ -573,6 +629,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         <Typography variant="body2" color="text.secondary">
                           {contact.phone} • {contact.role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                         </Typography>
+                        {contact.worksites && contact.worksites.length > 0 && (
+                          <Typography variant="body2" color="primary.main" sx={{ mt: 0.5 }}>
+                            📍 {contact.worksites.map(w => w.name).join(', ')}
+                          </Typography>
+                        )}
                       </Box>
                       <IconButton onClick={() => removeContact(contact.id)} color="error" size="small">
                         <DeleteIcon />
@@ -597,7 +658,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     <Autocomplete
                       options={loadedContacts.filter(contact => !formData.companyContacts.some(c => c.id === contact.id))}
                       getOptionLabel={(option) => `${option.fullName || option.name} (${option.title || 'No Title'})`}
-                      value={null}
+                      value={contactDropdownValue}
                       onChange={(_, newValue) => {
                         if (newValue) {
                           const jobOrderContact: JobOrderContact = {
@@ -606,12 +667,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                             email: newValue.email,
                             phone: newValue.phone,
                             role: 'hiring_manager', // Default role
-                            notes: newValue.title || ''
+                            notes: newValue.title || '',
+                            worksites: newValue.worksites || [] // Include worksite data
                           };
                           setFormData(prev => ({
                             ...prev,
                             companyContacts: [...prev.companyContacts, jobOrderContact]
                           }));
+                          // Clear the dropdown after selection
+                          setContactDropdownValue(null);
                         }
                       }}
                       renderOption={(props, option) => (
@@ -619,13 +683,18 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                           <Avatar sx={{ bgcolor: 'primary.main', width: 24, height: 24, fontSize: '0.75rem' }}>
                             {(option.fullName || option.name).charAt(0).toUpperCase()}
                           </Avatar>
-                          <Box>
+                          <Box sx={{ flexGrow: 1 }}>
                             <Typography variant="body2" sx={{ fontWeight: 500 }}>
                               {option.fullName || option.name}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
                               {option.title || 'No Title'}
                             </Typography>
+                            {option.worksites && option.worksites.length > 0 && (
+                              <Typography variant="caption" color="primary.main" sx={{ display: 'block' }}>
+                                📍 {option.worksites.map(w => w.name).join(', ')}
+                              </Typography>
+                            )}
                           </Box>
                         </Box>
                       )}

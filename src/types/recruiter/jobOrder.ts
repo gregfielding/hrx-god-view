@@ -84,6 +84,10 @@ export interface JobOrderContact {
   phone?: string;
   role: 'hiring_manager' | 'supervisor' | 'hr_contact' | 'safety_contact' | 'other';
   notes?: string;
+  worksites?: Array<{
+    id: string;
+    name: string;
+  }>;
 }
 
 export interface Address {
