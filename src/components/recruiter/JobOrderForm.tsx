@@ -37,6 +37,8 @@ import {
   Security as SecurityIcon,
   Notes as NotesIcon
 } from '@mui/icons-material';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { JobOrderFormData, JobOrderContact, TimesheetMethod, JobsBoardVisibility } from '../../types/recruiter/jobOrder';
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 
@@ -72,6 +74,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   groups = []
 }) => {
   const jobOrderService = JobOrderService.getInstance();
+  
+  // Local state for loaded data
+  const [loadedCompanies, setLoadedCompanies] = useState<any[]>([]);
+  const [loadedLocations, setLoadedLocations] = useState<any[]>([]);
+  const [loadedContacts, setLoadedContacts] = useState<any[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  
   const [formData, setFormData] = useState<JobOrderFormData>({
     jobOrderName: '',
     jobOrderDescription: '',
@@ -144,6 +153,59 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     role: 'hiring_manager',
     notes: ''
   });
+
+  // Load data on component mount
+  useEffect(() => {
+    if (tenantId) {
+      loadData();
+    }
+  }, [tenantId]);
+
+  const loadData = async () => {
+    if (!tenantId) return;
+    
+    setDataLoading(true);
+    try {
+      // Load companies from crm_companies
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const companiesSnapshot = await getDocs(companiesRef);
+      const companiesData = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLoadedCompanies(companiesData);
+
+      // Load locations from crm_locations
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_locations');
+      const locationsSnapshot = await getDocs(locationsRef);
+      const locationsData = locationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLoadedLocations(locationsData);
+
+      console.log('✅ Loaded data for JobOrderForm:', {
+        companies: companiesData.length,
+        locations: locationsData.length
+      });
+    } catch (error) {
+      console.error('Error loading JobOrderForm data:', error);
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  // Load contacts when company is selected
+  const loadCompanyContacts = async (companyId: string) => {
+    if (!companyId || !tenantId) return;
+    
+    try {
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const contactsQuery = query(contactsRef, where('companyId', '==', companyId));
+      const contactsSnapshot = await getDocs(contactsQuery);
+      const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLoadedContacts(contactsData);
+      
+      console.log('✅ Loaded contacts for company:', { companyId, contacts: contactsData.length });
+    } catch (error) {
+      console.error('Error loading company contacts:', error);
+      setLoadedContacts([]);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
@@ -234,18 +296,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   };
 
   const handleCompanyChange = (companyId: string) => {
-    const company = companies.find(c => c.id === companyId);
+    const company = loadedCompanies.find(c => c.id === companyId);
     if (company) {
       setFormData(prev => ({
         ...prev,
         companyId: company.id,
         companyName: company.companyName || company.name
       }));
+      
+      // Load contacts for this company
+      loadCompanyContacts(companyId);
+      
+      // Clear worksite selection when company changes
+      setFormData(prev => ({
+        ...prev,
+        worksiteId: '',
+        worksiteName: '',
+        worksiteAddress: {
+          street: '',
+          city: '',
+          state: '',
+          zipCode: '',
+          country: 'USA'
+        }
+      }));
     }
   };
 
   const handleLocationChange = (locationId: string) => {
-    const location = locations.find(l => l.id === locationId);
+    const location = loadedLocations.find(l => l.id === locationId);
     if (location) {
       setFormData(prev => ({
         ...prev,
@@ -311,10 +390,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     }
   };
 
+  if (dataLoading) {
+    return (
+      <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3, textAlign: 'center' }}>
+        <CircularProgress />
+        <Typography variant="h6" sx={{ mt: 2 }}>
+          Loading companies and locations...
+        </Typography>
+      </Box>
+    );
+  }
+
   return (
     <Box component="form" onSubmit={handleSubmit} sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
       <Typography variant="h4" gutterBottom>
-        Job Order Form
+        {jobOrder ? 'Edit Job Order' : 'Create New Job Order'}
       </Typography>
 
       {/* Basic Information */}
@@ -401,10 +491,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           <Grid container spacing={3}>
             <Grid item xs={12} md={6}>
               <Autocomplete
-                options={companies}
+                options={loadedCompanies}
                 getOptionLabel={(option) => option.companyName || option.name || ''}
-                value={companies.find(c => c.id === formData.companyId) || null}
+                value={loadedCompanies.find(c => c.id === formData.companyId) || null}
                 onChange={(_, newValue) => handleCompanyChange(newValue?.id || '')}
+                loading={dataLoading}
                 renderInput={(params) => (
                   <TextField {...params} label="Company" required />
                 )}
@@ -412,10 +503,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
             <Grid item xs={12} md={6}>
               <Autocomplete
-                options={locations}
+                options={loadedLocations}
                 getOptionLabel={(option) => option.nickname || option.name || option.title || ''}
-                value={locations.find(l => l.id === formData.worksiteId) || null}
+                value={loadedLocations.find(l => l.id === formData.worksiteId) || null}
                 onChange={(_, newValue) => handleLocationChange(newValue?.id || '')}
+                loading={dataLoading}
                 renderInput={(params) => (
                   <TextField {...params} label="Worksite" required />
                 )}
@@ -425,6 +517,40 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             {/* Company Contacts */}
             <Grid item xs={12}>
               <Typography variant="h6" gutterBottom>Company Contacts</Typography>
+              
+              {/* Existing Company Contacts */}
+              {loadedContacts.length > 0 && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Available Contacts from {formData.companyName || 'Selected Company'}:
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {loadedContacts.map((contact) => (
+                      <Chip
+                        key={contact.id}
+                        label={`${contact.fullName || contact.name} (${contact.title || 'No Title'})`}
+                        onClick={() => {
+                          const jobOrderContact: JobOrderContact = {
+                            id: contact.id,
+                            name: contact.fullName || contact.name,
+                            email: contact.email,
+                            phone: contact.phone,
+                            role: 'hiring_manager', // Default role
+                            notes: contact.title || ''
+                          };
+                          setFormData(prev => ({
+                            ...prev,
+                            companyContacts: [...prev.companyContacts, jobOrderContact]
+                          }));
+                        }}
+                        variant="outlined"
+                        size="small"
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              )}
+              
               {formData.companyContacts.map((contact) => (
                 <Card key={contact.id} sx={{ mb: 2 }}>
                   <CardContent>
