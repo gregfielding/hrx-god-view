@@ -146,14 +146,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   });
 
   const [expandedSections, setExpandedSections] = useState<string[]>(['basic', 'company', 'job']);
-  const [newContact, setNewContact] = useState<JobOrderContact>({
-    id: '',
-    name: '',
-    email: '',
-    phone: '',
-    role: 'hiring_manager',
-    notes: ''
-  });
   const [contactDropdownValue, setContactDropdownValue] = useState<any>(null);
 
   // Load data on component mount
@@ -418,22 +410,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     }
   };
 
-  const addContact = () => {
-    if (newContact.name.trim()) {
-      setFormData(prev => ({
-        ...prev,
-        companyContacts: [...prev.companyContacts, { ...newContact, id: Date.now().toString() }]
-      }));
-      setNewContact({
-        id: '',
-        name: '',
-        email: '',
-        phone: '',
-        role: 'hiring_manager',
-        notes: ''
-      });
-    }
-  };
 
   const removeContact = (contactId: string) => {
     setFormData(prev => ({
@@ -714,74 +690,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   </Box>
                 )}
                 
-                {/* Manual Contact Entry */}
-                <Box sx={{ 
-                  border: '2px dashed', 
-                  borderColor: 'grey.300', 
-                  borderRadius: 1, 
-                  p: 2,
-                  bgcolor: 'grey.50'
-                }}>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Or add a new contact manually:
-                  </Typography>
-                  <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} md={3}>
-                      <TextField
-                        fullWidth
-                        label="Name"
-                        value={newContact.name}
-                        onChange={(e) => setNewContact(prev => ({ ...prev, name: e.target.value }))}
-                        size="small"
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={2}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Role</InputLabel>
-                        <Select
-                          value={newContact.role}
-                          label="Role"
-                          onChange={(e) => setNewContact(prev => ({ ...prev, role: e.target.value as any }))}
-                        >
-                          <MenuItem value="hiring_manager">Hiring Manager</MenuItem>
-                          <MenuItem value="supervisor">Supervisor</MenuItem>
-                          <MenuItem value="hr_contact">HR Contact</MenuItem>
-                          <MenuItem value="safety_contact">Safety Contact</MenuItem>
-                          <MenuItem value="other">Other</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid item xs={12} md={2}>
-                      <TextField
-                        fullWidth
-                        label="Email"
-                        value={newContact.email}
-                        onChange={(e) => setNewContact(prev => ({ ...prev, email: e.target.value }))}
-                        size="small"
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={2}>
-                      <TextField
-                        fullWidth
-                        label="Phone"
-                        value={newContact.phone}
-                        onChange={(e) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
-                        size="small"
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={2}>
-                      <Button
-                        variant="contained"
-                        startIcon={<AddIcon />}
-                        onClick={addContact}
-                        disabled={!newContact.name.trim()}
-                        size="small"
-                      >
-                        Add
-                      </Button>
-                    </Grid>
-                  </Grid>
-                </Box>
               </Box>
             </Grid>
           </Grid>
