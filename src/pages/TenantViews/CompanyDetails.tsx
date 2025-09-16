@@ -1931,29 +1931,35 @@ const RecentActivityWidget: React.FC<{ company: any; tenantId: string }> = ({ co
 
         const aggregated: CompanyActivityItem[] = [];
 
-        // Tasks: completed tasks associated to this company
-        try {
-          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-          const tq = query(
-            tasksRef,
-            where('associations.companies', 'array-contains', companyId),
-            where('status', '==', 'completed'),
-            orderBy('updatedAt', 'desc'),
-            limit(5)
-          );
-          const ts = await getDocs(tq);
-          ts.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            aggregated.push({
-              id: `task_${docSnap.id}`,
-              type: 'task',
-              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
-              title: d.title || 'Task completed',
-              description: d.description || '',
-              metadata: { priority: d.priority, taskType: d.type }
+        // Tasks: completed tasks associated to this company (check both collections)
+        const taskCollections = [
+          { name: 'tasks', ref: collection(db, 'tenants', tenantId, 'tasks') },
+          { name: 'crm_tasks', ref: collection(db, 'tenants', tenantId, 'crm_tasks') }
+        ];
+
+        for (const taskColl of taskCollections) {
+          try {
+            const tq = query(
+              taskColl.ref,
+              where('associations.companies', 'array-contains', companyId),
+              where('status', '==', 'completed'),
+              orderBy('updatedAt', 'desc'),
+              limit(5)
+            );
+            const ts = await getDocs(tq);
+            ts.forEach((docSnap) => {
+              const d = docSnap.data() as any;
+              aggregated.push({
+                id: `${taskColl.name}_${docSnap.id}`,
+                type: 'task',
+                timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+                title: d.title || 'Task completed',
+                description: d.description || '',
+                metadata: { priority: d.priority, taskType: d.type, source: taskColl.name }
+              });
             });
-          });
-        } catch {}
+          } catch {}
+        }
 
         // Notes: company + contact + deal notes
         const notesScopes = [
@@ -2081,32 +2087,38 @@ const CompanyActivityTab: React.FC<{ company: any; tenantId: string }> = ({ comp
 
         const aggregated: CompanyActivityItem[] = [];
 
-        // Tasks: completed tasks associated to this company
-        try {
-          const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-          const tq = query(
-            tasksRef,
-            where('associations.companies', 'array-contains', companyId),
-            where('status', '==', 'completed'),
-            orderBy('updatedAt', 'desc'),
-            limit(200)
-          );
-          const ts = await getDocs(tq);
-          console.log(`🔍 CompanyActivityTab: Found ${ts.docs.length} completed tasks for company ${companyId}`);
-          ts.forEach((docSnap) => {
-            const d = docSnap.data() as any;
-            console.log(`🔍 Task found: ${d.title} - associations:`, d.associations);
-            aggregated.push({
-              id: `task_${docSnap.id}`,
-              type: 'task',
-              timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
-              title: d.title || 'Task completed',
-              description: d.description || '',
-              metadata: { priority: d.priority, taskType: d.type }
+        // Tasks: completed tasks associated to this company (check both collections)
+        const taskCollections = [
+          { name: 'tasks', ref: collection(db, 'tenants', tenantId, 'tasks') },
+          { name: 'crm_tasks', ref: collection(db, 'tenants', tenantId, 'crm_tasks') }
+        ];
+
+        for (const taskColl of taskCollections) {
+          try {
+            const tq = query(
+              taskColl.ref,
+              where('associations.companies', 'array-contains', companyId),
+              where('status', '==', 'completed'),
+              orderBy('updatedAt', 'desc'),
+              limit(200)
+            );
+            const ts = await getDocs(tq);
+            console.log(`🔍 CompanyActivityTab: Found ${ts.docs.length} completed ${taskColl.name} for company ${companyId}`);
+            ts.forEach((docSnap) => {
+              const d = docSnap.data() as any;
+              console.log(`🔍 ${taskColl.name} task found: ${d.title} - associations:`, d.associations);
+              aggregated.push({
+                id: `${taskColl.name}_${docSnap.id}`,
+                type: 'task',
+                timestamp: d.completedAt ? new Date(d.completedAt) : (d.updatedAt?.toDate?.() || new Date()),
+                title: d.title || 'Task completed',
+                description: d.description || '',
+                metadata: { priority: d.priority, taskType: d.type, source: taskColl.name }
+              });
             });
-          });
-        } catch (error) {
-          console.error('Error loading tasks for company activity:', error);
+          } catch (error) {
+            console.error(`Error loading ${taskColl.name} for company activity:`, error);
+          }
         }
 
         // Notes: company + contact + deal notes
