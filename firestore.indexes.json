@@ -316,12 +316,6 @@
         }
       ]
     },
-        {
-          "fieldPath": "timestamp",
-          "order": "DESCENDING"
-        }
-      ]
-    },
     {
       "collectionGroup": "ai_logs",
       "queryScope": "COLLECTION",

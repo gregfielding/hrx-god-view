@@ -572,6 +572,49 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow create: if isHRX() || isTenantAdmin(tenantId);
       }
+
+      // --- JOB ORDERS (Tenant Subcollection) ---
+      match /job_orders/{jobOrderId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- JOBS BOARD POSTS (Tenant Subcollection) ---
+      match /jobs_board_posts/{postId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        // Allow public read access for job board posts
+        allow read: if resource.data.visibility == 'public';
+      }
+
+      // --- JOB APPLICATIONS (Tenant Subcollection) ---
+      match /job_applications/{applicationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- CANDIDATES (Tenant Subcollection) ---
+      match /candidates/{candidateId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- EMPLOYEES (Tenant Subcollection) ---
+      match /employees/{employeeId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- COUNTERS (Tenant Subcollection for auto-increment) ---
+      match /counters/{counterId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+      }
     }
 
     // Context Engine: Only HRX admins can read/write
