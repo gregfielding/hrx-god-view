@@ -728,8 +728,8 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Handle location association update
-  const handleLocationAssociationUpdate = async (locationId: string) => {
+  // Handle location association update (now supports multiple locations)
+  const handleLocationAssociationUpdate = async (selectedLocations: any[]) => {
     if (!contactId || !tenantId || !contact || !user?.uid) return;
 
     try {
@@ -747,25 +747,26 @@ const ContactDetails: React.FC = () => {
         return;
       }
 
-      // Find the location in companyLocations
-      const selectedLocation = companyLocations.find(loc => loc.id === locationId);
-      if (!selectedLocation) {
-        showToast('Location not found', 'error');
-        return;
-      }
-
-      // Update associations with the new location
+      // Extract location IDs from selected locations
+      const locationIds = selectedLocations.map(loc => loc.id);
+      
+      // Update associations with the new locations
       const currentAssociations = contact.associations || {};
       const updatedAssociations = {
         ...currentAssociations,
-        locations: [selectedLocation.id]
+        locations: locationIds
       };
+
+      // For backward compatibility, set the first location as the primary location
+      const primaryLocation = selectedLocations.length > 0 ? selectedLocations[0] : null;
+      const primaryLocationId = primaryLocation?.id || '';
+      const primaryLocationName = primaryLocation ? (primaryLocation.name || primaryLocation.nickname || 'Unknown Location') : '';
 
       // Update the contact document with both new and legacy formats
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
         associations: updatedAssociations,
-        locationId: selectedLocation.id, // Legacy format
-        locationName: selectedLocation.name || selectedLocation.nickname || 'Unknown Location', // Legacy format
+        locationId: primaryLocationId, // Legacy format - first location
+        locationName: primaryLocationName, // Legacy format - first location name
         updatedAt: new Date()
       });
 
@@ -773,32 +774,38 @@ const ContactDetails: React.FC = () => {
       setContact(prev => prev ? { 
         ...prev, 
         associations: updatedAssociations,
-        locationId: selectedLocation.id, // Legacy format
-        locationName: selectedLocation.name || selectedLocation.nickname || 'Unknown Location' // Legacy format
+        locationId: primaryLocationId, // Legacy format
+        locationName: primaryLocationName // Legacy format
       } : null);
       
       // Log the activity (client-side filtered/sampled)
       try {
         const { logAIActionClient } = await import('../../utils/loggingClient');
+        const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
         await logAIActionClient({
           eventType: 'contact.location_updated',
           action: 'contact_location_updated',
           entityId: contactId,
           entityType: 'contact',
-          reason: `Updated work location to: ${selectedLocation.name || selectedLocation.nickname}`,
+          reason: `Updated work locations to: ${locationNames}`,
           tenantId,
           userId: user.uid,
-          metadata: { locationId, locationName: selectedLocation.name || selectedLocation.nickname },
+          metadata: { 
+            locationIds, 
+            locationNames,
+            locationCount: selectedLocations.length
+          },
           urgencyScore: 7
         });
       } catch (logError) {
         console.warn('Failed to log activity:', logError);
       }
 
-      showToast(`Work location updated to: ${selectedLocation.name || selectedLocation.nickname}`, 'success');
+      const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
+      showToast(`Work locations updated to: ${locationNames}`, 'success');
     } catch (err) {
       console.error('Error updating location association:', err);
-      showToast('Failed to update work location', 'error');
+      showToast('Failed to update work locations', 'error');
     }
   };
 
@@ -1564,62 +1571,48 @@ const ContactDetails: React.FC = () => {
                     {company.companyName || company.name}
                   </Typography>
                   {(() => {
-                    // Check new associations format first
-                    if (Array.isArray(contact.associations?.locations) && contact.associations.locations.length > 0) {
-                      const locationId = contact.associations.locations[0];
-                      const locationName = companyLocations.find((l: any) => l.id === locationId)?.name || '';
-                      if (locationId && locationName) {
-                        return (
-                          <>
-                            <Typography variant="body2" color="text.secondary">/</Typography>
-                            <Typography 
-                              variant="body2" 
-                              color="primary"
-                              sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                              onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
-                            >
-                              {locationName}
-                            </Typography>
-                          </>
-                        );
+                    // Get all associated locations
+                    const assocLocations = contact.associations?.locations || [];
+                    const selectedLocations = [];
+                    
+                    // First, try to get locations from associations
+                    for (const locationId of assocLocations) {
+                      const location = companyLocations.find((l: any) => l.id === locationId);
+                      if (location) {
+                        selectedLocations.push(location);
                       }
                     }
                     
-                    // Fallback to legacy locationId format
-                    if (contact.locationId && contact.locationName) {
+                    // If no locations found in associations, check legacy locationId
+                    if (selectedLocations.length === 0 && contact.locationId) {
+                      const legacyLocation = companyLocations.find((l: any) => l.id === contact.locationId);
+                      if (legacyLocation) {
+                        selectedLocations.push(legacyLocation);
+                      }
+                    }
+                    
+                    // Display locations
+                    if (selectedLocations.length > 0) {
                       return (
                         <>
                           <Typography variant="body2" color="text.secondary">/</Typography>
-                          <Typography 
-                            variant="body2" 
-                            color="primary"
-                            sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                            onClick={() => navigate(`/crm/companies/${company.id}/locations/${contact.locationId}`)}
-                          >
-                            {contact.locationName}
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                            {selectedLocations.map((location, index) => (
+                              <React.Fragment key={location.id}>
+                                {index > 0 && <Typography variant="body2" color="text.secondary">, </Typography>}
+                                <Typography 
+                                  variant="body2" 
+                                  color="primary"
+                                  sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
+                                  onClick={() => navigate(`/crm/companies/${company.id}/locations/${location.id}`)}
+                                >
+                                  {location.nickname || location.name || location.title || 'Unknown Location'}
+                                </Typography>
+                              </React.Fragment>
+                            ))}
+                          </Box>
                         </>
                       );
-                    }
-                    
-                    // Fallback to locationId with name from loaded locations
-                    if (contact.locationId) {
-                      const locationName = companyLocations.find((l: any) => l.id === contact.locationId)?.name || '';
-                      if (locationName) {
-                        return (
-                          <>
-                            <Typography variant="body2" color="text.secondary">/</Typography>
-                            <Typography 
-                              variant="body2" 
-                              color="primary"
-                              sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                              onClick={() => navigate(`/crm/companies/${company.id}/locations/${contact.locationId}`)}
-                            >
-                              {locationName}
-                            </Typography>
-                          </>
-                        );
-                      }
                     }
                     
                     return null;
@@ -2370,35 +2363,75 @@ const ContactDetails: React.FC = () => {
                       size="small"
                     />
 
-                    <FormControl fullWidth size="small">
-                      <InputLabel>Work Location</InputLabel>
-                      <Select
-                        value={(() => {
-                          // Check new associations format first
-                          const assocLocations = contact.associations?.locations || [];
-                          if (assocLocations.length > 0) {
-                            const locationId = assocLocations[0];
-                            // Only return the value if it exists in companyLocations
-                            return companyLocations.some(loc => loc.id === locationId) ? locationId : '';
+                    <Autocomplete
+                      multiple
+                      options={companyLocations}
+                      getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
+                      value={(() => {
+                        // Get currently selected locations from associations
+                        const assocLocations = contact.associations?.locations || [];
+                        const selectedLocations = [];
+                        
+                        // First, try to get locations from associations
+                        for (const locationId of assocLocations) {
+                          const location = companyLocations.find(loc => loc.id === locationId);
+                          if (location) {
+                            selectedLocations.push(location);
                           }
-                          // Fallback to legacy locationId format
-                          const legacyLocationId = contact.locationId || '';
-                          return companyLocations.some(loc => loc.id === legacyLocationId) ? legacyLocationId : '';
-                        })() || ''}
-                        label="Work Location"
-                        onChange={(e) => handleLocationAssociationUpdate(e.target.value)}
-                        disabled={companyLocations.length === 0}
-                      >
-                        <MenuItem value="">
-                          <em>Select a location</em>
-                        </MenuItem>
-                        {companyLocations.map((location) => (
-                          <MenuItem key={location.id} value={location.id}>
-                            {location.nickname || location.name || location.title || 'Unknown Location'}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
+                        }
+                        
+                        // If no locations found in associations, check legacy locationId
+                        if (selectedLocations.length === 0 && contact.locationId) {
+                          const legacyLocation = companyLocations.find(loc => loc.id === contact.locationId);
+                          if (legacyLocation) {
+                            selectedLocations.push(legacyLocation);
+                          }
+                        }
+                        
+                        return selectedLocations;
+                      })()}
+                      onChange={(event, newValue) => {
+                        handleLocationAssociationUpdate(newValue);
+                      }}
+                      disabled={companyLocations.length === 0}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Work Locations"
+                          placeholder="Select locations..."
+                          size="small"
+                          InputProps={{
+                            ...params.InputProps,
+                            startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
+                          }}
+                        />
+                      )}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            {...getTagProps({ index })}
+                            key={option.id}
+                            label={option.nickname || option.name || option.title || 'Unknown Location'}
+                            size="small"
+                            color="primary"
+                            variant="outlined"
+                          />
+                        ))
+                      }
+                      renderOption={(props, option) => (
+                        <Box component="li" {...props}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <LocationIcon fontSize="small" color="action" />
+                            <Typography variant="body2">
+                              {option.nickname || option.name || option.title || 'Unknown Location'}
+                            </Typography>
+                            {option.code && (
+                              <Chip label={option.code} size="small" variant="outlined" />
+                            )}
+                          </Box>
+                        </Box>
+                      )}
+                    />
 
                     {/* Contact Address Information */}
                     {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
