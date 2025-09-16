@@ -255,6 +255,7 @@ const ContactDetails: React.FC = () => {
   // Company linking state
   // Company and location are managed via associations; no local pickers
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
+  const [selectedLocations, setSelectedLocations] = useState<any[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
@@ -778,6 +779,9 @@ const ContactDetails: React.FC = () => {
         locationName: primaryLocationName // Legacy format
       } : null);
       
+      // Update selected locations state
+      setSelectedLocations(selectedLocations);
+      
       // Log the activity (client-side filtered/sampled)
       try {
         const { logAIActionClient } = await import('../../utils/loggingClient');
@@ -865,6 +869,36 @@ const ContactDetails: React.FC = () => {
     loadRecentActivities();
     loadAllCompanies();
   }, [contactId, tenantId]);
+
+  // Initialize selected locations when contact or companyLocations change
+  useEffect(() => {
+    if (!contact || companyLocations.length === 0) {
+      setSelectedLocations([]);
+      return;
+    }
+
+    const assocLocations = contact.associations?.locations || [];
+    const locations = [];
+    
+    // First, try to get locations from associations
+    for (const locationId of assocLocations) {
+      const location = companyLocations.find(loc => loc.id === locationId);
+      if (location) {
+        locations.push(location);
+      }
+    }
+    
+    // If no locations found in associations, check legacy locationId
+    if (locations.length === 0 && contact.locationId) {
+      const legacyLocation = companyLocations.find(loc => loc.id === contact.locationId);
+      if (legacyLocation) {
+        locations.push(legacyLocation);
+      }
+    }
+    
+    console.log('🔍 Initializing selected locations:', locations);
+    setSelectedLocations(locations);
+  }, [contact, companyLocations]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -2367,30 +2401,10 @@ const ContactDetails: React.FC = () => {
                       multiple
                       options={companyLocations}
                       getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
-                      value={(() => {
-                        // Get currently selected locations from associations
-                        const assocLocations = contact.associations?.locations || [];
-                        const selectedLocations = [];
-                        
-                        // First, try to get locations from associations
-                        for (const locationId of assocLocations) {
-                          const location = companyLocations.find(loc => loc.id === locationId);
-                          if (location) {
-                            selectedLocations.push(location);
-                          }
-                        }
-                        
-                        // If no locations found in associations, check legacy locationId
-                        if (selectedLocations.length === 0 && contact.locationId) {
-                          const legacyLocation = companyLocations.find(loc => loc.id === contact.locationId);
-                          if (legacyLocation) {
-                            selectedLocations.push(legacyLocation);
-                          }
-                        }
-                        
-                        return selectedLocations;
-                      })()}
+                      isOptionEqualToValue={(option, value) => option.id === value.id}
+                      value={selectedLocations}
                       onChange={(event, newValue) => {
+                        console.log('🔍 Autocomplete onChange:', newValue);
                         handleLocationAssociationUpdate(newValue);
                       }}
                       disabled={companyLocations.length === 0}
@@ -2406,8 +2420,9 @@ const ContactDetails: React.FC = () => {
                           }}
                         />
                       )}
-                      renderTags={(value, getTagProps) =>
-                        value.map((option, index) => (
+                      renderTags={(value, getTagProps) => {
+                        console.log('🔍 renderTags called with value:', value);
+                        return value.map((option, index) => (
                           <Chip
                             {...getTagProps({ index })}
                             key={option.id}
@@ -2416,8 +2431,8 @@ const ContactDetails: React.FC = () => {
                             color="primary"
                             variant="outlined"
                           />
-                        ))
-                      }
+                        ));
+                      }}
                       renderOption={(props, option) => (
                         <Box component="li" {...props}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
