@@ -172,7 +172,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const companiesData = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setLoadedCompanies(companiesData);
 
-      // Load locations from crm_locations
+      // Load all locations from crm_locations (we'll filter by company when needed)
       const locationsRef = collection(db, 'tenants', tenantId, 'crm_locations');
       const locationsSnapshot = await getDocs(locationsRef);
       const locationsData = locationsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -321,6 +321,26 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         }
       }));
     }
+  };
+
+  // Filter locations by selected company
+  const getFilteredLocations = () => {
+    if (!formData.companyId) return [];
+    
+    // Filter locations that are associated with the selected company
+    return loadedLocations.filter(location => {
+      // Check if location has companyId field
+      if (location.companyId === formData.companyId) return true;
+      
+      // Check if location is in company's associations
+      if (location.associations?.companies?.includes(formData.companyId)) return true;
+      
+      // Check if company has this location in its associations
+      const company = loadedCompanies.find(c => c.id === formData.companyId);
+      if (company?.associations?.locations?.includes(location.id)) return true;
+      
+      return false;
+    });
   };
 
   const handleLocationChange = (locationId: string) => {
@@ -503,11 +523,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
             <Grid item xs={12} md={6}>
               <Autocomplete
-                options={loadedLocations}
+                options={getFilteredLocations()}
                 getOptionLabel={(option) => option.nickname || option.name || option.title || ''}
-                value={loadedLocations.find(l => l.id === formData.worksiteId) || null}
+                value={getFilteredLocations().find(l => l.id === formData.worksiteId) || null}
                 onChange={(_, newValue) => handleLocationChange(newValue?.id || '')}
                 loading={dataLoading}
+                disabled={!formData.companyId}
                 renderInput={(params) => (
                   <TextField {...params} label="Worksite" required />
                 )}
