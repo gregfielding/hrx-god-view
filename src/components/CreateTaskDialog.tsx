@@ -549,7 +549,7 @@ interface CreateTaskDialogProps {
                       clickable
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open(`/tenant/crm/contacts/${option.id}`, '_blank');
+                        window.open(`/crm/contacts/${option.id}`, '_blank');
                       }}
                       sx={{ 
                         cursor: 'pointer',
@@ -590,7 +590,7 @@ interface CreateTaskDialogProps {
                       clickable
                       onClick={(e) => {
                         e.stopPropagation();
-                        window.open(`/tenant/crm/contacts?search=${encodeURIComponent(option.email || option.displayName || option.fullName || option.name)}`, '_blank');
+                        window.open(`/crm/contacts?search=${encodeURIComponent(option.email || option.displayName || option.fullName || option.name)}`, '_blank');
                       }}
                       sx={{ 
                         cursor: 'pointer',

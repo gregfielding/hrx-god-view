@@ -777,10 +777,10 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                           label={option.fullName || option.name || option.email || option.id} 
                           size="small"
                           clickable
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            window.open(`/tenant/crm/contacts/${option.id}`, '_blank');
-                          }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          window.open(`/crm/contacts/${option.id}`, '_blank');
+                        }}
                           sx={{ 
                             cursor: 'pointer',
                             '&:hover': { 
@@ -827,12 +827,12 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                           label={option.fullName || option.name || option.displayName || option.email || option.id} 
                           size="small"
                           clickable
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // For salespeople, we might want to open a user profile or just show a tooltip
-                            // For now, let's open the CRM contacts page in case the salesperson is also a contact
-                            window.open(`/tenant/crm/contacts?search=${encodeURIComponent(option.email || option.fullName || option.name)}`, '_blank');
-                          }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // For salespeople, we might want to open a user profile or just show a tooltip
+                          // For now, let's open the CRM contacts page in case the salesperson is also a contact
+                          window.open(`/crm/contacts?search=${encodeURIComponent(option.email || option.fullName || option.name)}`, '_blank');
+                        }}
                           sx={{ 
                             cursor: 'pointer',
                             '&:hover': { 
