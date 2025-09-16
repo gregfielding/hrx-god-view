@@ -45,6 +45,7 @@ import {
   ListItemText,
   Breadcrumbs,
   Link as MUILink,
+  InputAdornment,
 } from '@mui/material';
 import {
   Phone as PhoneIcon,
@@ -84,6 +85,10 @@ import {
   RocketLaunch as RocketLaunchIcon,
   AccountTree as AccountTreeIcon,
   CheckCircle as CheckCircleIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
+  ArrowUpward as ArrowUpwardIcon,
+  ArrowDownward as ArrowDownwardIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import SalesCoach from '../../components/SalesCoach';
@@ -5444,6 +5449,11 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   const [success, setSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   
+  // Sorting and search state
+  const [sortField, setSortField] = useState<string>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [searchTerm, setSearchTerm] = useState('');
+  
   // Contact form state
   const [contactForm, setContactForm] = useState({
     firstName: '',
@@ -5491,6 +5501,56 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   const handleTagsChange = (newTags: string[]) => {
     setContactForm(prev => ({ ...prev, tags: newTags }));
   };
+
+  // Sorting and filtering functions
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortableValue = (contact: any, field: string) => {
+    switch (field) {
+      case 'name':
+        return (contact.fullName || contact.name || '').toLowerCase();
+      case 'location':
+        if (contact.locationId) {
+          const location = companyLocations.find(loc => loc.id === contact.locationId);
+          return (location?.nickname || location?.name || 'Unknown Location').toLowerCase();
+        }
+        return 'zzz_no_location'; // Sort no location to the end
+      default:
+        return '';
+    }
+  };
+
+  const filteredAndSortedContacts = contacts
+    .filter((contact: any) => {
+      if (!searchTerm) return true;
+      const searchLower = searchTerm.toLowerCase();
+      const fullName = (contact.fullName || contact.name || '').toLowerCase();
+      const firstName = (contact.firstName || '').toLowerCase();
+      const lastName = (contact.lastName || '').toLowerCase();
+      const email = (contact.email || '').toLowerCase();
+      
+      return fullName.includes(searchLower) || 
+             firstName.includes(searchLower) || 
+             lastName.includes(searchLower) || 
+             email.includes(searchLower);
+    })
+    .sort((a: any, b: any) => {
+      if (!sortField) return 0;
+      
+      const aValue = getSortableValue(a, sortField);
+      const bValue = getSortableValue(b, sortField);
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
 
   const handleSaveContact = async () => {
     if (!contactForm.firstName || !contactForm.lastName) {
@@ -5650,13 +5710,53 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
         </Button>
       </Box>
       
+      {/* Search Field */}
+      <Box sx={{ px: 3, mb: 2 }}>
+        <TextField
+          fullWidth
+          placeholder="Search contacts by name or email..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          size="small"
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              backgroundColor: '#F9FAFB',
+              '&:hover': {
+                backgroundColor: '#F3F4F6'
+              },
+              '&.Mui-focused': {
+                backgroundColor: '#FFFFFF'
+              }
+            }
+          }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: '#6B7280', fontSize: 20 }} />
+              </InputAdornment>
+            ),
+            endAdornment: searchTerm && (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  onClick={() => setSearchTerm('')}
+                  sx={{ color: '#6B7280' }}
+                >
+                  <ClearIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </InputAdornment>
+            )
+          }}
+        />
+      </Box>
+      
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
       
-      {contacts.length > 0 ? (
+      {filteredAndSortedContacts.length > 0 ? (
         <TableContainer 
           component={Paper} 
           variant="outlined"
@@ -5669,16 +5769,26 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
           <Table sx={{ minWidth: 1200 }}>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell sx={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Name
+                <TableCell 
+                  sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5,
+                    cursor: 'pointer',
+                    '&:hover': { backgroundColor: '#F3F4F6' }
+                  }}
+                  onClick={() => handleSort('name')}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    Name
+                    {sortField === 'name' && (
+                      sortDirection === 'asc' ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </Box>
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -5713,16 +5823,26 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 }}>
                   Phone
                 </TableCell>
-                <TableCell sx={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Location
+                <TableCell 
+                  sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5,
+                    cursor: 'pointer',
+                    '&:hover': { backgroundColor: '#F3F4F6' }
+                  }}
+                  onClick={() => handleSort('location')}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    Location
+                    {sortField === 'location' && (
+                      sortDirection === 'asc' ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </Box>
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -5738,7 +5858,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               </TableRow>
             </TableHead>
             <TableBody>
-              {contacts.map((contact: any) => (
+              {filteredAndSortedContacts.map((contact: any) => (
                 <TableRow 
                   key={contact.id}
                   onClick={() => navigate(`/crm/contacts/${contact.id}`)}
