@@ -1300,7 +1300,7 @@ const DealDetails: React.FC = () => {
           { id: 'legal_approval', title: 'Obtain legal approval if required', required: false }
         );
         break;
-      case 'closed_won':
+      case 'closedWon':
         checklistItems.push(
           { id: 'contract_signed', title: 'Contract signed and executed', required: true },
           { id: 'project_kickoff', title: 'Schedule project kickoff meeting', required: true },
@@ -2016,14 +2016,14 @@ const DealDetails: React.FC = () => {
                   // Optionally navigate to the job order or show success message
                   console.log('Job Order created:', jobOrderId);
                 }}
-                disabled={deal.stage !== 'closed_won' && deal.stage !== 'verbal_agreement'}
+                disabled={deal.stage !== 'closedWon' && deal.stage !== 'verbalAgreement'}
                 variant="contained"
                 size="small"
                 sx={{
-                  bgcolor: deal.stage === 'closed_won' || deal.stage === 'verbal_agreement' ? 'success.main' : 'grey.400',
+                  bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.main' : 'grey.400',
                   color: 'white',
                   '&:hover': {
-                    bgcolor: deal.stage === 'closed_won' || deal.stage === 'verbal_agreement' ? 'success.dark' : 'grey.500'
+                    bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.dark' : 'grey.500'
                   },
                   '&:disabled': {
                     bgcolor: 'grey.400',
@@ -2684,25 +2684,25 @@ const DealDetails: React.FC = () => {
           </Typography>
           
           {/* Action Status Card */}
-          <Card sx={{ mb: 3, bgcolor: deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' ? 'success.light' : 'warning.light' }}>
+          <Card sx={{ mb: 3, bgcolor: deal.stage === 'verbalAgreement' || deal.stage === 'closedWon' ? 'success.light' : 'warning.light' }}>
             <CardContent sx={{ py: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <WorkIcon color={deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' ? 'success' : 'warning'} />
+                <WorkIcon color={deal.stage === 'verbalAgreement' || deal.stage === 'closedWon' ? 'success' : 'warning'} />
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="subtitle1" fontWeight={600}>
-                    {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' 
+                    {deal.stage === 'verbalAgreement' || deal.stage === 'closedWon' 
                       ? 'Ready to Generate Job Orders' 
                       : 'Complete Deal Stages First'
                     }
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won'
+                    {deal.stage === 'verbalAgreement' || deal.stage === 'closedWon'
                       ? 'This deal is ready for job order creation. Use the "Generate Job Order" button above to create job orders from the deal stage data.'
                       : `This deal must reach "Verbal Agreement" or "Closed Won" stage before job orders can be created. Current stage: ${deal.stage}`
                     }
                   </Typography>
                 </Box>
-                {deal.stage === 'verbal_agreement' || deal.stage === 'closed_won' && (
+                {(deal.stage === 'verbalAgreement' || deal.stage === 'closedWon') && (
                   <Button
                     variant="contained"
                     startIcon={<WorkIcon />}

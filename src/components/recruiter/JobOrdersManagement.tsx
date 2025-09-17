@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { safeToDate } from '../../utils/dateUtils';
 import {
   Box,
   Typography,
@@ -486,7 +487,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
-                        {new Date(jobOrder.createdAt).toLocaleDateString()}
+                        {safeToDate(jobOrder.createdAt).toLocaleDateString()}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">

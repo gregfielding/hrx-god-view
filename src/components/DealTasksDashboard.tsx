@@ -659,7 +659,9 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
     switch (status) {
       case 'completed': return 'success';
       case 'due': return 'warning'; // Yellow for due today
-      case 'overdue': return 'error'; // Red for overdue
+      case 'Past Due': return 'error'; // Red for past due
+      case 'overdue': return 'error'; // Red for overdue (legacy)
+      case 'scheduled': return 'info'; // Blue for scheduled
       case 'upcoming': return 'success'; // Green for future
       case 'postponed': return 'default';
       case 'cancelled': return 'error';
@@ -678,9 +680,9 @@ const DealTasksDashboard: React.FC<DealTasksDashboardProps> = React.memo(functio
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
     
-    if (scheduledDay < today) return 'overdue';
+    if (scheduledDay < today) return 'Past Due';
     if (scheduledDay.getTime() === today.getTime()) return 'due';
-    return 'upcoming';
+    return 'scheduled';
   };
 
   const getTaskTypeIcon = (type: string) => {

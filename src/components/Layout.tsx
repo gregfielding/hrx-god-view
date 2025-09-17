@@ -40,7 +40,7 @@ import { db } from '../firebase';
 import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
-import { generateMenuItems, MenuItem as MenuItemType } from '../utils/menuGenerator';
+import { generateMenuItems, MenuItem as MenuItemType, filterMenuItemsByClaims } from '../utils/menuGenerator';
 import { Role, SecurityLevel } from '../utils/AccessRoles';
 
 import TenantSwitcher from './TenantSwitcher';
@@ -54,7 +54,24 @@ const appBarHeight = 64;
 const Layout: React.FC = React.memo(function Layout() {
   // REMOVED: Excessive logging causing re-renders
   const { toggleMode, mode } = useThemeMode();
-  const { user, role, securityLevel, logout, avatarUrl, orgType, tenantId, tenantIds, activeTenant, setActiveTenant, loading: authLoading } = useAuth();
+  const { 
+    user, 
+    role, 
+    securityLevel, 
+    logout, 
+    avatarUrl, 
+    orgType, 
+    tenantId, 
+    tenantIds, 
+    activeTenant, 
+    setActiveTenant, 
+    loading: authLoading,
+    // New claims-based properties
+    isHRX,
+    claimsRoles,
+    currentClaimsRole,
+    currentClaimsSecurityLevel
+  } = useAuth();
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();
@@ -234,9 +251,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for flex module status
   useEffect(() => {
-    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
-      // Not a tenant or is HRX, no need to listen for flex module
+    if (!activeTenant?.id) {
+      // No active tenant
       setFlexModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setFlexModuleEnabled(true);
       return;
     }
 
@@ -260,9 +283,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for recruiter module status
   useEffect(() => {
-    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
-      // Not a tenant or is HRX, no need to listen for recruiter module
+    if (!activeTenant?.id) {
+      // No active tenant
       setRecruiterModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setRecruiterModuleEnabled(true);
       return;
     }
 
@@ -286,9 +315,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for customers module status
   useEffect(() => {
-    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
-      // Not a tenant or is HRX, no need to listen for customers module
+    if (!activeTenant?.id) {
+      // No active tenant
       setCustomersModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setCustomersModuleEnabled(true);
       return;
     }
 
@@ -312,9 +347,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for jobs board module status
   useEffect(() => {
-    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
-      // Not a tenant or is HRX, no need to listen for jobs board module
+    if (!activeTenant?.id) {
+      // No active tenant
       setJobsBoardModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setJobsBoardModuleEnabled(true);
       return;
     }
 
@@ -338,9 +379,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for CRM module status
   useEffect(() => {
-    if (!activeTenant?.id || activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
-      // Not a tenant or is HRX, no need to listen for CRM module
+    if (!activeTenant?.id) {
+      // No active tenant
       setCrmModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setCrmModuleEnabled(true);
       return;
     }
 
@@ -367,9 +414,32 @@ const Layout: React.FC = React.memo(function Layout() {
       setMenuLoading(true);
       try {
         // REMOVED: Excessive logging causing re-renders
-        const items = await generateMenuItems(userAccessRole, (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), activeTenant?.id, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled);
-                  // REMOVED: Excessive logging causing re-renders
-        setMenuItems(items);
+        const items = await generateMenuItems(
+          userAccessRole, 
+          (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), 
+          activeTenant?.id, 
+          flexModuleEnabled, 
+          recruiterModuleEnabled, 
+          customersModuleEnabled, 
+          jobsBoardModuleEnabled, 
+          crmModuleEnabled,
+          // New claims-based parameters
+          isHRX,
+          currentClaimsRole,
+          claimsRoles
+        );
+        
+        // Apply claims-based filtering to menu items
+        const filteredItems = filterMenuItemsByClaims(
+          items,
+          isHRX,
+          currentClaimsRole,
+          activeTenant?.id,
+          claimsRoles
+        );
+        
+        // REMOVED: Excessive logging causing re-renders
+        setMenuItems(filteredItems);
       } catch (error) {
         console.error('Error generating menu:', error);
         setMenuItems([]);
@@ -378,7 +448,7 @@ const Layout: React.FC = React.memo(function Layout() {
       }
     };
     generateMenu();
-  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled]);
+  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, isHRX, currentClaimsRole, claimsRoles]);
 
   const menuItemsWithIcons = menuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {

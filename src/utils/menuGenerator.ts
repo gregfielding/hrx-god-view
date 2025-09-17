@@ -3,15 +3,19 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
 import { Role, SecurityLevel, getAccessRole } from './AccessRoles';
+import { ClaimsRole } from '../contexts/AuthContext';
 
 
 export interface MenuItem {
   text: string;
   to: string;
   icon?: string;
-  accessRoles?: string[];
+  accessRoles?: string[]; // Legacy access roles
   orgTypes?: ('Tenant' | 'HRX')[];
   securityLevels?: SecurityLevel[];
+  // New claims-based role requirements
+  requiredRoles?: ClaimsRole[]; // User needs ANY of these roles
+  requireAllRoles?: boolean; // If true, user needs ALL roles
 }
 
 export async function generateMenuItems(
@@ -22,7 +26,11 @@ export async function generateMenuItems(
   recruiterModuleEnabled?: boolean,
   customersModuleEnabled?: boolean,
   jobsBoardModuleEnabled?: boolean,
-  crmModuleEnabled?: boolean
+  crmModuleEnabled?: boolean,
+  // New claims-based parameters
+  isHRXUser?: boolean,
+  currentClaimsRole?: ClaimsRole,
+  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } }
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
 
@@ -68,8 +76,9 @@ export async function generateMenuItems(
     }
   }
 
-  // Check if this is HRX based on specific tenant ID
-  const isHRX =  activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
+  // Check if this is HRX based on specific tenant ID (not user claims)
+  // HRX user status (isHRXUser) gives access to switch tenants, but doesn't force HRX menu
+  const isHRX = activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
   // REMOVED: Excessive logging causing re-renders
   // REMOVED: Excessive logging causing re-renders
 
@@ -78,79 +87,89 @@ export async function generateMenuItems(
   // REMOVED: Excessive logging causing re-renders
 
   if (!isHRX) {
-    // Add tenant-specific menu items
+    // Add basic menu items that don't require specific roles (for users without claims)
     menuItems.push(
       {
         text: 'Dashboard',
         to: '/dashboard',
         icon: 'dashboard',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        // No role requirements - available to all users
       },
+      {
+        text: 'My Profile',
+        to: '/profile',
+        icon: 'person',
+        // No role requirements - available to all users
+      },
+    );
+
+    // Add tenant-specific menu items with claims-based role requirements
+    menuItems.push(
       {
         text: 'Workforce',
         to: '/workforce',
         icon: 'people',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'], // Admin and Manager only
       },
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{
         text: 'Customers',
         to: '/customers',
         icon: 'business',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
       // Only show Flex Jobs if HRX Flex Engine module is enabled
       ...(flexModuleEnabled ? [{
         text: 'Flex Jobs',
         to: '/flex',
         icon: 'assignment',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
       // Only show Jobs Board if HRX Jobs Board module is enabled
       ...(jobsBoardModuleEnabled ? [{
         text: 'Jobs Board',
         to: '/jobs-board',
         icon: 'work',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
       // Only show Recruiter if HRX Recruiting Engine module is enabled
       ...(recruiterModuleEnabled ? [{
         text: 'Recruiter',
         to: '/recruiter',
         icon: 'people',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }] : []),
       // Only show Sales CRM if HRX CRM module is enabled
       ...(crmModuleEnabled ? [{
         text: 'Sales CRM',
         to: '/crm',
         icon: 'business',
-        accessRoles: ['tenant_7', 'tenant_6'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
       {
         text: 'My Assignments',
         to: '/assignments',
         icon: 'assignment_turned_in',
-        accessRoles: ['tenant_3'], // Flex only
+        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
       },
 
       {
         text: 'Settings',
         to: '/settings',
         icon: 'settings',
-        accessRoles: ['tenant_7', 'tenant_7'], // Admin and Manager only
+        requiredRoles: ['Admin'], // Admin only
       },
       {
         text: 'Modules',
         to: '/modules',
         icon: 'extension',
-        accessRoles: ['tenant_7', 'tenant_7'], // Admin and Manager only
+        requiredRoles: ['Admin'], // Admin only
       },
       {
         text: 'Reports',
         to: '/reports',
         icon: 'assessment',
-        accessRoles: ['tenant_7', 'tenant_7'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'], // Admin and Manager only
       },
       // {
       //   text: 'Team Access',
@@ -168,13 +187,13 @@ export async function generateMenuItems(
         text: 'Mobile App',
         to: '/mobile-app',
         icon: 'phone_iphone',
-        accessRoles: ['tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
+        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
       },
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
         icon: 'notifications',
-        accessRoles: ['tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
+        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
       },
       // {
       //   text: 'Help',
@@ -186,49 +205,59 @@ export async function generateMenuItems(
         text: 'Log out',
         to: '#', // Will be handled specially in Layout
         icon: 'logout',
-        accessRoles: ['tenant_7', 'tenant_6', 'tenant_5', 'tenant_4', 'tenant_3', 'tenant_2'], // All users except Applicants and Dismissed
+        // No role requirements - always visible to all authenticated users
       }
     );
   }
 
   if (isHRX) {
-    // Add HRX-specific admin menu items
+    // Add basic menu items for HRX users (no role requirements)
     menuItems.push(
       {
         text: 'Dashboard',
         to: '/dashboard',
         icon: 'dashboard',
-        accessRoles: ['hrx_7', 'hrx_6'],
+        // No role requirements - available to all HRX users
       },
+      {
+        text: 'My Profile',
+        to: '/profile',
+        icon: 'person',
+        // No role requirements - available to all HRX users
+      },
+    );
+
+    // Add HRX-specific admin menu items
+    menuItems.push(
       {
         text: 'Team Access',
         to: '/users',
         icon: 'people',
-        accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       {
         text: 'Tenants',
         to: '/tenants',
         icon: 'business',
-        accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       {
         text: 'Broadcasts',
         to: '/broadcasts',
         icon: 'campaign',
-       accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       {
         text: 'AI Launchpad',
         to: '/admin/ai',
         icon: 'rocket_launch',
-       accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       {
         text: 'Modules Dashboard',
         to: '/admin/modules',
         icon: 'apps',
-       accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       // {
       //   text: 'AI Context Dashboard',
@@ -253,13 +282,13 @@ export async function generateMenuItems(
         text: 'AI Logs',
         to: '/admin/ai-logs',
         icon: 'list_alt',
-       accessRoles: ['hrx_7', 'hrx_6'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       {
         text: 'Data Operations',
         to: '/admin/data-operations',
         icon: 'data_object',
-       accessRoles: ['hrx_7', 'hrx_6', 'hrx_5'],
+        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
       },
       // {
       //   text: 'AI Self Improvement',
@@ -445,7 +474,7 @@ export async function generateMenuItems(
         text: 'Log out',
         to: '#',
         icon: 'logout',
-        accessRoles: ['hrx_7', 'hrx_6'],
+        // No role requirements - always visible to all HRX users
       }
     );
   }
@@ -499,4 +528,84 @@ export function hasMenuAccess(
   }
 
   return true;
+}
+
+/**
+ * Filter menu items based on claims-based roles
+ * This function checks if the user has the required roles for each menu item
+ */
+export function filterMenuItemsByClaims(
+  menuItems: MenuItem[],
+  isHRX: boolean,
+  currentClaimsRole?: ClaimsRole,
+  activeTenantId?: string,
+  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } }
+): MenuItem[] {
+  // If we're in the HRX tenant, HRX users can see all menu items
+  if (isHRX) {
+    return menuItems;
+  }
+
+  // Debug logging
+  console.log('=== MENU FILTERING DEBUG ===');
+  console.log('isHRX:', isHRX);
+  console.log('currentClaimsRole:', currentClaimsRole);
+  console.log('activeTenantId:', activeTenantId);
+  console.log('claimsRoles:', claimsRoles);
+  console.log('menuItems count:', menuItems.length);
+
+  // If no claims role or active tenant, show basic menu items (fallback for users without claims)
+  if (!currentClaimsRole || !activeTenantId) {
+    // Return basic menu items that don't require specific roles
+    return menuItems.filter(item => {
+      // Show items that have no role requirements or only have legacy accessRoles
+      return (!item.requiredRoles || item.requiredRoles.length === 0) || 
+             (item.accessRoles && item.accessRoles.length > 0);
+    });
+  }
+
+  return menuItems.filter(item => {
+    // If item has legacy accessRoles, use legacy filtering (for backward compatibility)
+    if (item.accessRoles && item.accessRoles.length > 0) {
+      // Keep legacy items for now - they'll be filtered by the existing system
+      return true;
+    }
+
+    // If item has new requiredRoles, use claims-based filtering
+    if (item.requiredRoles && item.requiredRoles.length > 0) {
+      const tenantRole = claimsRoles?.[activeTenantId];
+      
+      console.log(`Checking item "${item.text}":`, {
+        requiredRoles: item.requiredRoles,
+        tenantRole: tenantRole,
+        hasAccess: tenantRole && item.requiredRoles.includes(tenantRole.role)
+      });
+      
+      // Special handling for "Tenant" role - it should have access to everything
+      if (tenantRole?.role === 'Tenant') {
+        return true; // Tenant role sees everything
+      }
+      
+      // Special handling for "HRX" role - HRX users have access to admin/manager items, not worker items
+      if (tenantRole?.role === 'HRX') {
+        // HRX users should not see worker-specific items
+        // Only show items that are appropriate for admin/manager roles
+        return !item.requiredRoles.includes('Worker');
+      }
+      
+      if (item.requireAllRoles) {
+        // User must have ALL required roles
+        return item.requiredRoles.every(role => {
+          // Check if user has this role in the active tenant
+          return tenantRole?.role === role;
+        });
+      } else {
+        // User needs ANY of the required roles
+        return tenantRole && item.requiredRoles.includes(tenantRole.role);
+      }
+    }
+
+    // If no role requirements specified, show the item
+    return true;
+  });
 } 

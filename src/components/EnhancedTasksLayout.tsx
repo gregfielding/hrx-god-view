@@ -114,6 +114,14 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
   const [hoveredTask, setHoveredTask] = useState<string | null>(null);
   const [expandedTodos, setExpandedTodos] = useState<Set<string>>(new Set());
 
+  // Debug logging
+  console.log('🔍 EnhancedTasksLayout debug:', {
+    tasksCount: tasks.length,
+    associatedContactsCount: associatedContacts.length,
+    associatedContacts: associatedContacts,
+    deal: deal
+  });
+
   const allTodoTasks = tasks.filter(task => task.classification === 'todo');
   const appointmentTasks = tasks.filter(task => task.classification === 'appointment' && task.status !== 'completed');
   
@@ -157,8 +165,11 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
 
   const getStatusChipBackground = (status: string) => {
     switch (status.toLowerCase()) {
+      case 'past due': return 'error.main';
       case 'overdue': return 'error.main';
       case 'completed': return 'success.main';
+      case 'scheduled': return 'info.main';
+      case 'due': return 'warning.main';
       default: return 'grey.300';
     }
   };
@@ -415,7 +426,7 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                           sx={{
                             fontSize: '0.7rem',
                             height: '20px',
-                            bgcolor: getStatusChipBackground(task.status),
+                            bgcolor: getStatusChipBackground(getTaskStatusDisplay(task)),
                             color: 'white'
                           }}
                         />
@@ -463,16 +474,25 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                           >
                             👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
                               // Find the contact name from associatedContacts prop
-                              const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
-                              const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
-                              const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
-                              const fullName = lastName ? `${firstName} ${lastName}` : firstName;
-                              
-                              return (
-                                <span key={index}>
-                                  {index > 0 ? ', ' : ''}{fullName}
-                                </span>
-                              );
+                              const contact = associatedContacts?.find(c => c.id === contactId || c.uid === contactId);
+                              if (contact) {
+                                const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                                const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                                const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                                
+                                return (
+                                  <span key={index}>
+                                    {index > 0 ? ', ' : ''}{fullName}
+                                  </span>
+                                );
+                              } else {
+                                // Fallback to contact ID if name not found
+                                return (
+                                  <span key={index}>
+                                    {index > 0 ? ', ' : ''}{contactId}
+                                  </span>
+                                );
+                              }
                             })}
                           </Typography>
                         </Box>
@@ -665,7 +685,7 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                               sx={{
                                 fontSize: '0.7rem',
                                 height: '20px',
-                                bgcolor: getStatusChipBackground(task.status),
+                                bgcolor: getStatusChipBackground(getTaskStatusDisplay(task)),
                                 color: 'white'
                               }}
                             />
@@ -713,16 +733,25 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                               >
                                 👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
                                   // Find the contact name from associatedContacts prop
-                                  const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
-                                  const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
-                                  const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
-                                  const fullName = lastName ? `${firstName} ${lastName}` : firstName;
-                                  
-                                  return (
-                                    <span key={index}>
-                                      {index > 0 ? ', ' : ''}{fullName}
-                                    </span>
-                                  );
+                                  const contact = associatedContacts?.find(c => c.id === contactId || c.uid === contactId);
+                                  if (contact) {
+                                    const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                                    const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                                    const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                                    
+                                    return (
+                                      <span key={index}>
+                                        {index > 0 ? ', ' : ''}{fullName}
+                                      </span>
+                                    );
+                                  } else {
+                                    // Fallback to contact ID if name not found
+                                    return (
+                                      <span key={index}>
+                                        {index > 0 ? ', ' : ''}{contactId}
+                                      </span>
+                                    );
+                                  }
                                 })}
                               </Typography>
                             </Box>
@@ -730,7 +759,8 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
 
                           {/* Associated companies */}
                           {task.associations?.companies && task.associations.companies.length > 0 && (
-                            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                              <BusinessIcon fontSize="small" color="action" sx={{ mr: 0.5 }} />
                               <Typography
                                 variant="caption"
                                 sx={{
@@ -740,7 +770,23 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                                   alignItems: 'center'
                                 }}
                               >
-                                🏢 Companies: {task.associations.companies.length} associated
+                                Company: {task.associations.companies.map((companyId: any, index: number) => {
+                                  // Try to find company name from associatedCompany or companies array
+                                  let companyName = companyId; // fallback to ID
+                                  
+                                  // Check if we have an associatedCompany prop (from deal context)
+                                  if (deal?.companyName) {
+                                    companyName = deal.companyName;
+                                  } else if (deal?.company?.name) {
+                                    companyName = deal.company.name;
+                                  }
+                                  
+                                  return (
+                                    <span key={index}>
+                                      {index > 0 ? ', ' : ''}{companyName}
+                                    </span>
+                                  );
+                                })}
                               </Typography>
                             </Box>
                           )}
@@ -945,7 +991,7 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                               sx={{
                                 fontSize: '0.7rem',
                                 height: '20px',
-                                bgcolor: getStatusChipBackground(task.status),
+                                bgcolor: getStatusChipBackground(getTaskStatusDisplay(task)),
                                 color: 'white'
                               }}
                             />
@@ -993,16 +1039,25 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
                               >
                                 👥 Contacts: {task.associations.contacts.map((contactId: any, index: number) => {
                                   // Find the contact name from associatedContacts prop
-                                  const contact = associatedContacts.find(c => c.id === contactId || c.uid === contactId);
-                                  const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
-                                  const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
-                                  const fullName = lastName ? `${firstName} ${lastName}` : firstName;
-                                  
-                                  return (
-                                    <span key={index}>
-                                      {index > 0 ? ', ' : ''}{fullName}
-                                    </span>
-                                  );
+                                  const contact = associatedContacts?.find(c => c.id === contactId || c.uid === contactId);
+                                  if (contact) {
+                                    const firstName = contact?.firstName || contact?.name?.split(' ')[0] || 'Unknown';
+                                    const lastName = contact?.lastName || contact?.name?.split(' ').slice(1).join(' ') || '';
+                                    const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+                                    
+                                    return (
+                                      <span key={index}>
+                                        {index > 0 ? ', ' : ''}{fullName}
+                                      </span>
+                                    );
+                                  } else {
+                                    // Fallback to contact ID if name not found
+                                    return (
+                                      <span key={index}>
+                                        {index > 0 ? ', ' : ''}{contactId}
+                                      </span>
+                                    );
+                                  }
                                 })}
                               </Typography>
                             </Box>

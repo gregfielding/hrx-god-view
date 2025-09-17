@@ -55,7 +55,12 @@
     "eject": "react-scripts eject",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
     "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx,json,css,md}'",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "seed-roles": "ts-node --project scripts/tsconfig.json scripts/seed-tenant-roles.ts",
+    "seed-roles:execute": "ts-node --project scripts/tsconfig.json scripts/seed-tenant-roles.ts --execute",
+    "assign-roles": "ts-node --project scripts/tsconfig.json scripts/assign-initial-roles.ts",
+    "smoke-test": "ts-node --project scripts/tsconfig.json scripts/smoke-test-phase2.ts",
+    "verify-phase2-auth": "ts-node --project scripts/tsconfig.json scripts/verify-phase2-auth.ts"
   },
   "eslintConfig": {
     "extends": [
@@ -83,6 +88,7 @@
     "@types/react-dom": "^18.3.7",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/parser": "^5.62.0",
+    "dotenv": "^17.2.2",
     "eslint": "^8.44.0",
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-import": "^2.32.0",
@@ -91,7 +97,8 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-unused-imports": "^4.1.4",
     "node-fetch": "^2.7.0",
-    "prettier": "^2.8.8"
+    "prettier": "^2.8.8",
+    "ts-node": "^10.9.2"
   },
   "editor.formatOnSave": true,
   "files.autoSave": "onWindowChange"

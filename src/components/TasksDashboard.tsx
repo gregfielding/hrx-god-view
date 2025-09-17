@@ -150,7 +150,7 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
         user.uid,
         tenantId,
         filter,
-        (tasks) => {
+        async (tasks) => {
           const baseTasks = showOnlyTodos
             ? tasks.filter(t => (t.classification || '').toLowerCase() === 'todo')
             : tasks;
@@ -158,6 +158,60 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             console.log('🔍 TasksDashboard: Received tasks from service:', tasks);
             console.log('🔍 TasksDashboard: Visible (after filter) tasks:', baseTasks);
             console.log('🔍 TasksDashboard: Current user:', user.uid);
+          }
+
+          // Load contact and company data for tasks that have associations
+          const contactIds = new Set<string>();
+          const companyIds = new Set<string>();
+          
+          baseTasks.forEach(task => {
+            if (task.associations?.contacts) {
+              task.associations.contacts.forEach((contactId: string) => {
+                contactIds.add(contactId);
+              });
+            }
+            if (task.associations?.companies) {
+              task.associations.companies.forEach((companyId: string) => {
+                companyIds.add(companyId);
+              });
+            }
+          });
+
+          // Load contact data if we have contact IDs
+          let loadedContacts: any[] = [];
+          if (contactIds.size > 0) {
+            try {
+              const { collection, query, where, getDocs } = await import('firebase/firestore');
+              const { db } = await import('../firebase');
+              
+              // Try to load from crm_contacts first, then crm_companies as fallback
+              const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+              const contactsQuery = query(contactsRef, where('__name__', 'in', Array.from(contactIds)));
+              const contactsSnapshot = await getDocs(contactsQuery);
+              loadedContacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              
+              console.log('🔍 TasksDashboard: Loaded contacts:', loadedContacts);
+            } catch (error) {
+              console.error('Error loading contacts for tasks:', error);
+            }
+          }
+
+          // Load company data if we have company IDs
+          let loadedCompanies: any[] = [];
+          if (companyIds.size > 0) {
+            try {
+              const { collection, query, where, getDocs } = await import('firebase/firestore');
+              const { db } = await import('../firebase');
+              
+              const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+              const companiesQuery = query(companiesRef, where('__name__', 'in', Array.from(companyIds)));
+              const companiesSnapshot = await getDocs(companiesQuery);
+              loadedCompanies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              
+              console.log('🔍 TasksDashboard: Loaded companies:', loadedCompanies);
+            } catch (error) {
+              console.error('Error loading companies for tasks:', error);
+            }
           }
           
           // Process tasks into dashboard data
@@ -333,6 +387,11 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           };
           
           setDashboardData(dashboardData);
+          
+          // Update the associated contacts and companies with the loaded data
+          setAssociatedContacts(loadedContacts);
+          setAssociatedCompany(loadedCompanies.length > 0 ? loadedCompanies[0] : null);
+          
           setLoading(false);
         }
       );
@@ -420,6 +479,7 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
     switch (status?.toLowerCase()) {
       case 'completed': return 'success';
       case 'overdue': return 'error';
+      case 'past due': return 'error';
       case 'due': return 'warning';
       case 'pending': return 'info';
       case 'scheduled': return 'primary';
@@ -430,6 +490,20 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   // Get task status display
   const getTaskStatusDisplay = (task: any) => {
     if (task.status === 'completed') return 'completed';
+    
+    // Use dueDate for todos, scheduledDate for appointments
+    const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+    if (dateToUse) {
+      const scheduledDate = new Date(dateToUse + 'T00:00:00');
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
+      
+      if (scheduledDay < today) return 'Past Due';
+      if (scheduledDay.getTime() === today.getTime()) return 'due';
+      return 'scheduled';
+    }
+    
     if (task.status === 'overdue') return 'overdue';
     if (task.status === 'due') return 'due';
     if (task.status === 'scheduled') return 'scheduled';
@@ -512,8 +586,8 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             showDeal={entityType === 'deal' || entityType === 'salesperson'}
             showContacts={true}
             deal={entityType === 'deal' ? entity : undefined}
-            company={preloadedCompany}
-            contacts={preloadedContacts || []}
+            company={associatedCompany || preloadedCompany}
+            contacts={associatedContacts || preloadedContacts || []}
             salespeople={preloadedSalespeople || []}
             // Pass additional context data for association resolution
             deals={preloadedDeals || []}
@@ -532,9 +606,9 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
         <TasksList
           tasks={dashboardData?.mainDashboardTasks || []}
           emptyStateMessage={`No tasks for this ${entityType}`}
-          preloadedContacts={preloadedContacts}
+          preloadedContacts={associatedContacts || preloadedContacts}
           preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={preloadedCompany}
+          preloadedCompany={associatedCompany || preloadedCompany}
         />
       )}
       
@@ -562,18 +636,18 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             return Array.from(uniqueTasksMap.values());
           })()}
           emptyStateMessage="No tasks for this period"
-          preloadedContacts={preloadedContacts}
+          preloadedContacts={associatedContacts || preloadedContacts}
           preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={preloadedCompany}
+          preloadedCompany={associatedCompany || preloadedCompany}
         />
       )}
       {activeTab === 2 && (
         <TasksList
           tasks={dashboardData?.completed?.tasks || []}
           emptyStateMessage="No completed tasks"
-          preloadedContacts={preloadedContacts}
+          preloadedContacts={associatedContacts || preloadedContacts}
           preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={preloadedCompany}
+          preloadedCompany={associatedCompany || preloadedCompany}
         />
       )}
 

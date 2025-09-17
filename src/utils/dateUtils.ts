@@ -1,141 +1,89 @@
-/**
- * Date and Timezone Utilities
- * Handles consistent date formatting and timezone conversion across the app
- */
+import { FieldValue } from 'firebase/firestore';
 
 /**
- * Get the user's current timezone
+ * Safely convert a Date or FieldValue to a Date object
+ * @param value - Date object or FieldValue (serverTimestamp)
+ * @returns Date object or current date if value is FieldValue
+ */
+export const safeToDate = (value: Date | FieldValue | any): Date => {
+  // If it's already a Date object
+  if (value instanceof Date) {
+    return value;
+  }
+  
+  // If it's a Firestore Timestamp (from toDate())
+  if (value && typeof value.toDate === 'function') {
+    return value.toDate();
+  }
+  
+  // If it's a FieldValue (serverTimestamp), return current date
+  if (value && typeof value === 'object' && value._methodName === 'serverTimestamp') {
+    return new Date();
+  }
+  
+  // If it's a string or number, try to parse it
+  if (typeof value === 'string' || typeof value === 'number') {
+    return new Date(value);
+  }
+  
+  // Fallback to current date
+  return new Date();
+};
+
+/**
+ * Get job order age in days, handling both Date and FieldValue
+ * @param dateOpened - Date object or FieldValue
+ * @returns Number of days since the date
+ */
+export const getJobOrderAge = (dateOpened: Date | FieldValue | any): number => {
+  const date = safeToDate(dateOpened);
+  const now = new Date();
+  const diffTime = Math.abs(now.getTime() - date.getTime());
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+};
+
+/**
+ * Get current local date as ISO string (date only)
+ * @returns ISO string of current date
+ */
+export const getCurrentLocalDate = (): string => {
+  const date = new Date();
+  return date.toISOString().split('T')[0];
+};
+
+/**
+ * Get current local date and time as ISO string
+ * @returns ISO string of current date/time
+ */
+export const getCurrentLocalDateTime = (): string => {
+  return new Date().toISOString();
+};
+
+/**
+ * Convert local date time to UTC
+ * @param localDateTime - Local date time string
+ * @returns UTC date time string
+ */
+export const localDateTimeToUTC = (localDateTime: string): string => {
+  const date = new Date(localDateTime);
+  return date.toISOString();
+};
+
+/**
+ * Get user's timezone
+ * @returns User's timezone string
  */
 export const getUserTimezone = (): string => {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 };
 
 /**
- * Convert a local date string (YYYY-MM-DD) to a Date object in user's timezone
- */
-export const localDateToDate = (dateString: string): Date => {
-  if (!dateString) return new Date();
-  
-  const [year, month, day] = dateString.split('-').map(Number);
-  return new Date(year, month - 1, day); // month is 0-indexed
-};
-
-/**
- * Convert a local datetime string (YYYY-MM-DDTHH:mm) to UTC ISO string for Google Calendar
- */
-export const localDateTimeToUTC = (dateTimeString: string): string => {
-  if (!dateTimeString) return '';
-  
-  try {
-    const localDateTime = new Date(dateTimeString);
-    if (isNaN(localDateTime.getTime())) {
-      console.warn('Invalid datetime string:', dateTimeString);
-      return '';
-    }
-    
-    return localDateTime.toISOString();
-  } catch (error) {
-    console.warn('Error converting datetime to UTC:', error);
-    return '';
-  }
-};
-
-/**
- * Convert a UTC ISO string back to local datetime string for display
- */
-export const utcToLocalDateTime = (utcString: string): string => {
-  if (!utcString) return '';
-  
-  try {
-    const utcDate = new Date(utcString);
-    if (isNaN(utcDate.getTime())) {
-      console.warn('Invalid UTC string:', utcString);
-      return '';
-    }
-    
-    const year = utcDate.getFullYear();
-    const month = String(utcDate.getMonth() + 1).padStart(2, '0');
-    const day = String(utcDate.getDate()).padStart(2, '0');
-    const hours = String(utcDate.getHours()).padStart(2, '0');
-    const minutes = String(utcDate.getMinutes()).padStart(2, '0');
-    
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  } catch (error) {
-    console.warn('Error converting UTC to local datetime:', error);
-    return '';
-  }
-};
-
-/**
- * Get current date in user's local timezone as YYYY-MM-DD
- */
-export const getCurrentLocalDate = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-/**
- * Get current datetime in user's local timezone as YYYY-MM-DDTHH:mm
- */
-export const getCurrentLocalDateTime = (): string => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-};
-
-/**
- * Format a date for display in user's local timezone
+ * Format date for display
+ * @param dateString - Date string to format
+ * @returns Formatted date string
  */
 export const formatDateForDisplay = (dateString: string): string => {
-  if (!dateString) return '';
-  
-  try {
-    let date: Date;
-    
-    if (dateString.includes('T')) {
-      // ISO date string (e.g., "2025-08-17T00:00:00.000Z")
-      date = new Date(dateString);
-    } else {
-      // Date-only string (e.g., "2025-08-17") - treat as local date
-      const [year, month, day] = dateString.split('-').map(Number);
-      date = new Date(year, month - 1, day); // month is 0-indexed
-    }
-    
-    if (isNaN(date.getTime())) {
-      console.warn('Invalid date:', dateString);
-      return '';
-    }
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  } catch (error) {
-    console.warn('Error formatting date:', dateString, error);
-    return '';
-  }
-};
-
-/**
- * Calculate end time based on start time and duration in minutes
- */
-export const calculateEndTime = (startTime: string, durationMinutes: number): string => {
-  if (!startTime || !durationMinutes) return '';
-  
-  try {
-    const startDate = new Date(startTime);
-    const endDate = new Date(startDate.getTime() + durationMinutes * 60000);
-    return endDate.toISOString();
-  } catch (error) {
-    console.warn('Error calculating end time:', error);
-    return '';
-  }
+  const date = new Date(dateString);
+  return date.toLocaleDateString();
 };

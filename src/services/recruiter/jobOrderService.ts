@@ -2,6 +2,7 @@ import {
   collection, 
   doc, 
   addDoc, 
+  setDoc,
   updateDoc, 
   deleteDoc, 
   getDoc, 
@@ -10,7 +11,8 @@ import {
   where, 
   orderBy, 
   limit,
-  increment
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { JobOrder, JobOrderFormData, JobApplication, Candidate, Employee } from '../../types/recruiter/jobOrder';
@@ -26,20 +28,36 @@ export class JobOrderService {
   }
 
   // Generate next job order number for tenant
-  async getNextJobOrderNumber(tenantId: string): Promise<number> {
+  async getNextJobOrderNumber(tenantId: string): Promise<{ jobOrderSeq: number; jobOrderNumber: string }> {
     try {
-      const counterRef = doc(db, 'tenants', tenantId, 'counters', 'jobOrders');
+      const counterRef = doc(db, 'tenants', tenantId, 'counters', 'jobOrderNumber');
       const counterDoc = await getDoc(counterRef);
       
       if (counterDoc.exists()) {
         const currentCount = counterDoc.data().count || 0;
         const newCount = currentCount + 1;
-        await updateDoc(counterRef, { count: increment(1) });
-        return newCount;
+        const formattedNumber = `JO-${newCount.toString().padStart(4, '0')}`;
+        
+        await updateDoc(counterRef, { 
+          count: increment(1),
+          lastFormatted: formattedNumber,
+          updatedAt: serverTimestamp()
+        });
+        
+        return { jobOrderSeq: newCount, jobOrderNumber: formattedNumber };
       } else {
-        // Initialize counter
-        await updateDoc(counterRef, { count: 1 });
-        return 1;
+        // Initialize counter - use setDoc instead of updateDoc for new documents
+        const initialCount = 1;
+        const formattedNumber = `JO-${initialCount.toString().padStart(4, '0')}`;
+        
+        await setDoc(counterRef, { 
+          count: initialCount,
+          lastFormatted: formattedNumber,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        
+        return { jobOrderSeq: initialCount, jobOrderNumber: formattedNumber };
       }
     } catch (error) {
       console.error('Error getting next job order number:', error);
@@ -50,16 +68,23 @@ export class JobOrderService {
   // Create new job order
   async createJobOrder(tenantId: string, formData: JobOrderFormData, createdBy: string, dealId?: string): Promise<string> {
     try {
-      const jobOrderNumber = await this.getNextJobOrderNumber(tenantId);
+      const { jobOrderSeq, jobOrderNumber } = await this.getNextJobOrderNumber(tenantId);
       
       const jobOrderData: Omit<JobOrder, 'id'> = {
+        jobOrderSeq,
         jobOrderNumber,
         ...formData,
         tenantId,
-        dateOpened: new Date(),
+        // Add default values
+        status: formData.status || 'open',
+        visibility: formData.visibility || 'hidden',
+        headcountRequested: formData.headcountRequested || 0,
+        headcountFilled: formData.headcountFilled || 0,
+        // Use serverTimestamp for consistency
+        dateOpened: serverTimestamp(),
         createdBy,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         dealId
       };
 
@@ -77,7 +102,7 @@ export class JobOrderService {
       const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
       await updateDoc(jobOrderRef, {
         ...updates,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp()
       });
     } catch (error) {
       console.error('Error updating job order:', error);

@@ -763,6 +763,8 @@ const TasksList: React.FC<TasksListProps> = ({
     switch (status) {
       case 'completed': return 'success';
       case 'due': return 'warning';
+      case 'Past Due': return 'error';
+      case 'scheduled': return 'info';
       case 'upcoming': return 'info';
       case 'postponed': return 'default';
       case 'cancelled': return 'error';
@@ -772,6 +774,20 @@ const TasksList: React.FC<TasksListProps> = ({
 
   const getTaskStatusDisplay = (task: any) => {
     if (task.status === 'completed') return 'completed';
+    
+    // Use dueDate for todos, scheduledDate for appointments
+    const dateToUse = task.classification === 'todo' ? task.dueDate : task.scheduledDate;
+    if (dateToUse) {
+      const scheduledDate = new Date(dateToUse + 'T00:00:00');
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const scheduledDay = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate());
+      
+      if (scheduledDay < today) return 'Past Due';
+      if (scheduledDay.getTime() === today.getTime()) return 'due';
+      return 'scheduled';
+    }
+    
     if (task.status === 'due') return 'due';
     if (task.status === 'upcoming') return 'upcoming';
     if (task.status === 'postponed') return 'postponed';

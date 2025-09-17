@@ -139,6 +139,10 @@ export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDe
 export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
 export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
+
+// Auth Functions
+export { setTenantRole } from './auth/setTenantRole';
+export { inviteUser } from './auth/inviteUser';
 export { companyLocationMirrorStats };
 export { deleteDuplicateCompanies };
 export { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp };

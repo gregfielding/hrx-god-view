@@ -5,6 +5,23 @@ import { doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/fires
 import { auth, db } from '../firebase';
 import { Role, SecurityLevel, getAccessRole } from '../utils/AccessRoles';
 
+// New claims-based types
+export type ClaimsRole = 'Admin' | 'Recruiter' | 'Manager' | 'Worker' | 'Customer' | 'Tenant' | 'HRX';
+export type ClaimsSecurityLevel = '1' | '2' | '3' | '4' | '5' | '6' | '7';
+
+export interface TenantRole {
+  role: ClaimsRole;
+  securityLevel: ClaimsSecurityLevel;
+}
+
+export interface CustomClaims {
+  hrx?: boolean;
+  roles?: {
+    [tenantId: string]: TenantRole;
+  };
+  ver?: number;
+}
+
 type AuthContextType = {
   user: User | null;
   currentUser: User | null;
@@ -21,6 +38,12 @@ type AuthContextType = {
   tenantIds?: string[]; // Array of all tenant IDs the user belongs to
   activeTenant: any | null; // Active tenant object
   setActiveTenant: (tenant: any) => void; // Function to set active tenant
+  // New claims-based properties
+  isHRX: boolean;
+  claimsRoles: { [tenantId: string]: TenantRole };
+  currentClaimsRole?: ClaimsRole;
+  currentClaimsSecurityLevel?: ClaimsSecurityLevel;
+  refreshUserClaims: () => Promise<void>; // Function to refresh claims from token
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,6 +66,13 @@ const AuthContext = createContext<AuthContextType>({
   setActiveTenant: () => {
     console.warn('setActiveTenant called on uninitialized context');
   },
+  isHRX: false,
+  claimsRoles: {},
+  currentClaimsRole: undefined,
+  currentClaimsSecurityLevel: undefined,
+  refreshUserClaims: async () => {
+    console.warn('refreshUserClaims called on uninitialized context');
+  },
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -51,6 +81,66 @@ export const useAuth = () => useContext(AuthContext);
 export const useActiveTenantId = () => {
   const { activeTenant } = useAuth();
   return activeTenant?.id;
+};
+
+// Helper hook to get the current user's role for a specific tenant
+export const useTenantRole = (tenantId: string) => {
+  const { claimsRoles } = useAuth();
+  return claimsRoles[tenantId];
+};
+
+// Helper hook to check if user has a specific role in the active tenant
+export const useHasRole = (role: ClaimsRole) => {
+  const { currentClaimsRole, isHRX } = useAuth();
+  return isHRX || currentClaimsRole === role;
+};
+
+// Helper hook to check if user has any of the specified roles in the active tenant
+export const useHasAnyRole = (roles: ClaimsRole[]) => {
+  const { currentClaimsRole, isHRX } = useAuth();
+  return isHRX || roles.includes(currentClaimsRole!);
+};
+
+// Helper hook to check if user is HRX
+export const useIsHRX = () => {
+  const { isHRX } = useAuth();
+  return isHRX;
+};
+
+// Helper hook to check if user is admin in the active tenant
+export const useIsTenantAdmin = () => {
+  const { isHRX, currentClaimsRole } = useAuth();
+  return isHRX || currentClaimsRole === 'Admin';
+};
+
+// Helper hook to check if user has any of the specified roles in a specific tenant
+export const useHasRoleInTenant = (tenantId: string, roles: ClaimsRole[]) => {
+  const { isHRX, claimsRoles } = useAuth();
+  if (isHRX) return true; // HRX users have all roles
+  const tenantRole = claimsRoles[tenantId];
+  return tenantRole ? roles.includes(tenantRole.role) : false;
+};
+
+// Helper hook to require specific roles in a tenant (throws error if not authorized)
+export const useRequireRole = (tenantId: string, roles: ClaimsRole[]) => {
+  const { isHRX, claimsRoles, currentUser } = useAuth();
+  
+  if (!currentUser) {
+    throw new Error('User not authenticated');
+  }
+  
+  if (isHRX) return; // HRX users are always authorized
+  
+  const tenantRole = claimsRoles[tenantId];
+  if (!tenantRole || !roles.includes(tenantRole.role)) {
+    throw new Error(`User does not have required role. Required: ${roles.join(' or ')}, Current: ${tenantRole?.role || 'none'}`);
+  }
+};
+
+// Helper hook to refresh user claims (useful after role changes)
+export const useRefreshClaims = () => {
+  const { refreshUserClaims } = useAuth();
+  return refreshUserClaims;
 };
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -68,6 +158,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const lastWrittenActiveTenantIdRef = useRef<string | undefined>(undefined);
   // Add new state for tenantRoles
   const [tenantRoles, setTenantRoles] = useState<{ [tenantId: string]: { role: Role, securityLevel: SecurityLevel } }>({});
+  
+  // New claims-based state
+  const [isHRX, setIsHRX] = useState<boolean>(false);
+  const [claimsRoles, setClaimsRoles] = useState<{ [tenantId: string]: TenantRole }>({});
+  const [currentClaimsRole, setCurrentClaimsRole] = useState<ClaimsRole | undefined>(undefined);
+  const [currentClaimsSecurityLevel, setCurrentClaimsSecurityLevel] = useState<ClaimsSecurityLevel | undefined>(undefined);
 
   // Update tenantId when activeTenant changes and save to database
   // Comment out this useEffect to break the infinite loop
@@ -100,6 +196,86 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // }, [activeTenant, tenantRoles]);
 
   const accessRole = getAccessRole(role, securityLevel);
+
+  // Helper function to convert claims role to legacy role
+  const convertClaimsRoleToLegacy = (claimsRole: ClaimsRole): Role => {
+    switch (claimsRole) {
+      case 'Admin':
+        return 'HRX'; // Admin maps to HRX for legacy compatibility
+      case 'Recruiter':
+      case 'Manager':
+      case 'Worker':
+      case 'Customer':
+        return 'Tenant';
+      default:
+        return 'Tenant';
+    }
+  };
+
+  // Helper function to convert claims security level to legacy security level
+  const convertClaimsSecurityToLegacy = (claimsSecurity: ClaimsSecurityLevel): SecurityLevel => {
+    // Map claims security levels (1-7) to legacy security levels (0-7)
+    switch (claimsSecurity) {
+      case '7': return '7'; // HRX Admin
+      case '6': return '6'; // HRX Manager
+      case '5': return '5'; // Worker
+      case '4': return '4'; // Hired Staff
+      case '3': return '3'; // Flex
+      case '2': return '2'; // Applicant
+      case '1': return '1'; // Dismissed
+      default: return '3';
+    }
+  };
+
+  // Helper function to load claims from user token (force fresh token)
+  const loadClaimsFromUser = async (user: User): Promise<CustomClaims> => {
+    try {
+      const tokenResult = await user.getIdTokenResult(true); // Force fresh token
+      const claims = tokenResult.claims as CustomClaims;
+      console.log('=== CLAIMS DEBUG ===');
+      console.log('Raw claims:', claims);
+      console.log('claims.hrx:', claims.hrx);
+      console.log('claims.roles:', claims.roles);
+      console.log('=== END CLAIMS DEBUG ===');
+      return claims || {};
+    } catch (error) {
+      console.error('Failed to load claims from user token:', error);
+      return {};
+    }
+  };
+
+  // Helper function to refresh user claims (useful when switching tenants)
+  const refreshUserClaims = async (): Promise<void> => {
+    if (currentUser) {
+      try {
+        const claims = await loadClaimsFromUser(currentUser);
+        const claimsRolesMap = claims.roles || {};
+        const claimsTenantIds = Object.keys(claimsRolesMap);
+        const isHRXUser = !!claims.hrx;
+
+        // Update claims-based state
+        setIsHRX(isHRXUser);
+        setClaimsRoles(claimsRolesMap);
+
+        // Update tenant IDs if they changed
+        if (JSON.stringify(claimsTenantIds) !== JSON.stringify(tenantIds)) {
+          setTenantIds(claimsTenantIds);
+        }
+
+        // Update role/security level for active tenant
+        const activeTenantId = activeTenant?.id;
+        if (activeTenantId && claimsRolesMap[activeTenantId]) {
+          const claimsRole = claimsRolesMap[activeTenantId];
+          setCurrentClaimsRole(claimsRole.role);
+          setCurrentClaimsSecurityLevel(claimsRole.securityLevel);
+          setRole(convertClaimsRoleToLegacy(claimsRole.role));
+          setSecurityLevel(convertClaimsSecurityToLegacy(claimsRole.securityLevel));
+        }
+      } catch (error) {
+        console.error('Failed to refresh user claims:', error);
+      }
+    }
+  };
 
   // Helper function to create default user document
   const createDefaultUserDoc = async (user: User) => {
@@ -136,6 +312,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setCurrentUser(user);
 
       if (user) {
+        // Load claims from user token (primary source of truth)
+        const claims = await loadClaimsFromUser(user);
+        const claimsRolesMap = claims.roles || {};
+        const claimsTenantIds = Object.keys(claimsRolesMap);
+        const isHRXUser = !!claims.hrx;
+
+        // Set claims-based state
+        setIsHRX(isHRXUser);
+        setClaimsRoles(claimsRolesMap);
+
         const userRef = doc(db, 'users', user.uid);
 
         const unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
@@ -149,7 +335,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             let userTenantIds: string[] = [];
             let primaryTenantId: string | undefined = undefined;
 
-            if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
+            // Prioritize claims-based tenant IDs, fallback to Firestore
+            if (claimsTenantIds.length > 0) {
+              userTenantIds = claimsTenantIds;
+              primaryTenantId = userData.activeTenantId || userTenantIds[0];
+            } else if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
               tenantRolesMap = userData.tenantIds;
               userTenantIds = Object.keys(userData.tenantIds);
               primaryTenantId = userData.activeTenantId || userData.tenantId || userTenantIds[0];
@@ -173,14 +363,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setTenantIds(userTenantIds);
             setTenantRoles(tenantRolesMap);
 
-            // Set role/securityLevel for the active tenant
-            if (userData.activeTenantId && tenantRolesMap[userData.activeTenantId]) {
-              setRole(tenantRolesMap[userData.activeTenantId].role || 'Tenant');
-              setSecurityLevel(tenantRolesMap[userData.activeTenantId].securityLevel || '5');
-            } else if (primaryTenantId && tenantRolesMap[primaryTenantId]) {
-              // Use the primary tenant's role/security level if no activeTenantId
-              setRole(tenantRolesMap[primaryTenantId].role || 'Tenant');
-              setSecurityLevel(tenantRolesMap[primaryTenantId].securityLevel || '5');
+            // Set role/securityLevel based on claims (primary) or Firestore (fallback)
+            const activeTenantId = userData.activeTenantId || primaryTenantId;
+            
+            if (activeTenantId && claimsRolesMap[activeTenantId]) {
+              // Use claims-based role for active tenant
+              const claimsRole = claimsRolesMap[activeTenantId];
+              setCurrentClaimsRole(claimsRole.role);
+              setCurrentClaimsSecurityLevel(claimsRole.securityLevel);
+              setRole(convertClaimsRoleToLegacy(claimsRole.role));
+              setSecurityLevel(convertClaimsSecurityToLegacy(claimsRole.securityLevel));
+            } else if (activeTenantId && tenantRolesMap[activeTenantId]) {
+              // Fallback to Firestore tenant roles
+              setRole(tenantRolesMap[activeTenantId].role || 'Tenant');
+              setSecurityLevel(tenantRolesMap[activeTenantId].securityLevel || '5');
             } else if (userData.role && userData.securityLevel) {
               // Fallback to the user's direct role/security level
               setRole(userData.role);
@@ -267,6 +463,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               setTenantId(undefined);
               setTenantIds([]);
               setActiveTenant(null);
+              // Reset claims-based state
+              setIsHRX(false);
+              setClaimsRoles({});
+              setCurrentClaimsRole(undefined);
+              setCurrentClaimsSecurityLevel(undefined);
               setLoading(false);
             }
             return; // Don't set loading to false yet, wait for the new document
@@ -285,6 +486,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setTenantId(undefined);
         setTenantIds([]);
         setActiveTenant(null);
+        // Reset claims-based state
+        setIsHRX(false);
+        setClaimsRoles({});
+        setCurrentClaimsRole(undefined);
+        setCurrentClaimsSecurityLevel(undefined);
         setLoading(false);
       }
     });
@@ -304,6 +510,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setTenantIds([]);
     setActiveTenant(null);
     lastWrittenActiveTenantIdRef.current = undefined;
+    // Reset claims-based state
+    setIsHRX(false);
+    setClaimsRoles({});
+    setCurrentClaimsRole(undefined);
+    setCurrentClaimsSecurityLevel(undefined);
   };
 
   return (
@@ -324,6 +535,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         tenantIds,
         activeTenant,
         setActiveTenant,
+        // New claims-based properties
+        isHRX,
+        claimsRoles,
+        currentClaimsRole,
+        currentClaimsSecurityLevel,
+        refreshUserClaims,
       }}
     >
       {children}

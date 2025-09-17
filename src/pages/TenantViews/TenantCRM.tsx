@@ -5272,6 +5272,15 @@ const CompaniesTab: React.FC<{
     // Check if deal has a status field, otherwise default to 'open'
     const status = deal.status || 'open';
     
+    // Debug logging
+    console.log('🔍 Deal status debug:', {
+      dealId: deal.id,
+      dealName: deal.name,
+      dealStatus: deal.status,
+      resolvedStatus: status,
+      dealKeys: Object.keys(deal)
+    });
+    
     const statusMap = {
       open: { label: 'Open', color: 'default', emoji: '⚪' },
       won: { label: 'Won', color: 'success', emoji: '🟢' },

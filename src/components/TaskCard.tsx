@@ -141,6 +141,15 @@ const TaskCard: React.FC<TaskCardProps> = ({
   };
 
   const contactDisplay = useMemo(() => {
+    // Debug logging
+    console.log('🔍 TaskCard contact resolution:', {
+      taskId: task.id,
+      taskTitle: task.title,
+      taskContactIds: task.associations?.contacts,
+      contactsProp: contacts,
+      contactsLength: contacts?.length
+    });
+
     // First, try to get contacts from task associations
     if (task.associations?.contacts && task.associations.contacts.length > 0) {
       // If we have contact IDs in task associations, try to resolve them
@@ -154,6 +163,12 @@ const TaskCard: React.FC<TaskCardProps> = ({
           taskContactIds.includes(contact.id)
         );
         
+        console.log('🔍 TaskCard matched contacts:', {
+          taskContactIds,
+          matchedContacts,
+          contactKeys: matchedContacts.map(c => Object.keys(c))
+        });
+        
         if (matchedContacts.length > 0) {
           if (matchedContacts.length === 1) {
             const contactName = matchedContacts[0].fullName || `${matchedContacts[0].firstName} ${matchedContacts[0].lastName}`;
@@ -163,9 +178,9 @@ const TaskCard: React.FC<TaskCardProps> = ({
         }
       }
 
-      // Fallback: show the contact ID if we can't find the contact object
+      // Fallback: show a more user-friendly message if we can't find the contact object
       if (taskContactIds.length === 1) {
-        return taskContactIds[0];
+        return `Contact (${taskContactIds[0].substring(0, 8)}...)`;
       }
       return `${taskContactIds.length} contacts`;
     }

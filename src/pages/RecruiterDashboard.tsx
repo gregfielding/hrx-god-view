@@ -21,6 +21,7 @@ import {
   LinearProgress,
   Skeleton,
 } from '@mui/material';
+import Applications from './Applications';
 import {
   Work as WorkIcon,
   People as PeopleIcon,
@@ -1023,29 +1024,7 @@ const RecruiterDashboard: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        <Box>
-          <Typography variant="h5" gutterBottom>
-            Applications
-          </Typography>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            Application management interface will be implemented here. 
-            This will include reviewing and processing job applications.
-          </Alert>
-          <Grid container spacing={2}>
-            <Grid item>
-              <Chip label="New" color="primary" />
-            </Grid>
-            <Grid item>
-              <Chip label="Screened" color="secondary" />
-            </Grid>
-            <Grid item>
-              <Chip label="Advanced" color="success" />
-            </Grid>
-            <Grid item>
-              <Chip label="Hired" color="info" />
-            </Grid>
-          </Grid>
-        </Box>
+        <Applications />
       </TabPanel>
 
       <TabPanel value={tabValue} index={4}>

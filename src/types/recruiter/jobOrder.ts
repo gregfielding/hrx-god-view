@@ -1,13 +1,16 @@
+import { FieldValue } from 'firebase/firestore';
+
 export interface JobOrder {
   id: string;
-  jobOrderNumber: number; // Auto-increment per tenant
+  jobOrderSeq: number; // Raw auto-increment per tenant
+  jobOrderNumber: string; // Formatted number (e.g., "JO-0001")
   jobOrderName: string;
   jobOrderDescription?: string;
   status: JobOrderStatus;
   tenantId: string;
   startDate?: Date;
   endDate?: Date;
-  dateOpened: Date;
+  dateOpened: Date | FieldValue;
   poNumber?: string;
   
   // Company / Worksite
@@ -26,6 +29,8 @@ export interface JobOrder {
   payRate: number;
   billRate: number;
   workersNeeded: number;
+  headcountRequested: number; // Default: 0
+  headcountFilled: number; // Default: 0
   workersCompCode?: string;
   workersCompRate?: number;
   checkInInstructions?: string;
@@ -33,6 +38,7 @@ export interface JobOrder {
   
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
+  visibility: JobsBoardVisibility; // Alias for consistency
   showPayRate: boolean;
   showStartDate: boolean;
   showShiftTimes: boolean;
@@ -72,8 +78,8 @@ export interface JobOrder {
   
   // Metadata
   createdBy: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | FieldValue;
+  updatedAt: Date | FieldValue;
   dealId?: string; // Link back to originating CRM deal
 }
 
@@ -133,6 +139,8 @@ export interface JobOrderFormData {
   payRate: number;
   billRate: number;
   workersNeeded: number;
+  headcountRequested?: number; // Optional in form, defaults to 0
+  headcountFilled?: number; // Optional in form, defaults to 0
   workersCompCode?: string;
   workersCompRate?: number;
   checkInInstructions?: string;
@@ -140,6 +148,7 @@ export interface JobOrderFormData {
   
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
+  visibility?: JobsBoardVisibility; // Optional in form, defaults to 'hidden'
   showPayRate: boolean;
   showStartDate: boolean;
   showShiftTimes: boolean;

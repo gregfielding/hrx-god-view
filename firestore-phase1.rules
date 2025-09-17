@@ -1,0 +1,300 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if user is HRX admin
+    function isHRX() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.orgType == 'HRX';
+    }
+    
+    // Check if user is assigned to tenant
+    function isAssignedToTenant(tenantId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantIds[tenantId] != null);
+    }
+    
+    // Check if user is tenant admin
+    function isTenantAdmin(tenantId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin';
+    }
+    
+    // Check if user is tenant manager
+    function isTenantManager(tenantId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Admin', 'Manager'];
+    }
+    
+    // Check if user is tenant user
+    function isTenantUser(tenantId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+    }
+    
+    // Check if user has specific role in tenant
+    function hasRole(tenantId, allowedRoles) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in allowedRoles;
+    }
+    
+    // Check if user is recruiter or admin
+    function isRecruiterOrAdmin(tenantId) {
+      return hasRole(tenantId, ['admin', 'recruiter', 'Admin', 'Recruiter']);
+    }
+    
+    // ============================================================================
+    // TOP-LEVEL COLLECTIONS
+    // ============================================================================
+    
+    // Users collection - only HRX can manage, users can read their own
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isHRX() || request.auth.uid == userId);
+      allow write: if isHRX();
+    }
+    
+    // Tenants collection - only HRX can manage, tenant users can read their tenant
+    match /tenants/{tenantId} {
+      allow read: if isHRX() || isAssignedToTenant(tenantId);
+      allow write: if isHRX();
+      
+      // ============================================================================
+      // PHASE 1 TARGET COLLECTIONS
+      // ============================================================================
+      
+      // Job Orders (NEW - Phase 1 target structure)
+      match /jobOrders/{jobOrderId} {
+        allow read: if isHRX() || isTenantUser(tenantId);
+        allow write: if isHRX() || isRecruiterOrAdmin(tenantId);
+      }
+      
+      // Applications (NEW - Phase 1 target structure)
+      match /applications/{applicationId} {
+        allow read: if isHRX() || isTenantUser(tenantId);
+        allow write: if isHRX() || isRecruiterOrAdmin(tenantId);
+      }
+      
+      // User Groups (NEW - Phase 1 target structure)
+      match /userGroups/{groupId} {
+        allow read: if isHRX() || isTenantUser(tenantId);
+        allow write: if isHRX() || isRecruiterOrAdmin(tenantId);
+      }
+      
+      // Job Board Posts (NEW - Phase 1 target structure)
+      match /jobBoardPosts/{postId} {
+        allow read: if isHRX() || isTenantUser(tenantId);
+        allow write: if isHRX() || isRecruiterOrAdmin(tenantId);
+      }
+      
+      // ============================================================================
+      // EXISTING CRM COLLECTIONS (keep as-is)
+      // ============================================================================
+      
+      // CRM Companies
+      match /crm_companies/{companyId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+        
+        // CRM Contacts (under companies)
+        match /crm_contacts/{contactId} {
+          allow read, write: if isHRX() || isTenantUser(tenantId);
+        }
+        
+        // CRM Deals (under companies)
+        match /crm_deals/{dealId} {
+          allow read, write: if isHRX() || isTenantUser(tenantId);
+        }
+        
+        // Locations (under companies - correct structure)
+        match /locations/{locationId} {
+          allow read, write: if isHRX() || isTenantUser(tenantId);
+        }
+      }
+      
+      // Users (tenant-level)
+      match /users/{userId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // ============================================================================
+      // EXISTING SETTINGS COLLECTIONS
+      // ============================================================================
+      
+      // Settings
+      match /settings/{settingsId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // AI Settings
+      match /aiSettings/{settingsId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+      
+      // Branding
+      match /branding/{brandingId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // Integrations
+      match /integrations/{integrationId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // AI Training
+      match /aiTraining/{trainingId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // Modules
+      match /modules/{moduleId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // HRX-FLEX MODULE SUBCOLLECTIONS
+        match /jobTitles/{jobTitleId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        match /uniformDefaults/{uniformId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        match /positions/{positionId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+        
+        // CATCH-ALL FOR HRX-FLEX SUBCOLLECTIONS
+        match /{subcollection}/{documentId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // ============================================================================
+      // LEGACY COLLECTIONS (for migration period - will be removed)
+      // ============================================================================
+      
+      // Legacy Recruiter Collections (to be cleaned up)
+      match /recruiter_jobOrders/{jobOrderId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+      }
+      
+      match /recruiter_candidates/{candidateId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+      }
+      
+      match /recruiter_applications/{applicationId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+      }
+      
+      match /recruiter_assignments/{assignmentId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+      }
+      
+      match /recruiter_jobsBoardPosts/{postId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+      }
+      
+      // Legacy Tasks
+      match /tasks/{taskId} {
+        allow read, write: if isHRX() || isTenantUser(tenantId);
+        // Allow users to read tasks assigned to them
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) && 
+                       resource.data.assignedTo == request.auth.uid;
+      }
+      
+      // Counters (for auto-incrementing IDs) - Restricted writes
+      match /counters/{counterId} {
+        allow read: if isHRX() || isTenantUser(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+    }
+    
+    // ============================================================================
+    // GLOBAL COLLECTIONS (if any)
+    // ============================================================================
+    
+    // App-level settings (only HRX)
+    match /appSettings/{settingsId} {
+      allow read, write: if isHRX();
+    }
+    
+    // App-level AI settings (only HRX)
+    match /appAiSettings/{settingsId} {
+      allow read, write: if isHRX();
+    }
+    
+    // Modules (global)
+    match /modules/{moduleId} {
+      allow read, write: if isHRX();
+    }
+  }
+  
+  // ============================================================================
+  // PHASE 2.2.1 - APPLICATIONS RULES
+  // ============================================================================
+  
+  // Standalone applications (talent pool)
+  match /tenants/{tenantId}/applications/{appId} {
+    allow read: if isHRX() || isTenantUser(tenantId);
+    allow create, update, delete: if isHRX() || (isTenantUser(tenantId) && isRecruiterOrAdmin(tenantId))
+      && request.resource.data.tenantId == tenantId;
+  }
+
+  // Job-linked applications
+  match /tenants/{tenantId}/job_orders/{jobOrderId}/applications/{appId} {
+    allow read: if isHRX() || isTenantUser(tenantId);
+    allow create, update, delete: if isHRX() || (isTenantUser(tenantId) && isRecruiterOrAdmin(tenantId))
+      && request.resource.data.tenantId == tenantId
+      && request.resource.data.jobOrderId == jobOrderId;
+  }
+
+  // ============================================================================
+  // PHASE 2.2 - ASSIGNMENTS & SCHEDULING RULES
+  // ============================================================================
+
+  // Assignments (subcollections under job orders)
+  match /tenants/{tenantId}/job_orders/{jobOrderId}/assignments/{assignmentId} {
+    allow read: if isHRX() || isTenantUser(tenantId);
+    allow create, update: if isHRX() || (isTenantUser(tenantId) && isRecruiterOrAdmin(tenantId))
+      && request.resource.data.tenantId == tenantId
+      && request.resource.data.jobOrderId == jobOrderId;
+    allow delete: if isHRX() || isTenantAdmin(tenantId);
+  }
+
+  // Shift Templates
+  match /tenants/{tenantId}/shift_templates/{templateId} {
+    allow read: if isHRX() || isTenantUser(tenantId);
+    allow create, update, delete: if isHRX() || (isTenantUser(tenantId) && isRecruiterOrAdmin(tenantId))
+      && request.resource.data.tenantId == tenantId;
+  }
+
+  // Timesheets
+  match /tenants/{tenantId}/timesheets/{timesheetId} {
+    allow read: if isHRX() || isTenantUser(tenantId);
+    allow create, update: if isHRX() || (isTenantUser(tenantId) && isRecruiterOrAdmin(tenantId))
+      && request.resource.data.tenantId == tenantId;
+    allow delete: if isHRX() || isTenantAdmin(tenantId);
+  }
+}
