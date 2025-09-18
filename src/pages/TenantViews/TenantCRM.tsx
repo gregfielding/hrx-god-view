@@ -170,6 +170,7 @@ const TenantCRM: React.FC = () => {
   
   // State for data
   const [contacts, setContacts] = useState<any[]>([]);
+  const [allContacts, setAllContacts] = useState<any[]>([]); // All contacts for TasksDashboard
   const [companies, setCompanies] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [allDeals, setAllDeals] = useState<any[]>([]);
@@ -769,6 +770,7 @@ const TenantCRM: React.FC = () => {
       // Update state with all data
       setAllCompanies(allCompaniesData);
       setAllDeals(allDealsData);
+      setAllContacts(allContactsData); // Set all contacts for TasksDashboard
       
       // Mark initial data as loaded
       setInitialDataLoaded(true);
@@ -7820,7 +7822,7 @@ const SalesDashboard: React.FC<{
   }), [currentUser?.uid, myDeals, myCompanies, myContacts]);
 
   // Memoize the preloaded arrays to prevent unnecessary re-renders
-  const memoizedContacts = React.useMemo(() => contacts, [contacts]);
+  const memoizedContacts = React.useMemo(() => contacts, [contacts]); // Use contacts for TasksDashboard
   const memoizedMyDeals = React.useMemo(() => myDeals, [myDeals]);
   const memoizedAllCompanies = React.useMemo(() => allCompanies, [allCompanies]);
   const memoizedEmptyArray = React.useMemo(() => [], []);

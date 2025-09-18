@@ -322,9 +322,16 @@ const TenantWorkforce: React.FC = () => {
   const fetchManagers = async () => {
     if (!effectiveTenantId) return;
     try {
-      const q = collection(db, 'tenants', effectiveTenantId, 'managers');
-      const snapshot = await getDocs(q);
-      setManagers(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      // Fetch managers from users collection with security levels 5, 6, 7 (managers and admins)
+      const usersQuery = query(
+        collection(db, 'users'),
+        where('tenantId', '==', effectiveTenantId),
+        where('securityLevel', 'in', ['5', '6', '7'])
+      );
+      const usersSnap = await getDocs(usersQuery);
+      const managerData = usersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      console.log('Fetched managers:', managerData);
+      setManagers(managerData);
     } catch (err: any) {
       console.warn('Could not fetch managers:', err);
       setManagers([]);
