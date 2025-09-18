@@ -150,7 +150,7 @@ export async function generateMenuItems(
         text: 'My Assignments',
         to: '/assignments',
         icon: 'assignment_turned_in',
-        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
+        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
       },
 
       {
@@ -187,13 +187,13 @@ export async function generateMenuItems(
         text: 'Mobile App',
         to: '/mobile-app',
         icon: 'phone_iphone',
-        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
+        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
       },
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
         icon: 'notifications',
-        requiredRoles: ['Worker'], // Worker access only (security level 2-5)
+        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
       },
       // {
       //   text: 'Help',

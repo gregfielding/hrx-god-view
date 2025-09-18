@@ -27,7 +27,7 @@ import {
   TrendingUp as TrendingUpIcon,
   Assignment as AssignmentIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -152,7 +152,28 @@ const TenantSalesperson: React.FC = () => {
       }
     };
 
+    const loadContacts = async () => {
+      try {
+        console.log('🔍 Loading contacts for TenantSalesperson...');
+        const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+        const contactsQuery = query(contactsRef, orderBy('createdAt', 'desc'), limit(100));
+        const contactsSnapshot = await getDocs(contactsQuery);
+        
+        const contactsData = contactsSnapshot.docs.map(doc => ({ 
+          id: doc.id, 
+          ...doc.data() 
+        }));
+        
+        console.log('✅ Loaded contacts for TenantSalesperson:', contactsData.length);
+        setContacts(contactsData);
+      } catch (error) {
+        console.error('Error loading contacts:', error);
+        setContacts([]);
+      }
+    };
+
     loadSalesperson();
+    loadContacts();
   }, [salespersonId, tenantId]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -519,6 +540,11 @@ const TenantSalesperson: React.FC = () => {
           entityType="salesperson"
           tenantId={tenantId} 
           entity={salesperson}
+          preloadedContacts={contacts}
+          preloadedSalespeople={[]}
+          preloadedCompany={null}
+          preloadedDeals={[]}
+          preloadedCompanies={[]}
         />
       </TabPanel>
     </Box>

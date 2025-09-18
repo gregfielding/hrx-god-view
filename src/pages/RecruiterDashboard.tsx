@@ -48,6 +48,8 @@ import { useAuth } from '../contexts/AuthContext';
 import TasksDashboard from '../components/TasksDashboard';
 import CalendarWidget from '../components/CalendarWidget';
 import JobOrdersManagement from '../components/recruiter/JobOrdersManagement';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -105,10 +107,15 @@ const RecruiterDashboard: React.FC = () => {
     applicantsTrend: [8, 12, 15, 10, 14, 11, 12], // 7-day trend
   });
 
+  // Contact data for task cards
+  const [preloadedContacts, setPreloadedContacts] = useState<any[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+
   useEffect(() => {
     if (tenantId) {
       loadUserData();
       loadKPIs();
+      loadContacts();
     }
   }, [tenantId, dateRange]);
 
@@ -126,6 +133,31 @@ const RecruiterDashboard: React.FC = () => {
       console.error('Error loading user data:', error);
     } finally {
       setLoadingUser(false);
+    }
+  };
+
+  const loadContacts = async () => {
+    if (!tenantId) return;
+    
+    setLoadingContacts(true);
+    try {
+      console.log('🔍 Loading contacts for RecruiterDashboard...');
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const contactsQuery = query(contactsRef, orderBy('createdAt', 'desc'), limit(100));
+      const contactsSnapshot = await getDocs(contactsQuery);
+      
+      const contactsData = contactsSnapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      }));
+      
+      console.log('✅ Loaded contacts for RecruiterDashboard:', contactsData.length);
+      setPreloadedContacts(contactsData);
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+      setPreloadedContacts([]);
+    } finally {
+      setLoadingContacts(false);
     }
   };
 
@@ -887,7 +919,7 @@ const RecruiterDashboard: React.FC = () => {
                         entityType="salesperson"
                         tenantId={tenantId}
                         entity={tasksEntity}
-                        preloadedContacts={[]}
+                        preloadedContacts={preloadedContacts}
                         preloadedSalespeople={[]}
                         preloadedCompany={null}
                         preloadedDeals={[]}
