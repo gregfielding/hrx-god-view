@@ -479,25 +479,33 @@ export async function generateMenuItems(
     );
   }
 
-  // Filter menu items based on security level
+  // Filter menu items based on security level and roles
   return menuItems.filter(item => {
-    if (!item.accessRoles) return true;
+    // If no access requirements, show the item
+    if (!item.accessRoles && !item.requiredRoles) return true;
     
     // Get the user's security level for the active tenant
     const userSecurityLevel = activeTenantData?.securityLevel || '0';
-    
-    // Convert security level to number for comparison
     const userLevel = parseInt(userSecurityLevel);
     
-    // Check if user has access to any of the required roles
-    // Only show items that the user has explicit access to
-    for (const requiredRole of item.accessRoles) {
-      if (requiredRole.startsWith('hrx_')) {
-        const requiredLevel = parseInt(requiredRole.split('_')[1]);
-        if (userLevel === requiredLevel) return true;
-      } else if (requiredRole.startsWith('tenant_')) {
-        const requiredLevel = parseInt(requiredRole.split('_')[1]);
-        if (userLevel === requiredLevel) return true;
+    // Check legacy accessRoles (security level based)
+    if (item.accessRoles) {
+      for (const requiredRole of item.accessRoles) {
+        if (requiredRole.startsWith('hrx_')) {
+          const requiredLevel = parseInt(requiredRole.split('_')[1]);
+          if (userLevel === requiredLevel) return true;
+        } else if (requiredRole.startsWith('tenant_')) {
+          const requiredLevel = parseInt(requiredRole.split('_')[1]);
+          if (userLevel === requiredLevel) return true;
+        }
+      }
+    }
+    
+    // Check new requiredRoles (claims-based)
+    if (item.requiredRoles && activeTenantData?.role) {
+      const userRole = activeTenantData.role;
+      if (item.requiredRoles.includes(userRole as ClaimsRole)) {
+        return true;
       }
     }
     
