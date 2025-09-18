@@ -144,7 +144,7 @@ export async function generateMenuItems(
         text: 'Sales CRM',
         to: '/crm',
         icon: 'business',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager', 'Recruiter', 'Worker'] as ClaimsRole[], // Admin, Manager, Recruiter, and Worker access
       }] : []),
       {
         text: 'My Assignments',
