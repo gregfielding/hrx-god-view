@@ -502,9 +502,13 @@ export async function generateMenuItems(
     }
     
     // Check new requiredRoles (claims-based)
-    if (item.requiredRoles && activeTenantData?.role) {
-      const userRole = activeTenantData.role;
-      if (item.requiredRoles.includes(userRole as ClaimsRole)) {
+    if (item.requiredRoles) {
+      // First try to use claims-based role if available
+      if (currentClaimsRole && item.requiredRoles.includes(currentClaimsRole)) {
+        return true;
+      }
+      // Fallback to Firestore role
+      if (activeTenantData?.role && item.requiredRoles.includes(activeTenantData.role as ClaimsRole)) {
         return true;
       }
     }
