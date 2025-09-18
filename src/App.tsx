@@ -123,6 +123,21 @@ function MyTenantWrapper() {
   return <div>Redirecting to your tenant...</div>;
 }
 
+function ProfileRedirect() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  
+  useEffect(() => {
+    if (user?.uid) {
+      navigate(`/users/${user.uid}`, { replace: true });
+    } else {
+      navigate('/login', { replace: true });
+    }
+  }, [user, navigate]);
+  
+  return <div>Redirecting to your profile...</div>;
+}
+
 function App() {
   console.log('App rendered');
   useEffect(() => {
@@ -151,6 +166,7 @@ function App() {
       >
         <Route index element={<Dashboard />} />
         <Route path="dashboard" element={<AIDashboard />} />
+        <Route path="profile" element={<ProfileRedirect />} />
 
         {/* Admin/Manager only routes */}
         <Route path="users" element={
