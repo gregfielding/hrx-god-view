@@ -24,7 +24,8 @@ interface GenerateJobOrderButtonProps {
   dealName: string;
   companyId?: string;
   companyName?: string;
-  onJobOrderCreated?: (jobOrderId: string) => void;
+  jobTitles?: string[];
+  onJobOrderCreated?: (jobOrderIds: string[]) => void;
   disabled?: boolean;
   variant?: 'contained' | 'outlined' | 'text';
   size?: 'small' | 'medium' | 'large';
@@ -36,6 +37,7 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
   dealName,
   companyId,
   companyName,
+  jobTitles = [],
   onJobOrderCreated,
   disabled = false,
   variant = 'contained',
@@ -60,24 +62,26 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
 
     try {
       const jobOrderService = JobOrderService.getInstance();
-      const jobOrderId = await jobOrderService.createJobOrderFromDeal(tenantId, dealId, user.uid);
+      const jobOrderIds = await jobOrderService.createJobOrderFromDeal(tenantId, dealId, user.uid);
       
-      setSuccess(`Job Order created successfully! Job Order ID: ${jobOrderId}`);
+      const jobOrderCount = jobOrderIds.length;
+      const jobOrderText = jobOrderCount === 1 ? 'Job Order' : 'Job Orders';
+      setSuccess(`${jobOrderCount} ${jobOrderText} created successfully!`);
       
       // Call the callback if provided
       if (onJobOrderCreated) {
-        onJobOrderCreated(jobOrderId);
+        onJobOrderCreated(jobOrderIds);
       }
       
       // Close dialog after a short delay
       setTimeout(() => {
         setDialogOpen(false);
         setSuccess(null);
-      }, 2000);
+      }, 3000);
       
     } catch (err: any) {
-      console.error('Error generating job order:', err);
-      setError(err.message || 'Failed to generate job order');
+      console.error('Error generating job orders:', err);
+      setError(err.message || 'Failed to generate job orders');
     } finally {
       setLoading(false);
     }
@@ -132,7 +136,7 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
         <DialogContent>
           <Box sx={{ mb: 2 }}>
             <Typography variant="body1" gutterBottom>
-              This will create a new Job Order based on the current deal information:
+              This will create Job Orders based on the current deal information:
             </Typography>
             
             <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
@@ -143,6 +147,34 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
                 <Typography variant="subtitle2" color="text.secondary">
                   Company: <strong>{companyName}</strong>
                 </Typography>
+              )}
+              {jobTitles.length > 0 && (
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    Job Titles ({jobTitles.length}):
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {jobTitles.map((title, index) => (
+                      <Box
+                        key={index}
+                        sx={{
+                          px: 1,
+                          py: 0.5,
+                          bgcolor: 'primary.light',
+                          color: 'primary.contrastText',
+                          borderRadius: 0.5,
+                          fontSize: '0.75rem',
+                          fontWeight: 500
+                        }}
+                      >
+                        {title}
+                      </Box>
+                    ))}
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    One Job Order will be created for each job title above.
+                  </Typography>
+                </Box>
               )}
             </Box>
           </Box>
@@ -160,7 +192,7 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
           )}
 
           <Typography variant="body2" color="text.secondary">
-            The Job Order will be created in draft status and can be edited in the Recruiter module.
+            The Job Orders will be created in draft status and can be edited in the Recruiter module.
             All relevant deal information will be pre-populated to minimize data entry.
           </Typography>
         </DialogContent>
@@ -178,7 +210,7 @@ const GenerateJobOrderButton: React.FC<GenerateJobOrderButtonProps> = ({
             disabled={loading}
             startIcon={loading ? <CircularProgress size={20} /> : <AddIcon />}
           >
-            {loading ? 'Creating...' : 'Create Job Order'}
+            {loading ? 'Creating...' : `Create ${jobTitles.length > 0 ? jobTitles.length : ''} Job Order${jobTitles.length > 1 ? 's' : ''}`}
           </Button>
         </DialogActions>
       </Dialog>

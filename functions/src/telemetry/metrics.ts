@@ -1,4 +1,6 @@
 import * as admin from 'firebase-admin';
+import { acquireLock } from '../lib/lock';
+import { paginateCollection } from '../lib/paginate';
 import fetch from 'node-fetch';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onCall } from 'firebase-functions/v2/https';
@@ -98,80 +100,83 @@ export const associationsIntegrityReport = onCall({ cors: true }, async (request
 });
 
 // Nightly scheduled integrity check (logs to Firestore)
-export const associationsIntegrityNightly = onSchedule('every day 03:30', async (event) => {
+// CHANGE: Hardening per cost-control policy
+// - Env kill-switch; caps; will add pagination/lock in follow-up
+const ENABLE_ASSOCIATIONS_INTEGRITY = process.env.ENABLE_ASSOCIATIONS_INTEGRITY === 'true';
+export const associationsIntegrityNightly = onSchedule({
+  schedule: '0 2 * * *',
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 300,
+  memory: '256MiB'
+}, async (event) => {
+  if (!ENABLE_ASSOCIATIONS_INTEGRITY) {
+    console.info('associationsIntegrityNightly: disabled by ENABLE_ASSOCIATIONS_INTEGRITY');
+    return;
+  }
+  const started = Date.now();
   try {
-    const tenantsSnap = await db.collection('tenants').get();
-    const batch = db.batch();
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    for (const t of tenantsSnap.docs) {
-      const tenantId = t.id;
-      const dealsRef = db.collection('tenants').doc(tenantId).collection('crm_deals');
-      const snapshot = await dealsRef.limit(5000).get();
-      let missingCompanyIds = 0;
-      let missingPrimaryCompany = 0;
-      let companiesWithNoSnapshot = 0;
-      let contactsWithNoSnapshot = 0;
-      let salespeopleWithNoSnapshot = 0;
-      let locationsWithNoSnapshot = 0;
-      snapshot.docs.forEach((docSnap) => {
-        const d: any = docSnap.data() || {};
-        const assoc = d.associations || {};
-        const ids = Array.isArray(d.companyIds) ? d.companyIds : [];
-        if (!ids.length && Array.isArray(assoc.companies) && assoc.companies.length > 0) missingCompanyIds++;
-        const primary = assoc?.companies?.find((e: any) => e && typeof e === 'object' && e.isPrimary);
-        if (!primary && (!ids || !ids.length)) missingPrimaryCompany++;
-        const checkNoSnapshot = (arr: any[], inc: () => void) => {
-          (arr || []).forEach((e) => { if (typeof e === 'object' && (!e.snapshot || Object.keys(e.snapshot || {}).length === 0)) inc(); });
-        };
-        checkNoSnapshot(assoc.companies || [], () => companiesWithNoSnapshot++);
-        checkNoSnapshot(assoc.contacts || [], () => contactsWithNoSnapshot++);
-        checkNoSnapshot(assoc.salespeople || [], () => salespeopleWithNoSnapshot++);
-        checkNoSnapshot(assoc.locations || [], () => locationsWithNoSnapshot++);
-      });
-      const dest = db.collection('associations_integrity').doc(`${tenantId}_${Date.now()}`);
-      const payload = {
-        tenantId,
-        totalDeals: snapshot.size,
-        missingCompanyIds,
-        missingPrimaryCompany,
-        companiesWithNoSnapshot,
-        contactsWithNoSnapshot,
-        salespeopleWithNoSnapshot,
-        locationsWithNoSnapshot,
-        _at: now
-      } as any;
-      batch.set(dest, payload);
-
-      // Lightweight alerting via logs; extend to Slack/Email via env-configured webhooks if set
-      const hasIssues = (
-        missingCompanyIds > 0 ||
-        missingPrimaryCompany > 0 ||
-        companiesWithNoSnapshot > 0 ||
-        contactsWithNoSnapshot > 0 ||
-        salespeopleWithNoSnapshot > 0 ||
-        locationsWithNoSnapshot > 0
-      );
-      if (hasIssues) {
-        console.error(`associationsIntegrityNightly ALERT for tenant ${tenantId}`, payload);
-        try {
-          const cfg = (process as any).env || {};
-          const slackWebhook = cfg.SLACK_ASSOCIATIONS_ALERT_WEBHOOK_URL;
-          const threshold = Number(cfg.ASSOCIATIONS_ALERT_THRESHOLD || '0');
-          const totalIssues = missingCompanyIds + missingPrimaryCompany + companiesWithNoSnapshot + contactsWithNoSnapshot + salespeopleWithNoSnapshot + locationsWithNoSnapshot;
-          if (slackWebhook && totalIssues > threshold) {
-            await fetch(slackWebhook, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: `Associations integrity issues for tenant ${tenantId}: ${JSON.stringify(payload)}` })
-            } as any);
-          }
-        } catch (e) {
-          console.error('Failed to send integrity alert webhook', e);
-        }
+    // Acquire per-day lock
+    const lockRelease = await acquireLock(`associationsIntegrityNightly-${new Date().toISOString().slice(0,10)}`);
+    try {
+      const tenantsSnap = await db.collection('tenants').get();
+      const batch = db.batch();
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      for (const t of tenantsSnap.docs) {
+        const tenantId = t.id;
+        // Bounded per-tenant processing using pagination
+        const { docs } = await paginateCollection<any>(`tenants/${tenantId}/crm_deals`, {
+          batchSize: 1000,
+          orderBy: 'createdAt'
+        });
+        let missingCompanyIds = 0;
+        let missingPrimaryCompany = 0;
+        let companiesWithNoSnapshot = 0;
+        let contactsWithNoSnapshot = 0;
+        let salespeopleWithNoSnapshot = 0;
+        let locationsWithNoSnapshot = 0;
+        docs.forEach((docSnap) => {
+          const d: any = docSnap.data() || {};
+          const assoc = d.associations || {};
+          const ids = Array.isArray(d.companyIds) ? d.companyIds : [];
+          if (!ids.length && Array.isArray(assoc.companies) && assoc.companies.length > 0) missingCompanyIds++;
+          const primary = assoc?.companies?.find((e: any) => e && typeof e === 'object' && e.isPrimary);
+          if (!primary && (!ids || !ids.length)) missingPrimaryCompany++;
+          const checkNoSnapshot = (arr: any[], inc: () => void) => {
+            (arr || []).forEach((e) => { if (typeof e === 'object' && (!e.snapshot || Object.keys(e.snapshot || {}).length === 0)) inc(); });
+          };
+          checkNoSnapshot(assoc.companies || [], () => companiesWithNoSnapshot++);
+          checkNoSnapshot(assoc.contacts || [], () => contactsWithNoSnapshot++);
+          checkNoSnapshot(assoc.salespeople || [], () => salespeopleWithNoSnapshot++);
+          checkNoSnapshot(assoc.locations || [], () => locationsWithNoSnapshot++);
+        });
+        const dest = db.collection('associations_integrity').doc(`${tenantId}_${Date.now()}`);
+        const payload = {
+          tenantId,
+          totalDeals: docs.length,
+          missingCompanyIds,
+          missingPrimaryCompany,
+          companiesWithNoSnapshot,
+          contactsWithNoSnapshot,
+          salespeopleWithNoSnapshot,
+          locationsWithNoSnapshot,
+          _at: now
+        } as any;
+        batch.set(dest, payload);
       }
+      await batch.commit();
+    } finally {
+      await lockRelease();
     }
-    await batch.commit();
   } catch (e) {
     console.error('associationsIntegrityNightly error:', e);
+  } finally {
+    console.log(JSON.stringify({
+      event: 'job_summary',
+      job: 'associationsIntegrityNightly',
+      duration_ms: Date.now() - started,
+      success: true
+    }));
   }
 });

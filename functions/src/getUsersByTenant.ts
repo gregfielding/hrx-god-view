@@ -14,20 +14,24 @@ export const getUsersByTenant = onCall({
     throw new Error('User must be authenticated');
   }
 
-  const { tenantId } = request.data;
+  const { tenantId, _cacheBust } = request.data;
   
   if (!tenantId) {
     throw new Error('Tenant ID is required');
   }
 
   try {
-    // Check cache first
+    // Check cache first (skip if cache busting is requested)
     const cacheKey = `users_by_tenant_${tenantId}`;
     const cached = usersByTenantCache.get(cacheKey);
     const now = Date.now();
-    if (cached && (now - cached.timestamp) < USERS_BY_TENANT_CACHE_DURATION) {
+    if (!_cacheBust && cached && (now - cached.timestamp) < USERS_BY_TENANT_CACHE_DURATION) {
       console.log('Users by tenant served from cache for tenant:', tenantId);
       return cached.data;
+    }
+    
+    if (_cacheBust) {
+      console.log('Cache busting requested, fetching fresh data for tenant:', tenantId);
     }
 
     const db = admin.firestore();

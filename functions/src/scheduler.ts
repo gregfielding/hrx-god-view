@@ -387,10 +387,21 @@ async function runSchedulerLogic(): Promise<void> {
   }
 }
 
+// CHANGE: Hardening per cost-control policy
+// - Env kill-switch; caps for scheduler
+const ENABLE_AI_SCHEDULER = process.env.ENABLE_AI_SCHEDULER === 'true';
 export const runAIScheduler = onSchedule({
   schedule: '0 9 * * *', // Run daily at 9 AM
-  timeZone: 'America/New_York'
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 240,
+  memory: '256MiB'
 }, async (event) => {
+  if (!ENABLE_AI_SCHEDULER) {
+    console.info('runAIScheduler: disabled by ENABLE_AI_SCHEDULER');
+    return;
+  }
   await runSchedulerLogic();
 });
 

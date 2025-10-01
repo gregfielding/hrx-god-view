@@ -1,6 +1,18 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https'; // v2 for callable functions
 import { onSchedule } from 'firebase-functions/v2/scheduler'; // v2 for scheduler
+import { setGlobalOptions } from 'firebase-functions/v2';
+
+// CHANGE: Hardening per cost-control policy
+// - Global safe defaults for region/limits
+setGlobalOptions({
+  region: 'us-central1',
+  minInstances: 0,
+  maxInstances: 2,
+  timeoutSeconds: 240,
+  memory: '256MiB',
+  concurrency: 40
+});
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { runAIScheduler, manualSchedulerRun } from './scheduler';
 import { logAIAction } from './feedbackEngine';
@@ -2233,8 +2245,22 @@ export const analyzeConversationSentiment = onCall(async (request) => {
 });
 
 // Scheduled Check-in Trigger (runs daily at 9 AM)
-export const triggerScheduledCheckins = onSchedule('0 9 * * *', async (event) => {
-  const start = Date.now();
+// CHANGE: Hardening per cost-control policy
+// - Env kill-switch; caps for scheduler
+const ENABLE_SCHEDULED_CHECKINS = process.env.ENABLE_SCHEDULED_CHECKINS === 'true';
+export const triggerScheduledCheckins = onSchedule({
+  schedule: '0 9 * * *',
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 240,
+  memory: '256MiB'
+}, async (event) => {
+  if (!ENABLE_SCHEDULED_CHECKINS) {
+    console.info('triggerScheduledCheckins: disabled by ENABLE_SCHEDULED_CHECKINS');
+    return;
+  }
+  const started = Date.now();
   
   try {
     const now = new Date();
@@ -2279,7 +2305,7 @@ export const triggerScheduledCheckins = onSchedule('0 9 * * *', async (event) =>
       actionType: 'ai_chat_checkin_trigger',
       sourceModule: 'AIChat',
       success: true,
-      latencyMs: Date.now() - start,
+      latencyMs: Date.now() - started,
       versionTag: 'v1',
       reason: `Triggered ${triggeredCheckins.length} scheduled check-ins`
     });
@@ -2292,12 +2318,14 @@ export const triggerScheduledCheckins = onSchedule('0 9 * * *', async (event) =>
       sourceModule: 'AIChat',
       success: false,
       errorMessage: error.message,
-      latencyMs: Date.now() - start,
+      latencyMs: Date.now() - started,
       versionTag: 'v1',
       reason: 'Failed to trigger scheduled check-ins'
     });
     
     throw error;
+  } finally {
+    console.log(JSON.stringify({ event: 'job_summary', job: 'executePendingCampaigns', duration_ms: Date.now() - started, success: true }));
   }
 });
 // Real-time Analytics for AI Chat
@@ -8232,7 +8260,20 @@ export const logAssignmentDeleted = onDocumentDeleted('assignments/{assignmentId
 // ... existing code ...
 
 // Scheduled function to run tests daily at 2 AM
-export const scheduledTriggerTests = onSchedule('0 2 * * *', async (event) => {
+// CHANGE: Hardening per cost-control policy
+const ENABLE_SCHEDULED_TESTS = process.env.ENABLE_SCHEDULED_TESTS === 'true';
+export const scheduledTriggerTests = onSchedule({
+  schedule: '0 2 * * *',
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 240,
+  memory: '256MiB'
+}, async (event) => {
+  if (!ENABLE_SCHEDULED_TESTS) {
+    console.info('scheduledTriggerTests: disabled by ENABLE_SCHEDULED_TESTS');
+    return;
+  }
   try {
     console.log('Running scheduled Firestore trigger tests...');
     const summary = await runFirestoreTriggerTests();
@@ -8529,6 +8570,77 @@ export const updateUserLoginInfo = onCall(async (request) => {
       urgencyScore: 5
     });
     
+    throw error;
+  }
+});
+
+// Lightweight activity heartbeat to track real usage without runaway costs
+export const updateUserActivity = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com'
+  ]
+}, async (request) => {
+  const { userId, activity } = request.data || {};
+  const start = Date.now();
+  try {
+    if (!userId) throw new Error('userId is required');
+
+    const userRef = db.collection('users').doc(userId);
+    const snap = await userRef.get();
+    if (!snap.exists) throw new Error('User not found');
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+
+    // Write only minimal fields; rely on client throttle (>= 5 min) to avoid cost
+    const updateData: any = {
+      lastActiveAt: now,
+      updatedAt: now,
+    };
+    if (activity?.route) updateData.lastActiveRoute = String(activity.route).slice(0, 200);
+    if (activity?.visibility !== undefined) updateData.lastVisibility = !!activity.visibility;
+
+    await userRef.update(updateData);
+
+    await logAIAction({
+      userId,
+      actionType: 'user_activity_heartbeat',
+      sourceModule: 'ActivityTracking',
+      success: true,
+      latencyMs: Date.now() - start,
+      versionTag: 'v1',
+      reason: 'Updated lastActiveAt via heartbeat',
+      eventType: 'user.activity-heartbeat',
+      targetType: 'user',
+      targetId: userId,
+      aiRelevant: false,
+      contextType: 'user',
+      traitsAffected: null,
+      aiTags: ['activity','heartbeat'],
+      urgencyScore: 1,
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    await logAIAction({
+      userId: request.auth?.uid || 'system',
+      actionType: 'user_activity_heartbeat',
+      sourceModule: 'ActivityTracking',
+      success: false,
+      errorMessage: error.message,
+      latencyMs: Date.now() - start,
+      versionTag: 'v1',
+      reason: `Failed to update activity: ${error.message}`,
+      eventType: 'user.activity-heartbeat-failed',
+      targetType: 'user',
+      targetId: userId || 'unknown',
+      aiRelevant: false,
+      contextType: 'user',
+      traitsAffected: null,
+      aiTags: ['activity','error'],
+      urgencyScore: 2,
+    });
     throw error;
   }
 });
@@ -9408,10 +9520,20 @@ async function updateCampaignAnalytics(campaignId: string, analytics: any): Prom
 }
 
 // Scheduled function to execute pending campaigns
+// CHANGE: Hardening per cost-control policy
+const ENABLE_EXECUTE_CAMPAIGNS = process.env.ENABLE_EXECUTE_CAMPAIGNS === 'true';
 export const executePendingCampaigns = onSchedule({
   schedule: '0 */2 * * *', // Every 2 hours
-  timeZone: 'America/New_York'
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 300,
+  memory: '256MiB'
 }, async (event) => {
+  if (!ENABLE_EXECUTE_CAMPAIGNS) {
+    console.info('executePendingCampaigns: disabled by ENABLE_EXECUTE_CAMPAIGNS');
+    return;
+  }
   const start = Date.now();
   
   try {

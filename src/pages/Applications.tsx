@@ -39,6 +39,7 @@ import ApplicationsList from '../components/phase2/ApplicationsList';
 import ApplicationDetail from '../components/phase2/ApplicationDetail';
 import { Application } from '../types/phase2';
 import jobTitles from '../data/onetJobTitles.json';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 const Applications: React.FC = () => {
   const { user, tenantId } = useAuth();
@@ -363,8 +364,19 @@ const Applications: React.FC = () => {
     setSnackbar(prev => ({ ...prev, open: false }));
   };
 
+  const breadcrumbItems = [
+    {
+      label: 'Recruiter',
+      href: '/recruiter'
+    },
+    {
+      label: 'Applicants'
+    }
+  ];
+
   return (
     <Box sx={{ width: '100%', pt: 0, pb: 3 }}>
+      <BreadcrumbNav items={breadcrumbItems} />
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>

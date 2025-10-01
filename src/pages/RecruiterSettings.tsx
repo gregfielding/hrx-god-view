@@ -17,6 +17,7 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 const RecruiterSettings: React.FC = () => {
   const { tenantId } = useAuth();
@@ -124,8 +125,19 @@ const RecruiterSettings: React.FC = () => {
     );
   }
 
+  const breadcrumbItems = [
+    {
+      label: 'Recruiter',
+      href: '/recruiter'
+    },
+    {
+      label: 'Settings'
+    }
+  ];
+
   return (
     <Box sx={{ p: 3 }}>
+      <BreadcrumbNav items={breadcrumbItems} />
       <Typography variant="h4" gutterBottom>
         HRX Recruiter Settings
       </Typography>

@@ -410,7 +410,21 @@ function getEnvNumber(name: string, def: number): number {
   return Number.isFinite(n) ? n : def;
 }
 
-export const enrichCompanyWeekly = onSchedule({ schedule: '0 2 * * 0', secrets: [APOLLO_API_KEY] }, async () => {
+// CHANGE: Hardening per cost-control policy
+// - Env kill-switch; caps for scheduler
+const ENABLE_WEEKLY_ENRICHMENT = process.env.ENABLE_WEEKLY_ENRICHMENT === 'true';
+export const enrichCompanyWeekly = onSchedule({
+  schedule: '0 2 * * 0',
+  secrets: [APOLLO_API_KEY],
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 300,
+  memory: '256MiB'
+}, async () => {
+  if (!ENABLE_WEEKLY_ENRICHMENT) {
+    console.info('enrichCompanyWeekly: disabled by ENABLE_WEEKLY_ENRICHMENT');
+    return;
+  }
   const stalenessDays = getEnvNumber('ENRICHMENT_DEFAULT_STALENESS_DAYS', 7);
   const weeklyCap = getEnvNumber('ENRICHMENT_WEEKLY_LIMIT', 300);
   const perTenantCap = Math.max(10, Math.min(50, Math.floor(weeklyCap / 4)));

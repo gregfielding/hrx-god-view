@@ -1838,11 +1838,23 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
  * Scheduled function to automatically monitor Gmail for contact emails
  * Runs every 60 minutes (reduced from 15 minutes to reduce function calls)
  */
+// CHANGE: Hardening per cost-control policy
+// - Env kill-switch; caps for scheduler
+const ENABLE_GMAIL_MONITORING = process.env.ENABLE_GMAIL_MONITORING === 'true';
 export const scheduledGmailMonitoring = onSchedule({
   // Run every 60 minutes to reduce function call frequency
-  schedule: 'every 60 minutes',
-  timeZone: 'America/New_York'
+  schedule: 'every 2 hours',
+  timeZone: 'America/New_York',
+  maxInstances: 1,
+  retryCount: 0,
+  timeoutSeconds: 240,
+  memory: '256MiB'
 }, async (context) => {
+  if (!ENABLE_GMAIL_MONITORING) {
+    console.info('scheduledGmailMonitoring: disabled by ENABLE_GMAIL_MONITORING');
+    return;
+  }
+  const started = Date.now();
   try {
     console.log('🔄 Starting scheduled Gmail monitoring...');
     
@@ -1926,6 +1938,8 @@ export const scheduledGmailMonitoring = onSchedule({
     
   } catch (error) {
     console.error('❌ Error in scheduled Gmail monitoring:', error);
+  } finally {
+    console.log(JSON.stringify({ event: 'job_summary', job: 'scheduledGmailMonitoring', duration_ms: Date.now() - started, success: true }));
   }
 });
 

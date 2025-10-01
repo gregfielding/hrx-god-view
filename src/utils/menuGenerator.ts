@@ -27,12 +27,26 @@ export async function generateMenuItems(
   customersModuleEnabled?: boolean,
   jobsBoardModuleEnabled?: boolean,
   crmModuleEnabled?: boolean,
+  staffingModuleEnabled?: boolean,
   // New claims-based parameters
   isHRXUser?: boolean,
   currentClaimsRole?: ClaimsRole,
   claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } }
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
+
+  // Debug helper (toggled via ?debugMenu=1 or localStorage 'debugMenu' === '1')
+  const isMenuDebugEnabled = (): boolean => {
+    try {
+      if (typeof window !== 'undefined') {
+        const search = window.location?.search || '';
+        if (search.includes('debugMenu=1')) return true;
+        if (search.includes('debugMenu=0')) return false;
+        return window.localStorage?.getItem('debugMenu') === '1';
+      }
+    } catch (_) {}
+    return false;
+  };
 
   // Get current user data from Firestore
   let userData: any = null;
@@ -47,7 +61,8 @@ export async function generateMenuItems(
       
       if (userDoc.exists()) {
         userData = userDoc.data();
-        activeTenantId = userData?.activeTenantId || null;
+        // Prefer the tenantId argument from Layout when present; otherwise use stored activeTenantId
+        activeTenantId = (tenantId ?? userData?.activeTenantId) || null;
         
         // console.log('=== MENU GENERATOR DEBUG ===');
         // console.log('Current user data:', {
@@ -132,20 +147,20 @@ export async function generateMenuItems(
         icon: 'work',
         requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
-      // Only show Recruiter if HRX Recruiting Engine module is enabled
-      ...(recruiterModuleEnabled ? [{
+      // Recruiter (role-gated; no module gate)
+      ...([{
         text: 'Recruiter',
         to: '/recruiter',
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
-      }] : []),
-      // Only show Sales CRM if HRX CRM module is enabled
-      ...(crmModuleEnabled ? [{
+      }]),
+      // Sales CRM (role-gated; no module gate)
+      ...([{
         text: 'Sales CRM',
         to: '/crm',
         icon: 'business',
         requiredRoles: ['Admin', 'Manager', 'Recruiter', 'Worker'] as ClaimsRole[], // Admin, Manager, Recruiter, and Worker access
-      }] : []),
+      }]),
       {
         text: 'My Assignments',
         to: '/assignments',
@@ -154,11 +169,18 @@ export async function generateMenuItems(
       },
 
       {
-        text: 'Settings',
+        text: 'Setup',
         to: '/settings',
-        icon: 'settings',
+        icon: 'architecture',
         requiredRoles: ['Admin'], // Admin only
       },
+      // Only show Company Defaults if Staffing, Flex, or Recruiting modules are enabled AND user is Manager/Admin
+      ...((staffingModuleEnabled || flexModuleEnabled || recruiterModuleEnabled) ? [{
+        text: 'Company Defaults',
+        to: '/company-defaults',
+        icon: 'business_center',
+        requiredRoles: ['Manager', 'Admin'] as ClaimsRole[], // Manager and Admin only
+      }] : []),
       {
         text: 'Modules',
         to: '/modules',
@@ -479,41 +501,53 @@ export async function generateMenuItems(
     );
   }
 
-  // Filter menu items based on security level and roles
+  // Debug: surface what we resolved for active tenant role/level
+  if (isMenuDebugEnabled()) {
+    // eslint-disable-next-line no-console
+    console.log('[menuGenerator] activeTenantId:', activeTenantId, 'role:', activeTenantData?.role, 'level:', activeTenantData?.securityLevel, 'items:', menuItems.length);
+  }
+
+  // Filter menu items based on ONLY the active tenant's role and security level
   return menuItems.filter(item => {
-    // If no access requirements, show the item
+    // Always allow items without explicit requirements
     if (!item.accessRoles && !item.requiredRoles) return true;
-    
-    // Get the user's security level for the active tenant
-    const userSecurityLevel = activeTenantData?.securityLevel || '0';
-    const userLevel = parseInt(userSecurityLevel);
-    
-    // Check legacy accessRoles (security level based)
-    if (item.accessRoles) {
-      for (const requiredRole of item.accessRoles) {
-        if (requiredRole.startsWith('hrx_')) {
-          const requiredLevel = parseInt(requiredRole.split('_')[1]);
-          if (userLevel === requiredLevel) return true;
-        } else if (requiredRole.startsWith('tenant_')) {
-          const requiredLevel = parseInt(requiredRole.split('_')[1]);
-          if (userLevel === requiredLevel) return true;
-        }
-      }
+
+    // Derive user's role and level strictly from active tenant
+    const tenantRoleRaw = (activeTenantData?.role || '').toString();
+    const securityValue = activeTenantData?.securityLevel ?? '0';
+    const tenantLevel = parseInt(securityValue.toString());
+    const tenantAccessKey = `tenant_${isNaN(tenantLevel) ? '0' : tenantLevel}`;
+
+    // Derive an effective role from security level to be bulletproof
+    let effectiveRole: ClaimsRole = 'Tenant';
+    if (!isNaN(tenantLevel)) {
+      if (tenantLevel >= 7) effectiveRole = 'Admin';
+      else if (tenantLevel >= 6) effectiveRole = 'Manager';
+      else if (tenantLevel >= 5) effectiveRole = 'Worker';
+      else effectiveRole = 'Tenant';
     }
-    
-    // Check new requiredRoles (claims-based)
-    if (item.requiredRoles) {
-      // First try to use claims-based role if available
-      if (currentClaimsRole && item.requiredRoles.includes(currentClaimsRole)) {
-        return true;
-      }
-      // Fallback to Firestore role
-      if (activeTenantData?.role && item.requiredRoles.includes(activeTenantData.role as ClaimsRole)) {
-        return true;
-      }
+    // If an explicit role exists, prefer it when it is stronger than derived
+    const priorityOrder: ClaimsRole[] = ['Tenant','Worker','Recruiter','Manager','Admin','HRX'];
+    const pickStronger = (a: ClaimsRole, b: ClaimsRole) =>
+      priorityOrder.indexOf(a) > priorityOrder.indexOf(b) ? a : b;
+    const tenantRole = tenantRoleRaw ? pickStronger(tenantRoleRaw as ClaimsRole, effectiveRole) : effectiveRole;
+
+    // Legacy accessRoles check using computed tenant access key
+    if (item.accessRoles && item.accessRoles.length > 0) {
+      return item.accessRoles.includes(tenantAccessKey);
     }
-    
-    return false;
+
+    // Required roles check using tenant role only
+    if (item.requiredRoles && item.requiredRoles.length > 0) {
+      const ok = item.requiredRoles.includes(tenantRole as ClaimsRole);
+      if (!ok && isMenuDebugEnabled()) {
+        // eslint-disable-next-line no-console
+        console.log('[menuGenerator] hiding item due to role mismatch:', item.text, 'required:', item.requiredRoles, 'have:', tenantRole);
+      }
+      return ok;
+    }
+
+    return true;
   });
 }
 
@@ -566,14 +600,10 @@ export function filterMenuItemsByClaims(
   console.log('claimsRoles:', claimsRoles);
   console.log('menuItems count:', menuItems.length);
 
-  // If no claims role or active tenant, show basic menu items (fallback for users without claims)
+  // If claims haven't loaded or active tenant isn't known yet, don't hide items here.
+  // Let the generator's own legacy/Firestore checks stand.
   if (!currentClaimsRole || !activeTenantId) {
-    // Return basic menu items that don't require specific roles
-    return menuItems.filter(item => {
-      // Show items that have no role requirements or only have legacy accessRoles
-      return (!item.requiredRoles || item.requiredRoles.length === 0) || 
-             (item.accessRoles && item.accessRoles.length > 0);
-    });
+    return menuItems;
   }
 
   return menuItems.filter(item => {

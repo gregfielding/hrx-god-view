@@ -4,9 +4,8 @@ service firebase.storage {
 
     // Avatar upload access
     match /avatars/{fileName} {
-      // Allow users to upload/delete their own avatar
-      allow write, delete: if request.auth != null &&
-                           fileName.matches(request.auth.uid + '.*');
+      // Allow any authenticated user to upload/delete avatars (simplified for now)
+      allow write, delete: if request.auth != null;
 
       // Allow authenticated users to upload/delete tenant avatars
       allow write, delete: if request.auth != null &&

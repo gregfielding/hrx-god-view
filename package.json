@@ -60,7 +60,10 @@
     "seed-roles:execute": "ts-node --project scripts/tsconfig.json scripts/seed-tenant-roles.ts --execute",
     "assign-roles": "ts-node --project scripts/tsconfig.json scripts/assign-initial-roles.ts",
     "smoke-test": "ts-node --project scripts/tsconfig.json scripts/smoke-test-phase2.ts",
-    "verify-phase2-auth": "ts-node --project scripts/tsconfig.json scripts/verify-phase2-auth.ts"
+    "verify-phase2-auth": "ts-node --project scripts/tsconfig.json scripts/verify-phase2-auth.ts",
+    "check:parity": "ts-node scripts/checkFieldParity.ts",
+    "test:mapping": "ts-node scripts/testMapping.ts",
+    "test:adapter": "ts-node scripts/testDealStageAdapter.ts"
   },
   "eslintConfig": {
     "extends": [

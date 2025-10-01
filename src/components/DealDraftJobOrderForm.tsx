@@ -78,7 +78,7 @@ interface DraftJobOrderData {
   
   // Headcount & Dates
   workersNeeded: number;
-  dateOpened: string;
+  createdAt: string;
   startDate: string;
   endDate?: string;
   
@@ -138,7 +138,7 @@ const DealDraftJobOrderForm: React.FC<DealDraftJobOrderFormProps> = ({
     description: '',
     status: 'open',
     workersNeeded: 1,
-    dateOpened: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0],
     startDate: new Date().toISOString().split('T')[0],
     endDate: '',
     payRate: 0,
@@ -248,17 +248,17 @@ const DealDraftJobOrderForm: React.FC<DealDraftJobOrderFormProps> = ({
 
       // Get next job order number
       const jobOrderNumberStr = await getNextJobOrderNumber(tenantId);
-      const jobOrderNumber = parseInt(jobOrderNumberStr.replace('JO-', ''));
+      const jobOrderNumber = parseInt(jobOrderNumberStr);
 
       // Build job order payload
-      const jobOrderData: Omit<JobOrder, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'> = {
+      const jobOrderData: Omit<JobOrder, 'id' | 'updatedAt' | 'createdBy' | 'updatedBy'> = {
         tenantId,
         jobOrderNumber,
         jobOrderName: formData.name,
         status: 'Open',
         companyId: formData.accountId,
         locationId: formData.locationId,
-        dateOpened: safeToDate(formData.dateOpened).getTime(),
+        createdAt: safeToDate(formData.createdAt).getTime(),
         startDate: formData.startDate,
         endDate: formData.endDate || undefined,
         recruiterId: formData.recruiterIds[0] || user.uid,
@@ -293,7 +293,7 @@ const DealDraftJobOrderForm: React.FC<DealDraftJobOrderFormProps> = ({
 
       setToast({
         open: true,
-        message: `Job Order JO-${jobOrderNumber.toString().padStart(4, '0')} created successfully`,
+        message: `Job Order ${jobOrderNumber.toString().padStart(4, '0')} created successfully`,
         severity: 'success'
       });
 
@@ -459,8 +459,8 @@ const DealDraftJobOrderForm: React.FC<DealDraftJobOrderFormProps> = ({
               fullWidth
               label="Date Opened"
               type="date"
-              value={formData.dateOpened}
-              onChange={(e) => handleFieldChange('dateOpened', e.target.value)}
+              value={formData.createdAt}
+              onChange={(e) => handleFieldChange('createdAt', e.target.value)}
               InputLabelProps={{ shrink: true }}
             />
           </Grid>

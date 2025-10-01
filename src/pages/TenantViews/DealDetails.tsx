@@ -71,6 +71,7 @@ import { createUnifiedAssociationService } from '../../utils/unifiedAssociationS
 import StageChip from '../../components/StageChip';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import DealStageForms from '../../components/DealStageForms';
+import DealFormRenderer from '../../forms/DealFormRenderer';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import DealActivityTab from '../../components/DealActivityTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
@@ -259,7 +260,8 @@ const DealDetails: React.FC = () => {
     dealCoach: localStorage.getItem('feature.dealCoach') !== 'false',
     keyboardShortcuts: localStorage.getItem('feature.keyboardShortcuts') !== 'false',
     patternAlerts: localStorage.getItem('feature.patternAlerts') !== 'false',
-    pinnedWidgets: localStorage.getItem('feature.pinnedWidgets') !== 'false'
+    pinnedWidgets: localStorage.getItem('feature.pinnedWidgets') !== 'false',
+    replatformDealForms: localStorage.getItem('feature.replatformDealForms') === 'true'
   };
 
   // Deal Age & Health Helper Functions
@@ -2012,9 +2014,10 @@ const DealDetails: React.FC = () => {
                 dealName={deal.name}
                 companyId={deal.companyId}
                 companyName={deal.companyName}
-                onJobOrderCreated={(jobOrderId) => {
-                  // Optionally navigate to the job order or show success message
-                  console.log('Job Order created:', jobOrderId);
+                jobTitles={stageData?.discovery?.jobTitles || []}
+                onJobOrderCreated={(jobOrderIds) => {
+                  // Optionally navigate to the job orders or show success message
+                  console.log('Job Orders created:', jobOrderIds);
                 }}
                 disabled={deal.stage !== 'closedWon' && deal.stage !== 'verbalAgreement'}
                 variant="contained"
@@ -2646,16 +2649,36 @@ const DealDetails: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={tabValue} index={1}>
-        <DealStageForms
-          dealId={deal.id}
-          tenantId={tenantId}
-          currentStage={deal.stage}
-          stageData={stageData || {}}
-          onStageDataChange={handleStageDataChange}
-          onStageAdvance={handleStageAdvance}
-          onStageIncomplete={handleMarkStageIncomplete}
-          associatedContacts={associatedContacts}
-        />
+        {featureFlags.replatformDealForms ? (
+          <DealFormRenderer
+            deal={deal}
+            tenantId={tenantId}
+            stage={deal.stage === 'qualification' ? 'qualification' : deal.stage === 'scoping' ? 'scoping' : 'discovery'}
+            featureEnabled={true}
+            onSaved={async () => {
+              // reload foundational stageData so other parts stay in sync
+              try {
+                const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id));
+                if (dealDoc.exists()) {
+                  const d = { id: dealDoc.id, ...dealDoc.data() } as any;
+                  setDeal(d);
+                  setStageData(d.stageData || {});
+                }
+              } catch (e) { /* ignore */ }
+            }}
+          />
+        ) : (
+          <DealStageForms
+            dealId={deal.id}
+            tenantId={tenantId}
+            currentStage={deal.stage}
+            stageData={stageData || {}}
+            onStageDataChange={handleStageDataChange}
+            onStageAdvance={handleStageAdvance}
+            onStageIncomplete={handleMarkStageIncomplete}
+            associatedContacts={associatedContacts}
+          />
+        )}
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
@@ -2703,16 +2726,19 @@ const DealDetails: React.FC = () => {
                   </Typography>
                 </Box>
                 {(deal.stage === 'verbalAgreement' || deal.stage === 'closedWon') && (
-                  <Button
-                    variant="contained"
-                    startIcon={<WorkIcon />}
-                    onClick={() => {
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                  <GenerateJobOrderButton
+                    dealId={deal.id}
+                    dealName={deal.name}
+                    companyId={deal.companyId}
+                    companyName={deal.companyName}
+                    jobTitles={stageData?.discovery?.jobTitles || []}
+                    onJobOrderCreated={(jobOrderIds) => {
+                      console.log('Job Orders created:', jobOrderIds);
                     }}
+                    variant="contained"
+                    size="small"
                     sx={{ minWidth: 180 }}
-                  >
-                    Generate Job Order
-                  </Button>
+                  />
                 )}
               </Box>
             </CardContent>
@@ -2760,6 +2786,11 @@ const DealDetails: React.FC = () => {
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Job Titles: {stageData?.discovery?.jobTitles?.join(', ') || 'Not specified'}
+                    {stageData?.discovery?.jobTitles?.length > 0 && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        ({stageData.discovery.jobTitles.length} job order{stageData.discovery.jobTitles.length > 1 ? 's' : ''} will be created)
+                      </Typography>
+                    )}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     Shifts: {stageData?.discovery?.shifts?.join(', ') || 'Not specified'}
@@ -2791,7 +2822,7 @@ const DealDetails: React.FC = () => {
             <Alert severity="info" sx={{ mt: 2 }}>
               <Typography variant="body2">
                 <strong>Note:</strong> Complete the deal stages above to ensure all job order data is captured. 
-                The "Generate Job Order" button will create job orders using this information.
+                The "Generate Job Order" button will create one job order for each job title specified in the Discovery stage.
               </Typography>
             </Alert>
           </CardContent>

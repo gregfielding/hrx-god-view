@@ -18,6 +18,7 @@ import {
   Alert,
   Divider,
   Grid,
+  OutlinedInput,
   Autocomplete,
   Switch,
   FormLabel,
@@ -60,12 +61,15 @@ import {
   Undo as UndoIcon,
   Delete as DeleteIcon
 } from '@mui/icons-material';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
+import { getOptionsForField } from '../utils/fieldOptions';
+import jobTitlesList from '../data/onetJobTitles.json';
+import { getFieldDef } from '../fields/useFieldDef';
 
 
 interface Contact {
@@ -89,6 +93,7 @@ interface DealStageData {
 
 interface DiscoveryData {
   usesAgencies?: boolean;
+  openToNewAgency?: boolean;
   currentStaffCount?: number;
   currentAgencyCount?: number;
   jobTitles?: string[];
@@ -110,8 +115,7 @@ interface DiscoveryData {
 }
 
 interface QualificationData {
-  openToNewAgency?: boolean;
-  decisionMakers?: Contact[];
+  decisionMaker?: Contact; // Changed from array to single contact
   mustHave?: string;
   mustAvoid?: string;
   potentialObstacles?: string[];
@@ -140,12 +144,23 @@ interface ScopingData {
   onsite?: boolean;
   compliance?: {
     backgroundCheck?: boolean;
+    backgroundCheckPackages?: string[];
     backgroundCheckDetails?: string;
     drugScreen?: boolean;
+    drugScreeningPanels?: string[];
     drugScreenDetails?: string;
     eVerify?: boolean;
     ppe?: string[];
+    ppeProvidedBy?: 'company' | 'worker' | 'both';
     dressCode?: string;
+    uniformRequirement?: string;
+    requiredLicenses?: string[];
+    requiredCertifications?: string[];
+    experienceLevels?: string[];
+    educationLevels?: string[];
+    physicalRequirements?: string[];
+    languages?: string[];
+    skills?: string[];
   };
   shiftPolicies?: {
     timeclockSystem?: string;
@@ -309,6 +324,31 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const [toastSeverity, setToastSeverity] = useState<'success' | 'error' | 'warning' | 'info'>('success');
   const [hasInitialized, setHasInitialized] = useState(false);
   const [uploadingContract, setUploadingContract] = useState(false);
+  const [backgroundCheckPackages, setBackgroundCheckPackages] = useState<Array<{title: string, description: string}>>([]);
+  const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
+  const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
+  const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
+  const [requiredLicenses, setRequiredLicenses] = useState<Array<{title: string, description: string}>>([]);
+  const [requiredCertifications, setRequiredCertifications] = useState<Array<{title: string, description: string}>>([]);
+  const [experienceLevels, setExperienceLevels] = useState<Array<{title: string, description: string}>>([]);
+  const [educationLevels, setEducationLevels] = useState<Array<{title: string, description: string}>>([]);
+  const [physicalRequirements, setPhysicalRequirements] = useState<Array<{title: string, description: string}>>([]);
+  const [languages, setLanguages] = useState<Array<{title: string, description: string}>>([]);
+  const [skills, setSkills] = useState<Array<{title: string, description: string}>>([]);
+  // Build a single company defaults object for options sourcing
+  const companyDefaultsForOptions = {
+    backgroundPackages: backgroundCheckPackages,
+    screeningPanels: drugScreeningPanels,
+    uniformRequirements,
+    ppe: ppeOptions,
+    licenses: requiredLicenses,
+    certifications: requiredCertifications,
+    experienceLevels,
+    educationLevels,
+    physicalRequirements,
+    languages,
+    skills,
+  } as any;
 
   useEffect(() => {
     // Find the current stage index, default to 0 (Discovery) if not found
@@ -347,6 +387,60 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
       console.error('Error loading local backup:', error);
     }
   }, [currentStage, dealId, onStageAdvance, hasInitialized]);
+
+  // Fetch company defaults from Company Defaults
+  useEffect(() => {
+    const fetchCompanyDefaults = async () => {
+      try {
+        const docRef = doc(db, 'tenants', tenantId, 'settings', 'company-defaults');
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const packages = data.backgroundPackages || [];
+          const panels = data.screeningPanels || [];
+          const uniforms = data.uniformRequirements || [];
+          const ppe = data.ppe || [];
+          const licenses = data.licenses || [];
+          const certifications = data.certifications || [];
+          const experience = data.experienceLevels || [];
+          const education = data.educationLevels || [];
+          const physical = data.physicalRequirements || [];
+          const langs = data.languages || [];
+          const skillOptions = data.skills || [];
+          console.log('📦 Fetched background check packages:', packages);
+          console.log('💊 Fetched drug screening panels:', panels);
+          console.log('👔 Fetched uniform requirements:', uniforms);
+          console.log('🦺 Fetched PPE options:', ppe);
+          console.log('📜 Fetched required licenses:', licenses);
+          console.log('🏆 Fetched required certifications:', certifications);
+          console.log('💼 Fetched experience levels:', experience);
+          console.log('🎓 Fetched education levels:', education);
+          console.log('💪 Fetched physical requirements:', physical);
+          console.log('🗣️ Fetched languages:', langs);
+          console.log('🛠️ Fetched skills:', skillOptions);
+          setBackgroundCheckPackages(packages);
+          setDrugScreeningPanels(panels);
+          setUniformRequirements(uniforms);
+          setPpeOptions(ppe);
+          setRequiredLicenses(licenses);
+          setRequiredCertifications(certifications);
+          setExperienceLevels(experience);
+          setEducationLevels(education);
+          setPhysicalRequirements(physical);
+          setLanguages(langs);
+          setSkills(skillOptions);
+        } else {
+          console.log('📦 No company defaults document found');
+        }
+      } catch (error) {
+        console.error('Error fetching company defaults:', error);
+      }
+    };
+
+    if (tenantId) {
+      fetchCompanyDefaults();
+    }
+  }, [tenantId]);
 
   const getStageStatus = (stageKey: string, index: number) => {
     const stageIndex = STAGES.findIndex(s => s.key === stageKey);
@@ -701,6 +795,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
       <Box sx={{ p: 2 }}>
         <Typography variant="h6" gutterBottom>Discovery Questions</Typography>
         
+        <Box>
         <FormControl component="fieldset" sx={{ mb: 3 }}>
           <FormLabel component="legend">Do they currently use staffing agencies?</FormLabel>
           <RadioGroup
@@ -711,13 +806,15 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <FormControlLabel value="false" control={<Radio />} label="No" />
           </RadioGroup>
         </FormControl>
+        </Box>
 
+        
         {data.usesAgencies === true && (
           <Box sx={{ ml: 2, mb: 3 }}>
             <Grid container spacing={2}>
               <Grid item xs={6}>
                 <TextField
-                  label="Current Staff Count"
+                  label={getFieldDef('currentStaffCount')?.label || 'Current Staff Count'}
                   type="number"
                   value={data.currentStaffCount || ''}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleStageDataChange('discovery', 'currentStaffCount', parseInt(e.target.value))}
@@ -727,7 +824,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               </Grid>
               <Grid item xs={6}>
                 <TextField
-                  label="Current Agency Count"
+                  label={getFieldDef('currentAgencyCount')?.label || 'Current Agency Count'}
                   type="number"
                   value={data.currentAgencyCount || ''}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleStageDataChange('discovery', 'currentAgencyCount', parseInt(e.target.value))}
@@ -738,10 +835,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             </Grid>
 
             <FormControl fullWidth sx={{ mt: 3 }}>
-              <InputLabel>Satisfaction Level With Current Staffing Agencies</InputLabel>
+              <InputLabel>{getFieldDef('currentSatisfactionLevel')?.label || 'Satisfaction Level With Current Staffing Agencies'}</InputLabel>
               <Select
                 value={data.satisfactionLevel || ''}
-                label="Satisfaction Level"
+                label={getFieldDef('currentSatisfactionLevel')?.label || 'Satisfaction Level'}
                 onChange={(e) => handleStageDataChange('discovery', 'satisfactionLevel', e.target.value)}
               >
                 <MenuItem value="very_happy">Very Happy</MenuItem>
@@ -775,7 +872,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={[]}
+                options={jobTitlesList as any}
                 value={data.jobTitles || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'jobTitles', newValue);
@@ -899,6 +996,19 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             </FormControl>
           </Box>
         )}
+
+<Box>
+        <FormControl component="fieldset" sx={{ mb: 3 }}>
+          <FormLabel component="legend">Are they open to a new agency?</FormLabel>
+          <RadioGroup
+            value={data.openToNewAgency ?? ''}
+            onChange={(e) => handleStageDataChange('discovery', 'openToNewAgency', e.target.value === 'true')}
+          >
+            <FormControlLabel value="true" control={<Radio />} label="Yes" />
+            <FormControlLabel value="false" control={<Radio />} label="No" />
+          </RadioGroup>
+        </FormControl>
+        </Box>
 
         <Divider sx={{ my: 3 }} />
 
@@ -1043,92 +1153,38 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     
     return (
       <Box sx={{ p: 2 }}>
-        <Typography variant="h6" gutterBottom>Qualification Questions</Typography>
+        <Typography variant="h6" gutterBottom>{getFieldDef('qualificationNotes')?.label || 'Qualification Questions'}</Typography>
         
-        <FormControl component="fieldset" sx={{ mb: 3 }}>
-          <FormLabel component="legend">Are they open to a new agency?</FormLabel>
-          <RadioGroup
-            value={data.openToNewAgency ?? ''}
-            onChange={(e) => handleStageDataChange('qualification', 'openToNewAgency', e.target.value === 'true')}
+        
+
+        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+          <InputLabel>{getFieldDef('decisionMaker')?.label || 'Decision Maker'}</InputLabel>
+          <Select
+            value={data.decisionMaker?.id || ''}
+            onChange={(e) => {
+              const selectedContact = associatedContacts.find(c => c.id === e.target.value);
+              handleStageDataChange('qualification', 'decisionMaker', selectedContact || null);
+            }}
+            label={getFieldDef('decisionMaker')?.label || 'Decision Maker'}
           >
-            <FormControlLabel value="true" control={<Radio />} label="Yes" />
-            <FormControlLabel value="false" control={<Radio />} label="No" />
-          </RadioGroup>
+            <MenuItem value="">
+              <em>Select {getFieldDef('decisionMaker')?.label || 'Decision Maker'}</em>
+            </MenuItem>
+            {associatedContacts.map((contact) => (
+              <MenuItem key={contact.id} value={contact.id}>
+                {contact.fullName} {contact.title && `(${contact.title})`}
+              </MenuItem>
+            ))}
+          </Select>
+          {associatedContacts.length === 0 && (
+            <FormHelperText>
+              No contacts associated with this deal yet. Add contacts first.
+            </FormHelperText>
+          )}
         </FormControl>
 
-        <Typography variant="subtitle2" sx={{ mb: 2 }}>
-          Decision Makers (choose from Associated Deal Contacts)
-        </Typography>
-        
-        {associatedContacts.length > 0 ? (
-          <FormGroup sx={{ mb: 2 }}>
-            {associatedContacts.map((contact) => (
-              <FormControlLabel
-                key={contact.id}
-                control={
-                  <Checkbox
-                    checked={data.decisionMakers?.some(dm => dm.id === contact.id) || false}
-                    onChange={(e) => {
-                      const currentDecisionMakers = data.decisionMakers || [];
-                      if (e.target.checked) {
-                        // Add contact to decision makers
-                        handleStageDataChange('qualification', 'decisionMakers', [
-                          ...currentDecisionMakers,
-                          contact
-                        ]);
-                      } else {
-                        // Remove contact from decision makers
-                        handleStageDataChange('qualification', 'decisionMakers', 
-                          currentDecisionMakers.filter(dm => dm.id !== contact.id)
-                        );
-                      }
-                    }}
-                  />
-                }
-                label={
-                  <Box>
-                    <Typography variant="body2">{contact.fullName}</Typography>
-                    {contact.title && (
-                      <Typography variant="caption" color="text.secondary">
-                        {contact.title}
-                      </Typography>
-                    )}
-                  </Box>
-                }
-              />
-            ))}
-          </FormGroup>
-        ) : (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            No contacts associated with this deal yet. Add contacts in the Associations panel first.
-          </Alert>
-        )}
-        
-        {data.decisionMakers && data.decisionMakers.length > 0 && (
-          <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Selected Decision Makers:
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {data.decisionMakers.map((contact) => (
-                <Chip
-                  key={contact.id}
-                  label={contact.fullName}
-                  size="small"
-                  onDelete={() => {
-                    const currentDecisionMakers = data.decisionMakers || [];
-                    handleStageDataChange('qualification', 'decisionMakers', 
-                      currentDecisionMakers.filter(dm => dm.id !== contact.id)
-                    );
-                  }}
-                />
-              ))}
-            </Box>
-          </Box>
-        )}
-
         <TextField
-          label="Must Have Requirements"
+          label={getFieldDef('mustHave')?.label || 'Must Have Requirements'}
           value={data.mustHave || ''}
           onBlur={(e) => handleStageDataChange('qualification', 'mustHave', e.target.value)}
           fullWidth
@@ -1139,7 +1195,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Must Avoid"
+          label={getFieldDef('mustAvoid')?.label || 'Must Avoid'}
           value={data.mustAvoid || ''}
           onBlur={(e) => handleStageDataChange('qualification', 'mustAvoid', e.target.value)}
           fullWidth
@@ -1150,7 +1206,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Potential Obstacles"
+          label={getFieldDef('potentialObstacles')?.label || 'Potential Obstacles'}
           value={data.potentialObstacles?.join(', ') || ''}
           onChange={(e) => {
             const value = e.target.value;
@@ -1174,7 +1230,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           helperText="What could prevent this deal from closing? Separate with commas"
         />
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Staff Placement Timeline</Typography>
+        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{'Staff Placement Timeline'}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           How many staff should we expect to place?
         </Typography>
@@ -1182,7 +1238,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6} md={3}>
             <TextField
-              label="Starting"
+              label={getFieldDef('starting')?.label || 'Initial Order'}
               type="number"
               value={data.staffPlacementTimeline?.starting || ''}
               onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
@@ -1191,12 +1247,12 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               })}
               fullWidth
               size="small"
-              placeholder="Starting"
+              placeholder="Initial Order"
             />
           </Grid>
           <Grid item xs={6} md={3}>
             <TextField
-              label="After 30 Days"
+              label={getFieldDef('after30Days')?.label || 'Potential After 30 Days'}
               type="number"
               value={data.staffPlacementTimeline?.after30Days || ''}
               onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
@@ -1205,12 +1261,12 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               })}
               fullWidth
               size="small"
-              placeholder="After 30 Days"
+              placeholder="Potential After 30 Days"
             />
           </Grid>
           <Grid item xs={6} md={3}>
             <TextField
-              label="After 90 Days"
+              label={getFieldDef('after90Days')?.label || 'Potential After 90 Days'}
               type="number"
               value={data.staffPlacementTimeline?.after90Days || ''}
               onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
@@ -1219,12 +1275,12 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               })}
               fullWidth
               size="small"
-              placeholder="After 90 Days"
+              placeholder="Potential After 90 Days"
             />
           </Grid>
           <Grid item xs={6} md={3}>
             <TextField
-              label="After 180 Days"
+              label={getFieldDef('after180Days')?.label || 'Potential After 180 Days'}
               type="number"
               value={data.staffPlacementTimeline?.after180Days || ''}
               onChange={(e) => handleStageDataChange('qualification', 'staffPlacementTimeline', {
@@ -1233,7 +1289,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               })}
               fullWidth
               size="small"
-              placeholder="After 180 Days"
+              placeholder="Potential After 180 Days"
             />
           </Grid>
         </Grid>
@@ -1241,7 +1297,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={6}>
             <TextField
-              label="Expected Average Pay Rate"
+              label={getFieldDef('expectedAveragePayRate')?.label || 'Expected Average Pay Rate'}
               type="number"
               value={data.expectedAveragePayRate || ''}
               onChange={(e) => handleStageDataChange('qualification', 'expectedAveragePayRate', parseFloat(e.target.value) || 0)}
@@ -1255,7 +1311,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={12} md={6}>
             <TextField
-              label="Expected Average Markup"
+              label={getFieldDef('expectedAverageMarkup')?.label || 'Expected Average Markup (%)'}
               type="number"
               value={data.expectedAverageMarkup || ''}
               onChange={(e) => handleStageDataChange('qualification', 'expectedAverageMarkup', parseFloat(e.target.value) || 0)}
@@ -1271,10 +1327,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Divider sx={{ my: 3 }} />
 
-        <Typography variant="h6" gutterBottom>Vendor Setup Steps</Typography>
+        <Typography variant="h6" gutterBottom>{'Vendor Setup Steps'}</Typography>
         
         <TextField
-          label="Step 1"
+          label={getFieldDef('vendorStep1')?.label || 'Step 1'}
           value={data.vendorSetupSteps?.step1 || ''}
           onChange={(e) => handleStageDataChange('qualification', 'vendorSetupSteps', {
             ...data.vendorSetupSteps,
@@ -1286,7 +1342,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Step 2"
+          label={getFieldDef('vendorStep2')?.label || 'Step 2'}
           value={data.vendorSetupSteps?.step2 || ''}
           onChange={(e) => handleStageDataChange('qualification', 'vendorSetupSteps', {
             ...data.vendorSetupSteps,
@@ -1298,7 +1354,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Step 3"
+          label={getFieldDef('vendorStep3')?.label || 'Step 3'}
           value={data.vendorSetupSteps?.step3 || ''}
           onChange={(e) => handleStageDataChange('qualification', 'vendorSetupSteps', {
             ...data.vendorSetupSteps,
@@ -1310,7 +1366,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Step 4"
+          label={getFieldDef('vendorStep4')?.label || 'Step 4'}
           value={data.vendorSetupSteps?.step4 || ''}
           onChange={(e) => handleStageDataChange('qualification', 'vendorSetupSteps', {
             ...data.vendorSetupSteps,
@@ -1322,7 +1378,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <TextField
-          label="Expected Close Date"
+          label={getFieldDef('expectedCloseDate')?.label || 'Expected Close Date'}
           type="date"
           value={data.expectedCloseDate || ''}
           onChange={(e) => handleStageDataChange('qualification', 'expectedCloseDate', e.target.value)}
@@ -1334,9 +1390,9 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Divider sx={{ my: 3 }} />
 
-        <Typography variant="h6" gutterBottom>Additional Notes</Typography>
+        <Typography variant="h6" gutterBottom>{getFieldDef('qualificationNotes')?.label || 'Additional Notes'}</Typography>
         <TextField
-          label="Qualification Notes"
+          label={getFieldDef('qualificationNotes')?.label || 'Qualification Notes'}
           value={data.notes || ''}
           onBlur={(e) => handleStageDataChange('qualification', 'notes', e.target.value)}
           fullWidth
@@ -1411,32 +1467,148 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={4}>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={data.compliance?.backgroundCheck || false}
-                  onChange={(e) => handleStageDataChange('scoping', 'compliance', {
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.backgroundCheckPackages || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
                     ...data.compliance,
-                    backgroundCheck: e.target.checked
-                  })}
-                />
-              }
-              label="Background Check"
-            />
+                    backgroundCheckPackages: typeof value === 'string' ? value.split(',') : value,
+                    backgroundCheck: (typeof value === 'string' ? value.split(',') : value).length > 0
+                  });
+                }}
+                input={<OutlinedInput label="Background Check Packages" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newPackages = (data.compliance?.backgroundCheckPackages || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            backgroundCheckPackages: newPackages,
+                            backgroundCheck: newPackages.length > 0
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newPackages = (data.compliance?.backgroundCheckPackages || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                backgroundCheckPackages: newPackages,
+                                backgroundCheck: newPackages.length > 0
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('backgroundCheckPackages', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Grid>
           <Grid item xs={4}>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={data.compliance?.drugScreen || false}
-                  onChange={(e) => handleStageDataChange('scoping', 'compliance', {
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.drugScreeningPanels || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
                     ...data.compliance,
-                    drugScreen: e.target.checked
-                  })}
-                />
-              }
-              label="Drug Screen"
-            />
+                    drugScreeningPanels: typeof value === 'string' ? value.split(',') : value,
+                    drugScreen: (typeof value === 'string' ? value.split(',') : value).length > 0
+                  });
+                }}
+                input={<OutlinedInput label="Drug Screening Panels" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newPanels = (data.compliance?.drugScreeningPanels || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            drugScreeningPanels: newPanels,
+                            drugScreen: newPanels.length > 0
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newPanels = (data.compliance?.drugScreeningPanels || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                drugScreeningPanels: newPanels,
+                                drugScreen: newPanels.length > 0
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('drugScreeningPanels', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Grid>
           <Grid item xs={4}>
             <FormControlLabel
@@ -1454,85 +1626,608 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
         </Grid>
 
-        {/* Conditional Background Check Details */}
-        {data.compliance?.backgroundCheck && (
-          <TextField
-            label="Background Check Details"
-            value={data.compliance?.backgroundCheckDetails || ''}
-            onChange={(e) => handleStageDataChange('scoping', 'compliance', {
-              ...data.compliance,
-              backgroundCheckDetails: e.target.value
-            })}
-            fullWidth
-            size="small"
-            multiline
-            rows={2}
-            sx={{ mb: 2 }}
-            helperText="Specify background check requirements, type, frequency, etc."
-          />
-        )}
+        {/* Additional Compliance Requirements */}
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('requiredLicenses')?.label || 'Required Licenses'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.requiredLicenses || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    requiredLicenses: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Required Licenses" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newLicenses = (data.compliance?.requiredLicenses || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            requiredLicenses: newLicenses
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newLicenses = (data.compliance?.requiredLicenses || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                requiredLicenses: newLicenses
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('requiredLicenses', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('requiredCertifications')?.label || 'Required Certifications'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.requiredCertifications || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    requiredCertifications: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Required Certifications" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newCerts = (data.compliance?.requiredCertifications || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            requiredCertifications: newCerts
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newCerts = (data.compliance?.requiredCertifications || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                requiredCertifications: newCerts
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('requiredCertifications', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
 
-        {/* Conditional Drug Screen Details */}
-        {data.compliance?.drugScreen && (
-          <TextField
-            label="Drug Screen Details"
-            value={data.compliance?.drugScreenDetails || ''}
-            onChange={(e) => handleStageDataChange('scoping', 'compliance', {
-              ...data.compliance,
-              drugScreenDetails: e.target.value
-            })}
-            fullWidth
-            size="small"
-            multiline
-            rows={2}
-            sx={{ mb: 2 }}
-            helperText="Specify drug screen type, frequency, panel, etc."
-          />
-        )}
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('experienceLevels')?.label || 'Experience Levels'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.experienceLevels || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    experienceLevels: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Experience Levels" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newLevels = (data.compliance?.experienceLevels || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            experienceLevels: newLevels
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newLevels = (data.compliance?.experienceLevels || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                experienceLevels: newLevels
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('experienceLevels', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('educationLevels')?.label || 'Education Levels'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.educationLevels || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    educationLevels: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Education Levels" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newLevels = (data.compliance?.educationLevels || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            educationLevels: newLevels
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newLevels = (data.compliance?.educationLevels || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                educationLevels: newLevels
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('educationLevels', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
 
-        <TextField
-          label="Required PPE"
-          value={data.compliance?.ppe?.join(', ') || ''}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value.endsWith(',') || value === '') {
-              const ppe = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('physicalRequirements')?.label || 'Physical Requirements'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.physicalRequirements || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    physicalRequirements: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Physical Requirements" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newPhysical = (data.compliance?.physicalRequirements || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            physicalRequirements: newPhysical
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newPhysical = (data.compliance?.physicalRequirements || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                physicalRequirements: newPhysical
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('physicalRequirements', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('languages')?.label || 'Languages'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.languages || ['English']}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    languages: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Languages" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newLanguages = (data.compliance?.languages || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            languages: newLanguages
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newLanguages = (data.compliance?.languages || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                languages: newLanguages
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('languages', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+
+        <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+          <InputLabel>{getFieldDef('skills')?.label || 'Skills'}</InputLabel>
+          <Select
+            multiple
+            value={data.compliance?.skills || []}
+            onChange={(e) => {
+              const value = e.target.value;
               handleStageDataChange('scoping', 'compliance', {
                 ...data.compliance,
-                ppe: ppe
+                skills: typeof value === 'string' ? value.split(',') : value
               });
-            } else {
-              handleStageDataChange('scoping', 'compliance', {
-                ...data.compliance,
-                ppe: [value]
-              });
-            }
-          }}
-          onBlur={(e) => {
-            const value = e.target.value;
-            const ppe = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
-            handleStageDataChange('scoping', 'compliance', {
-              ...data.compliance,
-              ppe: ppe
-            });
-          }}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="Separate multiple items with commas (e.g., Hard Hat, Safety Glasses, Steel Toe Boots)"
-        />
+            }}
+            input={<OutlinedInput label="Skills" />}
+            renderValue={(selected) => (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                {selected.map((value) => (
+                  <Chip 
+                    key={value} 
+                    label={value} 
+                    size="small"
+                    onDelete={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const newSkills = (data.compliance?.skills || []).filter(item => item !== value);
+                      handleStageDataChange('scoping', 'compliance', {
+                        ...data.compliance,
+                        skills: newSkills
+                      });
+                    }}
+                    deleteIcon={
+                      <Box
+                        component="span"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newSkills = (data.compliance?.skills || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            skills: newSkills
+                          });
+                        }}
+                        sx={{ 
+                          cursor: 'pointer',
+                          '&:hover': { opacity: 0.7 }
+                        }}
+                      >
+                        ×
+                      </Box>
+                    }
+                    sx={{ 
+                      '& .MuiChip-deleteIcon': {
+                        zIndex: 1,
+                        pointerEvents: 'auto'
+                      }
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
+          >
+            {getOptionsForField('skills', companyDefaultsForOptions).map((opt, index) => (
+              <MenuItem key={index} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
 
-        <TextField
-          label="Dress Code"
-          value={data.compliance?.dressCode || ''}
-          onChange={(e) => handleStageDataChange('scoping', 'compliance', {
-            ...data.compliance,
-            dressCode: e.target.value
-          })}
-          fullWidth
-          size="small"
-          sx={{ mb: 3 }}
-        />
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('ppe')?.label || 'Required PPE'}</InputLabel>
+              <Select
+                multiple
+                value={data.compliance?.ppe || []}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  handleStageDataChange('scoping', 'compliance', {
+                    ...data.compliance,
+                    ppe: typeof value === 'string' ? value.split(',') : value
+                  });
+                }}
+                input={<OutlinedInput label="Required PPE" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
+                    {selected.map((value) => (
+                      <Chip 
+                        key={value} 
+                        label={value} 
+                        size="small"
+                        onDelete={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const newPpe = (data.compliance?.ppe || []).filter(item => item !== value);
+                          handleStageDataChange('scoping', 'compliance', {
+                            ...data.compliance,
+                            ppe: newPpe
+                          });
+                        }}
+                        deleteIcon={
+                          <Box
+                            component="span"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const newPpe = (data.compliance?.ppe || []).filter(item => item !== value);
+                              handleStageDataChange('scoping', 'compliance', {
+                                ...data.compliance,
+                                ppe: newPpe
+                              });
+                            }}
+                            sx={{ 
+                              cursor: 'pointer',
+                              '&:hover': { opacity: 0.7 }
+                            }}
+                          >
+                            ×
+                          </Box>
+                        }
+                        sx={{ 
+                          '& .MuiChip-deleteIcon': {
+                            zIndex: 1,
+                            pointerEvents: 'auto'
+                          }
+                        }}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getOptionsForField('ppe', companyDefaultsForOptions).map((opt, index) => (
+                  <MenuItem key={index} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>Select from Company Default PPE options</FormHelperText>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth size="small">
+              <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
+              <Select
+                value={data.compliance?.ppeProvidedBy || 'company'}
+                onChange={(e) => handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  ppeProvidedBy: e.target.value
+                })}
+                label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
+              >
+                <MenuItem value="company">Company</MenuItem>
+                <MenuItem value="worker">Worker</MenuItem>
+                <MenuItem value="both">Both</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+
+        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+          <InputLabel>{getFieldDef('uniformRequirement')?.label || 'Uniform Requirements'}</InputLabel>
+          <Select
+            value={data.compliance?.uniformRequirement || 'none'}
+            onChange={(e) => handleStageDataChange('scoping', 'compliance', {
+              ...data.compliance,
+              uniformRequirement: e.target.value,
+              dressCode: e.target.value !== 'none' ? e.target.value : ''
+            })}
+            label={getFieldDef('uniformRequirement')?.label || 'Uniform Requirements'}
+          >
+            <MenuItem value="none">None</MenuItem>
+            {getOptionsForField('uniformRequirement', companyDefaultsForOptions).map((opt, index) => (
+              <MenuItem key={index} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </Select>
+          <FormHelperText>Select from Company Default Uniform Requirements</FormHelperText>
+        </FormControl>
 
         <Divider sx={{ my: 3 }} />
 
@@ -1541,7 +2236,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <TextField
-              label="Timeclock System"
+              label={getFieldDef('timeclockSystem')?.label || 'Timeclock System'}
               value={data.shiftPolicies?.timeclockSystem || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1553,7 +2248,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <TextField
-              label="Overtime Policy"
+              label={getFieldDef('overtime')?.label || 'Overtime Policy'}
               value={data.shiftPolicies?.overtime || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1568,7 +2263,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <TextField
-              label="Attendance Policy"
+              label={getFieldDef('attendance')?.label || 'Attendance Policy'}
               value={data.shiftPolicies?.attendance || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1580,7 +2275,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <TextField
-              label="Call-off Policy"
+              label={getFieldDef('callOff')?.label || 'Call-off Policy'}
               value={data.shiftPolicies?.callOff || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1595,7 +2290,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <TextField
-              label="No Call No Show Policy"
+              label={getFieldDef('noCallNoShow')?.label || 'No Call No Show Policy'}
               value={data.shiftPolicies?.noCallNoShow || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1607,7 +2302,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <TextField
-              label="Discipline Policy"
+              label={getFieldDef('discipline')?.label || 'Discipline Policy'}
               value={data.shiftPolicies?.discipline || ''}
               onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
                 ...data.shiftPolicies,
@@ -1619,8 +2314,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
         </Grid>
 
-        <TextField
-          label="Injury Reporting Process"
+          <TextField
+            label={getFieldDef('injuryReporting')?.label || 'Injury Reporting Process'}
           value={data.shiftPolicies?.injuryReporting || ''}
           onChange={(e) => handleStageDataChange('scoping', 'shiftPolicies', {
             ...data.shiftPolicies,
@@ -1637,7 +2332,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Typography variant="h6" gutterBottom>Invoicing Requirements</Typography>
         
-        <FormControlLabel
+          <FormControlLabel
           control={
             <Switch
               checked={data.invoicing?.poRequired || false}
@@ -1647,15 +2342,15 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               })}
             />
           }
-          label="Purchase Order Required"
+            label={getFieldDef('poRequired')?.label || 'Purchase Order Required'}
           sx={{ mb: 2 }}
         />
 
         <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-          <InputLabel>Payment Terms</InputLabel>
+          <InputLabel>{getFieldDef('paymentTerms')?.label || 'Payment Terms'}</InputLabel>
           <Select
             value={data.invoicing?.paymentTerms || ''}
-            label="Payment Terms"
+            label={getFieldDef('paymentTerms')?.label || 'Payment Terms'}
             onChange={(e) => handleStageDataChange('scoping', 'invoicing', {
               ...data.invoicing,
               paymentTerms: e.target.value
@@ -1673,10 +2368,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <FormControl fullWidth>
-              <InputLabel>Delivery Method</InputLabel>
+              <InputLabel>{getFieldDef('deliveryMethod')?.label || 'Delivery Method'}</InputLabel>
               <Select
                 value={data.invoicing?.deliveryMethod || ''}
-                label="Delivery Method"
+                label={getFieldDef('deliveryMethod')?.label || 'Delivery Method'}
                 onChange={(e) => handleStageDataChange('scoping', 'invoicing', {
                   ...data.invoicing,
                   deliveryMethod: e.target.value
@@ -1690,10 +2385,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <FormControl fullWidth>
-              <InputLabel>Invoice Frequency</InputLabel>
+              <InputLabel>{getFieldDef('frequency')?.label || 'Invoice Frequency'}</InputLabel>
               <Select
                 value={data.invoicing?.frequency || ''}
-                label="Invoice Frequency"
+                label={getFieldDef('frequency')?.label || 'Invoice Frequency'}
                 onChange={(e) => handleStageDataChange('scoping', 'invoicing', {
                   ...data.invoicing,
                   frequency: e.target.value
@@ -1717,7 +2412,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>HR Contact</InputLabel>
+              <InputLabel>{getFieldDef('hrContactId')?.label || 'HR Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.hr?.id || ''}
                 onChange={(e) => {
@@ -1727,10 +2422,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     hr: selectedContact || null
                   });
                 }}
-                label="HR Contact"
+                label={getFieldDef('hrContactId')?.label || 'HR Contact'}
               >
                 <MenuItem value="">
-                  <em>Select HR Contact</em>
+                  <em>Select {getFieldDef('hrContactId')?.label || 'HR Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -1742,7 +2437,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>Operations Contact</InputLabel>
+              <InputLabel>{getFieldDef('operationsContactId')?.label || 'Operations Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.operations?.id || ''}
                 onChange={(e) => {
@@ -1752,10 +2447,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     operations: selectedContact || null
                   });
                 }}
-                label="Operations Contact"
+                label={getFieldDef('operationsContactId')?.label || 'Operations Contact'}
               >
                 <MenuItem value="">
-                  <em>Select Operations Contact</em>
+                  <em>Select {getFieldDef('operationsContactId')?.label || 'Operations Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -1770,7 +2465,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>Procurement Contact</InputLabel>
+              <InputLabel>{getFieldDef('procurementContactId')?.label || 'Procurement Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.procurement?.id || ''}
                 onChange={(e) => {
@@ -1780,10 +2475,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     procurement: selectedContact || null
                   });
                 }}
-                label="Procurement Contact"
+                label={getFieldDef('procurementContactId')?.label || 'Procurement Contact'}
               >
                 <MenuItem value="">
-                  <em>Select Procurement Contact</em>
+                  <em>Select {getFieldDef('procurementContactId')?.label || 'Procurement Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -1795,7 +2490,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>Billing Contact</InputLabel>
+              <InputLabel>{getFieldDef('billingContactId')?.label || 'Billing Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.billing?.id || ''}
                 onChange={(e) => {
@@ -1805,10 +2500,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     billing: selectedContact || null
                   });
                 }}
-                label="Billing Contact"
+                label={getFieldDef('billingContactId')?.label || 'Billing Contact'}
               >
                 <MenuItem value="">
-                  <em>Select Billing Contact</em>
+                  <em>Select {getFieldDef('billingContactId')?.label || 'Billing Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -1823,7 +2518,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>Safety Contact</InputLabel>
+              <InputLabel>{getFieldDef('safetyContactId')?.label || 'Safety Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.safety?.id || ''}
                 onChange={(e) => {
@@ -1833,10 +2528,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     safety: selectedContact || null
                   });
                 }}
-                label="Safety Contact"
+                label={getFieldDef('safetyContactId')?.label || 'Safety Contact'}
               >
                 <MenuItem value="">
-                  <em>Select Safety Contact</em>
+                  <em>Select {getFieldDef('safetyContactId')?.label || 'Safety Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -1848,7 +2543,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
-              <InputLabel>Invoice Contact</InputLabel>
+              <InputLabel>{getFieldDef('invoiceContactId')?.label || 'Invoice Contact'}</InputLabel>
               <Select
                 value={data.contactRoles?.invoice?.id || ''}
                 onChange={(e) => {
@@ -1858,10 +2553,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                     invoice: selectedContact || null
                   });
                 }}
-                label="Invoice Contact"
+                label={getFieldDef('invoiceContactId')?.label || 'Invoice Contact'}
               >
                 <MenuItem value="">
-                  <em>Select Invoice Contact</em>
+                  <em>Select {getFieldDef('invoiceContactId')?.label || 'Invoice Contact'}</em>
                 </MenuItem>
                 {associatedContacts.map((contact) => (
                   <MenuItem key={contact.id} value={contact.id}>
@@ -2169,7 +2864,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         </Typography>
 
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel>Proposal Being Reviewed By</InputLabel>
+          <InputLabel>{getFieldDef('underReviewBy')?.label || 'Proposal Being Reviewed By'}</InputLabel>
           <Select
             multiple
             value={data.underReviewBy?.map(contact => contact.id) || []}
@@ -2208,7 +2903,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         </FormControl>
 
         <TextField
-          label="Expected Proposal Response Date"
+          label={getFieldDef('expectedProposalResponseDate')?.label || 'Expected Proposal Response Date'}
           type="date"
           value={data.expectedProposalResponseDate || ''}
           onChange={(e) => handleStageDataChange('proposalReview', 'expectedProposalResponseDate', e.target.value)}
@@ -2223,9 +2918,9 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Divider sx={{ my: 3 }} />
 
-        <Typography variant="h6" gutterBottom>Additional Notes</Typography>
+        <Typography variant="h6" gutterBottom>{getFieldDef('proposalReviewNotes')?.label || 'Additional Notes'}</Typography>
         <TextField
-          label="Proposal Review Notes"
+          label={getFieldDef('proposalReviewNotes')?.label || 'Proposal Review Notes'}
           value={data.notes || ''}
           onBlur={(e) => handleStageDataChange('proposalReview', 'notes', e.target.value)}
           fullWidth
@@ -2268,7 +2963,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           Track requested changes and concessions during the negotiation process.
         </Typography>
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Requested Changes</Typography>
+        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{getFieldDef('requestedChanges')?.label || 'Requested Changes'}</Typography>
         <TextField
           label="Requested Changes"
           value={data.requestedChanges?.join(', ') || ''}
@@ -2284,7 +2979,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           helperText="Enter requested changes, separated by commas"
         />
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Concessions</Typography>
+        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{getFieldDef('concessions')?.label || 'Concessions'}</Typography>
         <Typography color="text.secondary" sx={{ mb: 2 }}>
           Track concessions with their requests and responses.
         </Typography>
@@ -2344,7 +3039,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Typography variant="h6" gutterBottom>Additional Notes</Typography>
         <TextField
-          label="Negotiation Notes"
+          label={getFieldDef('negotiationNotes')?.label || 'Negotiation Notes'}
           value={data.notes || ''}
           onBlur={(e) => handleStageDataChange('negotiation', 'notes', e.target.value)}
           fullWidth
@@ -2368,7 +3063,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         </Typography>
 
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel>Verbal From</InputLabel>
+          <InputLabel>{getFieldDef('verbalFrom')?.label || 'Verbal From'}</InputLabel>
           <Select
             value={data.verbalFrom?.id || ''}
             onChange={(e) => {
@@ -2389,7 +3084,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         </FormControl>
 
         <TextField
-          label="Verbal Date"
+          label={getFieldDef('verbalDate')?.label || 'Verbal Date'}
           type="date"
           value={data.verbalDate || ''}
           onChange={(e) => handleStageDataChange('verbalAgreement', 'verbalDate', e.target.value)}
@@ -2403,7 +3098,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         />
 
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel>Method</InputLabel>
+          <InputLabel>{getFieldDef('method')?.label || 'Method'}</InputLabel>
           <Select
             value={data.method || ''}
             onChange={(e) => handleStageDataChange('verbalAgreement', 'method', e.target.value)}
@@ -2419,7 +3114,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </FormHelperText>
         </FormControl>
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Conditions to Fulfill</Typography>
+        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{getFieldDef('conditionsToFulfill')?.label || 'Conditions to Fulfill'}</Typography>
         <TextField
           label="Conditions to Fulfill"
           value={data.conditionsToFulfill?.join(', ') || ''}
@@ -2435,7 +3130,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           helperText="Enter conditions that need to be fulfilled, separated by commas"
         />
 
-        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>Approvals Needed</Typography>
+        <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>{getFieldDef('approvalsNeeded')?.label || 'Approvals Needed'}</Typography>
         <TextField
           label="Approvals Needed"
           value={data.approvalsNeeded?.join(', ') || ''}
@@ -2455,7 +3150,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Divider sx={{ my: 3 }} />
 
-        <Typography variant="h6" gutterBottom>Additional Notes</Typography>
+        <Typography variant="h6" gutterBottom>{getFieldDef('verbalAgreementNotes')?.label || 'Additional Notes'}</Typography>
         <TextField
           label="Verbal Agreement Notes"
           value={data.notes || ''}
@@ -2562,7 +3257,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         </Typography>
 
         <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel>Closing Status</InputLabel>
+          <InputLabel>{getFieldDef('closingStatus')?.label || 'Closing Status'}</InputLabel>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Select
               value={data.status || ''}
@@ -2574,31 +3269,31 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <MenuItem value="">
                 <em>None</em>
               </MenuItem>
-              <MenuItem value="open">
+                <MenuItem value="open">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <span>⚪</span>
                   <span>Open</span>
                 </Box>
               </MenuItem>
-              <MenuItem value="won">
+                <MenuItem value="won">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <span>🟢</span>
                   <span>Won</span>
                 </Box>
               </MenuItem>
-              <MenuItem value="lost">
+                <MenuItem value="lost">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <span>🔴</span>
                   <span>Lost</span>
                 </Box>
               </MenuItem>
-              <MenuItem value="on_hold">
+                <MenuItem value="on_hold">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <span>⏸️</span>
                   <span>On Hold</span>
                 </Box>
               </MenuItem>
-              <MenuItem value="canceled">
+                <MenuItem value="canceled">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <span>⚫</span>
                   <span>Canceled</span>
@@ -2695,7 +3390,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
                 <TextField
-                  label="Date Signed"
+                  label={getFieldDef('dateSigned')?.label || 'Date Signed'}
                   type="date"
                   value={data.dateSigned || ''}
                   onChange={(e) => handleStageDataChange('closedWon', 'dateSigned', e.target.value)}
@@ -2709,7 +3404,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               </Grid>
               <Grid item xs={12} md={6}>
                 <TextField
-                  label="Expiration Date"
+                  label={getFieldDef('expirationDate')?.label || 'Expiration Date'}
                   type="date"
                   value={data.expirationDate || ''}
                   onChange={(e) => handleStageDataChange('closedWon', 'expirationDate', e.target.value)}
@@ -2888,7 +3583,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             
             <Divider sx={{ my: 3 }} />
 
-            <Typography variant="h6" gutterBottom>Additional Notes</Typography>
+            <Typography variant="h6" gutterBottom>{getFieldDef('closedWonNotes')?.label || 'Additional Notes'}</Typography>
             <TextField
               label={`${STAGES.find(s => s.key === stageKey)?.label} Notes`}
               value={stageData[stageKey as keyof DealStageData]?.notes || ''}

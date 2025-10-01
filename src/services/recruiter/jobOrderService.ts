@@ -36,7 +36,7 @@ export class JobOrderService {
       if (counterDoc.exists()) {
         const currentCount = counterDoc.data().count || 0;
         const newCount = currentCount + 1;
-        const formattedNumber = `JO-${newCount.toString().padStart(4, '0')}`;
+        const formattedNumber = newCount.toString().padStart(4, '0');
         
         await updateDoc(counterRef, { 
           count: increment(1),
@@ -48,7 +48,7 @@ export class JobOrderService {
       } else {
         // Initialize counter - use setDoc instead of updateDoc for new documents
         const initialCount = 1;
-        const formattedNumber = `JO-${initialCount.toString().padStart(4, '0')}`;
+        const formattedNumber = initialCount.toString().padStart(4, '0');
         
         await setDoc(counterRef, { 
           count: initialCount,
@@ -70,22 +70,48 @@ export class JobOrderService {
     try {
       const { jobOrderSeq, jobOrderNumber } = await this.getNextJobOrderNumber(tenantId);
       
-      const jobOrderData: Omit<JobOrder, 'id'> = {
+      // Create job order with unified structure
+      const jobOrderData = {
+        // Job Order specific fields
         jobOrderSeq,
         jobOrderNumber,
-        ...formData,
-        tenantId,
-        // Add default values
+        jobOrderName: formData.jobOrderName || 'New Job Order',
+        jobTitle: formData.jobTitle || '',
         status: formData.status || 'open',
-        visibility: formData.visibility || 'hidden',
-        headcountRequested: formData.headcountRequested || 0,
-        headcountFilled: formData.headcountFilled || 0,
-        // Use serverTimestamp for consistency
-        dateOpened: serverTimestamp(),
+        tenantId,
         createdBy,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        dealId
+        dealId,
+        
+        // If this is created from a deal, include the deal data
+        // Otherwise, create a minimal deal structure for consistency
+        deal: dealId ? null : {
+          id: null,
+          name: formData.jobOrderName || 'New Job Order',
+          companyId: formData.companyId || '',
+          companyName: formData.companyName || '',
+          locationId: formData.worksiteId || '',
+          locationName: formData.worksiteName || '',
+          stage: 'draft',
+          status: 'open',
+          estimatedRevenue: 0,
+          closeDate: null,
+          owner: createdBy,
+          tags: [],
+          notes: '',
+          stageData: {},
+          associations: {
+            companies: formData.companyId ? [formData.companyId] : [],
+            locations: formData.worksiteId ? [formData.worksiteId] : [],
+            contacts: [],
+            salespeople: [],
+            deals: [],
+            tasks: []
+          },
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }
       };
 
       const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_orders'), jobOrderData);
@@ -191,8 +217,8 @@ export class JobOrderService {
     }
   }
 
-  // Auto-fill job order from deal data
-  async createJobOrderFromDeal(tenantId: string, dealId: string, createdBy: string): Promise<string> {
+  // Auto-fill job order from deal data - creates one job order per job title
+  async createJobOrderFromDeal(tenantId: string, dealId: string, createdBy: string): Promise<string[]> {
     try {
       // Get deal data
       const dealRef = doc(db, 'tenants', tenantId, 'crm_deals', dealId);
@@ -202,47 +228,104 @@ export class JobOrderService {
         throw new Error('Deal not found');
       }
       
-      const dealData = dealDoc.data();
+      const dealData = { id: dealDoc.id, ...dealDoc.data() } as any;
+      const stageData = dealData.stageData || {};
+      const discoveryData = stageData.discovery || {};
       
-      // Map deal data to job order form data
-      const formData: JobOrderFormData = {
-        jobOrderName: `${dealData.name || 'Job Order'} - ${new Date().toLocaleDateString()}`,
-        jobOrderDescription: dealData.description || '',
-        status: 'draft',
-        companyId: dealData.companyId || '',
-        companyName: dealData.companyName || '',
-        companyContacts: [], // Will need to be populated separately
-        worksiteId: dealData.locationId || '',
-        worksiteName: dealData.locationName || '',
-        worksiteAddress: {
-          street: '',
-          city: '',
-          state: '',
-          zipCode: '',
-          country: 'USA'
-        },
-        jobTitle: dealData.jobTitle || '',
-        jobDescription: dealData.description || '',
-        assignedRecruiters: [],
-        payRate: 0,
-        billRate: 0,
-        workersNeeded: 1,
-        timesheetCollectionMethod: 'app_clock_in_out',
-        jobsBoardVisibility: 'hidden',
-        showPayRate: false,
-        showStartDate: true,
-        showShiftTimes: true,
-        requiredLicenses: [],
-        requiredCertifications: [],
-        drugScreenRequired: false,
-        backgroundCheckRequired: false,
-        ppeProvidedBy: 'company',
-        onboardingRequirements: []
-      };
+      // Get job titles from discovery stage data
+      const jobTitles = discoveryData.jobTitles || [];
       
-      return await this.createJobOrder(tenantId, formData, createdBy, dealId);
+      if (jobTitles.length === 0) {
+        throw new Error('No job titles found in deal. Please complete the Discovery stage with job titles.');
+      }
+      
+      const createdJobOrderIds: string[] = [];
+      
+      // Create one job order for each job title
+      for (const jobTitle of jobTitles) {
+        // Use mapping to produce flat fields + initialSnapshot
+        const { mapDealToJobOrder } = await import('../../mappings/dealToJobOrder');
+        const { SCHEMA_VERSION } = await import('../../fields/registry');
+        const mapped = mapDealToJobOrder({ ...dealData, jobTitle });
+
+        // Helper function to remove undefined values
+        const removeUndefinedValues = (obj: any): any => {
+          if (obj === null || obj === undefined) return obj;
+          if (Array.isArray(obj)) {
+            return obj.map(removeUndefinedValues).filter(item => item !== undefined);
+          }
+          if (typeof obj === 'object') {
+            const cleaned: any = {};
+            for (const [key, value] of Object.entries(obj)) {
+              if (value !== undefined) {
+                cleaned[key] = removeUndefinedValues(value);
+              }
+            }
+            return cleaned;
+          }
+          return obj;
+        };
+
+        // Create job order with unified structure - FLATTENED
+        const jobOrderData: any = {
+          // Job Order specific fields
+          jobOrderSeq: 0, // Will be set by getNextJobOrderNumber
+          jobOrderNumber: '', // Will be set by getNextJobOrderNumber
+          jobOrderName: `${jobTitle} - ${dealData.name || 'Job Order'}`,
+          jobTitle: jobTitle,
+          status: 'draft',
+          tenantId,
+          createdBy,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          dealId,
+
+          // Flattened mapping outputs (cleaned of undefined values)
+          ...removeUndefinedValues(mapped.flat),
+          // Registry versioning (Phase 1)
+          schemaVersion: SCHEMA_VERSION,
+          initialSnapshot: removeUndefinedValues(mapped.initialSnapshot),
+          
+          // Copy stageData to top level for easy access
+          stageData: dealData.stageData || {},
+          
+          // Copy deal data with associations for job order reference
+          deal: {
+            id: dealData.id,
+            name: dealData.name,
+            companyId: dealData.companyId,
+            companyName: dealData.companyName,
+            locationId: dealData.locationId,
+            locationName: dealData.locationName,
+            stage: dealData.stage,
+            status: dealData.status,
+            estimatedRevenue: dealData.estimatedRevenue,
+            closeDate: dealData.closeDate,
+            owner: dealData.owner,
+            tags: dealData.tags || [],
+            notes: dealData.notes || '',
+            stageData: dealData.stageData || {},
+            associations: dealData.associations || {},
+            createdAt: dealData.createdAt,
+            updatedAt: dealData.updatedAt
+          }
+        };
+        
+        // Get next job order number
+        const { jobOrderSeq, jobOrderNumber } = await this.getNextJobOrderNumber(tenantId);
+        
+        // Update the job order data with the generated number
+        jobOrderData.jobOrderSeq = jobOrderSeq;
+        jobOrderData.jobOrderNumber = jobOrderNumber;
+        
+        // Create the job order document
+        const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_orders'), jobOrderData);
+        createdJobOrderIds.push(docRef.id);
+      }
+      
+      return createdJobOrderIds;
     } catch (error) {
-      console.error('Error creating job order from deal:', error);
+      console.error('Error creating job orders from deal:', error);
       throw error;
     }
   }

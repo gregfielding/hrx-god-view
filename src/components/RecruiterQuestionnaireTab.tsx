@@ -108,6 +108,7 @@ const RecruiterQuestionnaireTab: React.FC<RecruiterQuestionnaireTabProps> = ({
             drugScreenDetails: stageData.scoping?.compliance?.drugScreenDetails || '',
             eVerify: stageData.scoping?.compliance?.eVerify || false,
             ppe: stageData.scoping?.compliance?.ppe || [],
+            ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
             dressCode: stageData.scoping?.compliance?.dressCode || ''
           },
           shiftPolicies: {

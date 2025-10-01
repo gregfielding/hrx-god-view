@@ -191,13 +191,13 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
     }
   };
 
-  const getJobOrderAge = (dateOpened: Date | any) => {
+  const getJobOrderAge = (createdAt: Date | any) => {
     // Handle FieldValue (serverTimestamp) by returning 0 for now
-    if (!dateOpened || typeof dateOpened.getTime !== 'function') {
+    if (!createdAt || typeof createdAt.getTime !== 'function') {
       return 0;
     }
     const now = new Date();
-    const diffTime = Math.abs(now.getTime() - dateOpened.getTime());
+    const diffTime = Math.abs(now.getTime() - createdAt.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
   };
@@ -232,7 +232,7 @@ const JobOrderDetail: React.FC<JobOrderDetailProps> = ({
     );
   }
 
-  const age = getJobOrderAge(jobOrder.dateOpened);
+  const age = getJobOrderAge(jobOrder.createdAt);
 
   return (
     <Box>

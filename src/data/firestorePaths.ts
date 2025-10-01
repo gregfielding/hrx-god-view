@@ -46,8 +46,8 @@ export const p = {
   /**
    * Job Orders (authoritative tenant-level collection)
    */
-  jobOrders: (tid: string) => `tenants/${tid}/jobOrders`,
-  jobOrder: (tid: string, id: string) => `tenants/${tid}/jobOrders/${id}`,
+  jobOrders: (tid: string) => `tenants/${tid}/job_orders`,
+  jobOrder: (tid: string, id: string) => `tenants/${tid}/job_orders/${id}`,
 
   /**
    * Job Board Posts
@@ -121,7 +121,7 @@ export const legacyPaths = {
    * Check if a path uses top-level jobOrders (should be tenant-scoped)
    */
   isTopLevelJobOrders: (path: string): boolean => {
-    return path.startsWith('jobOrders/') && !path.includes('tenants/');
+    return (path.startsWith('jobOrders/') || path.startsWith('job_orders/')) && !path.includes('tenants/');
   },
 
   /**
@@ -139,7 +139,7 @@ export const legacyPaths = {
       console.error(`🚨 LEGACY PATH DETECTED: ${context} is using recruiter_* collection: ${path}`);
     }
     if (legacyPaths.isTopLevelJobOrders(path)) {
-      console.error(`🚨 LEGACY PATH DETECTED: ${context} is using top-level jobOrders: ${path}`);
+      console.error(`🚨 LEGACY PATH DETECTED: ${context} is using top-level jobOrders/job_orders: ${path}`);
     }
     if (legacyPaths.isMissingTenantId(path)) {
       console.error(`🚨 MISSING TENANT ID: ${context} path doesn't include tenantId: ${path}`);

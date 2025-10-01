@@ -16,9 +16,6 @@ import {
   TableSortLabel,
   Paper,
   Chip,
-  IconButton,
-  Menu,
-  MenuItem,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -29,28 +26,20 @@ import {
   FormControl,
   InputLabel,
   Select,
+  MenuItem,
   Tooltip,
   Avatar,
-  Stack,
-  Divider,
-  Badge,
 } from '@mui/material';
 import {
   Add as AddIcon,
-  MoreVert as MoreVertIcon,
   Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as ViewIcon,
   Work as WorkIcon,
   Business as BusinessIcon,
-  LocationOn as LocationIcon,
   People as PeopleIcon,
   AttachMoney as MoneyIcon,
-  Schedule as ScheduleIcon,
   Search as SearchIcon,
   FilterList as FilterIcon,
   PostAdd as PostAddIcon,
-  Assignment as AssignmentIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -82,9 +71,6 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
   const [showPostDialog, setShowPostDialog] = useState(false);
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrder | null>(null);
   
-  // Menu states
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-  const [menuJobOrderId, setMenuJobOrderId] = useState<string | null>(null);
   
   const jobOrderService = JobOrderService.getInstance();
 
@@ -146,19 +132,8 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
     }
   };
 
-  // Handle menu actions
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, jobOrderId: string) => {
-    setAnchorEl(event.currentTarget);
-    setMenuJobOrderId(jobOrderId);
-  };
-
-  const handleMenuClose = () => {
-    setAnchorEl(null);
-    setMenuJobOrderId(null);
-  };
 
   const handleViewJobOrder = (jobOrderId: string) => {
-    handleMenuClose();
     if (onViewJobOrder) {
       onViewJobOrder(jobOrderId);
     } else {
@@ -166,37 +141,6 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
     }
   };
 
-  const handleEditJobOrder = (jobOrderId: string) => {
-    const jobOrder = jobOrders.find(order => order.id === jobOrderId);
-    if (jobOrder) {
-      setSelectedJobOrder(jobOrder);
-      setShowEditDialog(true);
-    }
-    handleMenuClose();
-  };
-
-  const handleDeleteJobOrder = async (jobOrderId: string) => {
-    if (!tenantId) return;
-    
-    if (window.confirm('Are you sure you want to delete this job order?')) {
-      try {
-        await jobOrderService.deleteJobOrder(tenantId, jobOrderId);
-        await loadJobOrders();
-      } catch (err: any) {
-        setError(err.message || 'Failed to delete job order');
-      }
-    }
-    handleMenuClose();
-  };
-
-  const handlePostToJobsBoard = (jobOrderId: string) => {
-    const jobOrder = jobOrders.find(order => order.id === jobOrderId);
-    if (jobOrder) {
-      setSelectedJobOrder(jobOrder);
-      setShowPostDialog(true);
-    }
-    handleMenuClose();
-  };
 
   // Handle job order creation/update
   const handleJobOrderSaved = async () => {
@@ -397,13 +341,12 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                     Created
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredAndSortedJobOrders.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
                     <Box sx={{ textAlign: 'center' }}>
                       <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
                       <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -429,7 +372,17 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                 </TableRow>
               ) : (
                 filteredAndSortedJobOrders.map((jobOrder) => (
-                  <TableRow key={jobOrder.id} hover>
+                  <TableRow 
+                    key={jobOrder.id} 
+                    hover 
+                    sx={{ 
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: 'action.hover'
+                      }
+                    }}
+                    onClick={() => handleViewJobOrder(jobOrder.id)}
+                  >
                     <TableCell>
                       <Typography variant="body2" fontWeight="medium">
                         #{jobOrder.jobOrderNumber}
@@ -490,14 +443,6 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                         {safeToDate(jobOrder.createdAt).toLocaleDateString()}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => handleMenuOpen(e, jobOrder.id)}
-                      >
-                        <MoreVertIcon />
-                      </IconButton>
-                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -506,33 +451,6 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
         </TableContainer>
       </Card>
 
-      {/* Action Menu */}
-      <Menu
-        anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={handleMenuClose}
-      >
-        <MenuItem onClick={() => handleViewJobOrder(menuJobOrderId!)}>
-          <ViewIcon fontSize="small" sx={{ mr: 1 }} />
-          View Details
-        </MenuItem>
-        <MenuItem onClick={() => handleEditJobOrder(menuJobOrderId!)}>
-          <EditIcon fontSize="small" sx={{ mr: 1 }} />
-          Edit
-        </MenuItem>
-        <MenuItem onClick={() => handlePostToJobsBoard(menuJobOrderId!)}>
-          <PostAddIcon fontSize="small" sx={{ mr: 1 }} />
-          Post to Jobs Board
-        </MenuItem>
-        <Divider />
-        <MenuItem 
-          onClick={() => handleDeleteJobOrder(menuJobOrderId!)}
-          sx={{ color: 'error.main' }}
-        >
-          <DeleteIcon fontSize="small" sx={{ mr: 1 }} />
-          Delete
-        </MenuItem>
-      </Menu>
 
       {/* Create Job Order Dialog */}
       <Dialog

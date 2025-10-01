@@ -54,7 +54,7 @@ export class Phase1JobOrderDataAccess {
       const counterResult = await getNextCounterValue(
         this.tenantId,
         'jobOrderNumber',
-        'JO-',
+        '',
         '',
         4
       );

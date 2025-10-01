@@ -253,7 +253,7 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
   return (
     <Box sx={{ p: 0 }}>
       <Typography variant="h5" gutterBottom>
-        Privacy & Notification Settings
+        Privacy & Notification Setting
       </Typography>
       
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>

@@ -26,7 +26,7 @@ export interface JobOrder extends BaseEntity {
   status: 'Open' | 'On-Hold' | 'Cancelled' | 'Filled' | 'Completed';
   companyId: string; // Reference to crm_companies
   locationId?: string; // Reference to crm_companies/{companyId}/locations
-  dateOpened: number; // timestamp
+  createdAt: number; // timestamp
   startDate: string; // date
   endDate?: string; // date or null
   recruiterId: string; // Reference to users

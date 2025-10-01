@@ -13,12 +13,22 @@ import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import { SalespeopleProvider } from './contexts/SalespeopleContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import { Box, Typography } from '@mui/material';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
 import TenantWorkforce from './pages/TenantViews/TenantWorkforce';
+import WorkforceDashboard from './pages/TenantViews/WorkforceDashboard';
+import CompanyDirectory from './pages/TenantViews/CompanyDirectory';
+import HiredStaff from './pages/TenantViews/HiredStaff';
+import FlexWorkers from './pages/TenantViews/FlexWorkers';
+import AddWorkers from './pages/TenantViews/AddWorkers';
+import PendingInvites from './pages/TenantViews/PendingInvites';
+import WorkforcePageWrapper from './pages/TenantViews/WorkforcePageWrapper';
 import TenantSettings from './pages/TenantViews/TenantSettings';
+import CompanyDefaults from './pages/TenantViews/CompanyDefaults';
 import TenantLocations from './pages/TenantViews/TenantLocations';
 import TenantUserGroups from './pages/TenantViews/TenantUserGroups';
+import IntegrationsTab from './pages/TenantViews/IntegrationsTab';
 import TenantModules from './pages/TenantViews/TenantModules';
 import TenantAISettings from './pages/TenantViews/TenantAISettings';
 import TenantFlex from './pages/TenantViews/TenantFlex';
@@ -88,6 +98,7 @@ import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
+import NewJobOrder from './pages/NewJobOrder';
 import Applications from './pages/Applications';
 
 import InsightReports from './pages/InsightReports';
@@ -106,6 +117,47 @@ function UserGroupDetailsWrapper() {
   return <UserGroupDetails tenantId={activeTenant.id} groupId={groupId} />;
 }
 
+function CRMAccessGuard({ children }: { children: React.ReactNode }) {
+  const { crmSalesEnabled } = useAuth();
+  if (!crmSalesEnabled) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
+        <Typography variant="h5" color="error">Access Denied</Typography>
+        <Typography variant="body1" color="text.secondary">You don’t have permission to access this page.</Typography>
+      </Box>
+    );
+  }
+  return <>{children}</>;
+}
+
+function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
+  const { recruiterEnabled } = useAuth();
+  console.log('🔍 RecruiterAccessGuard: recruiterEnabled =', recruiterEnabled);
+  if (!recruiterEnabled) {
+    console.log('🔍 RecruiterAccessGuard: Access denied, showing error message');
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
+        <Typography variant="h5" color="error">Access Denied</Typography>
+        <Typography variant="body1" color="text.secondary">You don't have permission to access this page.</Typography>
+      </Box>
+    );
+  }
+  console.log('🔍 RecruiterAccessGuard: Access granted, rendering children');
+  return <>{children}</>;
+}
+
+function JobsBoardAccessGuard({ children }: { children: React.ReactNode }) {
+  const { jobsBoardEnabled } = useAuth();
+  if (!jobsBoardEnabled) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
+        <Typography variant="h5" color="error">Access Denied</Typography>
+        <Typography variant="body1" color="text.secondary">You don't have permission to access this page.</Typography>
+      </Box>
+    );
+  }
+  return <>{children}</>;
+}
 
 
 function MyTenantWrapper() {
@@ -137,6 +189,12 @@ function ProfileRedirect() {
   
   return <div>Redirecting to your profile...</div>;
 }
+
+// Wrapper component for IntegrationsTab to provide tenantId
+const IntegrationsTabWrapper: React.FC = () => {
+  const { tenantId } = useAuth();
+  return tenantId ? <IntegrationsTab tenantId={tenantId} /> : null;
+};
 
 function App() {
   console.log('App rendered');
@@ -200,26 +258,34 @@ function App() {
         <Route path="flex" element={<TenantFlex />} />
         <Route path="jobs-board" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <JobsBoard />
+            <JobsBoardAccessGuard>
+              <JobsBoard />
+            </JobsBoardAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="crm" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <CRMCacheProvider>
-              <TenantCRM />
-            </CRMCacheProvider>
+            <CRMAccessGuard>
+              <CRMCacheProvider>
+                <TenantCRM />
+              </CRMCacheProvider>
+            </CRMAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <CRMCacheProvider>
-              <CompanyDetails />
-            </CRMCacheProvider>
+            <CRMAccessGuard>
+              <CRMCacheProvider>
+                <CompanyDetails />
+              </CRMCacheProvider>
+            </CRMAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="crm/contacts/:contactId" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <ContactDetails />
+            <CRMAccessGuard>
+              <ContactDetails />
+            </CRMAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="tenant/salesperson/:salespersonId" element={
@@ -229,17 +295,91 @@ function App() {
         } />
         <Route path="crm/deals/:dealId" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <DealDetails />
+            <CRMAccessGuard>
+              <DealDetails />
+            </CRMAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="crm/companies/:companyId/locations/:locationId" element={
           <ProtectedRoute requiredSecurityLevel="3">
-            <LocationDetails />
+            <CRMAccessGuard>
+              <LocationDetails />
+            </CRMAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="workforce" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <TenantWorkforce />
+            <WorkforceDashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/company-directory" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Company Directory' }
+            ]}>
+              <CompanyDirectory />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/hired-staff" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Hired Staff' }
+            ]}>
+              <HiredStaff />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/flex-workers" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Flex Workers' }
+            ]}>
+              <FlexWorkers />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/user-groups" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'User Groups' }
+            ]}>
+              <TenantUserGroups />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/add-workers" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Add Workers' }
+            ]}>
+              <AddWorkers />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/pending-invites" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Pending Invites' }
+            ]}>
+              <PendingInvites />
+            </WorkforcePageWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="workforce/integrations" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <WorkforcePageWrapper breadcrumbPath={[
+              { label: 'Workforce Management', href: '/workforce' },
+              { label: 'Integrations' }
+            ]}>
+              <IntegrationsTabWrapper />
+            </WorkforcePageWrapper>
           </ProtectedRoute>
         } />
         <Route path="customers" element={
@@ -250,6 +390,11 @@ function App() {
         <Route path="settings" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <TenantSettings />
+          </ProtectedRoute>
+        } />
+        <Route path="company-defaults" element={
+          <ProtectedRoute requiredSecurityLevel="6">
+            <CompanyDefaults />
           </ProtectedRoute>
         } />
         <Route path="locations" element={
@@ -606,19 +751,32 @@ function App() {
           </ProtectedRoute>
         } />
         <Route path="recruiter" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <RecruiterDashboard />
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <RecruiterDashboard />
+            </RecruiterAccessGuard>
           </ProtectedRoute>
         } />
 
         <Route path="recruiter/job-orders" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <RecruiterJobOrders />
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <RecruiterJobOrders />
+            </RecruiterAccessGuard>
+          </ProtectedRoute>
+        } />
+        <Route path="recruiter/job-orders/new" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <NewJobOrder />
+            </RecruiterAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="recruiter/job-orders/:jobOrderId" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <RecruiterJobOrderDetail />
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <RecruiterJobOrderDetail />
+            </RecruiterAccessGuard>
           </ProtectedRoute>
         } />
         <Route path="recruiter/applications" element={

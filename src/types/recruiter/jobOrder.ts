@@ -3,15 +3,19 @@ import { FieldValue } from 'firebase/firestore';
 export interface JobOrder {
   id: string;
   jobOrderSeq: number; // Raw auto-increment per tenant
-  jobOrderNumber: string; // Formatted number (e.g., "JO-0001")
+  jobOrderNumber: string; // Formatted number (e.g., "0001")
   jobOrderName: string;
   jobOrderDescription?: string;
   status: JobOrderStatus;
   tenantId: string;
   startDate?: Date;
   endDate?: Date;
-  dateOpened: Date | FieldValue;
+  createdAt: Date | FieldValue;
+  updatedAt: Date | FieldValue;
   poNumber?: string;
+  
+  // Deal data - unified structure
+  deal?: any; // The complete deal data structure
   
   // Company / Worksite
   companyId: string;
@@ -76,10 +80,71 @@ export interface JobOrder {
   // Onboarding
   onboardingRequirements?: string[];
   
+  // 🆕 Deal Conversion Fields - Discovery Stage
+  currentStaffCount?: number;
+  currentAgencyCount?: number;
+  currentSatisfactionLevel?: 'very_happy' | 'somewhat' | 'frustrated';
+  currentStruggles?: string[];
+  hasUsedAgenciesBefore?: boolean;
+  lastAgencyUsed?: string;
+  reasonStoppedUsingAgencies?: string;
+  openToUsingAgenciesAgain?: boolean;
+  additionalJobTitles?: string[];
+  shiftTimes?: string[];
+  employmentType?: 'seasonal' | 'year_round';
+  onsiteSupervisionRequired?: boolean;
+  
+  // 🆕 Deal Conversion Fields - Qualification Stage
+  mustHaveRequirements?: string;
+  mustAvoidRequirements?: string;
+  potentialObstacles?: string[];
+  expectedStartDate?: string;
+  initialHeadcount?: number;
+  headcountAfter30Days?: number;
+  headcountAfter90Days?: number;
+  headcountAfter180Days?: number;
+  expectedPayRate?: number;
+  expectedMarkup?: number;
+  
+  // 🆕 Deal Conversion Fields - Scoping Stage
+  replacingExistingAgency?: boolean;
+  rolloverExistingStaff?: boolean;
+  backgroundCheckPackages?: string[];
+  drugScreeningPanels?: string[];
+  eVerifyRequired?: boolean;
+  dressCode?: string;
+  timeclockSystem?: string;
+  disciplinePolicy?: string;
+  poRequired?: boolean;
+  paymentTerms?: string;
+  invoiceDeliveryMethod?: 'email' | 'portal' | 'mail';
+  invoiceFrequency?: 'weekly' | 'biweekly' | 'monthly';
+  rolloverStaff?: Array<{
+    howMany: number;
+    fromAgency: string;
+    positions: string;
+    markupPercent: number;
+  }>;
+  
+  // 🆕 Deal Conversion Fields - Verbal Agreement Stage
+  verbalAgreementContact?: string;
+  verbalAgreementDate?: string;
+  verbalAgreementMethod?: 'phone' | 'email' | 'in_person' | 'other';
+  conditionsToFulfill?: string[];
+  approvalsNeeded?: string[];
+  insuranceSubmitted?: boolean;
+  
+  // 🆕 Deal Conversion Fields - Closed Won Stage
+  contractSignedDate?: string;
+  contractExpirationDate?: string;
+  rateSheetOnFile?: boolean;
+  msaSigned?: boolean;
+  
+  // 🆕 Financial Fields
+  estimatedRevenue?: number;
+  
   // Metadata
   createdBy: string;
-  createdAt: Date | FieldValue;
-  updatedAt: Date | FieldValue;
   dealId?: string; // Link back to originating CRM deal
 }
 

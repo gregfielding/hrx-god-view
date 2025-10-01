@@ -32,11 +32,11 @@ export const safeToDate = (value: Date | FieldValue | any): Date => {
 
 /**
  * Get job order age in days, handling both Date and FieldValue
- * @param dateOpened - Date object or FieldValue
+ * @param createdAt - Date object or FieldValue
  * @returns Number of days since the date
  */
-export const getJobOrderAge = (dateOpened: Date | FieldValue | any): number => {
-  const date = safeToDate(dateOpened);
+export const getJobOrderAge = (createdAt: Date | FieldValue | any): number => {
+  const date = safeToDate(createdAt);
   const now = new Date();
   const diffTime = Math.abs(now.getTime() - date.getTime());
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));

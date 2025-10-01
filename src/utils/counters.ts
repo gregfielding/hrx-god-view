@@ -279,7 +279,7 @@ export const deleteCounter = async (
 export const COUNTER_CONFIGS = {
   JOB_ORDER_NUMBER: {
     counterId: 'jobOrderNumber',
-    prefix: 'JO-',
+    prefix: '',
     padding: 4,
     description: 'Job Order Number'
   },

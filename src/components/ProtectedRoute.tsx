@@ -22,7 +22,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requiredOrgType,
   fallbackPath = '/login',
 }) => {
-  const { user, role, securityLevel, orgType, loading } = useAuth();
+  const { user, role, securityLevel, orgType, loading, crmSalesEnabled, recruiterEnabled } = useAuth();
 
   // Show loading spinner while auth state is being determined
   if (loading) {
@@ -164,6 +164,11 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       );
     }
   }
+
+  // Specific route gating examples
+  // CRM pages require crmSalesEnabled true
+  // This component doesn't know the current path; we gate in App routes by wrapping with a small guard component.
+  // Kept here for future extension if we decide to pass a feature flag prop.
 
   // All checks passed, render the protected content
   return <>{children}</>;

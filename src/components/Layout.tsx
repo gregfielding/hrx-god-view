@@ -20,6 +20,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import SettingsIcon from '@mui/icons-material/Settings';
+import ArchitectureIcon from '@mui/icons-material/Architecture';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HelpIcon from '@mui/icons-material/Help';
@@ -70,7 +71,10 @@ const Layout: React.FC = React.memo(function Layout() {
     isHRX,
     claimsRoles,
     currentClaimsRole,
-    currentClaimsSecurityLevel
+    currentClaimsSecurityLevel,
+    crmSalesEnabled,
+    recruiterEnabled,
+    jobsBoardEnabled,
   } = useAuth();
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
@@ -248,6 +252,7 @@ const Layout: React.FC = React.memo(function Layout() {
   const [customersModuleEnabled, setCustomersModuleEnabled] = useState(false);
   const [jobsBoardModuleEnabled, setJobsBoardModuleEnabled] = useState(false);
   const [crmModuleEnabled, setCrmModuleEnabled] = useState(false);
+  const [staffingModuleEnabled, setStaffingModuleEnabled] = useState(false);
 
   // Real-time listener for flex module status
   useEffect(() => {
@@ -409,12 +414,44 @@ const Layout: React.FC = React.memo(function Layout() {
     return () => unsubscribe();
   }, [activeTenant?.id]);
 
+  // Real-time listener for Staffing module status
+  useEffect(() => {
+    if (!activeTenant?.id) {
+      // No active tenant
+      setStaffingModuleEnabled(false);
+      return;
+    }
+    
+    if (activeTenant.id === 'TgDJ4sIaC7x2n5cPs3rW') {
+      // HRX user - enable all modules by default
+      setStaffingModuleEnabled(true);
+      return;
+    }
+
+    const staffingModuleRef = doc(db, 'tenants', activeTenant.id, 'modules', 'hrx-staffing');
+    const unsubscribe = onSnapshot(staffingModuleRef, (doc) => {
+      if (doc.exists()) {
+        const isEnabled = doc.data()?.isEnabled || false;
+        // REMOVED: Excessive logging causing re-renders
+        setStaffingModuleEnabled(isEnabled);
+      } else {
+        console.log('Staffing module document does not exist, defaulting to disabled');
+        setStaffingModuleEnabled(false);
+      }
+    }, (error) => {
+      console.error('Error listening to Staffing module status:', error);
+      setStaffingModuleEnabled(false);
+    });
+
+    return () => unsubscribe();
+  }, [activeTenant?.id]);
+
   useEffect(() => {
     const generateMenu = async () => {
       setMenuLoading(true);
       try {
         // REMOVED: Excessive logging causing re-renders
-        const items = await generateMenuItems(
+        let items = await generateMenuItems(
           userAccessRole, 
           (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), 
           activeTenant?.id, 
@@ -423,23 +460,22 @@ const Layout: React.FC = React.memo(function Layout() {
           customersModuleEnabled, 
           jobsBoardModuleEnabled, 
           crmModuleEnabled,
+          staffingModuleEnabled,
           // New claims-based parameters
           isHRX,
           currentClaimsRole,
           claimsRoles
         );
-        
-        // Apply claims-based filtering to menu items
-        const filteredItems = filterMenuItemsByClaims(
-          items,
-          isHRX,
-          currentClaimsRole,
-          activeTenant?.id,
-          claimsRoles
-        );
-        
-        // REMOVED: Excessive logging causing re-renders
-        setMenuItems(filteredItems);
+        // Hide menu items by per-user flags
+        items = items.filter((mi) => {
+          if (mi.text === 'Sales CRM' && !crmSalesEnabled) return false;
+          if (mi.text === 'Recruiter' && !recruiterEnabled) return false;
+          if (mi.text === 'Jobs Board' && !jobsBoardEnabled) return false;
+          return true;
+        });
+
+        // Use items directly; internal generator already applies role/module checks
+        setMenuItems(items);
       } catch (error) {
         console.error('Error generating menu:', error);
         setMenuItems([]);
@@ -448,7 +484,7 @@ const Layout: React.FC = React.memo(function Layout() {
       }
     };
     generateMenu();
-  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, isHRX, currentClaimsRole, claimsRoles]);
+  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled]);
 
   const menuItemsWithIcons = menuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -480,6 +516,8 @@ const Layout: React.FC = React.memo(function Layout() {
       'Notifications': <NotificationsIcon />,
       'Privacy & Notifications': <NotificationsIcon />,
       'Modules': <AppsIcon />,
+      'Setup': <ArchitectureIcon />,
+      'Company Defaults': <BusinessIcon />,
       'AI Launchpad': <RocketLaunchIcon />,
       'Help': <HelpIcon />,
       'Campaigns': <WavesIcon />,

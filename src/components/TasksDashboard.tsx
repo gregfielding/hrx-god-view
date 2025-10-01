@@ -166,13 +166,25 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           
           baseTasks.forEach(task => {
             if (task.associations?.contacts) {
-              task.associations.contacts.forEach((contactId: string) => {
-                contactIds.add(contactId);
+              task.associations.contacts.forEach((contact: any) => {
+                // Handle both string IDs and object references
+                const contactId = typeof contact === 'string' ? contact : contact?.id;
+                if (contactId && typeof contactId === 'string') {
+                  contactIds.add(contactId);
+                } else {
+                  console.warn('Invalid contact ID in task associations:', contact);
+                }
               });
             }
             if (task.associations?.companies) {
-              task.associations.companies.forEach((companyId: string) => {
-                companyIds.add(companyId);
+              task.associations.companies.forEach((company: any) => {
+                // Handle both string IDs and object references
+                const companyId = typeof company === 'string' ? company : company?.id;
+                if (companyId && typeof companyId === 'string') {
+                  companyIds.add(companyId);
+                } else {
+                  console.warn('Invalid company ID in task associations:', company);
+                }
               });
             }
           });
@@ -184,13 +196,27 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               const { collection, query, where, getDocs } = await import('firebase/firestore');
               const { db } = await import('../firebase');
               
-              // Try to load from crm_contacts first, then crm_companies as fallback
-              const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-              const contactsQuery = query(contactsRef, where('__name__', 'in', Array.from(contactIds)));
-              const contactsSnapshot = await getDocs(contactsQuery);
-              loadedContacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              const contactIdsArray = Array.from(contactIds);
+              console.log('🔍 TasksDashboard: Contact IDs to query:', contactIdsArray);
               
-              console.log('🔍 TasksDashboard: Loaded contacts:', loadedContacts);
+              // Validate all IDs are strings
+              const validContactIds = contactIdsArray.filter(id => typeof id === 'string' && id.length > 0);
+              if (validContactIds.length !== contactIdsArray.length) {
+                console.warn('🔍 TasksDashboard: Filtered out invalid contact IDs:', {
+                  original: contactIdsArray,
+                  valid: validContactIds
+                });
+              }
+              
+              if (validContactIds.length > 0) {
+                // Try to load from crm_contacts first, then crm_companies as fallback
+                const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+                const contactsQuery = query(contactsRef, where('__name__', 'in', validContactIds));
+                const contactsSnapshot = await getDocs(contactsQuery);
+                loadedContacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                console.log('🔍 TasksDashboard: Loaded contacts:', loadedContacts);
+              }
             } catch (error) {
               console.error('Error loading contacts for tasks:', error);
             }
@@ -203,12 +229,26 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               const { collection, query, where, getDocs } = await import('firebase/firestore');
               const { db } = await import('../firebase');
               
-              const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-              const companiesQuery = query(companiesRef, where('__name__', 'in', Array.from(companyIds)));
-              const companiesSnapshot = await getDocs(companiesQuery);
-              loadedCompanies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              const companyIdsArray = Array.from(companyIds);
+              console.log('🔍 TasksDashboard: Company IDs to query:', companyIdsArray);
               
-              console.log('🔍 TasksDashboard: Loaded companies:', loadedCompanies);
+              // Validate all IDs are strings
+              const validCompanyIds = companyIdsArray.filter(id => typeof id === 'string' && id.length > 0);
+              if (validCompanyIds.length !== companyIdsArray.length) {
+                console.warn('🔍 TasksDashboard: Filtered out invalid company IDs:', {
+                  original: companyIdsArray,
+                  valid: validCompanyIds
+                });
+              }
+              
+              if (validCompanyIds.length > 0) {
+                const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+                const companiesQuery = query(companiesRef, where('__name__', 'in', validCompanyIds));
+                const companiesSnapshot = await getDocs(companiesQuery);
+                loadedCompanies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                
+                console.log('🔍 TasksDashboard: Loaded companies:', loadedCompanies);
+              }
             } catch (error) {
               console.error('Error loading companies for tasks:', error);
             }

@@ -76,6 +76,7 @@ export interface UserProfile {
   departmentId: string; // ref ID to Departments collection
   divisionId?: string; // ref ID to Divisions collection
   locationId?: string; // ref ID to Locations collection
+  regionId?: string; // ref ID to Regions collection
   managerId?: string; // ref ID to another user
 
   // 🗂️ Metadata & Structure
@@ -126,6 +127,10 @@ export interface UserProfile {
   vaccinationStatus?: string;
   specialTraining?: string;
   resume?: any;
+  // Module access flags (per-user overrides)
+  crm_sales?: boolean;
+  recruiter?: boolean;
+  jobsBoard?: boolean;
 }
 
 // Form interface for editing user profiles
@@ -136,6 +141,7 @@ export interface UserProfileForm {
   preferredName?: string;
   email: string;
   phone: string;
+  linkedinUrl?: string;
   dateOfBirth?: string; // ISO date string for form input
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   
@@ -145,6 +151,7 @@ export interface UserProfileForm {
   departmentId: string;
   divisionId?: string;
   locationId?: string;
+  regionId?: string;
   managerId?: string;
   
   // Metadata & Structure
@@ -163,6 +170,10 @@ export interface UserProfileForm {
   role?: string;
   jobTitle?: string;
   department?: string;
+  // Module access flags (per-user overrides)
+  crm_sales?: boolean;
+  recruiter?: boolean;
+  jobsBoard?: boolean;
 }
 
 // Validation schema for form validation
