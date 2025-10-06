@@ -6,6 +6,7 @@ export type FieldType =
   | 'boolean'
   | 'date'
   | 'datetime'
+  | 'time'
   | 'select'
   | 'multiselect'
   | 'object'
@@ -22,7 +23,7 @@ export type FieldDef = {
   options?: Option[];
   itemShape?: Record<string, FieldType> | FieldType;
   validator?: string;
-  usedBy: Array<'Deal' | 'JobOrder' | 'Both'>;
+  usedBy: Array<'Deal' | 'JobOrder' | 'JobPosting' | 'Both' | 'All'>;
   defaultValue?: any;
   tags?: string[];
   deprecated?: boolean;
