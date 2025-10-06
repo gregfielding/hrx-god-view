@@ -651,72 +651,77 @@ const JobsBoard: React.FC = () => {
 
             {useCompanyLocation ? (
               <>
-                <Autocomplete
-                  fullWidth
-                  options={companies}
-                  getOptionLabel={(option) => option.name}
-              value={companies.find(c => c.id === selectedCompanyId) || null}
-              onChange={(event, newValue) => {
-                if (newValue) {
-                  handleCompanyChange(newValue.id);
-                } else {
-                  setSelectedCompanyId('');
-                  setSelectedLocationId('');
-                  setLocations([]);
-                  setNewPost({
-                    ...newPost,
-                    companyId: '',
-                    companyName: '',
-                    worksiteId: '',
-                    worksiteName: '',
-                    street: '',
-                    city: '',
-                    state: '',
-                    zipCode: ''
-                  });
-                }
-              }}
-              loading={loadingCompanies}
-              disabled={loadingCompanies}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Company"
-                  required
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
-                        {params.InputProps.endAdornment}
-                      </>
-                    ),
-                  }}
-                />
-              )}
-            />
-
-            <FormControl fullWidth required disabled={!selectedCompanyId}>
-              <InputLabel>Worksite</InputLabel>
-              <Select
-                value={selectedLocationId}
-                label="Worksite"
-                onChange={(e) => handleLocationChange(e.target.value)}
-                disabled={loadingLocations || !selectedCompanyId}
-              >
-                {loadingLocations ? (
-                  <MenuItem value="">Loading locations...</MenuItem>
-                ) : locations.length === 0 ? (
-                  <MenuItem value="">No locations available</MenuItem>
-                ) : (
-                  locations.map((location) => (
-                    <MenuItem key={location.id} value={location.id}>
-                      {location.nickname || location.name}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <Autocomplete
+                      fullWidth
+                      options={companies}
+                      getOptionLabel={(option) => option.name}
+                      value={companies.find(c => c.id === selectedCompanyId) || null}
+                      onChange={(event, newValue) => {
+                        if (newValue) {
+                          handleCompanyChange(newValue.id);
+                        } else {
+                          setSelectedCompanyId('');
+                          setSelectedLocationId('');
+                          setLocations([]);
+                          setNewPost({
+                            ...newPost,
+                            companyId: '',
+                            companyName: '',
+                            worksiteId: '',
+                            worksiteName: '',
+                            street: '',
+                            city: '',
+                            state: '',
+                            zipCode: ''
+                          });
+                        }
+                      }}
+                      loading={loadingCompanies}
+                      disabled={loadingCompanies}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Company"
+                          required
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <FormControl fullWidth required disabled={!selectedCompanyId}>
+                      <InputLabel>Worksite</InputLabel>
+                      <Select
+                        value={selectedLocationId}
+                        label="Worksite"
+                        onChange={(e) => handleLocationChange(e.target.value)}
+                        disabled={loadingLocations || !selectedCompanyId}
+                      >
+                        {loadingLocations ? (
+                          <MenuItem value="">Loading locations...</MenuItem>
+                        ) : locations.length === 0 ? (
+                          <MenuItem value="">No locations available</MenuItem>
+                        ) : (
+                          locations.map((location) => (
+                            <MenuItem key={location.id} value={location.id}>
+                              {location.nickname || location.name}
+                            </MenuItem>
+                          ))
+                        )}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                </Grid>
 
                 {selectedLocationId && (
                   <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
