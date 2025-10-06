@@ -44,16 +44,23 @@ const JobsBoard: React.FC = () => {
 
   // New post form state
   const [newPost, setNewPost] = useState({
-    title: '',
-    description: '',
+    postTitle: '',
+    jobTitle: '',
+    jobDescription: '',
     companyName: '',
-    location: '',
+    worksiteName: '',
+    street: '',
+    city: '',
+    state: '',
+    zipCode: '',
     startDate: '',
+    endDate: '',
     payRate: '',
     showPayRate: true,
-    visibility: 'public' as 'public' | 'limited' | 'private',
-    sourceType: 'generic' as 'generic' | 'job_order',
-    sourceId: '',
+    visibility: 'public' as 'public' | 'private' | 'restricted',
+    status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
+    jobOrderId: '',
+    autoAddToUserGroup: '',
   });
 
   // Load jobs board posts from Firestore
@@ -120,16 +127,23 @@ const JobsBoard: React.FC = () => {
   const handleCloseNewPostModal = () => {
     setOpenNewPostModal(false);
     setNewPost({
-      title: '',
-      description: '',
+      postTitle: '',
+      jobTitle: '',
+      jobDescription: '',
       companyName: '',
-      location: '',
+      worksiteName: '',
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
       startDate: '',
+      endDate: '',
       payRate: '',
       showPayRate: true,
       visibility: 'public',
-      sourceType: 'generic',
-      sourceId: '',
+      status: 'draft',
+      jobOrderId: '',
+      autoAddToUserGroup: '',
     });
     setSubmitError(null);
   };
@@ -138,11 +152,15 @@ const JobsBoard: React.FC = () => {
     if (!tenantId) return;
 
     // Validation
-    if (!newPost.title.trim()) {
+    if (!newPost.postTitle.trim()) {
+      setSubmitError('Post title is required');
+      return;
+    }
+    if (!newPost.jobTitle.trim()) {
       setSubmitError('Job title is required');
       return;
     }
-    if (!newPost.description.trim()) {
+    if (!newPost.jobDescription.trim()) {
       setSubmitError('Job description is required');
       return;
     }
@@ -150,8 +168,12 @@ const JobsBoard: React.FC = () => {
       setSubmitError('Company name is required');
       return;
     }
-    if (!newPost.location.trim()) {
-      setSubmitError('Location is required');
+    if (!newPost.worksiteName.trim()) {
+      setSubmitError('Worksite name is required');
+      return;
+    }
+    if (!newPost.city.trim() || !newPost.state.trim()) {
+      setSubmitError('City and state are required');
       return;
     }
 
@@ -162,16 +184,24 @@ const JobsBoard: React.FC = () => {
       await jobsBoardService.createPost(
         tenantId,
         {
-          title: newPost.title.trim(),
-          description: newPost.description.trim(),
+          postTitle: newPost.postTitle.trim(),
+          jobTitle: newPost.jobTitle.trim(),
+          jobDescription: newPost.jobDescription.trim(),
           companyName: newPost.companyName.trim(),
-          location: newPost.location.trim(),
+          worksiteName: newPost.worksiteName.trim(),
+          worksiteAddress: {
+            street: newPost.street.trim(),
+            city: newPost.city.trim(),
+            state: newPost.state.trim(),
+            zipCode: newPost.zipCode.trim(),
+          },
           startDate: newPost.startDate || null,
+          endDate: newPost.endDate || null,
           payRate: newPost.payRate ? parseFloat(newPost.payRate) : null,
           showPayRate: newPost.showPayRate,
           visibility: newPost.visibility,
-          sourceType: newPost.sourceType,
-          sourceId: newPost.sourceId || null,
+          jobOrderId: newPost.jobOrderId || undefined,
+          autoAddToUserGroup: newPost.autoAddToUserGroup || undefined,
         },
         user?.uid || 'system'
       );
@@ -373,17 +403,27 @@ const JobsBoard: React.FC = () => {
           
           <Stack spacing={3} sx={{ mt: 2 }}>
             <TextField
-              label="Job Title"
-              value={newPost.title}
-              onChange={(e) => setNewPost({ ...newPost, title: e.target.value })}
+              label="Post Title"
+              value={newPost.postTitle}
+              onChange={(e) => setNewPost({ ...newPost, postTitle: e.target.value })}
               fullWidth
               required
+              helperText="Title for the job posting (may differ from actual job title)"
+            />
+
+            <TextField
+              label="Job Title"
+              value={newPost.jobTitle}
+              onChange={(e) => setNewPost({ ...newPost, jobTitle: e.target.value })}
+              fullWidth
+              required
+              helperText="Actual job title for the position"
             />
 
             <TextField
               label="Job Description"
-              value={newPost.description}
-              onChange={(e) => setNewPost({ ...newPost, description: e.target.value })}
+              value={newPost.jobDescription}
+              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
               fullWidth
               required
               multiline
@@ -400,22 +440,62 @@ const JobsBoard: React.FC = () => {
             />
 
             <TextField
-              label="Location"
-              value={newPost.location}
-              onChange={(e) => setNewPost({ ...newPost, location: e.target.value })}
+              label="Worksite Name"
+              value={newPost.worksiteName}
+              onChange={(e) => setNewPost({ ...newPost, worksiteName: e.target.value })}
               fullWidth
               required
-              helperText="City, State or full address"
+              helperText="Location nickname or worksite name"
             />
 
             <TextField
-              label="Start Date"
-              type="date"
-              value={newPost.startDate}
-              onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
+              label="Street Address"
+              value={newPost.street}
+              onChange={(e) => setNewPost({ ...newPost, street: e.target.value })}
               fullWidth
-              InputLabelProps={{ shrink: true }}
             />
+
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label="City"
+                value={newPost.city}
+                onChange={(e) => setNewPost({ ...newPost, city: e.target.value })}
+                fullWidth
+                required
+              />
+              <TextField
+                label="State"
+                value={newPost.state}
+                onChange={(e) => setNewPost({ ...newPost, state: e.target.value })}
+                fullWidth
+                required
+              />
+              <TextField
+                label="Zip Code"
+                value={newPost.zipCode}
+                onChange={(e) => setNewPost({ ...newPost, zipCode: e.target.value })}
+                fullWidth
+              />
+            </Stack>
+
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label="Start Date"
+                type="date"
+                value={newPost.startDate}
+                onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                label="End Date"
+                type="date"
+                value={newPost.endDate}
+                onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+              />
+            </Stack>
 
             <Stack direction="row" spacing={2}>
               <TextField
@@ -440,40 +520,51 @@ const JobsBoard: React.FC = () => {
               </FormControl>
             </Stack>
 
-            <FormControl fullWidth>
-              <InputLabel>Visibility</InputLabel>
-              <Select
-                value={newPost.visibility}
-                label="Visibility"
-                onChange={(e) => setNewPost({ ...newPost, visibility: e.target.value as any })}
-              >
-                <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                <MenuItem value="limited">Limited - Visible to specific user groups</MenuItem>
-                <MenuItem value="private">Private - Internal only</MenuItem>
-              </Select>
-            </FormControl>
+            <Stack direction="row" spacing={2}>
+              <FormControl fullWidth>
+                <InputLabel>Visibility</InputLabel>
+                <Select
+                  value={newPost.visibility}
+                  label="Visibility"
+                  onChange={(e) => setNewPost({ ...newPost, visibility: e.target.value as any })}
+                >
+                  <MenuItem value="public">Public - Visible to everyone</MenuItem>
+                  <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
+                  <MenuItem value="private">Private - Internal only</MenuItem>
+                </Select>
+              </FormControl>
 
-            <FormControl fullWidth>
-              <InputLabel>Source Type</InputLabel>
-              <Select
-                value={newPost.sourceType}
-                label="Source Type"
-                onChange={(e) => setNewPost({ ...newPost, sourceType: e.target.value as any })}
-              >
-                <MenuItem value="generic">Generic - Standalone posting</MenuItem>
-                <MenuItem value="job_order">Job Order - Linked to a job order</MenuItem>
-              </Select>
-            </FormControl>
+              <FormControl fullWidth>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  value={newPost.status}
+                  label="Status"
+                  onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
+                >
+                  <MenuItem value="draft">Draft</MenuItem>
+                  <MenuItem value="active">Active</MenuItem>
+                  <MenuItem value="paused">Paused</MenuItem>
+                  <MenuItem value="cancelled">Cancelled</MenuItem>
+                  <MenuItem value="expired">Expired</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
 
-            {newPost.sourceType === 'job_order' && (
-              <TextField
-                label="Job Order ID"
-                value={newPost.sourceId}
-                onChange={(e) => setNewPost({ ...newPost, sourceId: e.target.value })}
-                fullWidth
-                helperText="Enter the ID of the job order this posting is linked to"
-              />
-            )}
+            <TextField
+              label="Job Order ID (Optional)"
+              value={newPost.jobOrderId}
+              onChange={(e) => setNewPost({ ...newPost, jobOrderId: e.target.value })}
+              fullWidth
+              helperText="Link this posting to an existing job order"
+            />
+
+            <TextField
+              label="Auto-Add to User Group (Optional)"
+              value={newPost.autoAddToUserGroup}
+              onChange={(e) => setNewPost({ ...newPost, autoAddToUserGroup: e.target.value })}
+              fullWidth
+              helperText="Automatically add applicants to this user group ID"
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

@@ -10,7 +10,8 @@ import {
   where, 
   orderBy, 
   limit,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from 'firebase/firestore';
 
 import { db } from '../../firebase';
@@ -18,52 +19,110 @@ import { JobOrder } from '../../types/recruiter/jobOrder';
 
 export interface JobsBoardPost {
   id: string;
+  jobPostId: string; // Sequential counter like 2002, 2003, 2004
   tenantId: string;
-  jobOrderId: string;
-  title: string;
-  description: string;
-  location: string;
+  
+  // Posting Details
+  postTitle: string; // Title of the posting (may differ from job title)
+  jobTitle: string; // Actual job title
+  jobDescription: string; // Full job description
+  
+  // Company & Location
+  companyId?: string;
   companyName: string;
+  worksiteId?: string;
+  worksiteName: string; // Location nickname
+  worksiteAddress: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    coordinates?: {
+      lat: number;
+      lng: number;
+    };
+  };
+  
+  // Dates & Compensation
+  startDate?: Date;
+  endDate?: Date;
   payRate?: number;
   showPayRate: boolean;
-  startDate?: Date;
-  showStartDate: boolean;
-  shiftTimes?: string;
-  showShiftTimes: boolean;
-  requirements: string[];
-  benefits?: string;
-  visibility: 'hidden' | 'public' | 'group_restricted';
-  restrictedGroups?: string[];
-  status: 'draft' | 'posted' | 'paused' | 'closed';
+  
+  // Display Settings
+  visibility: 'public' | 'private' | 'restricted';
+  restrictedGroups?: string[]; // User group IDs for restricted visibility
+  
+  // Status
+  status: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired';
   postedAt?: Date;
   expiresAt?: Date;
+  
+  // Links
+  jobOrderId?: string; // Optional link to job order
+  autoAddToUserGroup?: string; // Optional: auto-add applicants to this user group
+  
+  // Requirements & Additional Info
+  requirements?: string[];
+  benefits?: string;
+  shiftTimes?: string;
+  showShiftTimes?: boolean;
+  
+  // Metrics
   applicationCount: number;
   maxApplications?: number;
+  
+  // Metadata
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface CreatePostData {
-  jobOrderId?: string;
-  title: string;
-  description: string;
-  location: string;
+  // Posting Details
+  postTitle: string;
+  jobTitle: string;
+  jobDescription: string;
+  
+  // Company & Location
+  companyId?: string;
   companyName: string;
+  worksiteId?: string;
+  worksiteName: string;
+  worksiteAddress: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    coordinates?: {
+      lat: number;
+      lng: number;
+    };
+  };
+  
+  // Dates & Compensation
+  startDate?: Date | string | null;
+  endDate?: Date | string | null;
   payRate?: number | null;
   showPayRate: boolean;
-  startDate?: Date | string | null;
-  showStartDate?: boolean;
-  shiftTimes?: string;
-  showShiftTimes?: boolean;
+  
+  // Display Settings
+  visibility: 'public' | 'private' | 'restricted';
+  restrictedGroups?: string[];
+  
+  // Links
+  jobOrderId?: string;
+  autoAddToUserGroup?: string;
+  
+  // Requirements & Additional Info
   requirements?: string[];
   benefits?: string;
-  visibility: 'hidden' | 'public' | 'group_restricted' | 'limited' | 'private';
-  restrictedGroups?: string[];
+  shiftTimes?: string;
+  showShiftTimes?: boolean;
+  
+  // Expiration
   maxApplications?: number;
-  expiresAt?: Date;
-  sourceType?: 'generic' | 'job_order';
-  sourceId?: string | null;
+  expiresAt?: Date | string | null;
 }
 
 export class JobsBoardService {
@@ -74,6 +133,32 @@ export class JobsBoardService {
       JobsBoardService.instance = new JobsBoardService();
     }
     return JobsBoardService.instance;
+  }
+
+  // Generate next sequential job post ID
+  private async getNextJobPostId(tenantId: string): Promise<string> {
+    try {
+      const counterRef = doc(db, 'tenants', tenantId, 'counters', 'jobPosts');
+      const counterDoc = await getDoc(counterRef);
+      
+      let nextSeq = 2001; // Start at 2001
+      if (counterDoc.exists()) {
+        nextSeq = (counterDoc.data().current || 2000) + 1;
+      }
+      
+      // Update or create the counter
+      if (counterDoc.exists()) {
+        await updateDoc(counterRef, { current: nextSeq, updatedAt: serverTimestamp() });
+      } else {
+        await setDoc(counterRef, { current: nextSeq, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      }
+      
+      return nextSeq.toString();
+    } catch (error) {
+      console.error('Error generating job post ID:', error);
+      // Fallback to timestamp-based ID
+      return `JP${Date.now()}`;
+    }
   }
 
   // Create a jobs board post from a job order
@@ -89,20 +174,58 @@ export class JobsBoardService {
       
       const jobOrder = { id: jobOrderDoc.id, ...jobOrderDoc.data() } as JobOrder;
       
+      // Generate sequential job post ID
+      const jobPostId = await this.getNextJobPostId(tenantId);
+      
+      // Normalize visibility from job order
+      let visibility: 'public' | 'private' | 'restricted' = 'public';
+      if (jobOrder.jobsBoardVisibility === 'hidden') {
+        visibility = 'private';
+      } else if (jobOrder.jobsBoardVisibility === 'group_restricted') {
+        visibility = 'restricted';
+      }
+      
       // Create the post data
       const postData: Omit<JobsBoardPost, 'id'> = {
+        jobPostId,
         tenantId,
-        jobOrderId,
-        title: customData?.title || jobOrder.jobOrderName,
-        description: customData?.description || jobOrder.jobOrderDescription || '',
-        location: customData?.location || jobOrder.worksiteName,
+        
+        // Posting Details
+        postTitle: customData?.postTitle || jobOrder.jobOrderName,
+        jobTitle: customData?.jobTitle || jobOrder.jobTitle,
+        jobDescription: customData?.jobDescription || jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
+        
+        // Company & Location
+        companyId: jobOrder.companyId,
         companyName: customData?.companyName || jobOrder.companyName,
+        worksiteId: jobOrder.worksiteId,
+        worksiteName: customData?.worksiteName || jobOrder.worksiteName,
+        worksiteAddress: customData?.worksiteAddress || jobOrder.worksiteAddress || {
+          street: '',
+          city: '',
+          state: '',
+          zipCode: '',
+        },
+        
+        // Dates & Compensation
+        startDate: customData?.startDate ? (typeof customData.startDate === 'string' ? new Date(customData.startDate) : customData.startDate) : jobOrder.startDate,
+        endDate: customData?.endDate ? (typeof customData.endDate === 'string' ? new Date(customData.endDate) : customData.endDate) : jobOrder.endDate,
         payRate: customData?.payRate !== undefined ? customData.payRate : (jobOrder.showPayRate ? jobOrder.payRate : undefined),
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
-        startDate: customData?.startDate || jobOrder.startDate,
-        showStartDate: customData?.showStartDate !== undefined ? customData.showStartDate : jobOrder.showStartDate,
-        shiftTimes: customData?.shiftTimes,
-        showShiftTimes: customData?.showShiftTimes !== undefined ? customData.showShiftTimes : jobOrder.showShiftTimes,
+        
+        // Display Settings
+        visibility: customData?.visibility || visibility,
+        restrictedGroups: customData?.restrictedGroups || jobOrder.restrictedGroups,
+        
+        // Status
+        status: 'draft',
+        expiresAt: customData?.expiresAt ? (typeof customData.expiresAt === 'string' ? new Date(customData.expiresAt) : customData.expiresAt) : undefined,
+        
+        // Links
+        jobOrderId,
+        autoAddToUserGroup: customData?.autoAddToUserGroup,
+        
+        // Requirements & Additional Info
         requirements: customData?.requirements || [
           ...jobOrder.requiredLicenses,
           ...jobOrder.requiredCertifications,
@@ -114,18 +237,20 @@ export class JobsBoardService {
           ...(jobOrder.skillsRequired || [])
         ].filter(Boolean),
         benefits: customData?.benefits,
-        visibility: customData?.visibility || jobOrder.jobsBoardVisibility,
-        restrictedGroups: customData?.restrictedGroups || jobOrder.restrictedGroups,
-        status: 'draft',
+        shiftTimes: customData?.shiftTimes || jobOrder.shiftTimes?.join(', '),
+        showShiftTimes: customData?.showShiftTimes !== undefined ? customData.showShiftTimes : jobOrder.showShiftTimes,
+        
+        // Metrics
         applicationCount: 0,
         maxApplications: customData?.maxApplications,
-        expiresAt: customData?.expiresAt,
+        
+        // Metadata
         createdBy,
         createdAt: new Date(),
         updatedAt: new Date()
       };
 
-      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'jobs_board_posts'), postData);
+      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_postings'), postData);
       return docRef.id;
     } catch (error) {
       console.error('Error creating jobs board post:', error);
@@ -136,49 +261,76 @@ export class JobsBoardService {
   // Create a standalone jobs board post
   async createPost(tenantId: string, postData: CreatePostData, createdBy?: string): Promise<string> {
     try {
-      // Normalize visibility values
-      let normalizedVisibility: 'hidden' | 'public' | 'group_restricted' = 'public';
-      if (postData.visibility === 'private' || postData.visibility === 'hidden') {
-        normalizedVisibility = 'hidden';
-      } else if (postData.visibility === 'limited' || postData.visibility === 'group_restricted') {
-        normalizedVisibility = 'group_restricted';
-      } else if (postData.visibility === 'public') {
-        normalizedVisibility = 'public';
-      }
+      // Generate sequential job post ID
+      const jobPostId = await this.getNextJobPostId(tenantId);
 
-      // Convert startDate to Date if it's a string
+      // Convert dates to Date objects if they're strings
       let startDate: Date | undefined;
       if (postData.startDate) {
         startDate = typeof postData.startDate === 'string' ? new Date(postData.startDate) : postData.startDate;
       }
 
+      let endDate: Date | undefined;
+      if (postData.endDate) {
+        endDate = typeof postData.endDate === 'string' ? new Date(postData.endDate) : postData.endDate;
+      }
+
+      let expiresAt: Date | undefined;
+      if (postData.expiresAt) {
+        expiresAt = typeof postData.expiresAt === 'string' ? new Date(postData.expiresAt) : postData.expiresAt;
+      }
+
       const fullPostData: Omit<JobsBoardPost, 'id'> = {
+        jobPostId,
         tenantId,
-        jobOrderId: postData.jobOrderId || postData.sourceId || '',
-        title: postData.title,
-        description: postData.description,
-        location: postData.location,
+        
+        // Posting Details
+        postTitle: postData.postTitle,
+        jobTitle: postData.jobTitle,
+        jobDescription: postData.jobDescription,
+        
+        // Company & Location
+        companyId: postData.companyId,
         companyName: postData.companyName,
+        worksiteId: postData.worksiteId,
+        worksiteName: postData.worksiteName,
+        worksiteAddress: postData.worksiteAddress,
+        
+        // Dates & Compensation
+        startDate,
+        endDate,
         payRate: postData.payRate || undefined,
         showPayRate: postData.showPayRate,
-        startDate,
-        showStartDate: postData.showStartDate !== undefined ? postData.showStartDate : true,
-        shiftTimes: postData.shiftTimes,
-        showShiftTimes: postData.showShiftTimes !== undefined ? postData.showShiftTimes : false,
-        requirements: postData.requirements || [],
-        benefits: postData.benefits,
-        visibility: normalizedVisibility,
+        
+        // Display Settings
+        visibility: postData.visibility,
         restrictedGroups: postData.restrictedGroups,
+        
+        // Status
         status: 'draft',
+        expiresAt,
+        
+        // Links
+        jobOrderId: postData.jobOrderId,
+        autoAddToUserGroup: postData.autoAddToUserGroup,
+        
+        // Requirements & Additional Info
+        requirements: postData.requirements,
+        benefits: postData.benefits,
+        shiftTimes: postData.shiftTimes,
+        showShiftTimes: postData.showShiftTimes,
+        
+        // Metrics
         applicationCount: 0,
         maxApplications: postData.maxApplications,
-        expiresAt: postData.expiresAt,
+        
+        // Metadata
         createdBy: createdBy || 'system',
         createdAt: new Date(),
         updatedAt: new Date()
       };
 
-      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'jobs_board_posts'), fullPostData);
+      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_postings'), fullPostData);
       return docRef.id;
     } catch (error) {
       console.error('Error creating jobs board post:', error);
@@ -189,7 +341,7 @@ export class JobsBoardService {
   // Update a jobs board post
   async updatePost(tenantId: string, postId: string, updates: Partial<CreatePostData>): Promise<void> {
     try {
-      const postRef = doc(db, 'tenants', tenantId, 'jobs_board_posts', postId);
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
       await updateDoc(postRef, {
         ...updates,
         updatedAt: new Date()
@@ -203,7 +355,7 @@ export class JobsBoardService {
   // Get a jobs board post by ID
   async getPost(tenantId: string, postId: string): Promise<JobsBoardPost | null> {
     try {
-      const postRef = doc(db, 'tenants', tenantId, 'jobs_board_posts', postId);
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
       const postDoc = await getDoc(postRef);
       
       if (postDoc.exists()) {
@@ -220,7 +372,7 @@ export class JobsBoardService {
   async getPosts(tenantId: string, limitCount?: number): Promise<JobsBoardPost[]> {
     try {
       let q = query(
-        collection(db, 'tenants', tenantId, 'jobs_board_posts'),
+        collection(db, 'tenants', tenantId, 'job_postings'),
         orderBy('createdAt', 'desc')
       );
       
@@ -240,9 +392,9 @@ export class JobsBoardService {
   async getPublicPosts(tenantId: string, userGroups?: string[]): Promise<JobsBoardPost[]> {
     try {
       const q = query(
-        collection(db, 'tenants', tenantId, 'jobs_board_posts'),
-        where('status', '==', 'posted'),
-        where('visibility', 'in', ['public', 'group_restricted']),
+        collection(db, 'tenants', tenantId, 'job_postings'),
+        where('status', '==', 'active'),
+        where('visibility', 'in', ['public', 'restricted']),
         orderBy('postedAt', 'desc')
       );
       
@@ -253,7 +405,7 @@ export class JobsBoardService {
       if (userGroups && userGroups.length > 0) {
         return allPosts.filter(post => {
           if (post.visibility === 'public') return true;
-          if (post.visibility === 'group_restricted' && post.restrictedGroups) {
+          if (post.visibility === 'restricted' && post.restrictedGroups) {
             return post.restrictedGroups.some(groupId => userGroups.includes(groupId));
           }
           return false;
@@ -272,7 +424,7 @@ export class JobsBoardService {
   async getPostsByJobOrder(tenantId: string, jobOrderId: string): Promise<JobsBoardPost[]> {
     try {
       const q = query(
-        collection(db, 'tenants', tenantId, 'jobs_board_posts'),
+        collection(db, 'tenants', tenantId, 'job_postings'),
         where('jobOrderId', '==', jobOrderId),
         orderBy('createdAt', 'desc')
       );
@@ -286,15 +438,15 @@ export class JobsBoardService {
   }
 
   // Update post status
-  async updatePostStatus(tenantId: string, postId: string, status: 'draft' | 'posted' | 'paused' | 'closed'): Promise<void> {
+  async updatePostStatus(tenantId: string, postId: string, status: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired'): Promise<void> {
     try {
-      const postRef = doc(db, 'tenants', tenantId, 'jobs_board_posts', postId);
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
       const updateData: Record<string, any> = {
         status,
         updatedAt: new Date()
       };
       
-      if (status === 'posted') {
+      if (status === 'active') {
         updateData.postedAt = new Date();
       }
       
@@ -308,7 +460,7 @@ export class JobsBoardService {
   // Increment application count
   async incrementApplicationCount(tenantId: string, postId: string): Promise<void> {
     try {
-      const postRef = doc(db, 'tenants', tenantId, 'jobs_board_posts', postId);
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
       await updateDoc(postRef, {
         applicationCount: serverTimestamp(), // This will be handled by a cloud function
         updatedAt: new Date()
@@ -322,7 +474,7 @@ export class JobsBoardService {
   // Delete a jobs board post
   async deletePost(tenantId: string, postId: string): Promise<void> {
     try {
-      const postRef = doc(db, 'tenants', tenantId, 'jobs_board_posts', postId);
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
       await deleteDoc(postRef);
     } catch (error) {
       console.error('Error deleting jobs board post:', error);
@@ -331,10 +483,10 @@ export class JobsBoardService {
   }
 
   // Get posts by visibility
-  async getPostsByVisibility(tenantId: string, visibility: 'hidden' | 'public' | 'group_restricted'): Promise<JobsBoardPost[]> {
+  async getPostsByVisibility(tenantId: string, visibility: 'public' | 'private' | 'restricted'): Promise<JobsBoardPost[]> {
     try {
       const q = query(
-        collection(db, 'tenants', tenantId, 'jobs_board_posts'),
+        collection(db, 'tenants', tenantId, 'job_postings'),
         where('visibility', '==', visibility),
         orderBy('createdAt', 'desc')
       );
@@ -348,10 +500,10 @@ export class JobsBoardService {
   }
 
   // Get posts by status
-  async getPostsByStatus(tenantId: string, status: 'draft' | 'posted' | 'paused' | 'closed'): Promise<JobsBoardPost[]> {
+  async getPostsByStatus(tenantId: string, status: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired'): Promise<JobsBoardPost[]> {
     try {
       const q = query(
-        collection(db, 'tenants', tenantId, 'jobs_board_posts'),
+        collection(db, 'tenants', tenantId, 'job_postings'),
         where('status', '==', status),
         orderBy('createdAt', 'desc')
       );
