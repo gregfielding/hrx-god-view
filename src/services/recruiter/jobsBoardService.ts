@@ -46,6 +46,7 @@ export interface JobsBoardPost {
   // Dates & Compensation
   startDate?: Date;
   endDate?: Date;
+  expDate?: Date;
   payRate?: number;
   showPayRate: boolean;
   
@@ -103,6 +104,7 @@ export interface CreatePostData {
   // Dates & Compensation
   startDate?: Date | string | null;
   endDate?: Date | string | null;
+  expDate?: Date | string | null;
   payRate?: number | null;
   showPayRate: boolean;
   
@@ -275,6 +277,11 @@ export class JobsBoardService {
         endDate = typeof postData.endDate === 'string' ? new Date(postData.endDate) : postData.endDate;
       }
 
+      let expDate: Date | undefined;
+      if (postData.expDate) {
+        expDate = typeof postData.expDate === 'string' ? new Date(postData.expDate) : postData.expDate;
+      }
+
       let expiresAt: Date | undefined;
       if (postData.expiresAt) {
         expiresAt = typeof postData.expiresAt === 'string' ? new Date(postData.expiresAt) : postData.expiresAt;
@@ -299,6 +306,7 @@ export class JobsBoardService {
         // Dates & Compensation
         startDate,
         endDate,
+        expDate,
         payRate: postData.payRate || undefined,
         showPayRate: postData.showPayRate,
         

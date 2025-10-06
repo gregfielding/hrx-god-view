@@ -74,6 +74,7 @@ const JobsBoard: React.FC = () => {
     zipCode: '',
     startDate: '',
     endDate: '',
+    expDate: '',
     payRate: '',
     showPayRate: true,
     visibility: 'public' as 'public' | 'private' | 'restricted',
@@ -646,6 +647,42 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Start Date"
+                    type="date"
+                    value={newPost.startDate}
+                    onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="End Date"
+                    type="date"
+                    value={newPost.endDate}
+                    onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Expiration Date"
+                    type="date"
+                    value={newPost.expDate || ''}
+                    onChange={(e) => setNewPost({ ...newPost, expDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                    helperText="When this posting will automatically expire"
+                  />
+                </Grid>
+              </Grid>
+            </Box>
+
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <Typography variant="body1">Use Company Location</Typography>
               <Switch
@@ -780,25 +817,6 @@ const JobsBoard: React.FC = () => {
                 />
               </GoogleAutocomplete>
             )}
-
-            <Stack direction="row" spacing={2}>
-              <TextField
-                label="Start Date"
-                type="date"
-                value={newPost.startDate}
-                onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
-                fullWidth
-                InputLabelProps={{ shrink: true }}
-              />
-              <TextField
-                label="End Date"
-                type="date"
-                value={newPost.endDate}
-                onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
-                fullWidth
-                InputLabelProps={{ shrink: true }}
-              />
-            </Stack>
 
             <FormControl fullWidth>
               <InputLabel>Visibility</InputLabel>
