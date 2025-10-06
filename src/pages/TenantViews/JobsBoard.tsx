@@ -622,6 +622,30 @@ const JobsBoard: React.FC = () => {
               helperText="Provide a detailed description of the role, responsibilities, and requirements"
             />
 
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    label="Pay Rate ($/hr)"
+                    type="number"
+                    value={newPost.payRate}
+                    onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
+                    fullWidth
+                    inputProps={{ min: 0, step: 0.01 }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Pay Rate</Typography>
+                    <Switch
+                      checked={newPost.showPayRate}
+                      onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <Typography variant="body1">Use Company Location</Typography>
               <Switch
@@ -775,30 +799,6 @@ const JobsBoard: React.FC = () => {
                 InputLabelProps={{ shrink: true }}
               />
             </Stack>
-
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Pay Rate ($/hr)"
-                    type="number"
-                    value={newPost.payRate}
-                    onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
-                    fullWidth
-                    inputProps={{ min: 0, step: 0.01 }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Pay Rate</Typography>
-                    <Switch
-                      checked={newPost.showPayRate}
-                      onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
 
             <FormControl fullWidth>
               <InputLabel>Visibility</InputLabel>
