@@ -651,7 +651,8 @@ const JobsBoard: React.FC = () => {
 
             {useCompanyLocation ? (
               <>
-                <Grid container spacing={2}>
+                <Box sx={{ mt: 2 }}>
+                  <Grid container spacing={2}>
                   <Grid item xs={12} sm={6}>
                     <Autocomplete
                       fullWidth
@@ -722,6 +723,7 @@ const JobsBoard: React.FC = () => {
                     </FormControl>
                   </Grid>
                 </Grid>
+                </Box>
 
                 {selectedLocationId && (
                   <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
