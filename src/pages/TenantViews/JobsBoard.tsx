@@ -269,10 +269,6 @@ const JobsBoard: React.FC = () => {
       setSubmitError('Post title is required');
       return;
     }
-    if (!newPost.jobTitle.trim()) {
-      setSubmitError('Job title is required');
-      return;
-    }
     if (!newPost.jobDescription.trim()) {
       setSubmitError('Job description is required');
       return;
@@ -557,9 +553,8 @@ const JobsBoard: React.FC = () => {
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Job Title"
-                  required
-                  helperText="Search or enter a job title"
+                  label="Job Title (Optional)"
+                  helperText="Search or enter a job title - leave blank for generic multi-role postings"
                 />
               )}
             />
