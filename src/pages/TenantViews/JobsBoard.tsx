@@ -769,22 +769,27 @@ const JobsBoard: React.FC = () => {
               />
             </Stack>
 
-            <TextField
-              label="Pay Rate ($/hr)"
-              type="number"
-              value={newPost.payRate}
-              onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
-              fullWidth
-              inputProps={{ min: 0, step: 0.01 }}
-            />
-
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="body1">Show Pay Rate</Typography>
-              <Switch
-                checked={newPost.showPayRate}
-                onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
-              />
-            </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                  <Typography variant="body1">Show Pay Rate</Typography>
+                  <Switch
+                    checked={newPost.showPayRate}
+                    onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
+                  />
+                </Box>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Pay Rate ($/hr)"
+                  type="number"
+                  value={newPost.payRate}
+                  onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
+                  fullWidth
+                  inputProps={{ min: 0, step: 0.01 }}
+                />
+              </Grid>
+            </Grid>
 
             <FormControl fullWidth>
               <InputLabel>Visibility</InputLabel>
