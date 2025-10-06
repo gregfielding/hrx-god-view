@@ -624,6 +624,15 @@ service cloud.firestore {
         allow read: if resource.data.visibility == 'public';
       }
 
+      // --- JOB POSTINGS (New collection name) ---
+      match /job_postings/{postId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        allow read: if isAssignedToTenant(tenantId);
+        // Allow public read access for job postings
+        allow read: if resource.data.visibility == 'public';
+      }
+
       // --- JOB APPLICATIONS (Tenant Subcollection) ---
       match /job_applications/{applicationId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
