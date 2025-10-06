@@ -113,7 +113,17 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
     if (!tenantId) return;
     
     try {
-      await jobsBoardService.updatePostStatus(tenantId, postId, newStatus);
+      // Map old status names to new ones
+      const statusMap: Record<string, 'draft' | 'active' | 'paused' | 'cancelled' | 'expired'> = {
+        'posted': 'active',
+        'closed': 'cancelled',
+        'draft': 'draft',
+        'paused': 'paused',
+        'active': 'active',
+        'cancelled': 'cancelled',
+        'expired': 'expired'
+      };
+      await jobsBoardService.updatePostStatus(tenantId, postId, statusMap[newStatus] || newStatus as any);
       await loadPosts(); // Reload to get updated data
     } catch (err: any) {
       console.error('Error updating post status:', err);
@@ -161,9 +171,10 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
 
   const filteredPosts = posts.filter(post => {
     const matchesSearch = 
-      post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      post.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      post.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      post.postTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      post.jobTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      post.jobDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      post.worksiteName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       post.companyName.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesStatus = statusFilter === 'all' || post.status === statusFilter;
@@ -276,7 +287,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                   variant="outlined" 
                 />
                 <Chip 
-                  label={`${posts.filter(p => p.status === 'posted').length} Live`} 
+                  label={`${posts.filter(p => p.status === 'active').length} Live`} 
                   color="success" 
                   variant="outlined" 
                 />
@@ -314,10 +325,10 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                   <TableCell>
                     <Box>
                       <Typography variant="subtitle2" fontWeight="bold">
-                        {post.title}
+                        {post.postTitle}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {post.description.substring(0, 100)}...
+                        {post.jobDescription.substring(0, 100)}...
                       </Typography>
                     </Box>
                   </TableCell>
@@ -333,7 +344,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <LocationIcon fontSize="small" color="action" />
                       <Typography variant="body2">
-                        {post.location}
+                        {post.worksiteName}
                       </Typography>
                     </Box>
                   </TableCell>
@@ -397,7 +408,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                           </IconButton>
                         </Tooltip>
                       )}
-                      {post.status === 'posted' && (
+                      {post.status === 'active' && (
                         <Tooltip title="Pause">
                           <IconButton 
                             size="small"
@@ -460,7 +471,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
           {selectedPost && (
             <Box>
               <Typography variant="h6" gutterBottom>
-                {selectedPost.title}
+                {selectedPost.postTitle}
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
@@ -476,7 +487,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                     Location
                   </Typography>
                   <Typography variant="body1">
-                    {selectedPost.location}
+                    {selectedPost.worksiteName}
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -507,7 +518,7 @@ const JobsBoardPostsManager: React.FC<JobsBoardPostsManagerProps> = ({
                     Description
                   </Typography>
                   <Typography variant="body1">
-                    {selectedPost.description}
+                    {selectedPost.jobDescription}
                   </Typography>
                 </Grid>
                 {selectedPost.requirements.length > 0 && (

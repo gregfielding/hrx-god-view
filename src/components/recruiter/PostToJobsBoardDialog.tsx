@@ -52,16 +52,25 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
+  // Normalize visibility
+  const normalizeVisibility = (vis: any): 'public' | 'private' | 'restricted' => {
+    if (vis === 'hidden') return 'private';
+    if (vis === 'group_restricted') return 'restricted';
+    return vis || 'public';
+  };
+
   const [formData, setFormData] = useState<CreatePostData>({
     jobOrderId: jobOrder.id,
-    title: jobOrder.jobOrderName,
-    description: jobOrder.jobOrderDescription || '',
-    location: jobOrder.worksiteName,
+    postTitle: jobOrder.jobOrderName,
+    jobTitle: jobOrder.jobTitle,
+    jobDescription: jobOrder.jobOrderDescription || '',
     companyName: jobOrder.companyName,
+    worksiteName: jobOrder.worksiteName,
+    worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
     payRate: jobOrder.payRate,
     showPayRate: jobOrder.showPayRate,
     startDate: jobOrder.startDate,
-    showStartDate: jobOrder.showStartDate,
+    endDate: jobOrder.endDate,
     shiftTimes: '',
     showShiftTimes: jobOrder.showShiftTimes,
     requirements: [
@@ -75,10 +84,11 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
       ...(jobOrder.skillsRequired || [])
     ].filter(Boolean),
     benefits: '',
-    visibility: jobOrder.jobsBoardVisibility,
+    visibility: normalizeVisibility(jobOrder.jobsBoardVisibility),
     restrictedGroups: jobOrder.restrictedGroups || [],
     maxApplications: undefined,
-    expiresAt: undefined
+    expiresAt: undefined,
+    autoAddToUserGroup: undefined
   });
 
   const jobsBoardService = JobsBoardService.getInstance();
@@ -88,14 +98,16 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
       // Reset form when dialog opens
       setFormData({
         jobOrderId: jobOrder.id,
-        title: jobOrder.jobOrderName,
-        description: jobOrder.jobOrderDescription || '',
-        location: jobOrder.worksiteName,
+        postTitle: jobOrder.jobOrderName,
+        jobTitle: jobOrder.jobTitle,
+        jobDescription: jobOrder.jobOrderDescription || '',
         companyName: jobOrder.companyName,
+        worksiteName: jobOrder.worksiteName,
+        worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
         payRate: jobOrder.payRate,
         showPayRate: jobOrder.showPayRate,
         startDate: jobOrder.startDate,
-        showStartDate: jobOrder.showStartDate,
+        endDate: jobOrder.endDate,
         shiftTimes: '',
         showShiftTimes: jobOrder.showShiftTimes,
         requirements: [
@@ -109,10 +121,11 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
           ...(jobOrder.skillsRequired || [])
         ].filter(Boolean),
         benefits: '',
-        visibility: jobOrder.jobsBoardVisibility,
+        visibility: normalizeVisibility(jobOrder.jobsBoardVisibility),
         restrictedGroups: jobOrder.restrictedGroups || [],
         maxApplications: undefined,
-        expiresAt: undefined
+        expiresAt: undefined,
+        autoAddToUserGroup: undefined
       });
       setError(null);
       setSuccess(null);
@@ -218,8 +231,8 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
             <TextField
               fullWidth
               label="Job Title"
-              value={formData.title}
-              onChange={(e) => handleInputChange('title', e.target.value)}
+              value={formData.postTitle}
+              onChange={(e) => handleInputChange('postTitle', e.target.value)}
               required
             />
           </Grid>
@@ -238,8 +251,8 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
             <TextField
               fullWidth
               label="Location"
-              value={formData.location}
-              onChange={(e) => handleInputChange('location', e.target.value)}
+              value={formData.worksiteName}
+              onChange={(e) => handleInputChange('worksiteName', e.target.value)}
               required
             />
           </Grid>
@@ -260,8 +273,8 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
               label="Job Description"
               multiline
               rows={4}
-              value={formData.description}
-              onChange={(e) => handleInputChange('description', e.target.value)}
+              value={formData.jobDescription}
+              onChange={(e) => handleInputChange('jobDescription', e.target.value)}
             />
           </Grid>
 
@@ -289,8 +302,8 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
             <FormControlLabel
               control={
                 <Switch
-                  checked={formData.showStartDate}
-                  onChange={(e) => handleInputChange('showStartDate', e.target.checked)}
+                  checked={formData.showShiftTimes || false}
+                  onChange={(e) => handleInputChange('showShiftTimes', e.target.checked)}
                 />
               }
               label="Show Start Date"
@@ -332,7 +345,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
             </FormControl>
           </Grid>
           
-          {formData.visibility === 'group_restricted' && (
+          {formData.visibility === 'restricted' && (
             <Grid item xs={12} md={6}>
               <Autocomplete
                 multiple
@@ -412,7 +425,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
               fullWidth
               label="Expires At"
               type="datetime-local"
-              value={formData.expiresAt ? formData.expiresAt.toISOString().slice(0, 16) : ''}
+              value={formData.expiresAt ? (typeof formData.expiresAt === 'string' ? formData.expiresAt : formData.expiresAt.toISOString().slice(0, 16)) : ''}
               onChange={(e) => handleInputChange('expiresAt', e.target.value ? new Date(e.target.value) : undefined)}
               InputLabelProps={{ shrink: true }}
             />

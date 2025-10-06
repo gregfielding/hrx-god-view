@@ -91,16 +91,17 @@ const JobsBoard: React.FC = () => {
     // Search filter
     if (searchTerm) {
       filtered = filtered.filter(post =>
-        post.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.postTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.jobTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.jobDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        post.worksiteName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         post.companyName.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
     // Location filter
     if (locationFilter !== 'all') {
-      filtered = filtered.filter(post => post.location === locationFilter);
+      filtered = filtered.filter(post => post.worksiteName === locationFilter);
     }
 
     // Company filter
@@ -112,7 +113,7 @@ const JobsBoard: React.FC = () => {
   }, [posts, searchTerm, locationFilter, companyFilter]);
 
   const getUniqueLocations = () => {
-    return Array.from(new Set(posts.map(post => post.location))).sort();
+    return Array.from(new Set(posts.map(post => post.worksiteName))).sort();
   };
 
   const getUniqueCompanies = () => {
@@ -316,7 +317,7 @@ const JobsBoard: React.FC = () => {
                 <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                     <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
-                      {post.title}
+                      {post.postTitle}
                     </Typography>
                     <Chip
                       label="OPEN"
@@ -326,9 +327,9 @@ const JobsBoard: React.FC = () => {
                   </Box>
 
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2, flexGrow: 1 }}>
-                    {post.description.length > 150 
-                      ? `${post.description.substring(0, 150)}...` 
-                      : post.description
+                    {post.jobDescription.length > 150 
+                      ? `${post.jobDescription.substring(0, 150)}...` 
+                      : post.jobDescription
                     }
                   </Typography>
 
@@ -342,7 +343,7 @@ const JobsBoard: React.FC = () => {
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                     <LocationOn sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
                     <Typography variant="body2" color="text.secondary">
-                      {post.location}
+                      {post.worksiteName}
                     </Typography>
                   </Box>
 
