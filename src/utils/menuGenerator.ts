@@ -143,7 +143,7 @@ export async function generateMenuItems(
       // Only show Jobs Board if HRX Jobs Board module is enabled
       ...(jobsBoardModuleEnabled ? [{
         text: 'Jobs Board',
-        to: '/jobs-board',
+        to: '/jobs-dashboard',
         icon: 'work',
         requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),

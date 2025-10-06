@@ -33,6 +33,7 @@ import TenantModules from './pages/TenantViews/TenantModules';
 import TenantAISettings from './pages/TenantViews/TenantAISettings';
 import TenantFlex from './pages/TenantViews/TenantFlex';
 import JobsBoard from './pages/TenantViews/JobsBoard';
+import PublicJobsBoard from './pages/PublicJobsBoard';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
@@ -214,6 +215,9 @@ function App() {
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
+      
+      {/* Public routes */}
+      <Route path="/jobs-board" element={<PublicJobsBoard />} />
       <Route
         path="/"
         element={
@@ -256,7 +260,7 @@ function App() {
         } />
 
         <Route path="flex" element={<TenantFlex />} />
-        <Route path="jobs-board" element={
+        <Route path="jobs-dashboard" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <JobsBoardAccessGuard>
               <JobsBoard />
