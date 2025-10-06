@@ -511,14 +511,34 @@ const JobsBoard: React.FC = () => {
           )}
           
           <Stack spacing={3} sx={{ mt: 2 }}>
-            <TextField
-              label="Post Title"
-              value={newPost.postTitle}
-              onChange={(e) => setNewPost({ ...newPost, postTitle: e.target.value })}
-              fullWidth
-              required
-              helperText="Title for the job posting (may differ from actual job title)"
-            />
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  label="Post Title"
+                  value={newPost.postTitle}
+                  onChange={(e) => setNewPost({ ...newPost, postTitle: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="Title for the job posting (may differ from actual job title)"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    value={newPost.status}
+                    label="Status"
+                    onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
+                  >
+                    <MenuItem value="draft">Draft</MenuItem>
+                    <MenuItem value="active">Active</MenuItem>
+                    <MenuItem value="paused">Paused</MenuItem>
+                    <MenuItem value="cancelled">Cancelled</MenuItem>
+                    <MenuItem value="expired">Expired</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
 
             <Autocomplete
               fullWidth
@@ -673,35 +693,18 @@ const JobsBoard: React.FC = () => {
               </FormControl>
             </Stack>
 
-            <Stack direction="row" spacing={2}>
-              <FormControl fullWidth>
-                <InputLabel>Visibility</InputLabel>
-                <Select
-                  value={newPost.visibility}
-                  label="Visibility"
-                  onChange={(e) => setNewPost({ ...newPost, visibility: e.target.value as any })}
-                >
-                  <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                  <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
-                  <MenuItem value="private">Private - Internal only</MenuItem>
-                </Select>
-              </FormControl>
-
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={newPost.status}
-                  label="Status"
-                  onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
-                >
-                  <MenuItem value="draft">Draft</MenuItem>
-                  <MenuItem value="active">Active</MenuItem>
-                  <MenuItem value="paused">Paused</MenuItem>
-                  <MenuItem value="cancelled">Cancelled</MenuItem>
-                  <MenuItem value="expired">Expired</MenuItem>
-                </Select>
-              </FormControl>
-            </Stack>
+            <FormControl fullWidth>
+              <InputLabel>Visibility</InputLabel>
+              <Select
+                value={newPost.visibility}
+                label="Visibility"
+                onChange={(e) => setNewPost({ ...newPost, visibility: e.target.value as any })}
+              >
+                <MenuItem value="public">Public - Visible to everyone</MenuItem>
+                <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
+                <MenuItem value="private">Private - Internal only</MenuItem>
+              </Select>
+            </FormControl>
 
             <TextField
               label="Job Order ID (Optional)"
