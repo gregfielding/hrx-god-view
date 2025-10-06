@@ -622,34 +622,32 @@ const JobsBoard: React.FC = () => {
               helperText="Provide a detailed description of the role, responsibilities, and requirements"
             />
 
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={useCompanyLocation}
-                  onChange={(e) => {
-                    setUseCompanyLocation(e.target.checked);
-                    if (!e.target.checked) {
-                      // Clear company/location when switching to generic location
-                      setSelectedCompanyId('');
-                      setSelectedLocationId('');
-                      setLocations([]);
-                      setNewPost({
-                        ...newPost,
-                        companyId: '',
-                        companyName: '',
-                        worksiteId: '',
-                        worksiteName: '',
-                        street: '',
-                        city: '',
-                        state: '',
-                        zipCode: ''
-                      });
-                    }
-                  }}
-                />
-              }
-              label="Use Company Location"
-            />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="body1">Use Company Location</Typography>
+              <Switch
+                checked={useCompanyLocation}
+                onChange={(e) => {
+                  setUseCompanyLocation(e.target.checked);
+                  if (!e.target.checked) {
+                    // Clear company/location when switching to generic location
+                    setSelectedCompanyId('');
+                    setSelectedLocationId('');
+                    setLocations([]);
+                    setNewPost({
+                      ...newPost,
+                      companyId: '',
+                      companyName: '',
+                      worksiteId: '',
+                      worksiteName: '',
+                      street: '',
+                      city: '',
+                      state: '',
+                      zipCode: ''
+                    });
+                  }
+                }}
+              />
+            </Box>
 
             {useCompanyLocation ? (
               <>
@@ -771,28 +769,22 @@ const JobsBoard: React.FC = () => {
               />
             </Stack>
 
-            <Stack direction="row" spacing={2}>
-              <TextField
-                label="Pay Rate ($/hr)"
-                type="number"
-                value={newPost.payRate}
-                onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
-                fullWidth
-                inputProps={{ min: 0, step: 0.01 }}
-              />
+            <TextField
+              label="Pay Rate ($/hr)"
+              type="number"
+              value={newPost.payRate}
+              onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
+              fullWidth
+              inputProps={{ min: 0, step: 0.01 }}
+            />
 
-              <FormControl fullWidth>
-                <InputLabel>Show Pay Rate</InputLabel>
-                <Select
-                  value={newPost.showPayRate ? 'yes' : 'no'}
-                  label="Show Pay Rate"
-                  onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.value === 'yes' })}
-                >
-                  <MenuItem value="yes">Yes</MenuItem>
-                  <MenuItem value="no">No</MenuItem>
-                </Select>
-              </FormControl>
-            </Stack>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="body1">Show Pay Rate</Typography>
+              <Switch
+                checked={newPost.showPayRate}
+                onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
+              />
+            </Box>
 
             <FormControl fullWidth>
               <InputLabel>Visibility</InputLabel>
