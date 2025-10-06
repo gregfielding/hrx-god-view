@@ -45,23 +45,25 @@ export interface JobsBoardPost {
 }
 
 export interface CreatePostData {
-  jobOrderId: string;
+  jobOrderId?: string;
   title: string;
   description: string;
   location: string;
   companyName: string;
-  payRate?: number;
+  payRate?: number | null;
   showPayRate: boolean;
-  startDate?: Date;
-  showStartDate: boolean;
+  startDate?: Date | string | null;
+  showStartDate?: boolean;
   shiftTimes?: string;
-  showShiftTimes: boolean;
-  requirements: string[];
+  showShiftTimes?: boolean;
+  requirements?: string[];
   benefits?: string;
-  visibility: 'hidden' | 'public' | 'group_restricted';
+  visibility: 'hidden' | 'public' | 'group_restricted' | 'limited' | 'private';
   restrictedGroups?: string[];
   maxApplications?: number;
   expiresAt?: Date;
+  sourceType?: 'generic' | 'job_order';
+  sourceId?: string | null;
 }
 
 export class JobsBoardService {
@@ -132,14 +134,46 @@ export class JobsBoardService {
   }
 
   // Create a standalone jobs board post
-  async createPost(tenantId: string, postData: CreatePostData, createdBy: string): Promise<string> {
+  async createPost(tenantId: string, postData: CreatePostData, createdBy?: string): Promise<string> {
     try {
+      // Normalize visibility values
+      let normalizedVisibility: 'hidden' | 'public' | 'group_restricted' = 'public';
+      if (postData.visibility === 'private' || postData.visibility === 'hidden') {
+        normalizedVisibility = 'hidden';
+      } else if (postData.visibility === 'limited' || postData.visibility === 'group_restricted') {
+        normalizedVisibility = 'group_restricted';
+      } else if (postData.visibility === 'public') {
+        normalizedVisibility = 'public';
+      }
+
+      // Convert startDate to Date if it's a string
+      let startDate: Date | undefined;
+      if (postData.startDate) {
+        startDate = typeof postData.startDate === 'string' ? new Date(postData.startDate) : postData.startDate;
+      }
+
       const fullPostData: Omit<JobsBoardPost, 'id'> = {
-        ...postData,
         tenantId,
+        jobOrderId: postData.jobOrderId || postData.sourceId || '',
+        title: postData.title,
+        description: postData.description,
+        location: postData.location,
+        companyName: postData.companyName,
+        payRate: postData.payRate || undefined,
+        showPayRate: postData.showPayRate,
+        startDate,
+        showStartDate: postData.showStartDate !== undefined ? postData.showStartDate : true,
+        shiftTimes: postData.shiftTimes,
+        showShiftTimes: postData.showShiftTimes !== undefined ? postData.showShiftTimes : false,
+        requirements: postData.requirements || [],
+        benefits: postData.benefits,
+        visibility: normalizedVisibility,
+        restrictedGroups: postData.restrictedGroups,
         status: 'draft',
         applicationCount: 0,
-        createdBy,
+        maxApplications: postData.maxApplications,
+        expiresAt: postData.expiresAt,
+        createdBy: createdBy || 'system',
         createdAt: new Date(),
         updatedAt: new Date()
       };
