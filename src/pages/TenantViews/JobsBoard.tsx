@@ -28,6 +28,7 @@ import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBo
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
+import jobTitlesList from '../../data/onetJobTitles.json';
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
@@ -519,13 +520,25 @@ const JobsBoard: React.FC = () => {
               helperText="Title for the job posting (may differ from actual job title)"
             />
 
-            <TextField
-              label="Job Title"
-              value={newPost.jobTitle}
-              onChange={(e) => setNewPost({ ...newPost, jobTitle: e.target.value })}
+            <Autocomplete
               fullWidth
-              required
-              helperText="Actual job title for the position"
+              freeSolo
+              options={jobTitlesList}
+              value={newPost.jobTitle}
+              onChange={(event, newValue) => {
+                setNewPost({ ...newPost, jobTitle: newValue || '' });
+              }}
+              onInputChange={(event, newInputValue) => {
+                setNewPost({ ...newPost, jobTitle: newInputValue });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Job Title"
+                  required
+                  helperText="Search or enter a job title"
+                />
+              )}
             />
 
             <TextField
