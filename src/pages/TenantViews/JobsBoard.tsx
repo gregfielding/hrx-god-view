@@ -22,8 +22,11 @@ import {
   DialogActions,
   Stack,
   Autocomplete,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add } from '@mui/icons-material';
+import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
@@ -50,6 +53,9 @@ const JobsBoard: React.FC = () => {
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
+  const [useCompanyLocation, setUseCompanyLocation] = useState(true);
+  const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
+  const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
 
@@ -231,6 +237,43 @@ const JobsBoard: React.FC = () => {
     }
   };
 
+  const onCityAutocompleteLoad = (autocomplete: google.maps.places.Autocomplete) => {
+    setCityAutocomplete(autocomplete);
+  };
+
+  const onCityPlaceChanged = () => {
+    if (cityAutocomplete) {
+      const place = cityAutocomplete.getPlace();
+      if (place.geometry && place.geometry.location) {
+        // Extract city and state from address components
+        let city = '';
+        let state = '';
+        let zipCode = '';
+        
+        place.address_components?.forEach((component) => {
+          if (component.types.includes('locality')) {
+            city = component.long_name;
+          }
+          if (component.types.includes('administrative_area_level_1')) {
+            state = component.short_name;
+          }
+          if (component.types.includes('postal_code')) {
+            zipCode = component.long_name;
+          }
+        });
+
+        setNewPost({
+          ...newPost,
+          worksiteName: place.formatted_address || `${city}, ${state}`,
+          street: '',
+          city,
+          state,
+          zipCode
+        });
+      }
+    }
+  };
+
   const handleCloseNewPostModal = () => {
     setOpenNewPostModal(false);
     setNewPost({
@@ -258,6 +301,7 @@ const JobsBoard: React.FC = () => {
     setSelectedLocationId('');
     setCompanies([]);
     setLocations([]);
+    setUseCompanyLocation(true);
     setSubmitError(null);
   };
 
@@ -273,13 +317,21 @@ const JobsBoard: React.FC = () => {
       setSubmitError('Job description is required');
       return;
     }
-    if (!selectedCompanyId) {
-      setSubmitError('Please select a company');
-      return;
-    }
-    if (!selectedLocationId) {
-      setSubmitError('Please select a worksite location');
-      return;
+    
+    if (useCompanyLocation) {
+      if (!selectedCompanyId) {
+        setSubmitError('Please select a company');
+        return;
+      }
+      if (!selectedLocationId) {
+        setSubmitError('Please select a worksite location');
+        return;
+      }
+    } else {
+      if (!newPost.city.trim() || !newPost.state.trim()) {
+        setSubmitError('Please select a city and state');
+        return;
+      }
     }
 
     try {
@@ -570,10 +622,41 @@ const JobsBoard: React.FC = () => {
               helperText="Provide a detailed description of the role, responsibilities, and requirements"
             />
 
-            <Autocomplete
-              fullWidth
-              options={companies}
-              getOptionLabel={(option) => option.name}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={useCompanyLocation}
+                  onChange={(e) => {
+                    setUseCompanyLocation(e.target.checked);
+                    if (!e.target.checked) {
+                      // Clear company/location when switching to generic location
+                      setSelectedCompanyId('');
+                      setSelectedLocationId('');
+                      setLocations([]);
+                      setNewPost({
+                        ...newPost,
+                        companyId: '',
+                        companyName: '',
+                        worksiteId: '',
+                        worksiteName: '',
+                        street: '',
+                        city: '',
+                        state: '',
+                        zipCode: ''
+                      });
+                    }
+                  }}
+                />
+              }
+              label="Use Company Location"
+            />
+
+            {useCompanyLocation ? (
+              <>
+                <Autocomplete
+                  fullWidth
+                  options={companies}
+                  getOptionLabel={(option) => option.name}
               value={companies.find(c => c.id === selectedCompanyId) || null}
               onChange={(event, newValue) => {
                 if (newValue) {
@@ -637,16 +720,36 @@ const JobsBoard: React.FC = () => {
               </Select>
             </FormControl>
 
-            {selectedLocationId && (
-              <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                  Selected Location Details:
-                </Typography>
-                <Typography variant="body2">
-                  {newPost.street && `${newPost.street}, `}
-                  {newPost.city}, {newPost.state} {newPost.zipCode}
-                </Typography>
-              </Box>
+                {selectedLocationId && (
+                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                      Selected Location Details:
+                    </Typography>
+                    <Typography variant="body2">
+                      {newPost.street && `${newPost.street}, `}
+                      {newPost.city}, {newPost.state} {newPost.zipCode}
+                    </Typography>
+                  </Box>
+                )}
+              </>
+            ) : (
+              <GoogleAutocomplete
+                onLoad={onCityAutocompleteLoad}
+                onPlaceChanged={onCityPlaceChanged}
+                options={{
+                  types: ['(cities)'],
+                  componentRestrictions: { country: 'us' }
+                }}
+              >
+                <TextField
+                  fullWidth
+                  label="City, State"
+                  placeholder="Search for a city..."
+                  required
+                  helperText="Search and select a city - coordinates will be saved automatically"
+                  inputRef={(ref) => setCityInputRef(ref)}
+                />
+              </GoogleAutocomplete>
             )}
 
             <Stack direction="row" spacing={2}>
