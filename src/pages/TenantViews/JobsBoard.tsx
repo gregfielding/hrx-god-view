@@ -771,15 +771,6 @@ const JobsBoard: React.FC = () => {
 
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                  <Typography variant="body1">Show Pay Rate</Typography>
-                  <Switch
-                    checked={newPost.showPayRate}
-                    onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
-                  />
-                </Box>
-              </Grid>
-              <Grid item xs={12} sm={6}>
                 <TextField
                   label="Pay Rate ($/hr)"
                   type="number"
@@ -788,6 +779,15 @@ const JobsBoard: React.FC = () => {
                   fullWidth
                   inputProps={{ min: 0, step: 0.01 }}
                 />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                  <Typography variant="body1">Show Pay Rate</Typography>
+                  <Switch
+                    checked={newPost.showPayRate}
+                    onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
+                  />
+                </Box>
               </Grid>
             </Grid>
 
