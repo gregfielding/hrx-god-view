@@ -510,7 +510,7 @@ const JobsBoard: React.FC = () => {
             </Alert>
           )}
           
-          <Stack spacing={3} sx={{ mt: 2 }}>
+          <Box sx={{ mt: 2 }}>
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}>
                 <TextField
@@ -539,6 +539,9 @@ const JobsBoard: React.FC = () => {
                 </FormControl>
               </Grid>
             </Grid>
+          </Box>
+
+          <Stack spacing={3} sx={{ mt: 3 }}>
 
             <Autocomplete
               fullWidth
