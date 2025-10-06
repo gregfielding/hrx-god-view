@@ -539,25 +539,50 @@ const JobsBoard: React.FC = () => {
               helperText="Provide a detailed description of the role, responsibilities, and requirements"
             />
 
-            <FormControl fullWidth required>
-              <InputLabel>Company</InputLabel>
-              <Select
-                value={selectedCompanyId}
-                label="Company"
-                onChange={(e) => handleCompanyChange(e.target.value)}
-                disabled={loadingCompanies}
-              >
-                {loadingCompanies ? (
-                  <MenuItem value="">Loading companies...</MenuItem>
-                ) : (
-                  companies.map((company) => (
-                    <MenuItem key={company.id} value={company.id}>
-                      {company.name}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              fullWidth
+              options={companies}
+              getOptionLabel={(option) => option.name}
+              value={companies.find(c => c.id === selectedCompanyId) || null}
+              onChange={(event, newValue) => {
+                if (newValue) {
+                  handleCompanyChange(newValue.id);
+                } else {
+                  setSelectedCompanyId('');
+                  setSelectedLocationId('');
+                  setLocations([]);
+                  setNewPost({
+                    ...newPost,
+                    companyId: '',
+                    companyName: '',
+                    worksiteId: '',
+                    worksiteName: '',
+                    street: '',
+                    city: '',
+                    state: '',
+                    zipCode: ''
+                  });
+                }
+              }}
+              loading={loadingCompanies}
+              disabled={loadingCompanies}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Company"
+                  required
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
 
             <FormControl fullWidth required disabled={!selectedCompanyId}>
               <InputLabel>Worksite</InputLabel>
