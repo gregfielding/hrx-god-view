@@ -115,7 +115,7 @@ const JobsBoard: React.FC = () => {
     try {
       setLoadingJobOrders(true);
       const { collection, query, where, getDocs } = await import('firebase/firestore');
-      const { db } = await import('../../config/firebase');
+      const { db } = await import('../../firebase');
       
       const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
       const q = query(jobOrdersRef, where('status', '==', 'Active'));
@@ -276,7 +276,7 @@ const JobsBoard: React.FC = () => {
       try {
         // Load job order data to pre-fill form
         const { doc, getDoc } = await import('firebase/firestore');
-        const { db } = await import('../../config/firebase');
+        const { db } = await import('../../firebase');
         
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
         const jobOrderDoc = await getDoc(jobOrderRef);
@@ -372,6 +372,7 @@ const JobsBoard: React.FC = () => {
       zipCode: '',
       startDate: '',
       endDate: '',
+      expDate: '',
       payRate: '',
       showPayRate: true,
       visibility: 'public',
