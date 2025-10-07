@@ -762,77 +762,6 @@ const JobsBoard: React.FC = () => {
               )}
             />
 
-            <TextField
-              label="Job Description"
-              value={newPost.jobDescription}
-              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
-              fullWidth
-              required
-              multiline
-              rows={4}
-              helperText="Provide a detailed description of the role, responsibilities, and requirements"
-            />
-
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Pay Rate ($/hr)"
-                    type="number"
-                    value={newPost.payRate}
-                    onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
-                    fullWidth
-                    inputProps={{ min: 0, step: 0.01 }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
-                    <Typography variant="body1">Show Pay Rate</Typography>
-                    <Switch
-                      checked={newPost.showPayRate}
-                      onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
-                    />
-                  </Box>
-                </Grid>
-              </Grid>
-            </Box>
-
-            <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Start Date"
-                    type="date"
-                    value={newPost.startDate}
-                    onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
-                    fullWidth
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="End Date"
-                    type="date"
-                    value={newPost.endDate}
-                    onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
-                    fullWidth
-                    InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Expiration Date"
-                    type="date"
-                    value={newPost.expDate || ''}
-                    onChange={(e) => setNewPost({ ...newPost, expDate: e.target.value })}
-                    fullWidth
-                    InputLabelProps={{ shrink: true }}
-                    helperText="When this posting will automatically expire"
-                  />
-                </Grid>
-              </Grid>
-            </Box>
-
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2} alignItems="center">
                 <Grid item xs={12} sm={8}>
@@ -905,6 +834,77 @@ const JobsBoard: React.FC = () => {
                   >
                     Clear Connection
                   </Button>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <TextField
+              label="Job Description"
+              value={newPost.jobDescription}
+              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
+              fullWidth
+              required
+              multiline
+              rows={4}
+              helperText="Provide a detailed description of the role, responsibilities, and requirements"
+            />
+
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    label="Pay Rate ($/hr)"
+                    type="number"
+                    value={newPost.payRate}
+                    onChange={(e) => setNewPost({ ...newPost, payRate: e.target.value })}
+                    fullWidth
+                    inputProps={{ min: 0, step: 0.01 }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Pay Rate</Typography>
+                    <Switch
+                      checked={newPost.showPayRate}
+                      onChange={(e) => setNewPost({ ...newPost, showPayRate: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Start Date"
+                    type="date"
+                    value={newPost.startDate}
+                    onChange={(e) => setNewPost({ ...newPost, startDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="End Date"
+                    type="date"
+                    value={newPost.endDate}
+                    onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Expiration Date"
+                    type="date"
+                    value={newPost.expDate || ''}
+                    onChange={(e) => setNewPost({ ...newPost, expDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                    helperText="When this posting will automatically expire"
+                  />
                 </Grid>
               </Grid>
             </Box>
