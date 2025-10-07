@@ -118,7 +118,7 @@ const JobsBoard: React.FC = () => {
       const { db } = await import('../../firebase');
       
       const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
-      const q = query(jobOrdersRef, where('status', '==', 'Active'));
+      const q = query(jobOrdersRef, where('status', 'in', ['draft', 'open', 'interviewing', 'offer', 'partially_filled']));
       const querySnapshot = await getDocs(q);
       
       const jobOrdersData = querySnapshot.docs.map(doc => ({
@@ -782,7 +782,7 @@ const JobsBoard: React.FC = () => {
                       {loadingJobOrders ? (
                         <MenuItem value="" disabled>Loading job orders...</MenuItem>
                       ) : jobOrders.length === 0 ? (
-                        <MenuItem value="" disabled>No active job orders available</MenuItem>
+                        <MenuItem value="" disabled>No available job orders to connect</MenuItem>
                       ) : (
                         jobOrders.map((jobOrder) => (
                           <MenuItem key={jobOrder.id} value={jobOrder.id}>
