@@ -63,6 +63,7 @@ export interface JobsBoardPost {
   
   // Links
   jobOrderId?: string; // Optional link to job order
+  skills?: string[]; // Required skills for the position
   autoAddToUserGroup?: string; // Optional: auto-add applicants to this user group
   
   // Requirements & Additional Info
@@ -118,6 +119,7 @@ export interface CreatePostData {
   
   // Links
   jobOrderId?: string;
+  skills?: string[];
   autoAddToUserGroup?: string;
   
   // Requirements & Additional Info
@@ -326,6 +328,7 @@ export class JobsBoardService {
         
         // Links
         jobOrderId: postData.jobOrderId,
+        skills: postData.skills || [],
         autoAddToUserGroup: postData.autoAddToUserGroup,
         
         // Requirements & Additional Info

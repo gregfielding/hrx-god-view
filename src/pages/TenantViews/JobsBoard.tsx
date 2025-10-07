@@ -32,6 +32,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 import jobTitlesList from '../../data/onetJobTitles.json';
+import onetSkills from '../../data/onetSkills.json';
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
@@ -83,6 +84,7 @@ const JobsBoard: React.FC = () => {
     showStart: boolean;
     showEnd: boolean;
     payRate: string;
+    skills: string[];
     restrictedGroups: string[];
   } | null>(null);
 
@@ -112,6 +114,7 @@ const JobsBoard: React.FC = () => {
     restrictedGroups: [] as string[],
     status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
     jobOrderId: '',
+    skills: [] as string[],
     autoAddToUserGroup: '',
   });
 
@@ -372,6 +375,7 @@ const JobsBoard: React.FC = () => {
         showStart: newPost.showStart,
         showEnd: newPost.showEnd,
         payRate: newPost.payRate,
+        skills: newPost.skills,
         restrictedGroups: newPost.restrictedGroups
       });
       
@@ -486,6 +490,7 @@ const JobsBoard: React.FC = () => {
       restrictedGroups: [],
       status: 'draft',
       jobOrderId: '',
+      skills: [],
       autoAddToUserGroup: '',
     });
     setSelectedCompanyId('');
@@ -876,6 +881,7 @@ const JobsBoard: React.FC = () => {
                           showStart: originalFormValues.showStart,
                           showEnd: originalFormValues.showEnd,
                           payRate: originalFormValues.payRate,
+                          skills: originalFormValues.skills,
                           restrictedGroups: originalFormValues.restrictedGroups
                         }));
                       } else {
@@ -1163,6 +1169,33 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
+
+            <Autocomplete
+              multiple
+              fullWidth
+              options={onetSkills.map(skill => skill.name)}
+              value={newPost.skills}
+              onChange={(event, newValue) => {
+                setNewPost({ ...newPost, skills: newValue });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Required Skills"
+                  helperText="Select skills required for this position"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
 
             <TextField
               label="Auto-Add to User Group (Optional)"
