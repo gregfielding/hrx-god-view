@@ -775,25 +775,42 @@ const JobsBoard: React.FC = () => {
 
           <Stack spacing={3} sx={{ mt: 3 }}>
 
-            <Autocomplete
-              fullWidth
-              freeSolo
-              options={jobTitlesList}
-              value={newPost.jobTitle}
-              onChange={(event, newValue) => {
-                setNewPost({ ...newPost, jobTitle: newValue || '' });
-              }}
-              onInputChange={(event, newInputValue) => {
-                setNewPost({ ...newPost, jobTitle: newInputValue });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Job Title (Optional)"
-                  helperText="Search or enter a job title - leave blank for generic multi-role postings"
-                />
-              )}
-            />
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={8}>
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    options={jobTitlesList}
+                    value={newPost.jobTitle}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, jobTitle: newValue || '' });
+                    }}
+                    onInputChange={(event, newInputValue) => {
+                      setNewPost({ ...newPost, jobTitle: newInputValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Job Title (Optional)"
+                        helperText="Search or enter a job title - leave blank for generic multi-role postings"
+                      />
+                    )}
+                  />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <TextField
+                    label="Expiration Date"
+                    type="date"
+                    value={newPost.expDate || ''}
+                    onChange={(e) => setNewPost({ ...newPost, expDate: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                    helperText="When this posting will automatically expire"
+                  />
+                </Grid>
+              </Grid>
+            </Box>
 
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2} alignItems="center">
@@ -909,7 +926,7 @@ const JobsBoard: React.FC = () => {
 
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={4}>
+                <Grid item xs={12} sm={6}>
                   <TextField
                     label="Start Date"
                     type="date"
@@ -919,7 +936,7 @@ const JobsBoard: React.FC = () => {
                     InputLabelProps={{ shrink: true }}
                   />
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid item xs={12} sm={6}>
                   <TextField
                     label="End Date"
                     type="date"
@@ -927,17 +944,6 @@ const JobsBoard: React.FC = () => {
                     onChange={(e) => setNewPost({ ...newPost, endDate: e.target.value })}
                     fullWidth
                     InputLabelProps={{ shrink: true }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Expiration Date"
-                    type="date"
-                    value={newPost.expDate || ''}
-                    onChange={(e) => setNewPost({ ...newPost, expDate: e.target.value })}
-                    fullWidth
-                    InputLabelProps={{ shrink: true }}
-                    helperText="When this posting will automatically expire"
                   />
                 </Grid>
               </Grid>
