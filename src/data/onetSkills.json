@@ -1,142 +1,3042 @@
 [
   {
     "name": "Reading Comprehension",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Active Listening",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Writing",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Speaking",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Mathematics",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Science",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Critical Thinking",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Active Learning",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Learning Strategies",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Monitoring",
-    "type": "O*NET"
+    "category": "Basic Skills"
   },
   {
     "name": "Social Perceptiveness",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Coordination",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Persuasion",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Negotiation",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Instructing",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Service Orientation",
-    "type": "O*NET"
+    "category": "Social Skills"
   },
   {
     "name": "Complex Problem Solving",
-    "type": "O*NET"
+    "category": "Complex Problem Solving Skills"
   },
   {
     "name": "Operations Analysis",
-    "type": "O*NET"
+    "category": "Complex Problem Solving Skills"
   },
   {
     "name": "Technology Design",
-    "type": "O*NET"
+    "category": "Complex Problem Solving Skills"
   },
   {
     "name": "Equipment Selection",
-    "type": "O*NET"
+    "category": "Complex Problem Solving Skills"
   },
   {
     "name": "Installation",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Programming",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Operations Monitoring",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Operation and Control",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Equipment Maintenance",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Troubleshooting",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Repairing",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Quality Control Analysis",
-    "type": "O*NET"
+    "category": "Technical Skills"
   },
   {
     "name": "Judgment and Decision Making",
-    "type": "O*NET"
+    "category": "Complex Problem Solving Skills"
   },
   {
     "name": "Systems Analysis",
-    "type": "O*NET"
+    "category": "System Skills"
   },
   {
     "name": "Systems Evaluation",
-    "type": "O*NET"
+    "category": "System Skills"
   },
   {
     "name": "Time Management",
-    "type": "O*NET"
+    "category": "Resource Management Skills"
   },
   {
     "name": "Management of Financial Resources",
-    "type": "O*NET"
+    "category": "Resource Management Skills"
   },
   {
     "name": "Management of Material Resources",
-    "type": "O*NET"
+    "category": "Resource Management Skills"
   },
   {
     "name": "Management of Personnel Resources",
-    "type": "O*NET"
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Database Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Network Administration",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CAD Software",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Statistical Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Conflict Resolution",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Team Building",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Public Speaking",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Cross-Cultural Communication",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Heavy Machinery Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Precision Measurement",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Quality Testing Equipment",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Medical Terminology",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Financial Analysis",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Legal Research",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Construction Safety",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Data Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Project Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Customer Service",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Leadership",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Microsoft Excel",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microsoft Word",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microsoft PowerPoint",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microsoft Outlook",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Workspace",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Salesforce",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "QuickBooks",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Adobe Creative Suite",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Photoshop",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Illustrator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "InDesign",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "AutoCAD",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SolidWorks",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Revit",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SketchUp",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "3D Modeling",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Web Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "HTML",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CSS",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "JavaScript",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Python",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Java",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "C++",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "C#",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SQL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "PHP",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Ruby",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "React",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Angular",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Vue.js",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Node.js",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Docker",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kubernetes",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "AWS",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Azure",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Cloud",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Linux",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Windows Server",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cybersecurity",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Penetration Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Risk Assessment",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Compliance Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Auditing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Budget Planning",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Cost Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Financial Modeling",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Investment Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Tax Preparation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Bookkeeping",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Payroll Processing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Accounts Payable",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Accounts Receivable",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Inventory Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Supply Chain Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Logistics",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Warehouse Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Forklift Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Pallet Jack Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Crane Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Welding",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Machining",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CNC Operation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Assembly Line Work",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Quality Assurance",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Six Sigma",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Lean Manufacturing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Process Improvement",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Root Cause Analysis",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Change Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Training Development",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Performance Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Recruitment",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Employee Relations",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Benefits Administration",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Workers' Compensation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Labor Law Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "OSHA Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Safety Training",
+    "category": "Social Skills"
+  },
+  {
+    "name": "First Aid",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "CPR",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "AED Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Fire Safety",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Emergency Response",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Crisis Management",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Event Planning",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Marketing",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Digital Marketing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Social Media Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Content Creation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SEO",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Analytics",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Email Marketing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "PPC Advertising",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Brand Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Market Research",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Competitive Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Sales",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Lead Generation",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Account Management",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Relationship Building",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Cold Calling",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Proposal Writing",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Contract Negotiation",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Client Relations",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Customer Retention",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Technical Writing",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Grant Writing",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Research",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Data Collection",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Survey Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Report Writing",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Presentation Skills",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Multilingual",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Spanish",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "French",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "German",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Mandarin",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Japanese",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Korean",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Arabic",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Portuguese",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Italian",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Russian",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Translation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Interpretation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Medical Coding",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "HIPAA Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Patient Care",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Nursing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pharmacy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Laboratory Work",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Clinical Research",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Drug Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Regulatory Affairs",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "FDA Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Teaching",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Curriculum Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Educational Technology",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Student Assessment",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Classroom Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Special Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "ESL Teaching",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Adult Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Criminal Justice",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Law Enforcement",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Security",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Investigation",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Forensics",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Paralegal",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Court Reporting",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Real Estate",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Property Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Appraisal",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Insurance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Claims Processing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Underwriting",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Risk Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Actuarial Science",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Architecture",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Interior Design",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Landscape Design",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Urban Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Civil Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Mechanical Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Electrical Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Chemical Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Environmental Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Software Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Systems Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Aerospace Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Biomedical Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Industrial Engineering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Materials Science",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Physics",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Chemistry",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Biology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Geology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Meteorology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Astronomy",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Psychology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Sociology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Anthropology",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Political Science",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Economics",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "History",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Geography",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Philosophy",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Literature",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Art",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Music",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Dance",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Theater",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Film Production",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Photography",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Video Editing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Audio Production",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Graphic Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "UI/UX Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Product Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Industrial Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Fashion Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Jewelry Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Textile Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Culinary Arts",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Safety",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Nutrition",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Restaurant Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Hotel Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Tourism",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Travel Planning",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Event Coordination",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Wedding Planning",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Fitness Training",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Personal Training",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Yoga Instruction",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Massage Therapy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Physical Therapy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Occupational Therapy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Speech Therapy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Veterinary Medicine",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Animal Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Agriculture",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Farming",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Horticulture",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Forestry",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Environmental Science",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Conservation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Wildlife Management",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Marine Biology",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Oceanography",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Meteorology",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Aviation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pilot",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Air Traffic Control",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Aircraft Maintenance",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Maritime",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Navigation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Transportation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Truck Driving",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Bus Driving",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Taxi Driving",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Delivery",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Postal Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Retail",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Sales Associate",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cashier",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Stock Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Visual Merchandising",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Store Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Banking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Loan Processing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Credit Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Investment Banking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Wealth Management",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Financial Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Tax Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Estate Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Insurance Sales",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Real Estate Sales",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Property Development",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Construction Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Project Coordination",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Site Supervision",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Building Inspection",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Code Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Permit Processing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Zoning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Urban Development",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Community Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Public Administration",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Government Relations",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Policy Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Program Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Grant Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Nonprofit Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Volunteer Coordination",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Fundraising",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Donor Relations",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Community Outreach",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Social Work",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Counseling",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Therapy",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Case Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Crisis Intervention",
+    "category": "Complex Problem Solving Skills"
+  },
+  {
+    "name": "Substance Abuse Counseling",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Mental Health",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Behavioral Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Applied Behavior Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Autism Support",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Developmental Disabilities",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Elder Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Hospice Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Palliative Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Home Health Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Assisted Living",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Nursing Home Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Child Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Early Childhood Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Elementary Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Secondary Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Higher Education",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Academic Administration",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Student Affairs",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Academic Advising",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Career Counseling",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Library Science",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Information Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Archival Work",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Museum Work",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Curatorial Work",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Exhibition Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Art Conservation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Archaeology",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Anthropology",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Ethnography",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cultural Studies",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "International Relations",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Diplomacy",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Foreign Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Immigration Services",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Customs",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Border Patrol",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Homeland Security",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Intelligence Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Counterterrorism",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cybersecurity Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Digital Forensics",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Malware Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Network Security",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Information Security",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Privacy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GDPR Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "CCPA Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "SOX Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "PCI Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "ISO 27001",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "NIST Framework",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "ITIL",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Agile",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Scrum",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kanban",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "DevOps",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CI/CD",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microservices",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "API Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "REST APIs",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GraphQL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Machine Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Artificial Intelligence",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Science",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Big Data",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Hadoop",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Spark",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kafka",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Elasticsearch",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MongoDB",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "PostgreSQL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MySQL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Oracle",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Redis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cassandra",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Neo4j",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Blockchain",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cryptocurrency",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Smart Contracts",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "DeFi",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NFTs",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Web3",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Metaverse",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "AR/VR",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Unity",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Unreal Engine",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Game Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Mobile App Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "iOS Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Android Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "React Native",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Flutter",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Xamarin",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Ionic",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cordova",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Progressive Web Apps",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Responsive Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Accessibility",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "WCAG Compliance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Section 508",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Usability Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "User Research",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "A/B Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Conversion Optimization",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Growth Hacking",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Product Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Business Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Requirements Gathering",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Process Mapping",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Workflow Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Automation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "RPA",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Workflow Automation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Business Process Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Enterprise Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Solution Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Technical Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cloud Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Security Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Integration Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "API Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microservices Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Event-Driven Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Service-Oriented Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Domain-Driven Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Test-Driven Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Behavior-Driven Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Continuous Integration",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Continuous Deployment",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Infrastructure as Code",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Terraform",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CloudFormation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Ansible",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Chef",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Puppet",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Jenkins",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GitLab CI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GitHub Actions",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CircleCI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Travis CI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Bamboo",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TeamCity",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Azure DevOps",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Monitoring",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Logging",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Alerting",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Performance Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Load Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Stress Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Security Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Penetration Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Vulnerability Assessment",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Code Review",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Static Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Dynamic Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Dependency Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Package Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Version Control",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Git",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SVN",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Mercurial",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Perforce",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Documentation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Technical Documentation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "API Documentation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "User Documentation",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Training Materials",
+    "category": "Basic Skills"
+  },
+  {
+    "name": "Knowledge Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Content Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Digital Asset Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Records Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Data Governance",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Master Data Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Data Quality",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Cleansing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Validation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Profiling",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Lineage",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Cataloging",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Metadata Management",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ETL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ELT",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Integration",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Warehousing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Lake",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Mesh",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Fabric",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Business Intelligence",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Data Visualization",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Tableau",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Power BI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "QlikView",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Looker",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Sisense",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Domo",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Chart.js",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "D3.js",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Plotly",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Matplotlib",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Seaborn",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pandas",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NumPy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SciPy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Scikit-learn",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TensorFlow",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "PyTorch",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Keras",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "OpenCV",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Computer Vision",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Natural Language Processing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NLTK",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "spaCy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Transformers",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "BERT",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GPT",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Deep Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Neural Networks",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Reinforcement Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Unsupervised Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Supervised Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Feature Engineering",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Model Selection",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Hyperparameter Tuning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cross-Validation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "A/B Testing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Statistical Modeling",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Regression Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Classification",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Clustering",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Dimensionality Reduction",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "PCA",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "t-SNE",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "UMAP",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Time Series Analysis",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Forecasting",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ARIMA",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Prophet",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LSTM",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GRU",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "RNN",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "CNN",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "GAN",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "VAE",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Transformer",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Attention Mechanism",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Transfer Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Fine-tuning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Model Deployment",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MLOps",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Model Monitoring",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Model Versioning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Experiment Tracking",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MLflow",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kubeflow",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Weights & Biases",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Neptune",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Comet",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TensorBoard",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Jupyter",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Colab",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kaggle",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "DataCamp",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Coursera",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "edX",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Udemy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pluralsight",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LinkedIn Learning",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Skillshare",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MasterClass",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Khan Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Codecademy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "FreeCodeCamp",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "The Odin Project",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "App Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Flatiron School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "General Assembly",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Lambda School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Thinkful",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Springboard",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "BrainStation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Ironhack",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Le Wagon",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "42 School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Holberton School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Make School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Rithm School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Hack Reactor",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Fullstack Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Grace Hopper",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Ada Developers Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Techtonica",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Code Tenderloin",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Year Up",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Per Scholas",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NPower",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Generation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LaunchCode",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TechHire",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TechCorps",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Girls Who Code",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Black Girls Code",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Code2040",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Outreachy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Summer of Code",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Microsoft Learn",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "AWS Training",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Cloud Training",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Azure Training",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Oracle University",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "IBM SkillsBuild",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Salesforce Trailhead",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "HubSpot Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Google Analytics Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Facebook Blueprint",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Twitter Flight School",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LinkedIn Learning Paths",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "YouTube Creator Academy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "TikTok Creator Portal",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Instagram Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Snapchat Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pinterest Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Reddit Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Discord Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Twitch Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "YouTube Creator",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Podcast Creation",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Video Production",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Audio Production",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Live Streaming",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Virtual Events",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Webinar Hosting",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Online Teaching",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "E-learning Development",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LMS Administration",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SCORM",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "xAPI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Tin Can API",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "AICC",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "LTI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "QTI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "IMS Global",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Accessibility Standards",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "WCAG 2.1",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Section 508",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ADA Compliance",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Universal Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Inclusive Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "User Experience",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "User Interface",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Interaction Design",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Information Architecture",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Wireframing",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Prototyping",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Figma",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Sketch",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Adobe XD",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "InVision",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Marvel",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Principle",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Framer",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Origami Studio",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Proto.io",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Axure",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Balsamiq",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Mockplus",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Justinmind",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Fluid UI",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MockFlow",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pidoco",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Gliffy",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Lucidchart",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Draw.io",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Visio",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "OmniGraffle",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MindMeister",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "XMind",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "FreeMind",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MindManager",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "iMindMap",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SimpleMind",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MindNode",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Mindomo",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Coggle",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Bubbl.us",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Popplet",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SpiderScribe",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Text2MindMap",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "WiseMapping",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MindMup",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Mind42",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "MindMaple",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Novamind",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ConceptDraw",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "SmartDraw",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Creately",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cacoo",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ProcessOn",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Edraw Max",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "yEd",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Gephi",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cytoscape",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Tulip",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NodeXL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pajek",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "UCINET",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NetDraw",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ORA",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kumu",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Graph Commons",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Gephi",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cytoscape",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Tulip",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NodeXL",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Pajek",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "UCINET",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "NetDraw",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "ORA",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Kumu",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Graph Commons",
+    "category": "Technical Skills"
   }
 ]

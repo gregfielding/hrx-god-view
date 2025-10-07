@@ -32,7 +32,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 import jobTitlesList from '../../data/onetJobTitles.json';
-import onetSkills from '../../data/onetSkills.json';
+import onetSkills from '../../data/onetSkillsExpanded.json';
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
