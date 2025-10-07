@@ -60,6 +60,24 @@ const JobsBoard: React.FC = () => {
   // Job orders for connection
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+  
+  // Track original form values before job order connection
+  const [originalFormValues, setOriginalFormValues] = useState<{
+    postTitle: string;
+    jobTitle: string;
+    jobDescription: string;
+    companyId: string;
+    companyName: string;
+    worksiteId: string;
+    worksiteName: string;
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    startDate: string;
+    endDate: string;
+    payRate: string;
+  } | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
 
@@ -300,9 +318,25 @@ const JobsBoard: React.FC = () => {
   };
 
   const handleJobOrderChange = async (jobOrderId: string) => {
-    setNewPost({ ...newPost, jobOrderId });
-    
     if (jobOrderId) {
+      // Save current form values before populating from job order
+      setOriginalFormValues({
+        postTitle: newPost.postTitle,
+        jobTitle: newPost.jobTitle,
+        jobDescription: newPost.jobDescription,
+        companyId: newPost.companyId,
+        companyName: newPost.companyName,
+        worksiteId: newPost.worksiteId,
+        worksiteName: newPost.worksiteName,
+        street: newPost.street,
+        city: newPost.city,
+        state: newPost.state,
+        zipCode: newPost.zipCode,
+        startDate: newPost.startDate,
+        endDate: newPost.endDate,
+        payRate: newPost.payRate
+      });
+      
       try {
         // Load job order data to pre-fill form
         const { doc, getDoc } = await import('firebase/firestore');
@@ -346,6 +380,9 @@ const JobsBoard: React.FC = () => {
       } catch (err) {
         console.error('Error loading job order data:', err);
       }
+    } else {
+      // Clear job order connection
+      setNewPost({ ...newPost, jobOrderId: '' });
     }
   };
 
@@ -416,6 +453,7 @@ const JobsBoard: React.FC = () => {
     setLocations([]);
     setUseCompanyLocation(true);
     setSubmitError(null);
+    setOriginalFormValues(null);
   };
 
   const handleSubmitNewPost = async () => {
@@ -828,7 +866,39 @@ const JobsBoard: React.FC = () => {
                     variant="outlined"
                     color="error"
                     size="small"
-                    onClick={() => setNewPost({ ...newPost, jobOrderId: '' })}
+                    onClick={() => {
+                      // Clear job order connection and restore original form values
+                      if (originalFormValues) {
+                        setNewPost(prev => ({
+                          ...prev,
+                          jobOrderId: '',
+                          // Restore original values
+                          postTitle: originalFormValues.postTitle,
+                          jobTitle: originalFormValues.jobTitle,
+                          jobDescription: originalFormValues.jobDescription,
+                          companyId: originalFormValues.companyId,
+                          companyName: originalFormValues.companyName,
+                          worksiteId: originalFormValues.worksiteId,
+                          worksiteName: originalFormValues.worksiteName,
+                          street: originalFormValues.street,
+                          city: originalFormValues.city,
+                          state: originalFormValues.state,
+                          zipCode: originalFormValues.zipCode,
+                          startDate: originalFormValues.startDate,
+                          endDate: originalFormValues.endDate,
+                          payRate: originalFormValues.payRate
+                        }));
+                      } else {
+                        // Fallback: clear job order connection only
+                        setNewPost(prev => ({ ...prev, jobOrderId: '' }));
+                      }
+                      
+                      // Clear company and location selections
+                      setSelectedCompanyId('');
+                      setSelectedLocationId('');
+                      setLocations([]);
+                      setOriginalFormValues(null);
+                    }}
                     disabled={!newPost.jobOrderId}
                     startIcon={<CloseIcon />}
                     fullWidth
