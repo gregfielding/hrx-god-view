@@ -1148,7 +1148,10 @@ const JobsBoard: React.FC = () => {
             variant="contained" 
             disabled={submitting}
           >
-            {submitting ? 'Creating...' : 'Create Post'}
+            {submitting 
+              ? (newPost.status === 'draft' ? 'Saving...' : 'Creating...') 
+              : (newPost.status === 'draft' ? 'Save Draft' : 'Create Post')
+            }
           </Button>
         </DialogActions>
       </Dialog>
