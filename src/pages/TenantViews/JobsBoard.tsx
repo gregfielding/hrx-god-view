@@ -25,7 +25,7 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add } from '@mui/icons-material';
+import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -57,6 +57,10 @@ const JobsBoard: React.FC = () => {
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
 
+  // Job orders for connection
+  const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
+  const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+
   const jobsBoardService = JobsBoardService.getInstance();
 
   // New post form state
@@ -86,6 +90,7 @@ const JobsBoard: React.FC = () => {
   // Load jobs board posts from Firestore
   useEffect(() => {
     loadPosts();
+    loadJobOrders();
   }, [tenantId]);
 
   const loadPosts = async () => {
@@ -101,6 +106,32 @@ const JobsBoard: React.FC = () => {
       setError(err.message || 'Failed to load jobs board posts');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadJobOrders = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoadingJobOrders(true);
+      const { collection, query, where, getDocs } = await import('firebase/firestore');
+      const { db } = await import('../../config/firebase');
+      
+      const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+      const q = query(jobOrdersRef, where('status', '==', 'Active'));
+      const querySnapshot = await getDocs(q);
+      
+      const jobOrdersData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        jobOrderName: doc.data().jobOrderName || 'Unnamed Job Order',
+        status: doc.data().status || 'Unknown'
+      }));
+      
+      setJobOrders(jobOrdersData);
+    } catch (err: any) {
+      console.error('Error loading job orders:', err);
+    } finally {
+      setLoadingJobOrders(false);
     }
   };
 
@@ -235,6 +266,56 @@ const JobsBoard: React.FC = () => {
         state: selectedLocation.address.state,
         zipCode: selectedLocation.address.zipCode
       });
+    }
+  };
+
+  const handleJobOrderChange = async (jobOrderId: string) => {
+    setNewPost({ ...newPost, jobOrderId });
+    
+    if (jobOrderId) {
+      try {
+        // Load job order data to pre-fill form
+        const { doc, getDoc } = await import('firebase/firestore');
+        const { db } = await import('../../config/firebase');
+        
+        const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+        const jobOrderDoc = await getDoc(jobOrderRef);
+        
+        if (jobOrderDoc.exists()) {
+          const jobOrderData = jobOrderDoc.data();
+          
+          // Pre-fill form with job order data
+          setNewPost(prev => ({
+            ...prev,
+            jobOrderId,
+            postTitle: prev.postTitle || jobOrderData.jobOrderName || '',
+            jobTitle: prev.jobTitle || jobOrderData.jobTitle || '',
+            jobDescription: prev.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
+            companyId: jobOrderData.companyId || '',
+            companyName: jobOrderData.companyName || '',
+            worksiteId: jobOrderData.worksiteId || '',
+            worksiteName: jobOrderData.worksiteName || '',
+            street: jobOrderData.worksiteAddress?.street || '',
+            city: jobOrderData.worksiteAddress?.city || '',
+            state: jobOrderData.worksiteAddress?.state || '',
+            zipCode: jobOrderData.worksiteAddress?.zipCode || '',
+            startDate: jobOrderData.startDate ? (typeof jobOrderData.startDate === 'string' ? jobOrderData.startDate : jobOrderData.startDate.toISOString().split('T')[0]) : '',
+            endDate: jobOrderData.endDate ? (typeof jobOrderData.endDate === 'string' ? jobOrderData.endDate : jobOrderData.endDate.toISOString().split('T')[0]) : '',
+            payRate: jobOrderData.payRate?.toString() || ''
+          }));
+          
+          // Set company and location if available
+          if (jobOrderData.companyId) {
+            setSelectedCompanyId(jobOrderData.companyId);
+            await loadLocationsForCompany(jobOrderData.companyId);
+            if (jobOrderData.worksiteId) {
+              setSelectedLocationId(jobOrderData.worksiteId);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error loading job order data:', err);
+      }
     }
   };
 
@@ -679,6 +760,50 @@ const JobsBoard: React.FC = () => {
                     InputLabelProps={{ shrink: true }}
                     helperText="When this posting will automatically expire"
                   />
+                </Grid>
+              </Grid>
+            </Box>
+
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={8}>
+                  <FormControl fullWidth>
+                    <InputLabel>Connect with Job Order</InputLabel>
+                    <Select
+                      value={newPost.jobOrderId}
+                      label="Connect with Job Order"
+                      onChange={(e) => handleJobOrderChange(e.target.value)}
+                      disabled={loadingJobOrders}
+                    >
+                      <MenuItem value="">
+                        <em>No Job Order Connection</em>
+                      </MenuItem>
+                      {loadingJobOrders ? (
+                        <MenuItem value="" disabled>Loading job orders...</MenuItem>
+                      ) : jobOrders.length === 0 ? (
+                        <MenuItem value="" disabled>No active job orders available</MenuItem>
+                      ) : (
+                        jobOrders.map((jobOrder) => (
+                          <MenuItem key={jobOrder.id} value={jobOrder.id}>
+                            {jobOrder.jobOrderName}
+                          </MenuItem>
+                        ))
+                      )}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    onClick={() => setNewPost({ ...newPost, jobOrderId: '' })}
+                    disabled={!newPost.jobOrderId}
+                    startIcon={<CloseIcon />}
+                    fullWidth
+                  >
+                    Clear Connection
+                  </Button>
                 </Grid>
               </Grid>
             </Box>
