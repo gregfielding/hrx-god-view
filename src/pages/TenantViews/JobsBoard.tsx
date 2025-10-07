@@ -1129,13 +1129,6 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
-            <TextField
-              label="Job Order ID (Optional)"
-              value={newPost.jobOrderId}
-              onChange={(e) => setNewPost({ ...newPost, jobOrderId: e.target.value })}
-              fullWidth
-              helperText="Link this posting to an existing job order"
-            />
 
             <TextField
               label="Auto-Add to User Group (Optional)"
