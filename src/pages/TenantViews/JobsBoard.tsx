@@ -1082,6 +1082,28 @@ const JobsBoard: React.FC = () => {
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                   <FormControl fullWidth>
+                    <InputLabel>Visibility</InputLabel>
+                    <Select
+                      value={newPost.visibility}
+                      label="Visibility"
+                      onChange={(e) => {
+                        const visibility = e.target.value as any;
+                        setNewPost({ 
+                          ...newPost, 
+                          visibility,
+                          // Clear restricted groups if not restricted
+                          restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : []
+                        });
+                      }}
+                    >
+                      <MenuItem value="public">Public - Visible to everyone</MenuItem>
+                      <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
+                      <MenuItem value="private">Private - Internal only</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
                     <InputLabel>User Groups</InputLabel>
                     <Select
                       value={newPost.restrictedGroups}
@@ -1101,28 +1123,6 @@ const JobsBoard: React.FC = () => {
                           </MenuItem>
                         ))
                       )}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Visibility</InputLabel>
-                    <Select
-                      value={newPost.visibility}
-                      label="Visibility"
-                      onChange={(e) => {
-                        const visibility = e.target.value as any;
-                        setNewPost({ 
-                          ...newPost, 
-                          visibility,
-                          // Clear restricted groups if not restricted
-                          restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : []
-                        });
-                      }}
-                    >
-                      <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                      <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
-                      <MenuItem value="private">Private - Internal only</MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
