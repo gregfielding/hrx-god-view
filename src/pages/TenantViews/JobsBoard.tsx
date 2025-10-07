@@ -80,6 +80,8 @@ const JobsBoard: React.FC = () => {
     zipCode: string;
     startDate: string;
     endDate: string;
+    showStart: boolean;
+    showEnd: boolean;
     payRate: string;
     restrictedGroups: string[];
   } | null>(null);
@@ -102,6 +104,8 @@ const JobsBoard: React.FC = () => {
     startDate: '',
     endDate: '',
     expDate: '',
+    showStart: false,
+    showEnd: false,
     payRate: '',
     showPayRate: true,
     visibility: 'public' as 'public' | 'private' | 'restricted',
@@ -365,6 +369,8 @@ const JobsBoard: React.FC = () => {
         zipCode: newPost.zipCode,
         startDate: newPost.startDate,
         endDate: newPost.endDate,
+        showStart: newPost.showStart,
+        showEnd: newPost.showEnd,
         payRate: newPost.payRate,
         restrictedGroups: newPost.restrictedGroups
       });
@@ -472,6 +478,8 @@ const JobsBoard: React.FC = () => {
       startDate: '',
       endDate: '',
       expDate: '',
+      showStart: false,
+      showEnd: false,
       payRate: '',
       showPayRate: true,
       visibility: 'public',
@@ -865,6 +873,8 @@ const JobsBoard: React.FC = () => {
                           zipCode: originalFormValues.zipCode,
                           startDate: originalFormValues.startDate,
                           endDate: originalFormValues.endDate,
+                          showStart: originalFormValues.showStart,
+                          showEnd: originalFormValues.showEnd,
                           payRate: originalFormValues.payRate,
                           restrictedGroups: originalFormValues.restrictedGroups
                         }));
@@ -926,7 +936,7 @@ const JobsBoard: React.FC = () => {
 
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} sm={4}>
                   <TextField
                     label="Start Date"
                     type="date"
@@ -936,7 +946,16 @@ const JobsBoard: React.FC = () => {
                     InputLabelProps={{ shrink: true }}
                   />
                 </Grid>
-                <Grid item xs={12} sm={6}>
+                <Grid item xs={12} sm={2}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Start</Typography>
+                    <Switch
+                      checked={newPost.showStart || false}
+                      onChange={(e) => setNewPost({ ...newPost, showStart: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+                <Grid item xs={12} sm={4}>
                   <TextField
                     label="End Date"
                     type="date"
@@ -945,6 +964,15 @@ const JobsBoard: React.FC = () => {
                     fullWidth
                     InputLabelProps={{ shrink: true }}
                   />
+                </Grid>
+                <Grid item xs={12} sm={2}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show End</Typography>
+                    <Switch
+                      checked={newPost.showEnd || false}
+                      onChange={(e) => setNewPost({ ...newPost, showEnd: e.target.checked })}
+                    />
+                  </Box>
                 </Grid>
               </Grid>
             </Box>

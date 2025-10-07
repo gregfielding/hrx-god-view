@@ -47,6 +47,8 @@ export interface JobsBoardPost {
   startDate?: Date;
   endDate?: Date;
   expDate?: Date;
+  showStart?: boolean;
+  showEnd?: boolean;
   payRate?: number;
   showPayRate: boolean;
   
@@ -105,6 +107,8 @@ export interface CreatePostData {
   startDate?: Date | string | null;
   endDate?: Date | string | null;
   expDate?: Date | string | null;
+  showStart?: boolean;
+  showEnd?: boolean;
   payRate?: number | null;
   showPayRate: boolean;
   
@@ -307,6 +311,8 @@ export class JobsBoardService {
         startDate,
         endDate,
         expDate,
+        showStart: postData.showStart || false,
+        showEnd: postData.showEnd || false,
         payRate: postData.payRate || undefined,
         showPayRate: postData.showPayRate,
         
