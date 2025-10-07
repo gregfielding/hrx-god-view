@@ -269,6 +269,36 @@ const JobsBoard: React.FC = () => {
     }
   };
 
+  // Helper function to safely convert dates to YYYY-MM-DD format for date inputs
+  const formatDateForInput = (dateValue: any): string => {
+    if (!dateValue) return '';
+    
+    try {
+      if (typeof dateValue === 'string') {
+        // If it's already a string, check if it's in the right format
+        if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          return dateValue;
+        }
+        // Try to parse and format
+        const date = new Date(dateValue);
+        return isNaN(date.getTime()) ? '' : date.toISOString().split('T')[0];
+      } else if (dateValue && typeof dateValue.toDate === 'function') {
+        // Firestore Timestamp
+        return dateValue.toDate().toISOString().split('T')[0];
+      } else if (dateValue && typeof dateValue.toISOString === 'function') {
+        // Date object
+        return dateValue.toISOString().split('T')[0];
+      } else {
+        // Try to create a Date object
+        const date = new Date(dateValue);
+        return isNaN(date.getTime()) ? '' : date.toISOString().split('T')[0];
+      }
+    } catch (error) {
+      console.warn('Error formatting date:', dateValue, error);
+      return '';
+    }
+  };
+
   const handleJobOrderChange = async (jobOrderId: string) => {
     setNewPost({ ...newPost, jobOrderId });
     
@@ -299,8 +329,8 @@ const JobsBoard: React.FC = () => {
             city: jobOrderData.worksiteAddress?.city || '',
             state: jobOrderData.worksiteAddress?.state || '',
             zipCode: jobOrderData.worksiteAddress?.zipCode || '',
-            startDate: jobOrderData.startDate ? (typeof jobOrderData.startDate === 'string' ? jobOrderData.startDate : jobOrderData.startDate.toISOString().split('T')[0]) : '',
-            endDate: jobOrderData.endDate ? (typeof jobOrderData.endDate === 'string' ? jobOrderData.endDate : jobOrderData.endDate.toISOString().split('T')[0]) : '',
+            startDate: formatDateForInput(jobOrderData.startDate),
+            endDate: formatDateForInput(jobOrderData.endDate),
             payRate: jobOrderData.payRate?.toString() || ''
           }));
           
