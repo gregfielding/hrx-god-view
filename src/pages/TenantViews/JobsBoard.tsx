@@ -61,6 +61,10 @@ const JobsBoard: React.FC = () => {
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
   
+  // User groups for restricted visibility
+  const [userGroups, setUserGroups] = useState<Array<{ id: string; name: string }>>([]);
+  const [loadingUserGroups, setLoadingUserGroups] = useState(false);
+  
   // Track original form values before job order connection
   const [originalFormValues, setOriginalFormValues] = useState<{
     postTitle: string;
@@ -77,6 +81,7 @@ const JobsBoard: React.FC = () => {
     startDate: string;
     endDate: string;
     payRate: string;
+    restrictedGroups: string[];
   } | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
@@ -100,6 +105,7 @@ const JobsBoard: React.FC = () => {
     payRate: '',
     showPayRate: true,
     visibility: 'public' as 'public' | 'private' | 'restricted',
+    restrictedGroups: [] as string[],
     status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
     jobOrderId: '',
     autoAddToUserGroup: '',
@@ -109,6 +115,7 @@ const JobsBoard: React.FC = () => {
   useEffect(() => {
     loadPosts();
     loadJobOrders();
+    loadUserGroups();
   }, [tenantId]);
 
   const loadPosts = async () => {
@@ -150,6 +157,30 @@ const JobsBoard: React.FC = () => {
       console.error('Error loading job orders:', err);
     } finally {
       setLoadingJobOrders(false);
+    }
+  };
+
+  const loadUserGroups = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoadingUserGroups(true);
+      const { collection, getDocs } = await import('firebase/firestore');
+      const { db } = await import('../../firebase');
+      
+      const userGroupsRef = collection(db, 'tenants', tenantId, 'userGroups');
+      const querySnapshot = await getDocs(userGroupsRef);
+      
+      const userGroupsData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name || 'Unnamed Group'
+      }));
+      
+      setUserGroups(userGroupsData);
+    } catch (err: any) {
+      console.error('Error loading user groups:', err);
+    } finally {
+      setLoadingUserGroups(false);
     }
   };
 
@@ -334,7 +365,8 @@ const JobsBoard: React.FC = () => {
         zipCode: newPost.zipCode,
         startDate: newPost.startDate,
         endDate: newPost.endDate,
-        payRate: newPost.payRate
+        payRate: newPost.payRate,
+        restrictedGroups: newPost.restrictedGroups
       });
       
       try {
@@ -443,6 +475,7 @@ const JobsBoard: React.FC = () => {
       payRate: '',
       showPayRate: true,
       visibility: 'public',
+      restrictedGroups: [],
       status: 'draft',
       jobOrderId: '',
       autoAddToUserGroup: '',
@@ -815,7 +848,8 @@ const JobsBoard: React.FC = () => {
                           zipCode: originalFormValues.zipCode,
                           startDate: originalFormValues.startDate,
                           endDate: originalFormValues.endDate,
-                          payRate: originalFormValues.payRate
+                          payRate: originalFormValues.payRate,
+                          restrictedGroups: originalFormValues.restrictedGroups
                         }));
                       } else {
                         // Fallback: clear job order connection only
@@ -1044,18 +1078,56 @@ const JobsBoard: React.FC = () => {
               </GoogleAutocomplete>
             )}
 
-            <FormControl fullWidth>
-              <InputLabel>Visibility</InputLabel>
-              <Select
-                value={newPost.visibility}
-                label="Visibility"
-                onChange={(e) => setNewPost({ ...newPost, visibility: e.target.value as any })}
-              >
-                <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
-                <MenuItem value="private">Private - Internal only</MenuItem>
-              </Select>
-            </FormControl>
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>User Groups</InputLabel>
+                    <Select
+                      value={newPost.restrictedGroups}
+                      label="User Groups"
+                      onChange={(e) => setNewPost({ ...newPost, restrictedGroups: e.target.value as string[] })}
+                      disabled={newPost.visibility !== 'restricted' || loadingUserGroups}
+                      multiple
+                    >
+                      {loadingUserGroups ? (
+                        <MenuItem value="" disabled>Loading user groups...</MenuItem>
+                      ) : userGroups.length === 0 ? (
+                        <MenuItem value="" disabled>No user groups available</MenuItem>
+                      ) : (
+                        userGroups.map((group) => (
+                          <MenuItem key={group.id} value={group.id}>
+                            {group.name}
+                          </MenuItem>
+                        ))
+                      )}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Visibility</InputLabel>
+                    <Select
+                      value={newPost.visibility}
+                      label="Visibility"
+                      onChange={(e) => {
+                        const visibility = e.target.value as any;
+                        setNewPost({ 
+                          ...newPost, 
+                          visibility,
+                          // Clear restricted groups if not restricted
+                          restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : []
+                        });
+                      }}
+                    >
+                      <MenuItem value="public">Public - Visible to everyone</MenuItem>
+                      <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
+                      <MenuItem value="private">Private - Internal only</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+            </Box>
 
             <TextField
               label="Job Order ID (Optional)"
