@@ -72,6 +72,9 @@ const JobsBoard: React.FC = () => {
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
+  
+  // Company names cache for displaying in table
+  const [companyNamesCache, setCompanyNamesCache] = useState<Record<string, string>>({});
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
@@ -299,11 +302,70 @@ const JobsBoard: React.FC = () => {
       const postsData = await jobsBoardService.getAllPosts(tenantId);
       setPosts(postsData);
       setFilteredJobs(postsData);
+      
+      // Load company names for posts that have companyId but empty companyName
+      await loadCompanyNamesForPosts(postsData);
     } catch (err: any) {
       console.error('Error loading jobs board posts:', err);
       setError(err.message || 'Failed to load jobs board posts');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCompanyNamesForPosts = async (posts: JobsBoardPost[]) => {
+    if (!tenantId) return;
+    
+    try {
+      // Get unique company IDs that need names
+      const companyIdsToLoad = [...new Set(
+        posts
+          .filter(post => post.companyId && (!post.companyName || post.companyName.trim() === ''))
+          .map(post => post.companyId)
+      )].filter(Boolean);
+      
+      if (companyIdsToLoad.length === 0) return;
+      
+      // Fetch company names in batch
+      const companyPromises = companyIdsToLoad.map(async (companyId) => {
+        try {
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('../../firebase');
+          
+          const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+          const companyDoc = await getDoc(companyRef);
+          
+          if (companyDoc.exists()) {
+            const companyData = companyDoc.data();
+            return {
+              id: companyId,
+              name: companyData.companyName || companyData.name || 'Unknown Company'
+            };
+          }
+          return {
+            id: companyId,
+            name: 'Unknown Company'
+          };
+        } catch (err) {
+          console.warn(`Failed to load company name for ${companyId}:`, err);
+          return {
+            id: companyId,
+            name: 'Unknown Company'
+          };
+        }
+      });
+      
+      const companyResults = await Promise.all(companyPromises);
+      
+      // Update the cache
+      const newCache: Record<string, string> = {};
+      companyResults.forEach(company => {
+        newCache[company.id] = company.name;
+      });
+      
+      setCompanyNamesCache(prev => ({ ...prev, ...newCache }));
+    } catch (err) {
+      console.error('Error loading company names:', err);
     }
   };
 
@@ -418,18 +480,34 @@ const JobsBoard: React.FC = () => {
 
     // Company filter
     if (companyFilter !== 'all') {
-      filtered = filtered.filter(post => post.companyName === companyFilter);
+      filtered = filtered.filter(post => getDisplayCompanyName(post) === companyFilter);
     }
 
     setFilteredJobs(filtered);
-  }, [posts, searchTerm, locationFilter, companyFilter]);
+  }, [posts, searchTerm, locationFilter, companyFilter, companyNamesCache]);
 
   const getUniqueLocations = () => {
     return Array.from(new Set(posts.map(post => post.worksiteName))).sort();
   };
 
   const getUniqueCompanies = () => {
-    return Array.from(new Set(posts.map(post => post.companyName))).sort();
+    return Array.from(new Set(posts.map(post => getDisplayCompanyName(post)))).sort();
+  };
+
+  // Helper function to get the display company name
+  const getDisplayCompanyName = (post: JobsBoardPost): string => {
+    // If companyName is not empty, use it
+    if (post.companyName && post.companyName.trim() !== '') {
+      return post.companyName;
+    }
+    
+    // If we have a companyId, try to get the name from cache
+    if (post.companyId && companyNamesCache[post.companyId]) {
+      return companyNamesCache[post.companyId];
+    }
+    
+    // Fallback to empty string if no company info available
+    return '';
   };
 
   const handleOpenNewPostModal = async () => {
@@ -1111,7 +1189,7 @@ const JobsBoard: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.primary">
-                      {post.companyName}
+                      {getDisplayCompanyName(post)}
                     </Typography>
                   </TableCell>
                   <TableCell>
