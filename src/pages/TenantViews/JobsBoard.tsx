@@ -34,8 +34,9 @@ import {
   TableRow,
   TableSortLabel,
   IconButton,
+  Breadcrumbs,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
+import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon, NavigateNext } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1052,6 +1053,30 @@ const JobsBoard: React.FC = () => {
 
   return (
     <Box sx={{ p: 0, width: '100%' }}>
+
+      {/* Breadcrumb Navigation */}
+      <Box sx={{ mb: 3 }}>
+        <Breadcrumbs 
+          separator={<NavigateNext fontSize="small" />} 
+          aria-label="breadcrumb"
+          sx={{
+            '& .MuiBreadcrumbs-separator': {
+              color: 'text.secondary',
+              mx: 1
+            }
+          }}
+        >
+          <Typography 
+            color="text.primary" 
+            sx={{ 
+              fontSize: '0.875rem',
+              fontWeight: 600
+            }}
+          >
+            Jobs Board
+          </Typography>
+        </Breadcrumbs>
+      </Box>
 
       {/* Filters */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>

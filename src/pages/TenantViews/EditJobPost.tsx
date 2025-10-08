@@ -7,8 +7,9 @@ import {
   CircularProgress,
   Alert,
   Paper,
+  Breadcrumbs,
 } from '@mui/material';
-import { ArrowBack } from '@mui/icons-material';
+import { ArrowBack, NavigateNext } from '@mui/icons-material';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import JobPostForm from '../../components/JobPostForm';
@@ -113,18 +114,57 @@ const EditJobPost: React.FC = () => {
   }
 
   return (
-    <Paper elevation={1} sx={{ p: 4, borderRadius: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-          Edit Job Post: {post.postTitle}
-        </Typography>
-        <Button
-          startIcon={<ArrowBack />}
-          onClick={handleCancel}
+    <Box sx={{ p: 0, width: '100%' }}>
+      {/* Breadcrumb Navigation */}
+      <Box sx={{ mb: 3 }}>
+        <Breadcrumbs 
+          separator={<NavigateNext fontSize="small" />} 
+          aria-label="breadcrumb"
+          sx={{
+            '& .MuiBreadcrumbs-separator': {
+              color: 'text.secondary',
+              mx: 1
+            }
+          }}
         >
-          Back
-        </Button>
+          <Typography 
+            color="text.secondary" 
+            sx={{ 
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              cursor: 'pointer',
+              '&:hover': {
+                color: 'primary.main'
+              }
+            }}
+            onClick={() => navigate('/jobs-dashboard')}
+          >
+            Jobs Board
+          </Typography>
+          <Typography 
+            color="text.primary" 
+            sx={{ 
+              fontSize: '0.875rem',
+              fontWeight: 600
+            }}
+          >
+            {post.postTitle}
+          </Typography>
+        </Breadcrumbs>
       </Box>
+
+      <Paper elevation={1} sx={{ p: 4, borderRadius: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            Edit Job Post: {post.postTitle}
+          </Typography>
+          <Button
+            startIcon={<ArrowBack />}
+            onClick={handleCancel}
+          >
+            Back
+          </Button>
+        </Box>
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -139,7 +179,8 @@ const EditJobPost: React.FC = () => {
         loading={saving}
         mode="edit"
       />
-    </Paper>
+      </Paper>
+    </Box>
   );
 };
 
