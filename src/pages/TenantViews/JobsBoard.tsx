@@ -1302,13 +1302,23 @@ const JobsBoard: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     {editingStatus === post.id ? (
-                      <FormControl size="small" sx={{ minWidth: 120 }}>
+                      <FormControl 
+                        size="small" 
+                        sx={{ minWidth: 120 }}
+                        onClick={(e) => e.stopPropagation()} // Prevent row click
+                      >
                         <Select
                           value={post.status || 'draft'}
-                          onChange={(e) => handleStatusUpdate(post.id, e.target.value as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired')}
+                          onChange={(e) => {
+                            e.stopPropagation(); // Prevent row click
+                            handleStatusUpdate(post.id, e.target.value as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired');
+                          }}
                           onBlur={() => setEditingStatus(null)}
                           autoFocus
                           size="small"
+                          MenuProps={{
+                            sx: { zIndex: 9999 } // Ensure dropdown appears above other elements
+                          }}
                         >
                           <MenuItem value="draft">Draft</MenuItem>
                           <MenuItem value="active">Active</MenuItem>
