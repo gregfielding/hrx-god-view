@@ -932,18 +932,6 @@ const JobsBoard: React.FC = () => {
 
   return (
     <Box sx={{ p: 0, width: '100%' }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700 }}>
-          Jobs Board
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<Add />}
-          onClick={handleOpenNewPostModal}
-        >
-          New Post
-        </Button>
-      </Stack>
 
       {/* Filters */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
@@ -994,9 +982,14 @@ const JobsBoard: React.FC = () => {
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
-            <Typography variant="body2" color="text.secondary">
-              {filteredJobs.length} jobs found
-            </Typography>
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={handleOpenNewPostModal}
+              fullWidth
+            >
+              New Post
+            </Button>
           </Grid>
         </Grid>
       </Paper>
