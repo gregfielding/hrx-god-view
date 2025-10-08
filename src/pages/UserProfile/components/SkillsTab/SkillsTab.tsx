@@ -40,21 +40,31 @@ import {
 import Autocomplete from '@mui/material/Autocomplete';
 
 import ResumeUpload from '../../../../components/ResumeUpload';
+import { educationOptions } from '../../../../data/experienceOptions';
 
 import { EducationSection, WorkExperienceSection } from './index';
 
-const educationLevels = ['High School', "Associate's", "Bachelor's", "Master's", 'Doctorate'];
+const educationLevels = educationOptions.map(option => option.label);
 const skillLevels = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
 const languageProficiencies = ['Basic', 'Conversational', 'Fluent', 'Native'];
 
 export interface SkillsTabProps {
   user: any;
   onUpdate: (updated: any) => void;
-  onetSkills: { name: string; type: string; level?: string }[];
+  onetSkills: { name: string; category: string }[];
   onetJobTitles: string[];
 }
 
 const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJobTitles }) => {
+  // Map onetSkills (with category) to internal format (with type and level)
+  const mapOnetSkillsToInternal = (onetSkillsList: { name: string; category: string }[]) => {
+    return onetSkillsList.map(skill => ({
+      name: skill.name,
+      type: skill.category,
+      level: 'Intermediate' // Default level
+    }));
+  };
+
   // Personal & Professional Info
   const [currentJobTitle, setCurrentJobTitle] = useState(user.currentJobTitle || '');
   const [appliedJobTitle, setAppliedJobTitle] = useState(user.appliedJobTitle || '');
@@ -147,7 +157,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
       (skillName: string) => {
         const foundSkill = onetSkills.find((s) => s.name === skillName);
         return foundSkill 
-          ? { ...foundSkill, level: foundSkill.level || 'Intermediate' }
+          ? { name: foundSkill.name, type: foundSkill.category, level: 'Intermediate' }
           : { name: skillName, type: 'Other', level: 'Intermediate' };
       },
     ),
@@ -372,7 +382,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     if (parsedData.skills && parsedData.skills.length > 0) {
       const newSkills = parsedData.skills.map((skill: any) => ({
         name: skill.name,
-        type: skill.type || 'Other',
+        type: skill.category || 'Other',
         level: skill.level || 'Intermediate'
       }));
       setSkills([...skills, ...newSkills.filter((newSkill: any) => 
@@ -775,7 +785,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 <Grid item xs={12} md={8}>
                   <Autocomplete
                     multiple
-                    options={onetSkills}
+                    options={mapOnetSkillsToInternal(onetSkills)}
                     groupBy={(option) => option.type}
                     getOptionLabel={(option) => option.name}
                     value={skills}

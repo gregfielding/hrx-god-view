@@ -110,12 +110,11 @@ export async function generateMenuItems(
         icon: 'dashboard',
         // No role requirements - available to all users
       },
-      {
-        text: 'My Profile',
-        to: '/profile',
-        icon: 'person',
-        // No role requirements - available to all users
-      },
+      // {
+      //   text: 'My Profile',
+      //   to: '/profile',
+      //   icon: 'person',
+      // },
     );
 
     // Add tenant-specific menu items with claims-based role requirements
@@ -124,7 +123,7 @@ export async function generateMenuItems(
         text: 'Workforce',
         to: '/workforce',
         icon: 'people',
-        requiredRoles: ['Admin', 'Manager'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       },
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{
@@ -134,12 +133,12 @@ export async function generateMenuItems(
         requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       }] : []),
       // Only show Flex Jobs if HRX Flex Engine module is enabled
-      ...(flexModuleEnabled ? [{
-        text: 'Flex Jobs',
-        to: '/flex',
-        icon: 'assignment',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
-      }] : []),
+      // ...(flexModuleEnabled ? [{
+      //   text: 'Flex Jobs',
+      //   to: '/flex',
+      //   icon: 'assignment',
+      //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
+      // }] : []),
       // Only show Jobs Board if HRX Jobs Board module is enabled
       ...(jobsBoardModuleEnabled ? [{
         text: 'Jobs Board',
@@ -165,33 +164,33 @@ export async function generateMenuItems(
         text: 'My Assignments',
         to: '/assignments',
         icon: 'assignment_turned_in',
-        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
+        requiredRoles: ['Worker'] as ClaimsRole[], // Worker access
       },
 
       {
-        text: 'Setup',
+        text: 'Company Setup',
         to: '/settings',
         icon: 'architecture',
-        requiredRoles: ['Admin'], // Admin only
+        requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
       // Only show Company Defaults if Staffing, Flex, or Recruiting modules are enabled AND user is Manager/Admin
-      ...((staffingModuleEnabled || flexModuleEnabled || recruiterModuleEnabled) ? [{
-        text: 'Company Defaults',
-        to: '/company-defaults',
-        icon: 'business_center',
-        requiredRoles: ['Manager', 'Admin'] as ClaimsRole[], // Manager and Admin only
-      }] : []),
+      // ...((staffingModuleEnabled || flexModuleEnabled || recruiterModuleEnabled) ? [{
+      //   text: 'Company Defaults',
+      //   to: '/company-defaults',
+      //   icon: 'business_center',
+      //   requiredRoles: ['Manager', 'Admin'] as ClaimsRole[], // Manager and Admin only
+      // }] : []),
       {
         text: 'Modules',
         to: '/modules',
         icon: 'extension',
-        requiredRoles: ['Admin'], // Admin only
+        requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
       {
         text: 'Reports',
         to: '/reports',
         icon: 'assessment',
-        requiredRoles: ['Admin', 'Manager'], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin only
       },
       // {
       //   text: 'Team Access',
@@ -209,13 +208,13 @@ export async function generateMenuItems(
         text: 'Mobile App',
         to: '/mobile-app',
         icon: 'phone_iphone',
-        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
+        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
       },
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
         icon: 'notifications',
-        accessRoles: ['tenant_2', 'tenant_3', 'tenant_4', 'tenant_5'], // Worker access (security level 2-5)
+        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
       },
       // {
       //   text: 'Help',
@@ -255,31 +254,31 @@ export async function generateMenuItems(
         text: 'Team Access',
         to: '/users',
         icon: 'people',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       {
         text: 'Tenants',
         to: '/tenants',
         icon: 'business',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       {
         text: 'Broadcasts',
         to: '/broadcasts',
         icon: 'campaign',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       {
         text: 'AI Launchpad',
         to: '/admin/ai',
         icon: 'rocket_launch',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       {
         text: 'Modules Dashboard',
         to: '/admin/modules',
         icon: 'apps',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       // {
       //   text: 'AI Context Dashboard',
@@ -304,13 +303,13 @@ export async function generateMenuItems(
         text: 'AI Logs',
         to: '/admin/ai-logs',
         icon: 'list_alt',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       {
         text: 'Data Operations',
         to: '/admin/data-operations',
         icon: 'data_object',
-        requiredRoles: ['Admin', 'Manager', 'HRX'], // HRX users have full access
+        requiredRoles: ['Admin', 'Manager', 'HRX'] as ClaimsRole[], // HRX users have full access
       },
       // {
       //   text: 'AI Self Improvement',

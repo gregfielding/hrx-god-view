@@ -111,6 +111,7 @@ export interface JobOrder {
   rolloverExistingStaff?: boolean;
   backgroundCheckPackages?: string[];
   drugScreeningPanels?: string[];
+  additionalScreenings?: string[];
   eVerifyRequired?: boolean;
   dressCode?: string;
   timeclockSystem?: string;

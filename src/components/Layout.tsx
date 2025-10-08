@@ -516,7 +516,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Notifications': <NotificationsIcon />,
       'Privacy & Notifications': <NotificationsIcon />,
       'Modules': <AppsIcon />,
-      'Setup': <ArchitectureIcon />,
+      'Company Setup': <ArchitectureIcon />,
       'Company Defaults': <BusinessIcon />,
       'AI Launchpad': <RocketLaunchIcon />,
       'Help': <HelpIcon />,
@@ -597,7 +597,7 @@ const Layout: React.FC = React.memo(function Layout() {
           />
         </Box>
         {/* Removed avatar/welcome and divider here */}
-        <List sx={{ flexGrow: 1, pb: '8px' }}>
+        <List sx={{ flexGrow: 1, pb: '80px' }}>
           {/* My Profile menu item at the top */}
           {user && (
             <ListItem disablePadding sx={{ display: 'block' }}>
@@ -806,8 +806,8 @@ const Layout: React.FC = React.memo(function Layout() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {/* Google Connection Chip */}
-            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && (
+            {/* Google Connection Chip - Only show for users with crm_sales enabled */}
+            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && crmSalesEnabled && (
               <GoogleStatusProvider tenantId={activeTenant.id}>
                 <GoogleConnectionChip tenantId={activeTenant.id} />
               </GoogleStatusProvider>

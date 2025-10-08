@@ -39,13 +39,13 @@ const TenantSettings: React.FC = () => {
           scrollButtons="auto"
           aria-label="settings tabs"
         >
+          <Tab label="Branding" />
           <Tab label="Regions" />
           <Tab label="Division Types" />
           <Tab label="Divisions" />
           <Tab label="Departments" />
           <Tab label="Locations" />
           {/* <Tab label="Org Chart" /> */}
-          {/* <Tab label="Branding" /> */}
           {/* <Tab label="Defaults" /> */}
           {/* <Tab label="Company Defaults" /> */}
         </Tabs>
@@ -53,37 +53,37 @@ const TenantSettings: React.FC = () => {
       {/* Tab Panels */}
       {tabValue === 0 && (
         <Box sx={{ p: 0 }}>
-          <RegionsTab tenantId={tenantId} />
+          <BrandingTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 1 && (
         <Box sx={{ p: 0 }}>
-          <DivisionTypesTab tenantId={tenantId} />
+          <RegionsTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 2 && (
         <Box sx={{ p: 0 }}>
-          <DivisionsTab tenantId={tenantId} />
+          <DivisionTypesTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 3 && (
         <Box sx={{ p: 0 }}>
-          <DepartmentsTab tenantId={tenantId} />
+          <DivisionsTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 4 && (
         <Box sx={{ p: 0 }}>
-          <LocationsTab tenantId={tenantId} />
+          <DepartmentsTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 5 && (
         <Box sx={{ p: 0 }}>
-          <OrgChartTab tenantId={tenantId} />
+          <LocationsTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 6 && (
         <Box sx={{ p: 0 }}>
-          <BrandingTab tenantId={tenantId} />
+          <OrgChartTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 7 && (

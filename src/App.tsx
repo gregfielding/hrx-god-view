@@ -33,6 +33,7 @@ import TenantModules from './pages/TenantViews/TenantModules';
 import TenantAISettings from './pages/TenantViews/TenantAISettings';
 import TenantFlex from './pages/TenantViews/TenantFlex';
 import JobsBoard from './pages/TenantViews/JobsBoard';
+import EditJobPost from './pages/TenantViews/EditJobPost';
 import PublicJobsBoard from './pages/PublicJobsBoard';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
@@ -216,8 +217,6 @@ function App() {
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       
-      {/* Public routes */}
-      <Route path="/jobs-board" element={<PublicJobsBoard />} />
       <Route
         path="/"
         element={
@@ -267,6 +266,17 @@ function App() {
             </JobsBoardAccessGuard>
           </ProtectedRoute>
         } />
+        <Route path="jobs-dashboard/edit/:postId" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <JobsBoardAccessGuard>
+              <EditJobPost />
+            </JobsBoardAccessGuard>
+          </ProtectedRoute>
+        } />
+        
+        {/* Public Jobs Board routes */}
+        <Route path="c1/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="jobs-board" element={<PublicJobsBoard />} />
         <Route path="crm" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>

@@ -5,6 +5,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, storage } from '../../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 
 type Props = { tenantId: string };
 
@@ -39,8 +40,8 @@ const emptyDefaults: Defaults = {
   ppe: asItems(['Hard Hat', 'Safety Glasses', 'Steel Toe Boots', 'Gloves']),
   licenses: asItems(['Driver License', 'Forklift Certification', 'TWIC Card']),
   certifications: asItems(['OSHA 10', 'OSHA 30', 'CPR/First Aid']),
-  experienceLevels: asItems(['Entry-Level', '1-2 years', '3-5 years', '5+ years']),
-  educationLevels: asItems(['High School / GED', 'Associate', 'Bachelor', 'Master']),
+  experienceLevels: experienceOptions.map(option => ({ title: option.label, description: option.description })),
+  educationLevels: educationOptions.map(option => ({ title: option.label, description: option.description })),
   physicalRequirements: asItems(['Standing', 'Walking', 'Lifting 25 lbs', 'Lifting 50 lbs']),
   uniformRequirements: [
     { title: 'Steel Toe Boots', description: 'Employee provides steel toe boots' },

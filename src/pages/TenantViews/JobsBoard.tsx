@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -24,6 +25,14 @@ import {
   Autocomplete,
   Switch,
   FormControlLabel,
+  FormHelperText,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableSortLabel,
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
@@ -32,10 +41,15 @@ import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
 import jobTitlesList from '../../data/onetJobTitles.json';
-import onetSkills from '../../data/onetSkillsExpanded.json';
+import onetSkills from '../../data/onetSkills.json';
+import credentialsSeed from '../../data/credentialsSeed.json';
+import { experienceOptions, educationOptions } from '../../data/experienceOptions';
+import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
+import { getOptionsForField } from '../../utils/fieldOptions';
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<JobsBoardPost[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<JobsBoardPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +60,10 @@ const JobsBoard: React.FC = () => {
   const [openNewPostModal, setOpenNewPostModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  
+  // Sorting state
+  const [sortField, setSortField] = useState<string>('createdAt');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   // Company and location data for dropdowns
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
@@ -66,9 +84,14 @@ const JobsBoard: React.FC = () => {
   const [userGroups, setUserGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingUserGroups, setLoadingUserGroups] = useState(false);
   
+  // Company defaults for background checks
+  const [companyDefaults, setCompanyDefaults] = useState<any>(null);
+  const [loadingCompanyDefaults, setLoadingCompanyDefaults] = useState(false);
+  
   // Track original form values before job order connection
   const [originalFormValues, setOriginalFormValues] = useState<{
     postTitle: string;
+    jobType: 'gig' | 'career' | '';
     jobTitle: string;
     jobDescription: string;
     companyId: string;
@@ -84,15 +107,127 @@ const JobsBoard: React.FC = () => {
     showStart: boolean;
     showEnd: boolean;
     payRate: string;
+    workersNeeded: number;
+    eVerifyRequired: boolean;
+    backgroundCheckPackages: string[];
+    showBackgroundChecks: boolean;
+    drugScreeningPanels: string[];
+    showDrugScreening: boolean;
+    additionalScreenings: string[];
+    showAdditionalScreenings: boolean;
     skills: string[];
+    showSkills: boolean;
+    licensesCerts: string[];
+    showLicensesCerts: boolean;
+    experienceLevels: string[];
+    showExperience: boolean;
+    educationLevels: string[];
+    showEducation: boolean;
+    languages: string[];
+    showLanguages: boolean;
+    physicalRequirements: string[];
+    showPhysicalRequirements: boolean;
+    uniformRequirements: string[];
+    showUniformRequirements: boolean;
+    requiredPpe: string[];
+    showRequiredPpe: boolean;
+    shift: string[];
+    showShift: boolean;
+    startTime: string;
+    endTime: string;
+    showStartTime: boolean;
+    showEndTime: boolean;
     restrictedGroups: string[];
   } | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
 
+  // Sorting functionality
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Helper function to safely format dates for display
+  const formatDateForDisplay = (dateValue: any): string => {
+    if (!dateValue) return '';
+    
+    try {
+      let date: Date;
+      
+      if (typeof dateValue === 'string') {
+        date = new Date(dateValue);
+      } else if (dateValue && typeof dateValue.toDate === 'function') {
+        // Firestore Timestamp
+        date = dateValue.toDate();
+      } else if (dateValue && typeof dateValue.toISOString === 'function') {
+        // Date object
+        date = dateValue;
+      } else {
+        date = new Date(dateValue);
+      }
+      
+      return isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+    } catch (error) {
+      console.warn('Error formatting date for display:', dateValue, error);
+      return '';
+    }
+  };
+
+  const getSortedJobs = () => {
+    return [...filteredJobs].sort((a, b) => {
+      let aValue: any = a[sortField as keyof JobsBoardPost];
+      let bValue: any = b[sortField as keyof JobsBoardPost];
+      
+      if (aValue === undefined) aValue = '';
+      if (bValue === undefined) bValue = '';
+      
+      if (sortField === 'createdAt' || sortField === 'startDate' || sortField === 'endDate') {
+        aValue = new Date(aValue);
+        bValue = new Date(bValue);
+        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+      
+      aValue = (aValue || '').toString().toLowerCase();
+      bValue = (bValue || '').toString().toLowerCase();
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  const handleRowClick = (post: JobsBoardPost) => {
+    navigate(`/jobs-dashboard/edit/${post.id}`);
+  };
+
+  // Shift options for Career job type
+  const shiftOptions = [
+    'Full Time',
+    'Part Time',
+    'Temporary',
+    'First Shift',
+    'Second Shift', 
+    'Third Shift',
+    'Day Shift',
+    'Night Shift',
+    'Swing Shift',
+    'Weekends',
+    'Some Weekends',
+    'Some Nights',
+    '8 Hour',
+    '10 Hour',
+    '12 Hour'
+  ];
+
   // New post form state
   const [newPost, setNewPost] = useState({
     postTitle: '',
+    jobType: '' as 'gig' | 'career' | '',
     jobTitle: '',
     jobDescription: '',
     companyId: '',
@@ -110,11 +245,40 @@ const JobsBoard: React.FC = () => {
     showEnd: false,
     payRate: '',
     showPayRate: true,
+    workersNeeded: 1,
+    eVerifyRequired: false,
+    backgroundCheckPackages: [],
+    showBackgroundChecks: false,
+    drugScreeningPanels: [],
+    showDrugScreening: false,
+    additionalScreenings: [],
+    showAdditionalScreenings: false,
     visibility: 'public' as 'public' | 'private' | 'restricted',
     restrictedGroups: [] as string[],
     status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
     jobOrderId: '',
     skills: [] as string[],
+    showSkills: false,
+    licensesCerts: [] as string[],
+    showLicensesCerts: false,
+    experienceLevels: [] as string[],
+    showExperience: false,
+    educationLevels: [] as string[],
+    showEducation: false,
+    languages: [] as string[],
+    showLanguages: false,
+    physicalRequirements: [] as string[],
+    showPhysicalRequirements: false,
+    uniformRequirements: [] as string[],
+    showUniformRequirements: false,
+    requiredPpe: [] as string[],
+    showRequiredPpe: false,
+    shift: [] as string[],
+    showShift: false,
+    startTime: '',
+    endTime: '',
+    showStartTime: false,
+    showEndTime: false,
     autoAddToUserGroup: '',
   });
 
@@ -123,6 +287,7 @@ const JobsBoard: React.FC = () => {
     loadPosts();
     loadJobOrders();
     loadUserGroups();
+    loadCompanyDefaults();
   }, [tenantId]);
 
   const loadPosts = async () => {
@@ -130,7 +295,8 @@ const JobsBoard: React.FC = () => {
     
     try {
       setLoading(true);
-      const postsData = await jobsBoardService.getPublicPosts(tenantId);
+      // Use getAllPosts to show all job posts regardless of status/visibility for internal management
+      const postsData = await jobsBoardService.getAllPosts(tenantId);
       setPosts(postsData);
       setFilteredJobs(postsData);
     } catch (err: any) {
@@ -161,7 +327,13 @@ const JobsBoard: React.FC = () => {
       
       setJobOrders(jobOrdersData);
     } catch (err: any) {
-      console.error('Error loading job orders:', err);
+      // Handle permissions error gracefully - job orders connection is optional
+      if (err.code === 'permission-denied') {
+        console.warn('Job orders not accessible - continuing without job order connections');
+        setJobOrders([]);
+      } else {
+        console.error('Error loading job orders:', err);
+      }
     } finally {
       setLoadingJobOrders(false);
     }
@@ -185,9 +357,42 @@ const JobsBoard: React.FC = () => {
       
       setUserGroups(userGroupsData);
     } catch (err: any) {
-      console.error('Error loading user groups:', err);
+      // Handle permissions error gracefully - user groups are optional for restricted visibility
+      if (err.code === 'permission-denied') {
+        console.warn('User groups not accessible - restricted visibility options will be limited');
+        setUserGroups([]);
+      } else {
+        console.error('Error loading user groups:', err);
+      }
     } finally {
       setLoadingUserGroups(false);
+    }
+  };
+
+  const loadCompanyDefaults = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoadingCompanyDefaults(true);
+      const { doc, getDoc } = await import('firebase/firestore');
+      const { db } = await import('../../firebase');
+      
+      const defaultsRef = doc(db, 'tenants', tenantId, 'companyDefaults', 'defaults');
+      const defaultsDoc = await getDoc(defaultsRef);
+      
+      if (defaultsDoc.exists()) {
+        setCompanyDefaults(defaultsDoc.data());
+      }
+    } catch (err: any) {
+      // Handle permissions error gracefully - company defaults are optional
+      if (err.code === 'permission-denied') {
+        console.warn('Company defaults not accessible - continuing without defaults');
+      } else {
+        console.error('Error loading company defaults:', err);
+      }
+      // Don't set companyDefaults to anything - keep it null
+    } finally {
+      setLoadingCompanyDefaults(false);
     }
   };
 
@@ -360,6 +565,7 @@ const JobsBoard: React.FC = () => {
       // Save current form values before populating from job order
       setOriginalFormValues({
         postTitle: newPost.postTitle,
+        jobType: newPost.jobType,
         jobTitle: newPost.jobTitle,
         jobDescription: newPost.jobDescription,
         companyId: newPost.companyId,
@@ -375,7 +581,36 @@ const JobsBoard: React.FC = () => {
         showStart: newPost.showStart,
         showEnd: newPost.showEnd,
         payRate: newPost.payRate,
+        workersNeeded: newPost.workersNeeded,
+        eVerifyRequired: newPost.eVerifyRequired,
+        backgroundCheckPackages: newPost.backgroundCheckPackages,
+        showBackgroundChecks: newPost.showBackgroundChecks,
+        drugScreeningPanels: newPost.drugScreeningPanels,
+        showDrugScreening: newPost.showDrugScreening,
+        additionalScreenings: newPost.additionalScreenings,
+        showAdditionalScreenings: newPost.showAdditionalScreenings,
         skills: newPost.skills,
+        showSkills: newPost.showSkills,
+        licensesCerts: newPost.licensesCerts,
+        showLicensesCerts: newPost.showLicensesCerts,
+        experienceLevels: newPost.experienceLevels,
+        showExperience: newPost.showExperience,
+        educationLevels: newPost.educationLevels,
+        showEducation: newPost.showEducation,
+        languages: newPost.languages,
+        showLanguages: newPost.showLanguages,
+        physicalRequirements: newPost.physicalRequirements,
+        showPhysicalRequirements: newPost.showPhysicalRequirements,
+        uniformRequirements: newPost.uniformRequirements,
+        showUniformRequirements: newPost.showUniformRequirements,
+        requiredPpe: newPost.requiredPpe,
+        showRequiredPpe: newPost.showRequiredPpe,
+        shift: newPost.shift,
+        showShift: newPost.showShift,
+        startTime: newPost.startTime,
+        endTime: newPost.endTime,
+        showStartTime: newPost.showStartTime,
+        showEndTime: newPost.showEndTime,
         restrictedGroups: newPost.restrictedGroups
       });
       
@@ -407,7 +642,12 @@ const JobsBoard: React.FC = () => {
             zipCode: jobOrderData.worksiteAddress?.zipCode || '',
             startDate: formatDateForInput(jobOrderData.startDate),
             endDate: formatDateForInput(jobOrderData.endDate),
-            payRate: jobOrderData.payRate?.toString() || ''
+            payRate: jobOrderData.payRate?.toString() || '',
+            workersNeeded: jobOrderData.workersNeeded || 1,
+            eVerifyRequired: jobOrderData.eVerifyRequired || false,
+            backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
+            drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
+            additionalScreenings: jobOrderData.additionalScreenings || []
           }));
           
           // Set company and location if available
@@ -416,6 +656,37 @@ const JobsBoard: React.FC = () => {
             await loadLocationsForCompany(jobOrderData.companyId);
             if (jobOrderData.worksiteId) {
               setSelectedLocationId(jobOrderData.worksiteId);
+              
+              // Fetch the actual worksite details to populate address fields
+              try {
+                const worksiteRef = doc(db, 'tenants', tenantId, 'crm_companies', jobOrderData.companyId, 'locations', jobOrderData.worksiteId);
+                const worksiteDoc = await getDoc(worksiteRef);
+                
+                if (worksiteDoc.exists()) {
+                  const worksiteData = worksiteDoc.data();
+                  setNewPost(prev => ({
+                    ...prev,
+                    worksiteId: jobOrderData.worksiteId,
+                    worksiteName: worksiteData.nickname || worksiteData.name || jobOrderData.worksiteName || '',
+                    street: worksiteData.address || worksiteData.street || '',
+                    city: worksiteData.city || '',
+                    state: worksiteData.state || '',
+                    zipCode: worksiteData.zipcode || worksiteData.zipCode || ''
+                  }));
+                }
+              } catch (worksiteErr) {
+                console.warn('Failed to load worksite details:', worksiteErr);
+                // Fallback to job order data if worksite fetch fails
+                setNewPost(prev => ({
+                  ...prev,
+                  worksiteId: jobOrderData.worksiteId,
+                  worksiteName: jobOrderData.worksiteName || '',
+                  street: jobOrderData.worksiteAddress?.street || '',
+                  city: jobOrderData.worksiteAddress?.city || '',
+                  state: jobOrderData.worksiteAddress?.state || '',
+                  zipCode: jobOrderData.worksiteAddress?.zipCode || ''
+                }));
+              }
             }
           }
         }
@@ -469,6 +740,7 @@ const JobsBoard: React.FC = () => {
     setOpenNewPostModal(false);
     setNewPost({
       postTitle: '',
+      jobType: 'gig',
       jobTitle: '',
       jobDescription: '',
       companyId: '',
@@ -486,11 +758,40 @@ const JobsBoard: React.FC = () => {
       showEnd: false,
       payRate: '',
       showPayRate: true,
+      workersNeeded: 1,
+      eVerifyRequired: false,
+      backgroundCheckPackages: [],
+      showBackgroundChecks: false,
+      drugScreeningPanels: [],
+      showDrugScreening: false,
+      additionalScreenings: [],
+      showAdditionalScreenings: false,
       visibility: 'public',
       restrictedGroups: [],
       status: 'draft',
       jobOrderId: '',
       skills: [],
+      showSkills: false,
+      licensesCerts: [],
+      showLicensesCerts: false,
+      experienceLevels: [],
+      showExperience: false,
+      educationLevels: [],
+      showEducation: false,
+      languages: [],
+      showLanguages: false,
+      physicalRequirements: [],
+      showPhysicalRequirements: false,
+      uniformRequirements: [],
+      showUniformRequirements: false,
+      requiredPpe: [],
+      showRequiredPpe: false,
+      shift: [],
+      showShift: false,
+      startTime: '',
+      endTime: '',
+      showStartTime: false,
+      showEndTime: false,
       autoAddToUserGroup: '',
     });
     setSelectedCompanyId('');
@@ -502,12 +803,33 @@ const JobsBoard: React.FC = () => {
     setOriginalFormValues(null);
   };
 
+  // Check if form is valid for submission
+  const isFormValid = () => {
+    // Required fields
+    if (!newPost.postTitle.trim()) return false;
+    if (!newPost.jobType) return false;
+    if (!newPost.jobDescription.trim()) return false;
+    
+    // Location validation
+    if (useCompanyLocation) {
+      if (!selectedCompanyId || !selectedLocationId) return false;
+    } else {
+      if (!newPost.city.trim() || !newPost.state.trim()) return false;
+    }
+    
+    return true;
+  };
+
   const handleSubmitNewPost = async () => {
     if (!tenantId) return;
 
     // Validation
     if (!newPost.postTitle.trim()) {
       setSubmitError('Post title is required');
+      return;
+    }
+    if (!newPost.jobType) {
+      setSubmitError('Job type is required');
       return;
     }
     if (!newPost.jobDescription.trim()) {
@@ -539,9 +861,12 @@ const JobsBoard: React.FC = () => {
         tenantId,
         {
           postTitle: newPost.postTitle.trim(),
+          jobType: newPost.jobType,
           jobTitle: newPost.jobTitle.trim(),
           jobDescription: newPost.jobDescription.trim(),
+          companyId: newPost.companyId || undefined,
           companyName: newPost.companyName.trim(),
+          worksiteId: newPost.worksiteId || undefined,
           worksiteName: newPost.worksiteName.trim(),
           worksiteAddress: {
             street: newPost.street.trim(),
@@ -551,10 +876,29 @@ const JobsBoard: React.FC = () => {
           },
           startDate: newPost.startDate || null,
           endDate: newPost.endDate || null,
+          expDate: newPost.expDate || null,
+          showStart: newPost.showStart,
+          showEnd: newPost.showEnd,
           payRate: newPost.payRate ? parseFloat(newPost.payRate) : null,
           showPayRate: newPost.showPayRate,
+          workersNeeded: newPost.workersNeeded,
+          eVerifyRequired: newPost.eVerifyRequired,
+          backgroundCheckPackages: newPost.backgroundCheckPackages,
+          showBackgroundChecks: newPost.showBackgroundChecks,
+          drugScreeningPanels: newPost.drugScreeningPanels,
+          showDrugScreening: newPost.showDrugScreening,
+          additionalScreenings: newPost.additionalScreenings,
+          showAdditionalScreenings: newPost.showAdditionalScreenings,
+          shift: newPost.shift,
+          showShift: newPost.showShift,
+          startTime: newPost.startTime,
+          endTime: newPost.endTime,
+          showStartTime: newPost.showStartTime,
+          showEndTime: newPost.showEndTime,
           visibility: newPost.visibility,
+          restrictedGroups: newPost.restrictedGroups,
           jobOrderId: newPost.jobOrderId || undefined,
+          skills: newPost.skills,
           autoAddToUserGroup: newPost.autoAddToUserGroup || undefined,
         },
         user?.uid || 'system'
@@ -657,87 +1001,182 @@ const JobsBoard: React.FC = () => {
         </Grid>
       </Paper>
 
-      {/* Jobs Grid */}
+      {/* Jobs Table */}
       {filteredJobs.length === 0 ? (
         <Alert severity="info">
           No jobs found matching your criteria. Try adjusting your filters or search terms.
         </Alert>
       ) : (
-        <Grid container spacing={3}>
-          {filteredJobs.map((post) => (
-            <Grid item xs={12} md={6} lg={4} key={post.id}>
-              <Card elevation={2} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                    <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
+        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+          <Table>
+            <TableHead sx={{ backgroundColor: 'grey.50' }}>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'postTitle'}
+                    direction={sortField === 'postTitle' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('postTitle')}
+                  >
+                    Post Title
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'jobType'}
+                    direction={sortField === 'jobType' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('jobType')}
+                  >
+                    Type
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'companyName'}
+                    direction={sortField === 'companyName' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('companyName')}
+                  >
+                    Company
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'worksiteName'}
+                    direction={sortField === 'worksiteName' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('worksiteName')}
+                  >
+                    Location
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'startDate'}
+                    direction={sortField === 'startDate' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('startDate')}
+                  >
+                    Start Date
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'payRate'}
+                    direction={sortField === 'payRate' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('payRate')}
+                  >
+                    Pay Rate
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'status'}
+                    direction={sortField === 'status' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('status')}
+                  >
+                    Status
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortField === 'createdAt'}
+                    direction={sortField === 'createdAt' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('createdAt')}
+                  >
+                    Created
+                  </TableSortLabel>
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {getSortedJobs().map((post) => (
+                <TableRow 
+                  key={post.id}
+                  hover
+                  onClick={() => handleRowClick(post)}
+                  sx={{ 
+                    cursor: 'pointer',
+                    '&:hover': {
+                      backgroundColor: 'action.hover'
+                    }
+                  }}
+                >
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
                       {post.postTitle}
                     </Typography>
+                    {post.jobTitle && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {post.jobTitle}
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     <Chip
-                      label="OPEN"
-                      color="success"
+                      label={post.jobType === 'career' ? 'Career' : 'Gig'}
                       size="small"
+                      color={post.jobType === 'career' ? 'primary' : 'secondary'}
+                      variant="outlined"
                     />
-                  </Box>
-
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2, flexGrow: 1 }}>
-                    {post.jobDescription.length > 150 
-                      ? `${post.jobDescription.substring(0, 150)}...` 
-                      : post.jobDescription
-                    }
-                  </Typography>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Business sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
-                    <Typography variant="body2" color="text.secondary">
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.primary">
                       {post.companyName}
                     </Typography>
-                  </Box>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <LocationOn sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
-                    <Typography variant="body2" color="text.secondary">
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.primary">
                       {post.worksiteName}
                     </Typography>
-                  </Box>
-
-                  {post.startDate && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Schedule sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />
-                      <Typography variant="body2" color="text.secondary">
-                        Starts: {new Date(post.startDate).toLocaleDateString()}
+                    {post.worksiteAddress?.city && post.worksiteAddress?.state && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {post.worksiteAddress.city}, {post.worksiteAddress.state}
                       </Typography>
-                    </Box>
-                  )}
-
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <People sx={{ fontSize: 16, color: 'text.secondary' }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {post.applicationCount} applications
-                      </Typography>
-                    </Box>
-                    {post.payRate && post.showPayRate && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <AttachMoney sx={{ fontSize: 16, color: 'primary.main' }} />
-                        <Typography variant="h6" color="primary" sx={{ fontWeight: 600 }}>
-                          ${post.payRate}/hr
-                        </Typography>
-                      </Box>
                     )}
-                  </Box>
-
-                  <Button 
-                    variant="contained" 
-                    fullWidth
-                    sx={{ mt: 'auto' }}
-                  >
-                    Apply Now
-                  </Button>
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
+                  </TableCell>
+                  <TableCell>
+                    {post.startDate ? (
+                      <Typography variant="body2" color="text.primary">
+                        {formatDateForDisplay(post.startDate)}
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        -
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {post.payRate && post.showPayRate ? (
+                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+                        ${post.payRate}/hr
+                      </Typography>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        -
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={post.status?.toUpperCase() || 'DRAFT'}
+                      size="small"
+                      color={
+                        post.status === 'active' ? 'success' :
+                        post.status === 'draft' ? 'default' :
+                        post.status === 'paused' ? 'warning' :
+                        post.status === 'cancelled' ? 'error' :
+                        'secondary'
+                      }
+                      variant="filled"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {post.createdAt ? formatDateForDisplay(post.createdAt) : '-'}
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       )}
 
       {/* New Post Modal */}
@@ -757,7 +1196,7 @@ const JobsBoard: React.FC = () => {
           
           <Box sx={{ mt: 2 }}>
             <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} sm={6}>
                 <TextField
                   label="Post Title"
                   value={newPost.postTitle}
@@ -767,19 +1206,16 @@ const JobsBoard: React.FC = () => {
                   helperText="Title for the job posting (may differ from actual job title)"
                 />
               </Grid>
-              <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Status</InputLabel>
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth required>
+                  <InputLabel>Job Type</InputLabel>
                   <Select
-                    value={newPost.status}
-                    label="Status"
-                    onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
+                    value={newPost.jobType}
+                    label="Job Type"
+                    onChange={(e) => setNewPost({ ...newPost, jobType: e.target.value as 'gig' | 'career' })}
                   >
-                    <MenuItem value="draft">Draft</MenuItem>
-                    <MenuItem value="active">Active</MenuItem>
-                    <MenuItem value="paused">Paused</MenuItem>
-                    <MenuItem value="cancelled">Cancelled</MenuItem>
-                    <MenuItem value="expired">Expired</MenuItem>
+                    <MenuItem value="gig">Gig</MenuItem>
+                    <MenuItem value="career">Career</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -790,7 +1226,7 @@ const JobsBoard: React.FC = () => {
 
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={8}>
+                <Grid item xs={12} sm={6}>
                   <Autocomplete
                     fullWidth
                     freeSolo
@@ -811,7 +1247,29 @@ const JobsBoard: React.FC = () => {
                     )}
                   />
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Status</InputLabel>
+                    <Select
+                      value={newPost.status}
+                      label="Status"
+                      onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
+                    >
+                      <MenuItem value="draft">Draft</MenuItem>
+                      <MenuItem value="active">Active</MenuItem>
+                      <MenuItem value="paused">Paused</MenuItem>
+                      <MenuItem value="cancelled">Cancelled</MenuItem>
+                      <MenuItem value="expired">Expired</MenuItem>
+                      <MenuItem value="complete">Complete</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
                   <TextField
                     label="Expiration Date"
                     type="date"
@@ -820,6 +1278,17 @@ const JobsBoard: React.FC = () => {
                     fullWidth
                     InputLabelProps={{ shrink: true }}
                     helperText="When this posting will automatically expire"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    label="Workers Needed"
+                    type="number"
+                    value={newPost.workersNeeded}
+                    onChange={(e) => setNewPost({ ...newPost, workersNeeded: parseInt(e.target.value) || 1 })}
+                    fullWidth
+                    inputProps={{ min: 1 }}
+                    helperText="Number of workers needed"
                   />
                 </Grid>
               </Grid>
@@ -866,6 +1335,7 @@ const JobsBoard: React.FC = () => {
                           jobOrderId: '',
                           // Restore original values
                           postTitle: originalFormValues.postTitle,
+                          jobType: originalFormValues.jobType,
                           jobTitle: originalFormValues.jobTitle,
                           jobDescription: originalFormValues.jobDescription,
                           companyId: originalFormValues.companyId,
@@ -881,7 +1351,36 @@ const JobsBoard: React.FC = () => {
                           showStart: originalFormValues.showStart,
                           showEnd: originalFormValues.showEnd,
                           payRate: originalFormValues.payRate,
+                          workersNeeded: originalFormValues.workersNeeded,
+                          eVerifyRequired: originalFormValues.eVerifyRequired,
+                          backgroundCheckPackages: originalFormValues.backgroundCheckPackages,
+                          showBackgroundChecks: originalFormValues.showBackgroundChecks,
+                          drugScreeningPanels: originalFormValues.drugScreeningPanels,
+                          showDrugScreening: originalFormValues.showDrugScreening,
+                          additionalScreenings: originalFormValues.additionalScreenings,
+                          showAdditionalScreenings: originalFormValues.showAdditionalScreenings,
                           skills: originalFormValues.skills,
+                          showSkills: originalFormValues.showSkills,
+                          licensesCerts: originalFormValues.licensesCerts,
+                          showLicensesCerts: originalFormValues.showLicensesCerts,
+                          experienceLevels: originalFormValues.experienceLevels,
+                          showExperience: originalFormValues.showExperience,
+                          educationLevels: originalFormValues.educationLevels,
+                          showEducation: originalFormValues.showEducation,
+                          languages: originalFormValues.languages,
+                          showLanguages: originalFormValues.showLanguages,
+                          physicalRequirements: originalFormValues.physicalRequirements,
+                          showPhysicalRequirements: originalFormValues.showPhysicalRequirements,
+                          uniformRequirements: originalFormValues.uniformRequirements,
+                          showUniformRequirements: originalFormValues.showUniformRequirements,
+                          requiredPpe: originalFormValues.requiredPpe,
+                          showRequiredPpe: originalFormValues.showRequiredPpe,
+                          shift: originalFormValues.shift,
+                          showShift: originalFormValues.showShift,
+                          startTime: originalFormValues.startTime,
+                          endTime: originalFormValues.endTime,
+                          showStartTime: originalFormValues.showStartTime,
+                          showEndTime: originalFormValues.showEndTime,
                           restrictedGroups: originalFormValues.restrictedGroups
                         }));
                       } else {
@@ -982,6 +1481,99 @@ const JobsBoard: React.FC = () => {
                 </Grid>
               </Grid>
             </Box>
+
+            {/* Shift Section - Only show for Career job type */}
+            {newPost.jobType === 'career' && (
+              <Box sx={{ mt: 2 }}>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} sm={6}>
+                    <Autocomplete
+                      multiple
+                      fullWidth
+                      options={shiftOptions}
+                      value={newPost.shift}
+                      onChange={(event, newValue) => {
+                        setNewPost({ ...newPost, shift: newValue });
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Shift Details"
+                          helperText="Select shift requirements for this position"
+                        />
+                      )}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip
+                            variant="outlined"
+                            label={option}
+                            {...getTagProps({ index })}
+                            key={option}
+                          />
+                        ))
+                      }
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                      <Typography variant="body1">Show Shift Details on Post</Typography>
+                      <Switch
+                        checked={newPost.showShift}
+                        onChange={(e) => setNewPost({ ...newPost, showShift: e.target.checked })}
+                      />
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
+
+            {/* Time Section - Only show for Gig job type */}
+            {newPost.jobType === 'gig' && (
+              <Box sx={{ mt: 2 }}>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      label="Start Time"
+                      type="time"
+                      value={newPost.startTime}
+                      onChange={(e) => setNewPost({ ...newPost, startTime: e.target.value })}
+                      fullWidth
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Job start time"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                      <Typography variant="body1">Show Start Time</Typography>
+                      <Switch
+                        checked={newPost.showStartTime}
+                        onChange={(e) => setNewPost({ ...newPost, showStartTime: e.target.checked })}
+                      />
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <TextField
+                      label="End Time"
+                      type="time"
+                      value={newPost.endTime}
+                      onChange={(e) => setNewPost({ ...newPost, endTime: e.target.value })}
+                      fullWidth
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Job end time"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={3}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                      <Typography variant="body1">Show End Time</Typography>
+                      <Switch
+                        checked={newPost.showEndTime}
+                        onChange={(e) => setNewPost({ ...newPost, showEndTime: e.target.checked })}
+                      />
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
 
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <Typography variant="body1">Use Company Location</Typography>
@@ -1132,7 +1724,9 @@ const JobsBoard: React.FC = () => {
                           ...newPost, 
                           visibility,
                           // Clear restricted groups if not restricted
-                          restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : []
+                          restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : [],
+                          // Clear auto-add to group if restricted
+                          autoAddToUserGroup: visibility === 'restricted' ? '' : newPost.autoAddToUserGroup
                         });
                       }}
                     >
@@ -1169,41 +1763,713 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
+            {/* E-Verify Required Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  {/* Empty left column for spacing */}
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">E-Verify Required</Typography>
+                    <Switch
+                      checked={newPost.eVerifyRequired}
+                      onChange={(e) => setNewPost({ ...newPost, eVerifyRequired: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
 
-            <Autocomplete
-              multiple
-              fullWidth
-              options={onetSkills.map(skill => skill.name)}
-              value={newPost.skills}
-              onChange={(event, newValue) => {
-                setNewPost({ ...newPost, skills: newValue });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Required Skills"
-                  helperText="Select skills required for this position"
-                />
-              )}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    variant="outlined"
-                    label={option}
-                    {...getTagProps({ index })}
-                    key={option}
+            {/* Background Checks Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={backgroundCheckOptions.map(option => option.label)}
+                    value={newPost.backgroundCheckPackages}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, backgroundCheckPackages: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Background Check Packages"
+                        helperText="Select required background check packages"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
                   />
-                ))
-              }
-            />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Background Requirements</Typography>
+                    <Switch
+                      checked={newPost.showBackgroundChecks}
+                      onChange={(e) => setNewPost({ ...newPost, showBackgroundChecks: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
 
-            <TextField
-              label="Auto-Add to User Group (Optional)"
-              value={newPost.autoAddToUserGroup}
-              onChange={(e) => setNewPost({ ...newPost, autoAddToUserGroup: e.target.value })}
-              fullWidth
-              helperText="Automatically add applicants to this user group ID"
-            />
+            {/* Drug Screening Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={drugScreeningOptions.map(option => option.label)}
+                    value={newPost.drugScreeningPanels}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, drugScreeningPanels: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Drug Screening Panels"
+                        helperText="Select required drug screening panels"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Drug Screening Requirements</Typography>
+                    <Switch
+                      checked={newPost.showDrugScreening}
+                      onChange={(e) => setNewPost({ ...newPost, showDrugScreening: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Additional Screenings Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={additionalScreeningOptions.map(option => option.label)}
+                    value={newPost.additionalScreenings}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, additionalScreenings: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Additional Screenings"
+                        helperText="Select required additional screening types"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Additional Screenings on Post</Typography>
+                    <Switch
+                      checked={newPost.showAdditionalScreenings}
+                      onChange={(e) => setNewPost({ ...newPost, showAdditionalScreenings: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Skills Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={onetSkills.map(skill => skill.name)}
+                    value={newPost.skills}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, skills: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Required Skills"
+                        helperText="Select skills required for this position"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Skills on Post</Typography>
+                    <Switch
+                      checked={newPost.showSkills}
+                      onChange={(e) => setNewPost({ ...newPost, showSkills: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Licenses & Certifications Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={credentialsSeed
+                      .filter(cred => cred.is_active)
+                      .map(cred => `${cred.name} (${cred.type})`)
+                    }
+                    value={newPost.licensesCerts}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, licensesCerts: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Licenses & Certifications"
+                        helperText="Select required licenses and certifications"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Licenses & Certifications on Post</Typography>
+                    <Switch
+                      checked={newPost.showLicensesCerts}
+                      onChange={(e) => setNewPost({ ...newPost, showLicensesCerts: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Experience Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={experienceOptions.map(exp => exp.label)}
+                    value={newPost.experienceLevels}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, experienceLevels: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Experience Levels"
+                        helperText="Select required experience levels"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Experience on Post</Typography>
+                    <Switch
+                      checked={newPost.showExperience}
+                      onChange={(e) => setNewPost({ ...newPost, showExperience: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Education Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={educationOptions.map(edu => edu.label)}
+                    value={newPost.educationLevels}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, educationLevels: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Education Levels"
+                        helperText="Select required education levels"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Education on Post</Typography>
+                    <Switch
+                      checked={newPost.showEducation}
+                      onChange={(e) => setNewPost({ ...newPost, showEducation: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Languages Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={['English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Chinese', 'Japanese', 'Korean', 'Arabic', 'Russian', 'Hindi', 'Dutch', 'Swedish', 'Norwegian', 'Danish', 'Finnish', 'Polish', 'Czech', 'Hungarian', 'Greek', 'Turkish', 'Hebrew', 'Thai', 'Vietnamese', 'Indonesian', 'Malay', 'Tagalog', 'Other']}
+                    value={newPost.languages}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, languages: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Language Requirements"
+                        helperText="Select required languages for this position"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Languages on Post</Typography>
+                    <Switch
+                      checked={newPost.showLanguages}
+                      onChange={(e) => setNewPost({ ...newPost, showLanguages: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Physical Requirements Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Standing',
+                      'Walking',
+                      'Sitting',
+                      'Lifting 25 lbs',
+                      'Lifting 50 lbs',
+                      'Lifting 75 lbs',
+                      'Lifting 100+ lbs',
+                      'Carrying 25 lbs',
+                      'Carrying 50 lbs',
+                      'Carrying 75 lbs',
+                      'Carrying 100+ lbs',
+                      'Pushing',
+                      'Pulling',
+                      'Climbing',
+                      'Balancing',
+                      'Stooping',
+                      'Kneeling',
+                      'Crouching',
+                      'Crawling',
+                      'Reaching',
+                      'Handling',
+                      'Fingering',
+                      'Feeling',
+                      'Talking',
+                      'Hearing',
+                      'Seeing',
+                      'Color Vision',
+                      'Depth Perception',
+                      'Field of Vision',
+                      'Driving',
+                      'Operating Machinery',
+                      'Working at Heights',
+                      'Confined Spaces',
+                      'Outdoor Work',
+                      'Indoor Work',
+                      'Temperature Extremes',
+                      'Noise',
+                      'Vibration',
+                      'Fumes/Odors',
+                      'Dust',
+                      'Chemicals',
+                      'Radiation',
+                      'Other'
+                    ]}
+                    value={newPost.physicalRequirements}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, physicalRequirements: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Physical Requirements"
+                        helperText="Select physical requirements for this position"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Physical Requirements on Post</Typography>
+                    <Switch
+                      checked={newPost.showPhysicalRequirements}
+                      onChange={(e) => setNewPost({ ...newPost, showPhysicalRequirements: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Uniform Requirements Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Business Casual',
+                      'Business Professional',
+                      'Casual',
+                      'Scrubs',
+                      'Uniform Provided',
+                      'Black Pants',
+                      'White Shirt',
+                      'Polo Shirt',
+                      'Button-Down Shirt',
+                      'Dress Shirt',
+                      'Khaki Pants',
+                      'Dress Pants',
+                      'Jeans (Dark)',
+                      'Jeans (No Holes)',
+                      'Slacks',
+                      'Skirt/Dress',
+                      'Blouse',
+                      'Sweater',
+                      'Cardigan',
+                      'Blazer',
+                      'Suit',
+                      'Tie Required',
+                      'No Tie',
+                      'Closed-Toe Shoes',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Dress Shoes',
+                      'Sneakers',
+                      'Boots',
+                      'Sandals Allowed',
+                      'No Sandals',
+                      'No Flip-Flops',
+                      'No Shorts',
+                      'No Tank Tops',
+                      'No Graphic Tees',
+                      'No Hoodies',
+                      'No Sweatpants',
+                      'No Leggings',
+                      'No Yoga Pants',
+                      'No Athletic Wear',
+                      'No Ripped Clothing',
+                      'No Visible Tattoos',
+                      'No Facial Piercings',
+                      'Minimal Jewelry',
+                      'No Jewelry',
+                      'Hair Tied Back',
+                      'Clean Shaven',
+                      'Facial Hair Allowed',
+                      'Hair Color Restrictions',
+                      'No Hair Color Restrictions',
+                      'Coveralls',
+                      'Safety Vest',
+                      'Hard Hat',
+                      'Reflective Clothing',
+                      'Weather-Appropriate',
+                      'Seasonal Attire',
+                      'Formal Occasions',
+                      'Customer-Facing',
+                      'Back Office',
+                      'Laboratory',
+                      'Kitchen',
+                      'Warehouse',
+                      'Construction',
+                      'Healthcare',
+                      'Food Service',
+                      'Retail',
+                      'Office',
+                      'Other'
+                    ]}
+                    value={newPost.uniformRequirements}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, uniformRequirements: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Uniform Requirements"
+                        helperText="Select dress code and uniform requirements"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Uniform Requirements on Post</Typography>
+                    <Switch
+                      checked={newPost.showUniformRequirements}
+                      onChange={(e) => setNewPost({ ...newPost, showUniformRequirements: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Required PPE Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Hard Hat',
+                      'Safety Glasses',
+                      'Safety Goggles',
+                      'Face Shield',
+                      'Respirator',
+                      'Dust Mask',
+                      'N95 Mask',
+                      'Hearing Protection',
+                      'Ear Plugs',
+                      'Ear Muffs',
+                      'High-Visibility Vest',
+                      'Reflective Clothing',
+                      'Safety Boots',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Cut-Resistant Gloves',
+                      'Chemical-Resistant Gloves',
+                      'Heat-Resistant Gloves',
+                      'Fall Protection Harness',
+                      'Safety Lanyard',
+                      'Lifeline',
+                      'Confined Space Equipment',
+                      'Gas Monitor',
+                      'Air Purifying Respirator',
+                      'Self-Contained Breathing Apparatus',
+                      'First Aid Kit',
+                      'Emergency Shower',
+                      'Eye Wash Station',
+                      'Fire Extinguisher',
+                      'Safety Data Sheets',
+                      'Lockout/Tagout Devices',
+                      'Barricades',
+                      'Warning Signs',
+                      'Personal Alarm',
+                      'Two-Way Radio',
+                      'Flashlight',
+                      'Headlamp',
+                      'Protective Coveralls',
+                      'Disposable Suits',
+                      'Chemical Apron',
+                      'Lab Coat',
+                      'Hair Net',
+                      'Beard Cover',
+                      'Disposable Gloves',
+                      'Nitrile Gloves',
+                      'Latex Gloves',
+                      'Vinyl Gloves',
+                      'Insulated Gloves',
+                      'Electrical Gloves',
+                      'Welding Helmet',
+                      'Welding Gloves',
+                      'Welding Apron',
+                      'Welding Boots',
+                      'Welding Jacket',
+                      'Chainsaw Chaps',
+                      'Cutting Gloves',
+                      'Abrasion-Resistant Clothing',
+                      'Flame-Resistant Clothing',
+                      'Arc Flash Protection',
+                      'Voltage-Rated Gloves',
+                      'Rubber Insulating Gloves',
+                      'Leather Protectors',
+                      'Insulating Blankets',
+                      'Insulating Covers',
+                      'Hot Sticks',
+                      'Voltage Detectors',
+                      'Ground Fault Circuit Interrupters',
+                      'Other'
+                    ]}
+                    value={newPost.requiredPpe}
+                    onChange={(event, newValue) => {
+                      setNewPost({ ...newPost, requiredPpe: newValue });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Required PPE"
+                        helperText="Select required personal protective equipment"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Required PPE on Post</Typography>
+                    <Switch
+                      checked={newPost.showRequiredPpe}
+                      onChange={(e) => setNewPost({ ...newPost, showRequiredPpe: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <FormControl fullWidth>
+              <InputLabel>Auto-Add to User Group</InputLabel>
+              <Select
+                value={newPost.autoAddToUserGroup}
+                label="Auto-Add to User Group"
+                onChange={(e) => setNewPost({ ...newPost, autoAddToUserGroup: e.target.value })}
+                disabled={newPost.visibility === 'restricted' || loadingUserGroups}
+                displayEmpty
+              >
+                <MenuItem value="">
+                  <em>No automatic group assignment</em>
+                </MenuItem>
+                {loadingUserGroups ? (
+                  <MenuItem value="" disabled>Loading user groups...</MenuItem>
+                ) : userGroups.length === 0 ? (
+                  <MenuItem value="" disabled>No user groups available</MenuItem>
+                ) : (
+                  userGroups.map((group) => (
+                    <MenuItem key={group.id} value={group.id}>
+                      {group.name}
+                    </MenuItem>
+                  ))
+                )}
+              </Select>
+              <FormHelperText>
+                {newPost.visibility === 'restricted' 
+                  ? 'Auto-add to group is not available when visibility is restricted'
+                  : 'Automatically add applicants to this user group'
+                }
+              </FormHelperText>
+            </FormControl>
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1213,7 +2479,7 @@ const JobsBoard: React.FC = () => {
           <Button 
             onClick={handleSubmitNewPost} 
             variant="contained" 
-            disabled={submitting}
+            disabled={submitting || !isFormValid()}
           >
             {submitting 
               ? (newPost.status === 'draft' ? 'Saving...' : 'Creating...') 

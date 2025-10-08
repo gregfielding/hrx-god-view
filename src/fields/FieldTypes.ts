@@ -41,7 +41,7 @@ export type FieldDef = {
   // Examples: 'qualification.expectedAveragePayRate', 'scoping.compliance.backgroundCheck'
   path?: string;
   // Source of options when dynamic (e.g., from Company Defaults)
-  optionsSource?: 'companyDefaults';
+  optionsSource?: 'companyDefaults' | 'onetSkills' | 'credentialsSeed' | 'experienceOptions' | 'educationOptions';
   // UI/formatting hints
   hints?: {
     unit?: '%' | '$' | 'hrs' | string;

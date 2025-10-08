@@ -19,6 +19,7 @@ import {
   Chip,
   OutlinedInput,
   Divider,
+  Autocomplete,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -29,6 +30,8 @@ import { collection, addDoc, getDocs, doc, getDoc, updateDoc } from 'firebase/fi
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
+import { experienceOptions, educationOptions } from '../data/experienceOptions';
+import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
@@ -122,8 +125,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
-  const [requiredLicenses, setRequiredLicenses] = useState<Array<{title: string, description: string}>>([]);
-  const [requiredCertifications, setRequiredCertifications] = useState<Array<{title: string, description: string}>>([]);
+  const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
   const [experienceLevels, setExperienceLevels] = useState<Array<{title: string, description: string}>>([]);
   const [educationLevels, setEducationLevels] = useState<Array<{title: string, description: string}>>([]);
   const [physicalRequirements, setPhysicalRequirements] = useState<Array<{title: string, description: string}>>([]);
@@ -134,8 +136,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
-    licenses: requiredLicenses,
-    certifications: requiredCertifications,
+    licensesCerts: licensesCerts,
     experienceLevels,
     educationLevels,
     physicalRequirements,
@@ -195,8 +196,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     rolloverExistingStaff: false,
     backgroundCheckPackages: [],
     drugScreeningPanels: [],
+    additionalScreenings: [],
     eVerifyRequired: false,
-    dressCode: '',
+    dressCode: [],
     timeclockSystem: '',
     disciplinePolicy: '',
     poRequired: false,
@@ -207,14 +209,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     // Compliance Fields
     backgroundCheckRequired: false,
     drugScreenRequired: false,
-    requiredLicenses: [],
-    requiredCertifications: [],
+    licensesCerts: [],
     experienceRequired: '',
     educationRequired: '',
     languagesRequired: [],
     skillsRequired: [],
-    physicalRequirements: '',
-    ppeRequirements: '',
+    physicalRequirements: [],
+    ppeRequirements: [],
     ppeProvidedBy: 'company',
     
     // Customer Rules
@@ -354,8 +355,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         setDrugScreeningPanels(data.screeningPanels || []);
         setUniformRequirements(data.uniformRequirements || []);
         setPpeOptions(data.ppe || []);
-        setRequiredLicenses(data.licenses || []);
-        setRequiredCertifications(data.certifications || []);
+        setLicensesCerts(data.licensesCerts || []);
         setExperienceLevels(data.experienceLevels || []);
         setEducationLevels(data.educationLevels || []);
         setPhysicalRequirements(data.physicalRequirements || []);
@@ -536,8 +536,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           rolloverExistingStaff: stageData.scoping?.rolloverExistingStaff || false,
           backgroundCheckPackages: stageData.scoping?.compliance?.backgroundCheckPackages || [],
           drugScreeningPanels: stageData.scoping?.compliance?.drugScreeningPanels || [],
+          additionalScreenings: stageData.scoping?.compliance?.additionalScreenings || [],
           eVerifyRequired: stageData.scoping?.compliance?.eVerify || false,
-          dressCode: stageData.scoping?.uniformRequirements || '',
+          dressCode: stageData.scoping?.uniformRequirements || [],
           timeclockSystem: stageData.scoping?.timeclockSystem || '',
           disciplinePolicy: stageData.scoping?.disciplinePolicy || '',
           poRequired: stageData.scoping?.poRequired || false,
@@ -548,14 +549,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Compliance Fields - from stageData.scoping.compliance
           backgroundCheckRequired: stageData.scoping?.compliance?.backgroundCheck || false,
           drugScreenRequired: stageData.scoping?.compliance?.drugScreen || false,
-          requiredLicenses: stageData.scoping?.compliance?.licenses || [],
-          requiredCertifications: stageData.scoping?.compliance?.certifications || [],
+          licensesCerts: stageData.scoping?.compliance?.licensesCerts || [],
           experienceRequired: stageData.scoping?.compliance?.experience || '',
           educationRequired: stageData.scoping?.compliance?.education || '',
           languagesRequired: stageData.scoping?.compliance?.languages || [],
           skillsRequired: stageData.scoping?.compliance?.skills || [],
-          physicalRequirements: stageData.scoping?.compliance?.physicalRequirements?.join(', ') || '',
-          ppeRequirements: stageData.scoping?.compliance?.ppe?.join(', ') || '',
+          physicalRequirements: stageData.scoping?.compliance?.physicalRequirements || [],
+          ppeRequirements: stageData.scoping?.compliance?.ppe || [],
           ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
           
           // Customer Rules - from stageData.scoping.customerRules
@@ -720,15 +720,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             backgroundCheckPackages: (dataToUse as any).backgroundCheckPackages || [],
             drugScreen: (dataToUse as any).drugScreenRequired || undefined,
             drugScreeningPanels: (dataToUse as any).drugScreeningPanels || [],
+            additionalScreenings: (dataToUse as any).additionalScreenings || [],
             eVerify: (dataToUse as any).eVerifyRequired || undefined,
-            licenses: (dataToUse as any).requiredLicenses || [],
-            certifications: (dataToUse as any).requiredCertifications || [],
+            licensesCerts: (dataToUse as any).licensesCerts || [],
             experience: (dataToUse as any).experienceRequired || undefined,
             education: (dataToUse as any).educationRequired || undefined,
             languages: (dataToUse as any).languagesRequired || [],
             skills: (dataToUse as any).skillsRequired || [],
-            physicalRequirements: (dataToUse as any).physicalRequirements ? (dataToUse as any).physicalRequirements.split(',').map((s: string) => s.trim()).filter((s: string) => s) : undefined,
-            ppe: (dataToUse as any).ppeRequirements ? (dataToUse as any).ppeRequirements.split(',').map((s: string) => s.trim()).filter((s: string) => s) : undefined,
+            physicalRequirements: (dataToUse as any).physicalRequirements || undefined,
+            ppe: (dataToUse as any).ppeRequirements || undefined,
             ppeProvidedBy: (dataToUse as any).ppeProvidedBy || undefined,
           },
           uniformRequirements: (dataToUse as any).dressCode || undefined,
@@ -918,15 +918,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               backgroundCheckPackages: formData.backgroundCheckPackages,
               drugScreen: formData.drugScreenRequired,
               drugScreeningPanels: formData.drugScreeningPanels,
+              additionalScreenings: formData.additionalScreenings,
               eVerify: formData.eVerifyRequired,
-              licenses: formData.requiredLicenses,
-              certifications: formData.requiredCertifications,
+              licensesCerts: formData.licensesCerts,
               experience: formData.experienceRequired || undefined,
               education: formData.educationRequired || undefined,
               languages: formData.languagesRequired,
               skills: formData.skillsRequired,
-              physicalRequirements: formData.physicalRequirements ? formData.physicalRequirements.split(',').map(s => s.trim()).filter(s => s) : undefined,
-              ppe: formData.ppeRequirements ? formData.ppeRequirements.split(',').map(s => s.trim()).filter(s => s) : undefined,
+              physicalRequirements: formData.physicalRequirements || undefined,
+              ppe: formData.ppeRequirements || undefined,
               ppeProvidedBy: formData.ppeProvidedBy,
             },
             uniformRequirements: formData.dressCode || undefined,
@@ -1810,102 +1810,123 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </FormControl>
             </Grid>
             <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.backgroundCheckPackages}
-                  onChange={(e) => handleInputChange('backgroundCheckPackages', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  <MenuItem value="None">None</MenuItem>
-                  {getOptionsForField('backgroundCheckPackages', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={backgroundCheckOptions.map(option => option.label)}
+                value={formData.backgroundCheckPackages}
+                onChange={(event, newValue) => {
+                  handleInputChange('backgroundCheckPackages', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
+                    helperText="Select required background check types"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
             </Grid>
             <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.drugScreeningPanels}
-                  onChange={(e) => handleInputChange('drugScreeningPanels', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  <MenuItem value="None">None</MenuItem>
-                  {getOptionsForField('drugScreeningPanels', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={drugScreeningOptions.map(option => option.label)}
+                value={formData.drugScreeningPanels}
+                onChange={(event, newValue) => {
+                  handleInputChange('drugScreeningPanels', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
+                    helperText="Select required drug screening panels"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={additionalScreeningOptions.map(option => option.label)}
+                value={formData.additionalScreenings}
+                onChange={(event, newValue) => {
+                  handleInputChange('additionalScreenings', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Additional Screenings"
+                    helperText="Select required additional screening types (healthcare, credentials, etc.)"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
             </Grid>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('requiredLicenses')?.label || 'Required Licenses'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.requiredLicenses}
-                  onChange={(e) => handleInputChange('requiredLicenses', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('requiredLicenses')?.label || 'Required Licenses'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {getOptionsForField('requiredLicenses', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('requiredCertifications')?.label || 'Required Certifications'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.requiredCertifications}
-                  onChange={(e) => handleInputChange('requiredCertifications', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('requiredCertifications')?.label || 'Required Certifications'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {getOptionsForField('requiredCertifications', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
+                value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
+                onChange={(_, newValue) => {
+                  const credValues = newValue.map(option => option.value);
+                  handleInputChange('licensesCerts', credValues);
+                }}
+                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        label={typeof option === 'string' ? option : option.label}
+                        size="small"
+                        {...chipProps}
+                      />
+                    );
+                  })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
+                    placeholder="Type to search licenses and certifications..."
+                    helperText="Start typing to search from 100+ standard credentials"
+                  />
+                )}
+                filterSelectedOptions
+                freeSolo={false}
+              />
             </Grid>
             <Grid item xs={12} md={6}>
               <FormControl fullWidth>
@@ -1915,9 +1936,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   onChange={(e) => handleInputChange('experienceRequired', e.target.value)}
                   label="Experience Required"
                 >
-                  {experienceLevels.map((level, index) => (
-                    <MenuItem key={index} value={level.title}>
-                      {level.title}
+                  {experienceOptions.map((option, index) => (
+                    <MenuItem key={index} value={option.value}>
+                      {option.label}
                     </MenuItem>
                   ))}
                 </Select>
@@ -1931,9 +1952,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   onChange={(e) => handleInputChange('educationRequired', e.target.value)}
                   label="Education Required"
                 >
-                  {educationLevels.map((level, index) => (
-                    <MenuItem key={index} value={level.title}>
-                      {level.title}
+                  {educationOptions.map((option, index) => (
+                    <MenuItem key={index} value={option.value}>
+                      {option.label}
                     </MenuItem>
                   ))}
                 </Select>
@@ -1964,76 +1985,305 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </FormControl>
             </Grid>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('skills')?.label || 'Skills Required'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.skillsRequired}
-                  onChange={(e) => handleInputChange('skillsRequired', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('skills')?.label || 'Skills Required'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {getOptionsForField('skills', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                options={getOptionsForField('skills', companyDefaultsForOptions)}
+                value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
+                onChange={(_, newValue) => {
+                  const skillValues = newValue.map(option => option.value);
+                  handleInputChange('skillsRequired', skillValues);
+                }}
+                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        label={typeof option === 'string' ? option : option.label}
+                        size="small"
+                        {...chipProps}
+                      />
+                    );
+                  })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={getFieldDef('skills')?.label || 'Skills Required'}
+                    placeholder="Type to search skills..."
+                    helperText="Start typing to search from 500+ O*NET skills"
+                  />
+                )}
+                filterSelectedOptions
+                freeSolo={false}
+              />
             </Grid>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Physical Requirements</InputLabel>
-                <Select
-                  multiple
-                  value={formData.physicalRequirements ? [formData.physicalRequirements] : []}
-                  onChange={(e) => handleInputChange('physicalRequirements', Array.isArray(e.target.value) ? e.target.value.join(', ') : e.target.value)}
-                  input={<OutlinedInput label="Physical Requirements" />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {physicalRequirements.map((req, index) => (
-                    <MenuItem key={index} value={req.title}>
-                      {req.title}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={[
+                  'Standing',
+                  'Walking',
+                  'Sitting',
+                  'Lifting 25 lbs',
+                  'Lifting 50 lbs',
+                  'Lifting 75 lbs',
+                  'Lifting 100+ lbs',
+                  'Carrying 25 lbs',
+                  'Carrying 50 lbs',
+                  'Carrying 75 lbs',
+                  'Carrying 100+ lbs',
+                  'Pushing',
+                  'Pulling',
+                  'Climbing',
+                  'Balancing',
+                  'Stooping',
+                  'Kneeling',
+                  'Crouching',
+                  'Crawling',
+                  'Reaching',
+                  'Handling',
+                  'Fingering',
+                  'Feeling',
+                  'Talking',
+                  'Hearing',
+                  'Seeing',
+                  'Color Vision',
+                  'Depth Perception',
+                  'Field of Vision',
+                  'Driving',
+                  'Operating Machinery',
+                  'Working at Heights',
+                  'Confined Spaces',
+                  'Outdoor Work',
+                  'Indoor Work',
+                  'Temperature Extremes',
+                  'Noise',
+                  'Vibration',
+                  'Fumes/Odors',
+                  'Dust',
+                  'Chemicals',
+                  'Radiation',
+                  'Other'
+                ]}
+                value={formData.physicalRequirements}
+                onChange={(event, newValue) => {
+                  handleInputChange('physicalRequirements', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Physical Requirements"
+                    helperText="Select physical requirements for this position"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
             </Grid>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('ppe')?.label || 'PPE Requirements'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.ppeRequirements ? [formData.ppeRequirements] : []}
-                  onChange={(e) => handleInputChange('ppeRequirements', Array.isArray(e.target.value) ? e.target.value.join(', ') : e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('ppe')?.label || 'PPE Requirements'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {getOptionsForField('ppe', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={[
+                  'Hard Hat',
+                  'Safety Glasses',
+                  'Safety Goggles',
+                  'Face Shield',
+                  'Respirator',
+                  'Dust Mask',
+                  'N95 Mask',
+                  'Hearing Protection',
+                  'Ear Plugs',
+                  'Ear Muffs',
+                  'High-Visibility Vest',
+                  'Reflective Clothing',
+                  'Safety Boots',
+                  'Steel-Toe Boots',
+                  'Non-Slip Shoes',
+                  'Cut-Resistant Gloves',
+                  'Chemical-Resistant Gloves',
+                  'Heat-Resistant Gloves',
+                  'Fall Protection Harness',
+                  'Safety Lanyard',
+                  'Lifeline',
+                  'Confined Space Equipment',
+                  'Gas Monitor',
+                  'Air Purifying Respirator',
+                  'Self-Contained Breathing Apparatus',
+                  'First Aid Kit',
+                  'Emergency Shower',
+                  'Eye Wash Station',
+                  'Fire Extinguisher',
+                  'Safety Data Sheets',
+                  'Lockout/Tagout Devices',
+                  'Barricades',
+                  'Warning Signs',
+                  'Personal Alarm',
+                  'Two-Way Radio',
+                  'Flashlight',
+                  'Headlamp',
+                  'Protective Coveralls',
+                  'Disposable Suits',
+                  'Chemical Apron',
+                  'Lab Coat',
+                  'Hair Net',
+                  'Beard Cover',
+                  'Disposable Gloves',
+                  'Nitrile Gloves',
+                  'Latex Gloves',
+                  'Vinyl Gloves',
+                  'Insulated Gloves',
+                  'Electrical Gloves',
+                  'Welding Helmet',
+                  'Welding Gloves',
+                  'Welding Apron',
+                  'Welding Boots',
+                  'Welding Jacket',
+                  'Chainsaw Chaps',
+                  'Cutting Gloves',
+                  'Abrasion-Resistant Clothing',
+                  'Flame-Resistant Clothing',
+                  'Arc Flash Protection',
+                  'Voltage-Rated Gloves',
+                  'Rubber Insulating Gloves',
+                  'Leather Protectors',
+                  'Insulating Blankets',
+                  'Insulating Covers',
+                  'Hot Sticks',
+                  'Voltage Detectors',
+                  'Ground Fault Circuit Interrupters',
+                  'Other'
+                ]}
+                value={formData.ppeRequirements}
+                onChange={(event, newValue) => {
+                  handleInputChange('ppeRequirements', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label={getFieldDef('ppe')?.label || 'PPE Requirements'}
+                    helperText="Select required personal protective equipment"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={[
+                  'Business Casual',
+                  'Business Professional',
+                  'Casual',
+                  'Scrubs',
+                  'Uniform Provided',
+                  'Black Pants',
+                  'White Shirt',
+                  'Polo Shirt',
+                  'Button-Down Shirt',
+                  'Dress Shirt',
+                  'Khaki Pants',
+                  'Dress Pants',
+                  'Jeans (Dark)',
+                  'Jeans (No Holes)',
+                  'Slacks',
+                  'Skirt/Dress',
+                  'Blouse',
+                  'Sweater',
+                  'Cardigan',
+                  'Blazer',
+                  'Suit',
+                  'Tie Required',
+                  'No Tie',
+                  'Closed-Toe Shoes',
+                  'Steel-Toe Boots',
+                  'Non-Slip Shoes',
+                  'Dress Shoes',
+                  'Sneakers',
+                  'Boots',
+                  'Sandals Allowed',
+                  'No Sandals',
+                  'No Flip-Flops',
+                  'No Shorts',
+                  'No Tank Tops',
+                  'No Graphic Tees',
+                  'No Hoodies',
+                  'No Sweatpants',
+                  'No Leggings',
+                  'No Yoga Pants',
+                  'No Athletic Wear',
+                  'No Ripped Clothing',
+                  'No Visible Tattoos',
+                  'No Facial Piercings',
+                  'Minimal Jewelry',
+                  'No Jewelry',
+                  'Hair Tied Back',
+                  'Clean Shaven',
+                  'Facial Hair Allowed',
+                  'Hair Color Restrictions',
+                  'No Hair Color Restrictions',
+                  'Coveralls',
+                  'Safety Vest',
+                  'Hard Hat',
+                  'Reflective Clothing',
+                  'Weather-Appropriate',
+                  'Seasonal Attire',
+                  'Formal Occasions',
+                  'Customer-Facing',
+                  'Back Office',
+                  'Laboratory',
+                  'Kitchen',
+                  'Warehouse',
+                  'Construction',
+                  'Healthcare',
+                  'Food Service',
+                  'Retail',
+                  'Office',
+                  'Other'
+                ]}
+                value={formData.dressCode}
+                onChange={(event, newValue) => {
+                  handleInputChange('dressCode', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Uniform Requirements"
+                    helperText="Select dress code and uniform requirements"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
             </Grid>
 
             {/* Customer Rules & Policies Section */}
@@ -2072,14 +2322,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 label="Timeclock System"
                 value={formData.timeclockSystem}
                 onChange={(e) => handleInputChange('timeclockSystem', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Dress Code"
-                value={formData.dressCode}
-                onChange={(e) => handleInputChange('dressCode', e.target.value)}
               />
             </Grid>
             <Grid item xs={12}>

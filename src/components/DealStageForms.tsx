@@ -70,6 +70,8 @@ import { db, storage } from '../firebase';
 import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { getFieldDef } from '../fields/useFieldDef';
+import { experienceOptions, educationOptions } from '../data/experienceOptions';
+import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
 
 
 interface Contact {
@@ -149,13 +151,13 @@ interface ScopingData {
     drugScreen?: boolean;
     drugScreeningPanels?: string[];
     drugScreenDetails?: string;
+    additionalScreenings?: string[];
     eVerify?: boolean;
     ppe?: string[];
     ppeProvidedBy?: 'company' | 'worker' | 'both';
     dressCode?: string;
-    uniformRequirement?: string;
-    requiredLicenses?: string[];
-    requiredCertifications?: string[];
+    uniformRequirement?: string[];
+    licensesCerts?: string[];
     experienceLevels?: string[];
     educationLevels?: string[];
     physicalRequirements?: string[];
@@ -328,8 +330,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const [drugScreeningPanels, setDrugScreeningPanels] = useState<Array<{title: string, description: string}>>([]);
   const [uniformRequirements, setUniformRequirements] = useState<Array<{title: string, description: string}>>([]);
   const [ppeOptions, setPpeOptions] = useState<Array<{title: string, description: string}>>([]);
-  const [requiredLicenses, setRequiredLicenses] = useState<Array<{title: string, description: string}>>([]);
-  const [requiredCertifications, setRequiredCertifications] = useState<Array<{title: string, description: string}>>([]);
+  const [licensesCerts, setLicensesCerts] = useState<Array<{title: string, description: string}>>([]);
   const [experienceLevels, setExperienceLevels] = useState<Array<{title: string, description: string}>>([]);
   const [educationLevels, setEducationLevels] = useState<Array<{title: string, description: string}>>([]);
   const [physicalRequirements, setPhysicalRequirements] = useState<Array<{title: string, description: string}>>([]);
@@ -341,8 +342,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     screeningPanels: drugScreeningPanels,
     uniformRequirements,
     ppe: ppeOptions,
-    licenses: requiredLicenses,
-    certifications: requiredCertifications,
+    licensesCerts: licensesCerts,
     experienceLevels,
     educationLevels,
     physicalRequirements,
@@ -400,8 +400,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           const panels = data.screeningPanels || [];
           const uniforms = data.uniformRequirements || [];
           const ppe = data.ppe || [];
-          const licenses = data.licenses || [];
-          const certifications = data.certifications || [];
+          const licensesCerts = data.licensesCerts || [];
           const experience = data.experienceLevels || [];
           const education = data.educationLevels || [];
           const physical = data.physicalRequirements || [];
@@ -411,8 +410,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           console.log('💊 Fetched drug screening panels:', panels);
           console.log('👔 Fetched uniform requirements:', uniforms);
           console.log('🦺 Fetched PPE options:', ppe);
-          console.log('📜 Fetched required licenses:', licenses);
-          console.log('🏆 Fetched required certifications:', certifications);
+          console.log('📜🏆 Fetched licenses & certifications:', licensesCerts);
           console.log('💼 Fetched experience levels:', experience);
           console.log('🎓 Fetched education levels:', education);
           console.log('💪 Fetched physical requirements:', physical);
@@ -422,8 +420,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           setDrugScreeningPanels(panels);
           setUniformRequirements(uniforms);
           setPpeOptions(ppe);
-          setRequiredLicenses(licenses);
-          setRequiredCertifications(certifications);
+          setLicensesCerts(licensesCerts);
           setExperienceLevels(experience);
           setEducationLevels(education);
           setPhysicalRequirements(physical);
@@ -926,7 +923,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={['1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
+                options={['Full Time', 'Part Time', 'Temporary', '1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
                 value={data.shifts || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'shifts', newValue);
@@ -1467,148 +1464,72 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={4}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.backgroundCheckPackages || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    backgroundCheckPackages: typeof value === 'string' ? value.split(',') : value,
-                    backgroundCheck: (typeof value === 'string' ? value.split(',') : value).length > 0
-                  });
-                }}
-                input={<OutlinedInput label="Background Check Packages" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newPackages = (data.compliance?.backgroundCheckPackages || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            backgroundCheckPackages: newPackages,
-                            backgroundCheck: newPackages.length > 0
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newPackages = (data.compliance?.backgroundCheckPackages || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                backgroundCheckPackages: newPackages,
-                                backgroundCheck: newPackages.length > 0
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('backgroundCheckPackages', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              multiple
+              fullWidth
+              size="small"
+              options={backgroundCheckOptions.map(option => option.label)}
+              value={data.compliance?.backgroundCheckPackages || []}
+              onChange={(event, newValue) => {
+                handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  backgroundCheckPackages: newValue,
+                  backgroundCheck: newValue.length > 0
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
+                  helperText="Select required background check types"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    size="small"
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
           </Grid>
           <Grid item xs={4}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.drugScreeningPanels || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    drugScreeningPanels: typeof value === 'string' ? value.split(',') : value,
-                    drugScreen: (typeof value === 'string' ? value.split(',') : value).length > 0
-                  });
-                }}
-                input={<OutlinedInput label="Drug Screening Panels" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newPanels = (data.compliance?.drugScreeningPanels || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            drugScreeningPanels: newPanels,
-                            drugScreen: newPanels.length > 0
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newPanels = (data.compliance?.drugScreeningPanels || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                drugScreeningPanels: newPanels,
-                                drugScreen: newPanels.length > 0
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('drugScreeningPanels', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              multiple
+              fullWidth
+              size="small"
+              options={drugScreeningOptions.map(option => option.label)}
+              value={data.compliance?.drugScreeningPanels || []}
+              onChange={(event, newValue) => {
+                handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  drugScreeningPanels: newValue,
+                  drugScreen: newValue.length > 0
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
+                  helperText="Select required drug screening panels"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    size="small"
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
           </Grid>
           <Grid item xs={4}>
             <FormControlLabel
@@ -1626,147 +1547,82 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
         </Grid>
 
-        {/* Additional Compliance Requirements */}
-        <Grid container spacing={2} sx={{ mb: 2 }}>
-          <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('requiredLicenses')?.label || 'Required Licenses'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.requiredLicenses || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    requiredLicenses: typeof value === 'string' ? value.split(',') : value
-                  });
-                }}
-                input={<OutlinedInput label="Required Licenses" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newLicenses = (data.compliance?.requiredLicenses || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            requiredLicenses: newLicenses
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newLicenses = (data.compliance?.requiredLicenses || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                requiredLicenses: newLicenses
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('requiredLicenses', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('requiredCertifications')?.label || 'Required Certifications'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.requiredCertifications || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    requiredCertifications: typeof value === 'string' ? value.split(',') : value
-                  });
-                }}
-                input={<OutlinedInput label="Required Certifications" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newCerts = (data.compliance?.requiredCertifications || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            requiredCertifications: newCerts
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newCerts = (data.compliance?.requiredCertifications || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                requiredCertifications: newCerts
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('requiredCertifications', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+        <Grid container spacing={2} sx={{ mb: 3 }}>
+          <Grid item xs={12}>
+            <Autocomplete
+              multiple
+              fullWidth
+              size="small"
+              options={additionalScreeningOptions.map(option => option.label)}
+              value={data.compliance?.additionalScreenings || []}
+              onChange={(event, newValue) => {
+                handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  additionalScreenings: newValue
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Additional Screenings"
+                  helperText="Select required additional screening types (healthcare, credentials, etc.)"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    size="small"
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
           </Grid>
         </Grid>
+
+        {/* Additional Compliance Requirements */}
+        <Autocomplete
+          multiple
+          size="small"
+          options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
+          value={(data.compliance?.licensesCerts || []).map(cred => ({ value: cred, label: cred }))}
+          onChange={(_, newValue) => {
+            const credValues = newValue.map(option => option.value);
+            handleStageDataChange('scoping', 'compliance', {
+              ...data.compliance,
+              licensesCerts: credValues
+            });
+          }}
+          getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => {
+              const { key, ...chipProps } = getTagProps({ index });
+              return (
+                <Chip
+                  key={key}
+                  label={typeof option === 'string' ? option : option.label}
+                  size="small"
+                  {...chipProps}
+                />
+              );
+            })
+          }
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
+              placeholder="Type to search licenses and certifications..."
+              helperText="Start typing to search from 100+ standard credentials"
+              size="small"
+            />
+          )}
+          filterSelectedOptions
+          freeSolo={false}
+          sx={{ mb: 2 }}
+        />
 
         <Grid container spacing={2} sx={{ mb: 2 }}>
           <Grid item xs={6}>
@@ -1830,7 +1686,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {getOptionsForField('experienceLevels', companyDefaultsForOptions).map((opt, index) => (
+                {experienceOptions.map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1899,7 +1755,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {getOptionsForField('educationLevels', companyDefaultsForOptions).map((opt, index) => (
+                {educationOptions.map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1911,73 +1767,81 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
 
         <Grid container spacing={2} sx={{ mb: 2 }}>
           <Grid item xs={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('physicalRequirements')?.label || 'Physical Requirements'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.physicalRequirements || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    physicalRequirements: typeof value === 'string' ? value.split(',') : value
-                  });
-                }}
-                input={<OutlinedInput label="Physical Requirements" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newPhysical = (data.compliance?.physicalRequirements || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            physicalRequirements: newPhysical
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newPhysical = (data.compliance?.physicalRequirements || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                physicalRequirements: newPhysical
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('physicalRequirements', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              multiple
+              fullWidth
+              size="small"
+              options={[
+                'Standing',
+                'Walking',
+                'Sitting',
+                'Lifting 25 lbs',
+                'Lifting 50 lbs',
+                'Lifting 75 lbs',
+                'Lifting 100+ lbs',
+                'Carrying 25 lbs',
+                'Carrying 50 lbs',
+                'Carrying 75 lbs',
+                'Carrying 100+ lbs',
+                'Pushing',
+                'Pulling',
+                'Climbing',
+                'Balancing',
+                'Stooping',
+                'Kneeling',
+                'Crouching',
+                'Crawling',
+                'Reaching',
+                'Handling',
+                'Fingering',
+                'Feeling',
+                'Talking',
+                'Hearing',
+                'Seeing',
+                'Color Vision',
+                'Depth Perception',
+                'Field of Vision',
+                'Driving',
+                'Operating Machinery',
+                'Working at Heights',
+                'Confined Spaces',
+                'Outdoor Work',
+                'Indoor Work',
+                'Temperature Extremes',
+                'Noise',
+                'Vibration',
+                'Fumes/Odors',
+                'Dust',
+                'Chemicals',
+                'Radiation',
+                'Other'
+              ]}
+              value={data.compliance?.physicalRequirements || []}
+              onChange={(event, newValue) => {
+                handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  physicalRequirements: newValue
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={getFieldDef('physicalRequirements')?.label || 'Physical Requirements'}
+                  helperText="Select physical requirements for this position"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    size="small"
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
           </Grid>
           <Grid item xs={6}>
             <FormControl fullWidth size="small">
@@ -2050,144 +1914,148 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
         </Grid>
 
-        <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-          <InputLabel>{getFieldDef('skills')?.label || 'Skills'}</InputLabel>
-          <Select
-            multiple
-            value={data.compliance?.skills || []}
-            onChange={(e) => {
-              const value = e.target.value;
-              handleStageDataChange('scoping', 'compliance', {
-                ...data.compliance,
-                skills: typeof value === 'string' ? value.split(',') : value
-              });
-            }}
-            input={<OutlinedInput label="Skills" />}
-            renderValue={(selected) => (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                {selected.map((value) => (
-                  <Chip 
-                    key={value} 
-                    label={value} 
-                    size="small"
-                    onDelete={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const newSkills = (data.compliance?.skills || []).filter(item => item !== value);
-                      handleStageDataChange('scoping', 'compliance', {
-                        ...data.compliance,
-                        skills: newSkills
-                      });
-                    }}
-                    deleteIcon={
-                      <Box
-                        component="span"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newSkills = (data.compliance?.skills || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            skills: newSkills
-                          });
-                        }}
-                        sx={{ 
-                          cursor: 'pointer',
-                          '&:hover': { opacity: 0.7 }
-                        }}
-                      >
-                        ×
-                      </Box>
-                    }
-                    sx={{ 
-                      '& .MuiChip-deleteIcon': {
-                        zIndex: 1,
-                        pointerEvents: 'auto'
-                      }
-                    }}
-                  />
-                ))}
-              </Box>
-            )}
-          >
-            {getOptionsForField('skills', companyDefaultsForOptions).map((opt, index) => (
-              <MenuItem key={index} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <Autocomplete
+          multiple
+          size="small"
+          options={getOptionsForField('skills', companyDefaultsForOptions)}
+          value={(data.compliance?.skills || []).map(skill => ({ value: skill, label: skill }))}
+          onChange={(_, newValue) => {
+            const skillValues = newValue.map(option => option.value);
+            handleStageDataChange('scoping', 'compliance', {
+              ...data.compliance,
+              skills: skillValues
+            });
+          }}
+          getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => {
+              const { key, ...chipProps } = getTagProps({ index });
+              return (
+                <Chip
+                  key={key}
+                  label={typeof option === 'string' ? option : option.label}
+                  size="small"
+                  {...chipProps}
+                />
+              );
+            })
+          }
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={getFieldDef('skills')?.label || 'Skills'}
+              placeholder="Type to search skills..."
+              helperText="Start typing to search from 500+ O*NET skills"
+              size="small"
+            />
+          )}
+          filterSelectedOptions
+          freeSolo={false}
+          sx={{ mb: 2 }}
+        />
 
         <Grid container spacing={2} sx={{ mb: 2 }}>
           <Grid item xs={12} md={6}>
-            <FormControl fullWidth size="small">
-              <InputLabel>{getFieldDef('ppe')?.label || 'Required PPE'}</InputLabel>
-              <Select
-                multiple
-                value={data.compliance?.ppe || []}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  handleStageDataChange('scoping', 'compliance', {
-                    ...data.compliance,
-                    ppe: typeof value === 'string' ? value.split(',') : value
-                  });
-                }}
-                input={<OutlinedInput label="Required PPE" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxHeight: '60px', overflow: 'auto' }}>
-                    {selected.map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={value} 
-                        size="small"
-                        onDelete={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const newPpe = (data.compliance?.ppe || []).filter(item => item !== value);
-                          handleStageDataChange('scoping', 'compliance', {
-                            ...data.compliance,
-                            ppe: newPpe
-                          });
-                        }}
-                        deleteIcon={
-                          <Box
-                            component="span"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const newPpe = (data.compliance?.ppe || []).filter(item => item !== value);
-                              handleStageDataChange('scoping', 'compliance', {
-                                ...data.compliance,
-                                ppe: newPpe
-                              });
-                            }}
-                            sx={{ 
-                              cursor: 'pointer',
-                              '&:hover': { opacity: 0.7 }
-                            }}
-                          >
-                            ×
-                          </Box>
-                        }
-                        sx={{ 
-                          '& .MuiChip-deleteIcon': {
-                            zIndex: 1,
-                            pointerEvents: 'auto'
-                          }
-                        }}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getOptionsForField('ppe', companyDefaultsForOptions).map((opt, index) => (
-                  <MenuItem key={index} value={opt.value}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>Select from Company Default PPE options</FormHelperText>
-            </FormControl>
+            <Autocomplete
+              multiple
+              fullWidth
+              size="small"
+              options={[
+                'Hard Hat',
+                'Safety Glasses',
+                'Safety Goggles',
+                'Face Shield',
+                'Respirator',
+                'Dust Mask',
+                'N95 Mask',
+                'Hearing Protection',
+                'Ear Plugs',
+                'Ear Muffs',
+                'High-Visibility Vest',
+                'Reflective Clothing',
+                'Safety Boots',
+                'Steel-Toe Boots',
+                'Non-Slip Shoes',
+                'Cut-Resistant Gloves',
+                'Chemical-Resistant Gloves',
+                'Heat-Resistant Gloves',
+                'Fall Protection Harness',
+                'Safety Lanyard',
+                'Lifeline',
+                'Confined Space Equipment',
+                'Gas Monitor',
+                'Air Purifying Respirator',
+                'Self-Contained Breathing Apparatus',
+                'First Aid Kit',
+                'Emergency Shower',
+                'Eye Wash Station',
+                'Fire Extinguisher',
+                'Safety Data Sheets',
+                'Lockout/Tagout Devices',
+                'Barricades',
+                'Warning Signs',
+                'Personal Alarm',
+                'Two-Way Radio',
+                'Flashlight',
+                'Headlamp',
+                'Protective Coveralls',
+                'Disposable Suits',
+                'Chemical Apron',
+                'Lab Coat',
+                'Hair Net',
+                'Beard Cover',
+                'Disposable Gloves',
+                'Nitrile Gloves',
+                'Latex Gloves',
+                'Vinyl Gloves',
+                'Insulated Gloves',
+                'Electrical Gloves',
+                'Welding Helmet',
+                'Welding Gloves',
+                'Welding Apron',
+                'Welding Boots',
+                'Welding Jacket',
+                'Chainsaw Chaps',
+                'Cutting Gloves',
+                'Abrasion-Resistant Clothing',
+                'Flame-Resistant Clothing',
+                'Arc Flash Protection',
+                'Voltage-Rated Gloves',
+                'Rubber Insulating Gloves',
+                'Leather Protectors',
+                'Insulating Blankets',
+                'Insulating Covers',
+                'Hot Sticks',
+                'Voltage Detectors',
+                'Ground Fault Circuit Interrupters',
+                'Other'
+              ]}
+              value={data.compliance?.ppe || []}
+              onChange={(event, newValue) => {
+                handleStageDataChange('scoping', 'compliance', {
+                  ...data.compliance,
+                  ppe: newValue
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={getFieldDef('ppe')?.label || 'Required PPE'}
+                  helperText="Select required personal protective equipment"
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    variant="outlined"
+                    label={option}
+                    size="small"
+                    {...getTagProps({ index })}
+                    key={option}
+                  />
+                ))
+              }
+            />
           </Grid>
           <Grid item xs={12} md={6}>
             <FormControl fullWidth size="small">
@@ -2208,26 +2076,108 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Grid>
         </Grid>
 
-        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
-          <InputLabel>{getFieldDef('uniformRequirement')?.label || 'Uniform Requirements'}</InputLabel>
-          <Select
-            value={data.compliance?.uniformRequirement || 'none'}
-            onChange={(e) => handleStageDataChange('scoping', 'compliance', {
+        <Autocomplete
+          multiple
+          fullWidth
+          size="small"
+          sx={{ mb: 3 }}
+          options={[
+            'Business Casual',
+            'Business Professional',
+            'Casual',
+            'Scrubs',
+            'Uniform Provided',
+            'Black Pants',
+            'White Shirt',
+            'Polo Shirt',
+            'Button-Down Shirt',
+            'Dress Shirt',
+            'Khaki Pants',
+            'Dress Pants',
+            'Jeans (Dark)',
+            'Jeans (No Holes)',
+            'Slacks',
+            'Skirt/Dress',
+            'Blouse',
+            'Sweater',
+            'Cardigan',
+            'Blazer',
+            'Suit',
+            'Tie Required',
+            'No Tie',
+            'Closed-Toe Shoes',
+            'Steel-Toe Boots',
+            'Non-Slip Shoes',
+            'Dress Shoes',
+            'Sneakers',
+            'Boots',
+            'Sandals Allowed',
+            'No Sandals',
+            'No Flip-Flops',
+            'No Shorts',
+            'No Tank Tops',
+            'No Graphic Tees',
+            'No Hoodies',
+            'No Sweatpants',
+            'No Leggings',
+            'No Yoga Pants',
+            'No Athletic Wear',
+            'No Ripped Clothing',
+            'No Visible Tattoos',
+            'No Facial Piercings',
+            'Minimal Jewelry',
+            'No Jewelry',
+            'Hair Tied Back',
+            'Clean Shaven',
+            'Facial Hair Allowed',
+            'Hair Color Restrictions',
+            'No Hair Color Restrictions',
+            'Coveralls',
+            'Safety Vest',
+            'Hard Hat',
+            'Reflective Clothing',
+            'Weather-Appropriate',
+            'Seasonal Attire',
+            'Formal Occasions',
+            'Customer-Facing',
+            'Back Office',
+            'Laboratory',
+            'Kitchen',
+            'Warehouse',
+            'Construction',
+            'Healthcare',
+            'Food Service',
+            'Retail',
+            'Office',
+            'Other'
+          ]}
+          value={data.compliance?.uniformRequirement || []}
+          onChange={(event, newValue) => {
+            handleStageDataChange('scoping', 'compliance', {
               ...data.compliance,
-              uniformRequirement: e.target.value,
-              dressCode: e.target.value !== 'none' ? e.target.value : ''
-            })}
-            label={getFieldDef('uniformRequirement')?.label || 'Uniform Requirements'}
-          >
-            <MenuItem value="none">None</MenuItem>
-            {getOptionsForField('uniformRequirement', companyDefaultsForOptions).map((opt, index) => (
-              <MenuItem key={index} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </Select>
-          <FormHelperText>Select from Company Default Uniform Requirements</FormHelperText>
-        </FormControl>
+              uniformRequirement: newValue,
+              dressCode: newValue.length > 0 ? newValue.join(', ') : ''
+            });
+          }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={getFieldDef('uniformRequirement')?.label || 'Uniform Requirements'}
+              helperText="Select dress code and uniform requirements"
+            />
+          )}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => (
+              <Chip
+                variant="outlined"
+                label={option}
+                size="small"
+                {...getTagProps({ index })}
+                key={option}
+              />
+            ))
+          }
+        />
 
         <Divider sx={{ my: 3 }} />
 

@@ -19,7 +19,8 @@ import {
   Alert,
   CircularProgress,
   Autocomplete,
-  Divider
+  Divider,
+  FormHelperText
 } from '@mui/material';
 import {
   Work as WorkIcon,
@@ -62,6 +63,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
   const [formData, setFormData] = useState<CreatePostData>({
     jobOrderId: jobOrder.id,
     postTitle: jobOrder.jobOrderName,
+    jobType: 'gig',
     jobTitle: jobOrder.jobTitle,
     jobDescription: jobOrder.jobOrderDescription || '',
     companyName: jobOrder.companyName,
@@ -69,6 +71,20 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
     worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
     payRate: jobOrder.payRate,
     showPayRate: jobOrder.showPayRate,
+    workersNeeded: jobOrder.workersNeeded,
+    eVerifyRequired: jobOrder.eVerifyRequired,
+    backgroundCheckPackages: jobOrder.backgroundCheckPackages,
+    showBackgroundChecks: false,
+    drugScreeningPanels: jobOrder.drugScreeningPanels,
+    showDrugScreening: false,
+    additionalScreenings: jobOrder.additionalScreenings,
+    showAdditionalScreenings: false,
+    shift: [],
+    showShift: false,
+    startTime: '',
+    endTime: '',
+    showStartTime: false,
+    showEndTime: false,
     startDate: jobOrder.startDate,
     endDate: jobOrder.endDate,
     shiftTimes: '',
@@ -99,6 +115,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
       setFormData({
         jobOrderId: jobOrder.id,
         postTitle: jobOrder.jobOrderName,
+        jobType: 'gig',
         jobTitle: jobOrder.jobTitle,
         jobDescription: jobOrder.jobOrderDescription || '',
         companyName: jobOrder.companyName,
@@ -106,6 +123,16 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
         worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
         payRate: jobOrder.payRate,
         showPayRate: jobOrder.showPayRate,
+        workersNeeded: jobOrder.workersNeeded,
+        eVerifyRequired: jobOrder.eVerifyRequired,
+        backgroundCheckPackages: jobOrder.backgroundCheckPackages,
+        showBackgroundChecks: false,
+        drugScreeningPanels: jobOrder.drugScreeningPanels,
+        showDrugScreening: false,
+        additionalScreenings: jobOrder.additionalScreenings,
+        showAdditionalScreenings: false,
+        shift: [],
+        showShift: false,
         startDate: jobOrder.startDate,
         endDate: jobOrder.endDate,
         shiftTimes: '',
@@ -336,7 +363,14 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
               <Select
                 value={formData.visibility}
                 label="Visibility"
-                onChange={(e) => handleInputChange('visibility', e.target.value)}
+                onChange={(e) => {
+                  const visibility = e.target.value;
+                  handleInputChange('visibility', visibility);
+                  // Clear auto-add to group if restricted
+                  if (visibility === 'group_restricted') {
+                    handleInputChange('autoAddToUserGroup', '');
+                  }
+                }}
               >
                 <MenuItem value="hidden">Hidden</MenuItem>
                 <MenuItem value="public">Public</MenuItem>
@@ -357,6 +391,37 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
                   <TextField {...params} label="Restricted Groups" />
                 )}
               />
+            </Grid>
+          )}
+
+          {/* Auto-Add to User Group - Only available for public/private */}
+          {formData.visibility !== 'restricted' && (
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Auto-Add to User Group</InputLabel>
+                <Select
+                  value={formData.autoAddToUserGroup || ''}
+                  label="Auto-Add to User Group"
+                  onChange={(e) => handleInputChange('autoAddToUserGroup', e.target.value)}
+                  displayEmpty
+                >
+                  <MenuItem value="">
+                    <em>No automatic group assignment</em>
+                  </MenuItem>
+                  {groups.length === 0 ? (
+                    <MenuItem value="" disabled>No user groups available</MenuItem>
+                  ) : (
+                    groups.map((group) => (
+                      <MenuItem key={group.id} value={group.id}>
+                        {group.name}
+                      </MenuItem>
+                    ))
+                  )}
+                </Select>
+                <FormHelperText>
+                  Automatically add applicants to this user group
+                </FormHelperText>
+              </FormControl>
             </Grid>
           )}
 
