@@ -33,6 +33,7 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
+  IconButton,
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
@@ -40,6 +41,9 @@ import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBo
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { useFavorites, useFavoritesFilter } from '../../hooks/useFavorites';
+import FavoriteButton from '../../components/FavoriteButton';
+import FavoritesFilter from '../../components/FavoritesFilter';
 import jobTitlesList from '../../data/onetJobTitles.json';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
@@ -79,6 +83,10 @@ const JobsBoard: React.FC = () => {
   // Inline editing state
   const [editingStatus, setEditingStatus] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+  
+  // Favorites state using universal system
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const { favorites } = useFavorites('jobPosts');
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
@@ -235,6 +243,7 @@ const JobsBoard: React.FC = () => {
       setUpdatingStatus(null);
     }
   };
+
 
   // Shift options for Career job type
   const shiftOptions = [
@@ -511,8 +520,13 @@ const JobsBoard: React.FC = () => {
       filtered = filtered.filter(post => getDisplayCompanyName(post) === companyFilter);
     }
 
+    // Favorites filter
+    if (showFavoritesOnly) {
+      filtered = filtered.filter(post => favorites.includes(post.id));
+    }
+
     setFilteredJobs(filtered);
-  }, [posts, searchTerm, locationFilter, companyFilter, companyNamesCache]);
+  }, [posts, searchTerm, locationFilter, companyFilter, companyNamesCache, showFavoritesOnly, favorites]);
 
   const getUniqueLocations = () => {
     return Array.from(new Set(posts.map(post => post.worksiteName))).sort();
@@ -1042,7 +1056,7 @@ const JobsBoard: React.FC = () => {
       {/* Filters */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <TextField
               fullWidth
               placeholder="Search jobs..."
@@ -1052,6 +1066,17 @@ const JobsBoard: React.FC = () => {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Search />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <FavoritesFilter
+                      favoriteType="jobPosts"
+                      showFavoritesOnly={showFavoritesOnly}
+                      onToggle={setShowFavoritesOnly}
+                      showText={true}
+                      size="small"
+                    />
                   </InputAdornment>
                 ),
               }}
@@ -1087,7 +1112,7 @@ const JobsBoard: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} md={3}>
             <Button
               variant="contained"
               startIcon={<Add />}
@@ -1110,6 +1135,9 @@ const JobsBoard: React.FC = () => {
           <Table>
             <TableHead sx={{ backgroundColor: 'grey.50' }}>
               <TableRow>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem', width: '60px', textAlign: 'center' }}>
+                  Favorites
+                </TableCell>
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
                   <TableSortLabel
                     active={sortField === 'postTitle'}
@@ -1197,6 +1225,17 @@ const JobsBoard: React.FC = () => {
                     }
                   }}
                 >
+                  <TableCell sx={{ textAlign: 'center' }}>
+                    <FavoriteButton
+                      itemId={post.id}
+                      favoriteType="jobPosts"
+                      size="small"
+                      tooltipText={{
+                        favorited: 'Remove from favorites',
+                        notFavorited: 'Add to favorites'
+                      }}
+                    />
+                  </TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
                       {post.postTitle}
