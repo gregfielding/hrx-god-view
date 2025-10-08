@@ -80,6 +80,49 @@ const Layout: React.FC = React.memo(function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Function to get page title based on current route
+  const getPageTitle = () => {
+    const pathname = location.pathname;
+    
+    // Jobs Board routes
+    if (pathname.includes('/jobs-board') || pathname.includes('/jobs-dashboard')) {
+      return 'Jobs Board';
+    }
+    
+    // Company Setup routes
+    if (pathname.includes('/company-setup')) {
+      return 'Company Setup';
+    }
+    
+    // User Profile routes
+    if (pathname.includes('/user-profile')) {
+      return 'User Profile';
+    }
+    
+    // CRM routes
+    if (pathname.includes('/crm')) {
+      return 'CRM';
+    }
+    
+    // Recruiter routes
+    if (pathname.includes('/recruiter')) {
+      return 'Recruiter';
+    }
+    
+    // Dashboard routes
+    if (pathname.includes('/dashboard') || pathname === '/') {
+      return 'Dashboard';
+    }
+    
+    // Settings routes
+    if (pathname.includes('/settings')) {
+      return 'Settings';
+    }
+    
+    // Default fallback
+    return 'HRX Platform';
+  };
+
   const [open, setOpen] = useState(true);
   const setOpenWithLog = (value) => { console.log('setOpen', value); setOpen(value); };
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
@@ -802,7 +845,7 @@ const Layout: React.FC = React.memo(function Layout() {
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="h5" sx={{ fontWeight: 600, color: 'text.primary' }}>
-              HRX Platform
+              {getPageTitle()}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
