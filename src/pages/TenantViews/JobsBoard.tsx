@@ -75,6 +75,10 @@ const JobsBoard: React.FC = () => {
   
   // Company names cache for displaying in table
   const [companyNamesCache, setCompanyNamesCache] = useState<Record<string, string>>({});
+  
+  // Inline editing state
+  const [editingStatus, setEditingStatus] = useState<string | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
@@ -206,6 +210,30 @@ const JobsBoard: React.FC = () => {
 
   const handleRowClick = (post: JobsBoardPost) => {
     navigate(`/jobs-dashboard/edit/${post.id}`);
+  };
+
+  const handleStatusUpdate = async (postId: string, newStatus: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired') => {
+    if (!tenantId) return;
+    
+    try {
+      setUpdatingStatus(postId);
+      await jobsBoardService.updatePostStatus(tenantId, postId, newStatus);
+      
+      // Update local state
+      setPosts(prev => prev.map(post => 
+        post.id === postId ? { ...post, status: newStatus } : post
+      ));
+      setFilteredJobs(prev => prev.map(post => 
+        post.id === postId ? { ...post, status: newStatus } : post
+      ));
+      
+      setEditingStatus(null);
+    } catch (err: any) {
+      console.error('Error updating status:', err);
+      // Could show a toast notification here
+    } finally {
+      setUpdatingStatus(null);
+    }
   };
 
   // Shift options for Career job type
@@ -1225,18 +1253,47 @@ const JobsBoard: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={post.status?.toUpperCase() || 'DRAFT'}
-                      size="small"
-                      color={
-                        post.status === 'active' ? 'success' :
-                        post.status === 'draft' ? 'default' :
-                        post.status === 'paused' ? 'warning' :
-                        post.status === 'cancelled' ? 'error' :
-                        'secondary'
-                      }
-                      variant="filled"
-                    />
+                    {editingStatus === post.id ? (
+                      <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <Select
+                          value={post.status || 'draft'}
+                          onChange={(e) => handleStatusUpdate(post.id, e.target.value as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired')}
+                          onBlur={() => setEditingStatus(null)}
+                          autoFocus
+                          size="small"
+                        >
+                          <MenuItem value="draft">Draft</MenuItem>
+                          <MenuItem value="active">Active</MenuItem>
+                          <MenuItem value="paused">Paused</MenuItem>
+                          <MenuItem value="cancelled">Cancelled</MenuItem>
+                          <MenuItem value="expired">Expired</MenuItem>
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <Chip
+                        label={updatingStatus === post.id ? 'Updating...' : (post.status?.toUpperCase() || 'DRAFT')}
+                        size="small"
+                        color={
+                          post.status === 'active' ? 'success' :
+                          post.status === 'draft' ? 'default' :
+                          post.status === 'paused' ? 'warning' :
+                          post.status === 'cancelled' ? 'error' :
+                          'secondary'
+                        }
+                        variant="filled"
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent row click
+                          setEditingStatus(post.id);
+                        }}
+                        sx={{ 
+                          cursor: 'pointer',
+                          '&:hover': {
+                            opacity: 0.8
+                          }
+                        }}
+                        disabled={updatingStatus === post.id}
+                      />
+                    )}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
