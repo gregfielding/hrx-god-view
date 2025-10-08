@@ -37,8 +37,14 @@ const FavoritesFilter: React.FC<FavoritesFilterProps> = ({
         minWidth: 'auto',
         p: 0.5,
         '& .MuiButton-startIcon': {
-          margin: showText ? '0 4px 0 -4px' : 0
+          margin: showText ? '0 4px 0 -4px' : 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
         },
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         ...sx
       }}
     >

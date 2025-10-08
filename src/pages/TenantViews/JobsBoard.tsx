@@ -1074,8 +1074,17 @@ const JobsBoard: React.FC = () => {
                       favoriteType="jobPosts"
                       showFavoritesOnly={showFavoritesOnly}
                       onToggle={setShowFavoritesOnly}
-                      showText={true}
+                      showText={false}
                       size="small"
+                      sx={{
+                        minWidth: '32px',
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        '&:hover': {
+                          backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                        }
+                      }}
                     />
                   </InputAdornment>
                 ),
