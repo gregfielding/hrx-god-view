@@ -299,6 +299,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       console.log('User document already exists, not creating default document');
       return userSnap.data();
     }
+
+    // Wait a bit to allow AuthDialog to create the user profile first
+    // This prevents race conditions where AuthDialog creates the profile
+    // but onAuthStateChanged hasn't seen it yet
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Check again after the delay
+    const userSnapAfterDelay = await getDoc(userRef);
+    if (userSnapAfterDelay.exists()) {
+      console.log('User document created by AuthDialog during delay, not creating default document');
+      return userSnapAfterDelay.data();
+    }
     
     const defaultUserDoc = {
       uid: user.uid,
