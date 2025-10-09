@@ -147,6 +147,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
     setLoading(true);
 
+    // Set flag to prevent AuthContext from creating default user document
+    setCreatingUserProfile(true);
+
     try {
       // Create user account
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
@@ -164,9 +167,6 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       if (!tenantId) {
         throw new Error('Unable to determine tenant for user registration');
       }
-
-      // Set flag to prevent AuthContext from creating default user document
-      setCreatingUserProfile(true);
 
       // Create user profile in Firestore
       const userProfile = {
@@ -240,9 +240,6 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
       await setDoc(doc(db, 'users', user.uid), userProfile);
 
-      // Clear flag after profile is created
-      setCreatingUserProfile(false);
-
       setSuccess('✅ Account created! Redirecting you to available jobs…');
       
       // Close dialog and refresh page state after a brief delay
@@ -250,6 +247,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         onAuthSuccess();
         handleClose();
       }, 2000);
+
+      // Clear flag after a longer delay to ensure AuthContext has processed
+      setTimeout(() => {
+        setCreatingUserProfile(false);
+      }, 5000);
 
     } catch (error: any) {
       console.error('Sign up error:', error);

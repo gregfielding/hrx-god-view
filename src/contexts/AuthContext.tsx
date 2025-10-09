@@ -315,10 +315,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return userSnap.data();
     }
 
-    // Wait a bit to allow AuthDialog to create the user profile first
-    // This prevents race conditions where AuthDialog creates the profile
-    // but onAuthStateChanged hasn't seen it yet
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // For new users from public jobs board, don't create default document
+    // The AuthDialog should handle user profile creation
+    // We'll wait longer to ensure AuthDialog has time to create the profile
+    console.log('Waiting for AuthDialog to create user profile...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Check again after the delay
     if (isCreatingUserProfileRef.current) {
@@ -332,6 +333,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return userSnapAfterDelay.data();
     }
     
+    // Only create default document for users who weren't created via AuthDialog
+    // This is a fallback for other signup methods
+    console.log('Creating fallback default user document');
     const defaultUserDoc = {
       uid: user.uid,
       email: user.email || '',
