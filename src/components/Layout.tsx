@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import {
@@ -156,6 +156,29 @@ const Layout: React.FC = React.memo(function Layout() {
   const effectiveSecurityLevel = devSecurityLevel || securityLevel;
   const effectiveOrgType = devOrgType || orgType;
   const userAccessRole = getAccessRole(effectiveRole, effectiveSecurityLevel);
+  const isApplicant = currentClaimsSecurityLevel === '2' || effectiveSecurityLevel === '2';
+  const isLowSecurityLevel = (currentClaimsSecurityLevel && parseInt(currentClaimsSecurityLevel) < 5) || (effectiveSecurityLevel && parseInt(effectiveSecurityLevel) < 5);
+
+  // Determine if user should listen to module status for current tenant
+  const shouldListenToModules = useMemo(() => {
+    // Security level 5+ required for module management
+    const hasAdminLevel = parseInt(effectiveSecurityLevel || '0') >= 5;
+    if (!hasAdminLevel) return false;
+    
+    // Always listen for HRX tenant
+    if (activeTenant?.id === 'TgDJ4sIaC7x2n5cPs3rW') return true;
+    
+    // For other tenants, check if user has admin rights in that tenant
+    if (activeTenant?.id && tenantIds && typeof tenantIds === 'object' && !Array.isArray(tenantIds)) {
+      const tenantRole = tenantIds[activeTenant.id] as any;
+      if (tenantRole && typeof tenantRole === 'object') {
+        const tenantSecurityLevel = parseInt(tenantRole.securityLevel || '0');
+        return tenantSecurityLevel >= 5;
+      }
+    }
+    
+    return false;
+  }, [effectiveSecurityLevel, activeTenant?.id, tenantIds]);
 
   const [showChat, setShowChat] = useState(false);
   // For now, default to showing the chat button unless user?.hideChatbot is true
@@ -300,6 +323,10 @@ const Layout: React.FC = React.memo(function Layout() {
 
   // Real-time listener for flex module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setFlexModuleEnabled(false);
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setFlexModuleEnabled(false);
@@ -328,10 +355,14 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules]);
 
   // Real-time listener for recruiter module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setRecruiterModuleEnabled(false);
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setRecruiterModuleEnabled(false);
@@ -360,10 +391,14 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules]);
 
   // Real-time listener for customers module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setCustomersModuleEnabled(false);
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setCustomersModuleEnabled(false);
@@ -392,10 +427,14 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules]);
 
   // Real-time listener for jobs board module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setJobsBoardModuleEnabled(isApplicant); // true for applicants, false otherwise
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setJobsBoardModuleEnabled(false);
@@ -424,10 +463,14 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules, isApplicant]);
 
   // Real-time listener for CRM module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setCrmModuleEnabled(false);
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setCrmModuleEnabled(false);
@@ -456,10 +499,14 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules]);
 
   // Real-time listener for Staffing module status
   useEffect(() => {
+    if (!shouldListenToModules) {
+      setStaffingModuleEnabled(false);
+      return;
+    }
     if (!activeTenant?.id) {
       // No active tenant
       setStaffingModuleEnabled(false);
@@ -488,7 +535,7 @@ const Layout: React.FC = React.memo(function Layout() {
     });
 
     return () => unsubscribe();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, shouldListenToModules]);
 
   useEffect(() => {
     const generateMenu = async () => {

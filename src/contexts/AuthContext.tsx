@@ -411,6 +411,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           try {
             const functions = getFunctions();
             const updateUserLoginInfo = httpsCallable(functions as any, 'updateUserLoginInfo');
+            const onC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
             await updateUserLoginInfo({
               userId: user.uid,
               loginData: {
@@ -420,6 +421,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                   language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
                 },
               },
+              // Context for first-time creation on public jobs board
+              initializeIfMissing: true,
+              source: onC1Route ? 'public_jobs_board' : undefined,
+              tenantId: onC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : undefined,
             });
             hasReportedLoginRef.current = true;
           } catch (err) {

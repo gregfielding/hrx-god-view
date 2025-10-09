@@ -202,11 +202,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         // Work status and eligibility
         workStatus: 'Active',
         workEligibility: false, // Gate that must be verified before job applications
-        dob: undefined, // Date of birth in YYYY-MM-DD format
-        phoneE164: undefined, // Phone number in E.164 format
+        dob: null, // Date of birth in YYYY-MM-DD format (nullable until provided)
+        phoneE164: null, // Phone number in E.164 format (nullable until provided)
         phoneVerified: false, // Phone verification status
         // Employment details
-        employmentType: undefined, // Leave blank as per requirement
+        employmentType: null as string | null, // Use null; Firestore rejects undefined
         departmentId: '',
         divisionId: '',
         locationId: '',

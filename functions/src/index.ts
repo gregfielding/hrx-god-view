@@ -8481,7 +8481,7 @@ export const translateContent = onCall(async (request) => {
 });
 // Enhanced User Login Tracking with Hello Message Settings
 export const updateUserLoginInfo = onCall(async (request) => {
-  const { userId, loginData } = request.data;
+  const { userId, loginData, initializeIfMissing, tenantId, source } = request.data || {};
   const start = Date.now();
   
   try {
@@ -8492,8 +8492,39 @@ export const updateUserLoginInfo = onCall(async (request) => {
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     
+    // If the user doc doesn't exist, optionally initialize for public jobs board
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      // Only create if explicitly asked, and only for public jobs board with a tenant context
+      if (initializeIfMissing === true && source === 'public_jobs_board' && typeof tenantId === 'string' && tenantId) {
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        const initialDoc: any = {
+          uid: userId,
+          createdAt: now,
+          updatedAt: now,
+          lastLoginAt: now,
+          activeTenantId: tenantId,
+          orgType: 'Tenant',
+          role: 'Tenant',
+          securityLevel: '2',
+          tenantIds: {
+            [tenantId]: { role: 'Applicant', securityLevel: '2' }
+          },
+          workStatus: 'Active',
+          workEligibility: false,
+          phoneVerified: false,
+          source: 'public_jobs_board',
+        };
+
+        // Merge any known login device data
+        if (loginData?.deviceInfo) {
+          initialDoc.lastDeviceInfo = loginData.deviceInfo;
+        }
+
+        await userRef.set(initialDoc, { merge: true });
+      } else {
+        // Do not create with wrong defaults; just no-op
+        return { success: true, created: false, initialized: false };
+      }
     }
     
     const userData = userDoc.data();
