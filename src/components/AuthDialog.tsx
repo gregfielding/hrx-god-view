@@ -31,6 +31,7 @@ import {
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
 
 interface AuthDialogProps {
   open: boolean;
@@ -39,6 +40,7 @@ interface AuthDialogProps {
 }
 
 const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess }) => {
+  const { setCreatingUserProfile } = useAuth();
   const [activeTab, setActiveTab] = useState(0);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -163,6 +165,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         throw new Error('Unable to determine tenant for user registration');
       }
 
+      // Set flag to prevent AuthContext from creating default user document
+      setCreatingUserProfile(true);
+
       // Create user profile in Firestore
       const userProfile = {
         uid: user.uid,
@@ -235,6 +240,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
       await setDoc(doc(db, 'users', user.uid), userProfile);
 
+      // Clear flag after profile is created
+      setCreatingUserProfile(false);
+
       setSuccess('✅ Account created! Redirecting you to available jobs…');
       
       // Close dialog and refresh page state after a brief delay
@@ -245,6 +253,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
     } catch (error: any) {
       console.error('Sign up error:', error);
+      
+      // Clear flag on error
+      setCreatingUserProfile(false);
       
       // Handle specific Firebase errors
       switch (error.code) {

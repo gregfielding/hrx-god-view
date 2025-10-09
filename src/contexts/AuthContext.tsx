@@ -48,6 +48,7 @@ type AuthContextType = {
   crmSalesEnabled?: boolean;
   recruiterEnabled?: boolean;
   jobsBoardEnabled?: boolean;
+  setCreatingUserProfile: (creating: boolean) => void;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -80,6 +81,9 @@ const AuthContext = createContext<AuthContextType>({
   crmSalesEnabled: false,
   recruiterEnabled: false,
   jobsBoardEnabled: false,
+  setCreatingUserProfile: () => {
+    console.warn('setCreatingUserProfile called on uninitialized context');
+  },
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -176,6 +180,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [recruiterEnabled, setRecruiterEnabled] = useState<boolean>(false);
   const [jobsBoardEnabled, setJobsBoardEnabled] = useState<boolean>(false);
   const lastActivitySentAtRef = useRef<number>(0);
+  const isCreatingUserProfileRef = useRef<boolean>(false);
+
+  const setCreatingUserProfile = (creating: boolean) => {
+    isCreatingUserProfileRef.current = creating;
+  };
 
   // Update tenantId when activeTenant changes and save to database
   // Comment out this useEffect to break the infinite loop
@@ -293,6 +302,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const createDefaultUserDoc = async (user: User) => {
     const userRef = doc(db, 'users', user.uid);
     
+    // Check if AuthDialog is currently creating a user profile
+    if (isCreatingUserProfileRef.current) {
+      console.log('AuthDialog is creating user profile, skipping default document creation');
+      return null;
+    }
+    
     // Check if user document already exists to prevent overwriting
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
@@ -306,6 +321,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Check again after the delay
+    if (isCreatingUserProfileRef.current) {
+      console.log('AuthDialog is still creating user profile after delay, skipping default document creation');
+      return null;
+    }
+    
     const userSnapAfterDelay = await getDoc(userRef);
     if (userSnapAfterDelay.exists()) {
       console.log('User document created by AuthDialog during delay, not creating default document');
@@ -656,6 +676,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         crmSalesEnabled,
         recruiterEnabled,
         jobsBoardEnabled,
+        setCreatingUserProfile,
       }}
     >
       {children}
