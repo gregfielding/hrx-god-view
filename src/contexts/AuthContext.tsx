@@ -334,22 +334,68 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
     
     // Only create default document for users who weren't created via AuthDialog
-    // This is a fallback for other signup methods
+    // If we're on the C1 public routes, initialize with the correct Tenant/Applicant profile
     console.log('Creating fallback default user document');
-    const defaultUserDoc = {
-      uid: user.uid,
-      email: user.email || '',
-      firstName: user.displayName?.split(' ')[0] || '',
-      lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
-      role: 'Tenant' as Role,
-      securityLevel: '4' as SecurityLevel,
-      orgType: 'HRX' as 'Tenant' | 'HRX',
-      onboarded: false,
-      createdAt: serverTimestamp(),
-      lastLogin: serverTimestamp(),
-      avatar: user.photoURL || '',
-      activeTenantId: null, // Will be set when user switches to a tenant
-    };
+    const isC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
+    const c1TenantId = 'BCiP2bQ9CgVOCTfV6MhD';
+
+    const defaultUserDoc = isC1Route
+      ? {
+          uid: user.uid,
+          email: user.email || '',
+          firstName: user.displayName?.split(' ')[0] || '',
+          lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+          role: 'Tenant' as Role,
+          securityLevel: '2' as SecurityLevel, // Applicant level
+          orgType: 'Tenant' as 'Tenant' | 'HRX',
+          onboarded: false,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+          avatar: user.photoURL || '',
+          activeTenantId: c1TenantId,
+          tenantIds: {
+            [c1TenantId]: {
+              role: 'Applicant',
+              securityLevel: '2',
+            },
+          },
+          // New user defaults aligned with public jobs board
+          isActive: true,
+          workStatus: 'Active',
+          workEligibility: false,
+          dob: undefined,
+          phoneE164: undefined,
+          phoneVerified: false,
+          address: {
+            street: '',
+            city: '',
+            state: '',
+            zipCode: '',
+            coordinates: null,
+          },
+          languages: [],
+          skills: [],
+          certifications: [],
+          userGroupIds: [],
+          crm_sales: false,
+          recruiter: false,
+          jobsBoard: false,
+          source: 'public_jobs_board',
+        }
+      : {
+          uid: user.uid,
+          email: user.email || '',
+          firstName: user.displayName?.split(' ')[0] || '',
+          lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
+          role: 'Tenant' as Role,
+          securityLevel: '4' as SecurityLevel,
+          orgType: 'HRX' as 'Tenant' | 'HRX',
+          onboarded: false,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+          avatar: user.photoURL || '',
+          activeTenantId: null, // Will be set when user switches to a tenant
+        };
 
     await setDoc(userRef, defaultUserDoc);
     return defaultUserDoc;
