@@ -154,25 +154,13 @@ const EditJobPost: React.FC = () => {
       </Box>
 
       <Paper elevation={1} sx={{ p: 4, borderRadius: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            Edit Job Post: {post.postTitle}
-          </Typography>
-          <Button
-            startIcon={<ArrowBack />}
-            onClick={handleCancel}
-          >
-            Back
-          </Button>
-        </Box>
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+        )}
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      <JobPostForm
+        <JobPostForm
         initialData={post}
         onSave={handleSave}
         onCancel={handleCancel}

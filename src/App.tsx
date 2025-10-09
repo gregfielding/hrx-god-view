@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from '
 import { LoadScript, Libraries } from '@react-google-maps/api';
 
 import Layout from './components/Layout';
+import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
 import Dashboard from './pages/Dashboard';
 import AIDashboard from './pages/TenantViews/AIDashboard';
 import UserProfile from './pages/UserProfile';
@@ -217,6 +218,12 @@ function App() {
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       
+      {/* Public Jobs Board routes with conditional layout */}
+      <Route element={<ConditionalJobsBoardLayout />}>
+        <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="/jobs-board" element={<PublicJobsBoard />} />
+      </Route>
+      
       <Route
         path="/"
         element={
@@ -274,9 +281,6 @@ function App() {
           </ProtectedRoute>
         } />
         
-        {/* Public Jobs Board routes */}
-        <Route path="c1/jobs-board" element={<PublicJobsBoard />} />
-        <Route path="jobs-board" element={<PublicJobsBoard />} />
         <Route path="crm" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>
@@ -820,23 +824,25 @@ function App() {
 
   console.log('App component about to return JSX');
   return (
-    <Router>
-      <AuthProvider>
-        <AssociationsCacheProvider>
-          <SalespeopleProvider>
-            {googleMapsApiKey ? (
-              <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
-                {routes}
-              </LoadScript>
-            ) : (
-              <div>
-                {routes}
-              </div>
-            )}
-          </SalespeopleProvider>
-        </AssociationsCacheProvider>
-      </AuthProvider>
-    </Router>
+    <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
+      <Router>
+        <AuthProvider>
+          <AssociationsCacheProvider>
+            <SalespeopleProvider>
+              {googleMapsApiKey ? (
+                <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
+                  {routes}
+                </LoadScript>
+              ) : (
+                <div>
+                  {routes}
+                </div>
+              )}
+            </SalespeopleProvider>
+          </AssociationsCacheProvider>
+        </AuthProvider>
+      </Router>
+    </Box>
   );
 }
 

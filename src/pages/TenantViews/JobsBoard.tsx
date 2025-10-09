@@ -34,9 +34,8 @@ import {
   TableRow,
   TableSortLabel,
   IconButton,
-  Breadcrumbs,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon, NavigateNext } from '@mui/icons-material';
+import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -321,6 +320,7 @@ const JobsBoard: React.FC = () => {
     showStartTime: false,
     showEndTime: false,
     autoAddToUserGroup: '',
+    coordinates: undefined as { lat: number; lng: number } | undefined,
   });
 
   // Load jobs board posts from Firestore
@@ -646,7 +646,9 @@ const JobsBoard: React.FC = () => {
         street: selectedLocation.address.street,
         city: selectedLocation.address.city,
         state: selectedLocation.address.state,
-        zipCode: selectedLocation.address.zipCode
+        zipCode: selectedLocation.address.zipCode,
+        // Store coordinates for distance calculations
+        coordinates: selectedLocation.address.coordinates
       });
     }
   };
@@ -845,13 +847,21 @@ const JobsBoard: React.FC = () => {
           }
         });
 
+        // Extract coordinates from Google Places API
+        const coordinates = {
+          lat: place.geometry.location.lat(),
+          lng: place.geometry.location.lng()
+        };
+
         setNewPost({
           ...newPost,
           worksiteName: place.formatted_address || `${city}, ${state}`,
           street: '',
           city,
           state,
-          zipCode
+          zipCode,
+          // Store coordinates for distance calculations
+          coordinates
         });
       }
     }
@@ -914,6 +924,7 @@ const JobsBoard: React.FC = () => {
       showStartTime: false,
       showEndTime: false,
       autoAddToUserGroup: '',
+      coordinates: undefined,
     });
     setSelectedCompanyId('');
     setSelectedLocationId('');
@@ -994,6 +1005,7 @@ const JobsBoard: React.FC = () => {
             city: newPost.city.trim(),
             state: newPost.state.trim(),
             zipCode: newPost.zipCode.trim(),
+            coordinates: newPost.coordinates || undefined,
           },
           startDate: newPost.startDate || null,
           endDate: newPost.endDate || null,
@@ -1053,30 +1065,6 @@ const JobsBoard: React.FC = () => {
 
   return (
     <Box sx={{ p: 0, width: '100%' }}>
-
-      {/* Breadcrumb Navigation */}
-      <Box sx={{ mb: 3 }}>
-        <Breadcrumbs 
-          separator={<NavigateNext fontSize="small" />} 
-          aria-label="breadcrumb"
-          sx={{
-            '& .MuiBreadcrumbs-separator': {
-              color: 'text.secondary',
-              mx: 1
-            }
-          }}
-        >
-          <Typography 
-            color="text.primary" 
-            sx={{ 
-              fontSize: '0.875rem',
-              fontWeight: 600
-            }}
-          >
-            Jobs Board
-          </Typography>
-        </Breadcrumbs>
-      </Box>
 
       {/* Filters */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>

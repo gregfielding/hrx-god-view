@@ -103,6 +103,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     showStartTime: false,
     showEndTime: false,
     autoAddToUserGroup: '',
+    coordinates: undefined as { lat: number; lng: number } | undefined,
     ...initialData
   });
 
@@ -330,7 +331,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         street: selectedLocation.address.street,
         city: selectedLocation.address.city,
         state: selectedLocation.address.state,
-        zipCode: selectedLocation.address.zipCode
+        zipCode: selectedLocation.address.zipCode,
+        // Store coordinates for distance calculations
+        coordinates: selectedLocation.address.coordinates
       });
     }
   };
@@ -359,13 +362,21 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           }
         });
 
+        // Extract coordinates from Google Places API
+        const coordinates = {
+          lat: place.geometry.location.lat(),
+          lng: place.geometry.location.lng()
+        };
+
         setFormData({
           ...formData,
           worksiteName: place.formatted_address || `${city}, ${state}`,
           street: '',
           city,
           state,
-          zipCode
+          zipCode,
+          // Store coordinates for distance calculations
+          coordinates
         });
       }
     }
@@ -490,6 +501,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           city: formData.city,
           state: formData.state,
           zipCode: formData.zipCode,
+          coordinates: formData.coordinates || undefined,
         },
         payRate: formData.payRate ? parseFloat(formData.payRate.toString()) : undefined,
       };

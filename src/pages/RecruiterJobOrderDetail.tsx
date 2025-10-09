@@ -28,6 +28,7 @@ import {
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
+  Work as BriefcaseIcon,
   Schedule as ScheduleIcon,
   AttachMoney as MoneyIcon,
   Work as WorkIcon,
@@ -51,6 +52,7 @@ import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import { BreadcrumbNav } from '../components/BreadcrumbNav';
 import JobOrderForm from '../components/JobOrderForm';
+import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -92,6 +94,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [recruiterUsers, setRecruiterUsers] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
+  const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
 
   // Load job order
   useEffect(() => {
@@ -137,6 +140,20 @@ const RecruiterJobOrderDetail: React.FC = () => {
       }
     } catch (error) {
       console.error('Error loading location data:', error);
+    }
+  };
+
+  const loadConnectedJobPosts = async (jobOrderId: string) => {
+    if (!jobOrderId || !tenantId) return;
+    
+    try {
+      console.log('🔍 Loading connected job posts for job order:', jobOrderId);
+      const jobsBoardService = JobsBoardService.getInstance();
+      const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
+      setConnectedJobPosts(posts);
+      console.log('🔍 Connected job posts loaded:', posts);
+    } catch (error) {
+      console.error('Error loading connected job posts:', error);
     }
   };
 
@@ -191,6 +208,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
         if (flatCompanyId) {
           await loadCompanyData(flatCompanyId);
         }
+        
+        // Load connected job board posts
+        await loadConnectedJobPosts(jobOrderId);
       } else {
         // Try the top-level collection as fallback
         console.log('🔍 RecruiterJobOrderDetail: Job order not found in tenant path, checking top-level collection...');
@@ -212,6 +232,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
           if (flatCompanyIdTop) {
             await loadCompanyData(flatCompanyIdTop);
           }
+          
+          // Load connected job board posts
+          await loadConnectedJobPosts(jobOrderId);
           return; // Exit early since we found the job order
         }
         // Job order not found - let's see what job orders actually exist
@@ -725,6 +748,31 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     >
                       {jobOrder.deal?.name || deal?.name || 'Loading...'}
                     </MUILink>
+                  </Box>
+                )}
+
+                {/* Connected Job Posts */}
+                {connectedJobPosts.length > 0 && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <BriefcaseIcon fontSize="small" color="primary" />
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                      {connectedJobPosts.map((post, index) => (
+                        <Box key={post.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <MUILink
+                            underline="hover"
+                            color="primary"
+                            href={`/jobs-dashboard/edit/${post.id}`}
+                            onClick={(e) => { e.preventDefault(); navigate(`/jobs-dashboard/edit/${post.id}`); }}
+                            sx={{ fontSize: '0.875rem', fontWeight: 500 }}
+                          >
+                            {post.postTitle}
+                          </MUILink>
+                          {index < connectedJobPosts.length - 1 && (
+                            <Typography variant="body2" color="text.secondary">•</Typography>
+                          )}
+                        </Box>
+                      ))}
+                    </Box>
                   </Box>
                 )}
               </Box>

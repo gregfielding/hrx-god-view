@@ -13,6 +13,7 @@ import {
   useMediaQuery,
   Drawer,
   Typography,
+  IconButton,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -603,7 +604,9 @@ const Layout: React.FC = React.memo(function Layout() {
 
       {/* Navigation Drawer (sidebar menu) */}
       <Drawer
-        variant="permanent"
+        variant={isMobile ? 'temporary' : 'permanent'}
+        open={open}
+        onClose={toggleDrawer}
         sx={{
           width: drawerWidth,
           flexShrink: 0,
@@ -844,6 +847,17 @@ const Layout: React.FC = React.memo(function Layout() {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {/* Hamburger menu button - only show on mobile */}
+            {isMobile && (
+              <IconButton
+                onClick={toggleDrawer}
+                edge="start"
+                sx={{ mr: 1 }}
+                aria-label="menu"
+              >
+                <MenuIcon />
+              </IconButton>
+            )}
             <Typography variant="h5" sx={{ fontWeight: 600, color: 'text.primary' }}>
               {getPageTitle()}
             </Typography>
