@@ -32,6 +32,7 @@ import {
 import { auth, db } from '../firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
 
 interface AuthDialogProps {
   open: boolean;
@@ -52,6 +53,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
   const [success, setSuccess] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
+  const [recaptchaLoading, setRecaptchaLoading] = useState(false);
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -95,6 +98,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setSuccess(null);
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setRecaptchaToken(null);
+    setRecaptchaLoading(false);
     setActiveTab(0);
     onClose();
   };
@@ -108,6 +113,25 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/;
     return passwordRegex.test(password);
+  };
+
+  const executeRecaptchaVerification = async (action: string): Promise<string> => {
+    setRecaptchaLoading(true);
+    setError(null);
+    
+    try {
+      // Wait for reCAPTCHA to be ready
+      await waitForRecaptcha(10000);
+      
+      // Execute reCAPTCHA
+      const token = await executeRecaptcha(action);
+      setRecaptchaToken(token);
+      setRecaptchaLoading(false);
+      return token;
+    } catch (error: any) {
+      setRecaptchaLoading(false);
+      throw new Error(`reCAPTCHA verification failed: ${error.message}`);
+    }
   };
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
@@ -151,6 +175,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setCreatingUserProfile(true);
 
     try {
+      // Execute reCAPTCHA verification
+      await executeRecaptchaVerification('SIGNUP');
       // Create user account
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
@@ -295,6 +321,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setLoading(true);
 
     try {
+      // Execute reCAPTCHA verification
+      await executeRecaptchaVerification('LOGIN');
+      
       await signInWithEmailAndPassword(auth, email, password);
       setSuccess('Welcome back!');
       
@@ -589,11 +618,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           <Button
             onClick={activeTab === 0 ? handleSignUp : handleSignIn}
             variant="contained"
-            disabled={loading}
-            startIcon={loading ? <CircularProgress size={20} /> : null}
+            disabled={loading || recaptchaLoading}
+            startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
             sx={{ minWidth: 140 }}
           >
-            {loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
+            {recaptchaLoading ? 'Verifying...' : loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
           </Button>
         </Box>
 

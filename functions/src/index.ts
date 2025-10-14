@@ -98,6 +98,10 @@ import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallLis
 import { setupCalendarWatch, calendarWebhook, stopCalendarWatch, refreshCalendarWatch } from './calendarWebhooks';
 import { getCalendarWebhookStatus } from './calendarWebhookStatus';
 
+// 🔄 HTTP WORKERS AND ORCHESTRATOR IMPORTS
+import { logTaskUpdate, logUserUpdate, updateActiveSalespeople } from './httpWorkers';
+import { scheduledOrchestrator } from './scheduledOrchestrator';
+
 // Export Deal Coach endpoints for deployment
 export {
   dealCoachAnalyze,
@@ -8480,7 +8484,15 @@ export const translateContent = onCall(async (request) => {
   }
 });
 // Enhanced User Login Tracking with Hello Message Settings
-export const updateUserLoginInfo = onCall(async (request) => {
+export const updateUserLoginInfo = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
   const { userId, loginData, initializeIfMissing, tenantId, source } = request.data || {};
   const start = Date.now();
   
@@ -8610,7 +8622,9 @@ export const updateUserActivity = onCall({
   cors: [
     'http://localhost:3000',
     'https://hrx1-d3beb.web.app',
-    'https://hrx1-d3beb.firebaseapp.com'
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
   ]
 }, async (request) => {
   const { userId, activity } = request.data || {};
@@ -9565,18 +9579,32 @@ export const executePendingCampaigns = onSchedule({
     console.info('executePendingCampaigns: disabled by ENABLE_EXECUTE_CAMPAIGNS');
     return;
   }
+  
+  // Idempotency: process this run only once
+  const runId = `campaigns_${new Date().toISOString().split('T')[0]}`;
+  const runRef = db.collection('function_runs').doc(runId);
+  
+  try {
+    await runRef.create({ createdAt: admin.firestore.FieldValue.serverTimestamp() });
+  } catch {
+    console.info('executePendingCampaigns: already processed today, skipping');
+    return;
+  }
+  
   const start = Date.now();
+  const maxCampaigns = 50; // Process max 50 campaigns per run
+  let executedCount = 0;
+  let processedCampaigns = 0;
   
   try {
     const now = new Date();
     
-    // Find pending scheduled campaigns
+    // Find pending scheduled campaigns with pagination
     const pendingCampaignsSnapshot = await db.collection('scheduledCampaigns')
       .where('status', '==', 'pending')
       .where('scheduledFor', '<=', admin.firestore.Timestamp.fromDate(now))
+      .limit(maxCampaigns)
       .get();
-
-    let executedCount = 0;
     let errorCount = 0;
 
     for (const doc of pendingCampaignsSnapshot.docs) {
@@ -10757,3 +10785,20 @@ export { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallLis
   getPlacements,
   updatePlacementStatus
 } from './recruiter'; */
+
+// Twilio SMS Functions
+export {
+  sendOtp,
+  checkOtp,
+  sendWorkerMessage
+} from './twilio';
+
+// HTTP Workers for Cloud Tasks
+export {
+  logTaskUpdate,
+  logUserUpdate,
+  updateActiveSalespeople
+};
+
+// Scheduled Orchestrator (Phase 3)
+export { scheduledOrchestrator };

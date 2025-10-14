@@ -432,12 +432,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
 
+        const cleanupFns: Array<() => void> = [];
+
         // Start lightweight activity heartbeat (throttled)
         try {
           const functions = getFunctions();
           const updateUserActivity = httpsCallable(functions as any, 'updateUserActivity');
 
           const sendHeartbeat = async (reason: string) => {
+            // Temporary guard: avoid CORS on production domain until server deploy
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const allowlist = new Set(['http://localhost:3000', 'https://hrx1-d3beb.web.app', 'https://hrx1-d3beb.firebaseapp.com']);
+            if (!allowlist.has(origin)) {
+              return; // skip heartbeat to prevent CORS error spam
+            }
+
             const now = Date.now();
             // 5-minute throttle client-side to avoid runaway cost
             if (now - lastActivitySentAtRef.current < 5 * 60 * 1000) return;
@@ -451,43 +460,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                   reason,
                 },
               });
-            } catch (err: any) {
-              // Only log CORS errors in development, not in production
-              if (process.env.NODE_ENV === 'development' && err?.message?.includes('CORS')) {
-                console.warn('Activity tracking CORS error (development only):', err.message);
-              }
-              // Always swallow errors to avoid log noise in production
+            } catch (err) {
+              console.warn('Failed to update user activity (suppressed):', err);
             }
           };
 
-          // Initial heartbeat once authenticated
-          sendHeartbeat('auth_state_change');
+          // Initial heartbeat
+          sendHeartbeat('auth_state_changed');
 
-          // Visibility-based heartbeat
-          const onVisible = () => sendHeartbeat('visibilitychange');
-          if (typeof document !== 'undefined') {
-            document.addEventListener('visibilitychange', onVisible);
-          }
+          // Visibility change heartbeat
+          const handleVisibilityChange = () => sendHeartbeat('visibility_change');
+          document.addEventListener('visibilitychange', handleVisibilityChange);
 
-          // Interval heartbeat while tab is visible
-          const intervalId = setInterval(() => {
-            if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
-            sendHeartbeat('interval');
-          }, 5 * 60 * 1000);
+          // Route change heartbeat (simple heuristic)
+          const handlePopState = () => sendHeartbeat('route_change');
+          window.addEventListener('popstate', handlePopState);
 
-          // Clean up on sign-out or unmount
-          const cleanupHeartbeat = () => {
-            if (typeof document !== 'undefined') {
-              document.removeEventListener('visibilitychange', onVisible);
-            }
-            clearInterval(intervalId);
-          };
-
-          // Attach cleanup to snapshot unsubscribe path below
-          // We will call cleanup in the outer return as well
-          (window as any)._hrxCleanupHeartbeat?.();
-          (window as any)._hrxCleanupHeartbeat = cleanupHeartbeat;
-        } catch {}
+          cleanupFns.push(() => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('popstate', handlePopState);
+          });
+        } catch (err) {
+          console.warn('Heartbeat setup failed:', err);
+        }
 
         // Load claims from user token (primary source of truth)
         const claims = await loadClaimsFromUser(user);
@@ -657,7 +652,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           setLoading(false);
         });
 
-        return unsubscribeUser;
+        return () => {
+          cleanupFns.forEach((fn) => {
+            try { fn(); } catch {}
+          });
+        };
       } else {
         setRole('Tenant');
         setSecurityLevel('3');
@@ -679,7 +678,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     });
 
-    return () => unsubscribeAuth();
+    return () => {
+      unsubscribeAuth();
+    };
   }, []);
 
   const logout = async () => {

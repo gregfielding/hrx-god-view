@@ -1,0 +1,442 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography } from '@mui/material';
+import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+
+import PersonalInfoStep from './steps/PersonalInfoStep';
+import WorkEligibilityStep from './steps/WorkEligibilityStep';
+import ResumeStep from './steps/ResumeStep';
+import QualificationsStep from './steps/QualificationsStep';
+import JobPreferencesStep from './steps/JobPreferencesStep';
+import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
+import ReviewSubmitStep from './steps/ReviewSubmitStep';
+
+type WizardProps = {
+  tenantId: string;
+  tenantName?: string;
+  jobId?: string;
+  uid: string | null;
+};
+
+type DraftApplication = {
+  status: 'draft' | 'submitted';
+  createdAt?: any;
+  updatedAt?: any;
+  tenantId: string;
+  jobId?: string;
+  uid?: string | null;
+  data: any;
+};
+
+const steps = ['Personal Info', 'Work Eligibility', 'Resume', 'Qualifications', 'Preferences', 'Requirements', 'Review'];
+
+const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => {
+  const [activeStep, setActiveStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [appId, setAppId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<any>({});
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [requirements, setRequirements] = useState<{
+    licenses?: string[];
+    certifications?: string[];
+    screenings?: string[];
+    ppe?: string[];
+    physical?: string[];
+  }>({});
+  const [posting, setPosting] = useState<any>(null);
+  const prefilledRef = useRef(false);
+  const [tenantAppId, setTenantAppId] = useState<string | null>(null);
+
+  // Create draft doc on first load (user-owned path; fallback to localStorage if rules block)
+  useEffect(() => {
+    const createDraft = async () => {
+      if (!uid || appId) return;
+      const now = serverTimestamp();
+      const draft: DraftApplication = {
+        status: 'draft',
+        createdAt: now,
+        updatedAt: now,
+        tenantId,
+        jobId,
+        uid,
+        data: {}
+      };
+      try {
+        // Save under user to avoid tenant write restrictions for applicants
+        const colRef = collection(db, 'users', uid, 'applicationDrafts');
+        const docRef = await addDoc(colRef, draft as any);
+        setAppId(docRef.id);
+      } catch {
+        const key = `appDraft:${uid}:${tenantId || 'na'}:${jobId || 'na'}`;
+        try { localStorage.setItem(key, JSON.stringify({ ...draft, createdAt: Date.now(), updatedAt: Date.now() })); } catch {}
+        setAppId(key);
+      }
+
+      // Mirror to tenant applications (best-effort) so recruiters can see in-progress
+      try {
+        if (tenantId && jobId && uid) {
+          const tidAppId = `${uid}_${jobId}`;
+          const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
+          await setDoc(tRef, {
+            status: 'in_progress',
+            uid,
+            jobId,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }, { merge: true });
+          setTenantAppId(tidAppId);
+        }
+      } catch {}
+    };
+    createDraft();
+  }, [tenantId, jobId, uid, appId]);
+
+  // Load job posting requirements (fallback merges can be added later)
+  useEffect(() => {
+    const loadPosting = async () => {
+      try {
+        if (!tenantId || !jobId) return;
+        const postRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
+        const snap = await getDoc(postRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        const merged = {
+          licenses: Array.isArray(data?.licensesCerts) ? data.licensesCerts.filter(Boolean) : [],
+          certifications: Array.isArray(data?.licensesCerts) ? data.licensesCerts.filter(Boolean) : [],
+          screenings: [
+            ...(Array.isArray(data?.drugScreeningPanels) ? data.drugScreeningPanels : []),
+            ...(Array.isArray(data?.backgroundCheckPackages) ? data.backgroundCheckPackages : []),
+            ...(Array.isArray(data?.additionalScreenings) ? data.additionalScreenings : []),
+            ...(data?.eVerifyRequired ? ['E-Verify'] : []),
+          ].filter(Boolean),
+          ppe: Array.isArray(data?.requiredPpe) ? data.requiredPpe.filter(Boolean) : [],
+          physical: Array.isArray(data?.physicalRequirements) ? data.physicalRequirements.filter(Boolean) : [],
+        };
+        setRequirements(merged);
+        setPosting(data);
+
+        // Prefill preferences from posting if empty
+        setFormData((prev: any) => {
+          const next = { ...prev };
+          if (!next.preferences) {
+            next.preferences = {
+              targetPay: typeof data?.payRate === 'number' ? data.payRate : '',
+              shift: Array.isArray(data?.shift) && data.shift.length ? data.shift[0] : '',
+              availabilityNotes: ''
+            };
+          }
+          return next;
+        });
+      } catch {
+        // ignore; requirements UI will just be empty
+      }
+    };
+    loadPosting();
+  }, [tenantId, jobId]);
+
+  // Load user profile for validation
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        if (!uid) return;
+        const uref = doc(db, 'users', uid);
+        const usnap = await getDoc(uref);
+        if (usnap.exists()) setUserProfile(usnap.data());
+      } catch {}
+    };
+    loadUser();
+  }, [uid]);
+
+  // Prefill wizard from user profile once
+  useEffect(() => {
+    if (!userProfile || prefilledRef.current) return;
+    prefilledRef.current = true;
+
+    const address = userProfile.address || {};
+    const personal = {
+      firstName: userProfile.firstName || '',
+      lastName: userProfile.lastName || '',
+      email: userProfile.email || '',
+      phone: userProfile.phone || '',
+      dob: userProfile.dob || '',
+      street: address.street || '',
+      unit: address.unit || '',
+      city: userProfile.city || address.city || '',
+      state: userProfile.state || address.state || '',
+      zip: userProfile.zipCode || address.zipCode || '',
+    };
+
+    const eligibility = {
+      workAuthorized: !!userProfile.workEligibility,
+      gender: userProfile.gender || '',
+      veteranStatus: userProfile.veteranStatus || '',
+      disabilityStatus: userProfile.disabilityStatus || '',
+    };
+
+    const qualifications = {
+      skills: Array.isArray(userProfile.skills) ? userProfile.skills : [],
+      certifications: Array.isArray(userProfile.certifications) ? userProfile.certifications : [],
+      languages: Array.isArray(userProfile.languages) ? userProfile.languages : [],
+      education: Array.isArray(userProfile.education) ? userProfile.education : [],
+      workHistory: Array.isArray(userProfile.workHistory) ? userProfile.workHistory : [],
+      salaryExpectations: userProfile.salaryExpectations || undefined,
+    };
+
+    const preferences = formData.preferences || {
+      targetPay: '',
+      shift: '',
+      availabilityNotes: ''
+    };
+
+    // Persist prefill to draft if possible
+    persist({ personal, eligibility, qualifications, preferences });
+  }, [userProfile]);
+
+  // Compute missing required items using profile + acknowledgements
+  const computeMissing = () => {
+    const acks = (formData.requirements && formData.requirements.acks) || {};
+    const uploaded = (formData.requirements && formData.requirements.uploaded) || {};
+    const profileCerts: string[] = Array.isArray(userProfile?.certifications)
+      ? userProfile.certifications.map((c: any) => (typeof c === 'string' ? c : c?.name)).filter(Boolean)
+      : [];
+
+    // Certifications require actual upload or existing cert on profile; acknowledgements do not satisfy
+    const missingCerts = (requirements.certifications || []).filter((name) => !profileCerts.includes(name) && !uploaded[name]);
+    const missingScreenings = (requirements.screenings || []).filter((name) => !acks[name]);
+    const missingPpe = (requirements.ppe || []).filter((name) => !acks[name]);
+    const missingPhysical = (requirements.physical || []).filter((name) => !acks[name]);
+
+    return {
+      certs: missingCerts,
+      screenings: missingScreenings,
+      ppe: missingPpe,
+      physical: missingPhysical,
+    };
+  };
+
+  const missing = computeMissing();
+
+  const persist = async (partial: any) => {
+    setSaving(true);
+    try {
+      setFormData((prev: any) => ({ ...prev, ...partial }));
+      if (!uid || !appId) {
+        // Draft not created yet; defer backend write but keep local state
+        return;
+      }
+      if (appId.startsWith('appDraft:')) {
+        const existing = localStorage.getItem(appId);
+        const parsed = existing ? JSON.parse(existing) : {};
+        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, data: { ...formData, ...partial }, updatedAt: Date.now() })); } catch {}
+      } else {
+        const appRef = doc(db, 'users', uid!, 'applicationDrafts', appId);
+        await updateDoc(appRef, { data: { ...formData, ...partial }, updatedAt: serverTimestamp() });
+      }
+
+      // Best-effort mirror to tenant application
+      try {
+        if (tenantId && (tenantAppId || (uid && jobId))) {
+          const tidAppId = tenantAppId || `${uid}_${jobId}`;
+          const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
+          const personal = (partial.personal || formData.personal) || {};
+          await setDoc(tRef, {
+            updatedAt: serverTimestamp(),
+            applicant: {
+              firstName: personal.firstName || null,
+              lastName: personal.lastName || null,
+              email: personal.email || null,
+              phone: personal.phone || null,
+            },
+          }, { merge: true });
+          if (!tenantAppId) setTenantAppId(tidAppId);
+        }
+      } catch {}
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleNext = async () => {
+    // Save-and-continue: persist current step into user profile where applicable
+    try {
+      if (uid) {
+        const userRef = doc(db, 'users', uid);
+        if (activeStep === 0) {
+          // Personal Info → save name/email/phone/dob/address
+          const p = formData.personal || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          if (p.firstName) update.firstName = String(p.firstName).trim();
+          if (p.lastName) update.lastName = String(p.lastName).trim();
+          if (p.email) update.email = String(p.email).trim();
+          if (p.phone) update.phone = String(p.phone).trim();
+          if (p.dob) update.dob = String(p.dob).trim();
+          const addr: any = {};
+          if (p.street) addr.street = String(p.street).trim();
+          if (p.unit) addr.unit = String(p.unit).trim();
+          if (p.city) addr.city = String(p.city).trim();
+          if (p.state) addr.state = String(p.state).trim();
+          if (p.zip) addr.zipCode = String(p.zip).trim();
+          if (Object.keys(addr).length > 0) {
+            update.address = addr;
+            if (addr.city) update.city = addr.city;
+            if (addr.state) update.state = addr.state;
+            if (addr.zipCode) update.zipCode = addr.zipCode;
+          }
+          if (Object.keys(update).length > 1) {
+            await updateDoc(userRef, update);
+          }
+        } else if (activeStep === 1) {
+          // Work Eligibility → save EEO fields
+          const e = formData.eligibility || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          if (typeof e.workAuthorized === 'boolean') update.workEligibility = !!e.workAuthorized;
+          if (e.gender) update.gender = String(e.gender);
+          if (e.veteranStatus) update.veteranStatus = String(e.veteranStatus);
+          if (e.disabilityStatus) update.disabilityStatus = String(e.disabilityStatus);
+          if (Object.keys(update).length > 1) {
+            await updateDoc(userRef, update);
+          }
+        } else if (activeStep === 3) {
+          // Qualifications → save key arrays to profile
+          const q = formData.qualifications || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          if (Array.isArray(q.skills)) update.skills = q.skills;
+          if (Array.isArray(q.certifications)) update.certifications = q.certifications;
+          if (Array.isArray(q.languages)) update.languages = q.languages;
+          if (Array.isArray(q.education)) update.education = q.education;
+          if (Array.isArray(q.workHistory)) update.workHistory = q.workHistory;
+          if (Object.keys(update).length > 1) await updateDoc(userRef, update);
+        }
+      }
+    } finally {
+      setActiveStep((s) => Math.min(s + 1, steps.length - 1));
+    }
+  };
+  const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0));
+
+  const handleSubmit = async () => {
+    if (!uid || !appId) return;
+    setSaving(true);
+    try {
+      if (appId.startsWith('appDraft:')) {
+        const existing = localStorage.getItem(appId);
+        const parsed = existing ? JSON.parse(existing) : {};
+        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, status: 'submitted', submittedAt: Date.now(), submittedTenantId: tenantId, submittedJobId: jobId })); } catch {}
+      } else {
+        const appRef = doc(db, 'users', uid!, 'applicationDrafts', appId);
+        await updateDoc(appRef, { status: 'submitted', submittedAt: serverTimestamp(), submittedTenantId: tenantId, submittedJobId: jobId });
+      }
+
+      // Merge selected profile fields into users/{uid}
+      const userRef = doc(db, 'users', uid!);
+      const personal = formData.personal || {};
+      const eligibility = formData.eligibility || {};
+      const quals = formData.qualifications || {};
+      const languages = Array.isArray(quals.languages)
+        ? quals.languages
+        : [];
+      const certifications = Array.isArray(quals.certifications)
+        ? quals.certifications
+        : [];
+      const skills = Array.isArray(quals.skills)
+        ? (quals.skills.map((s: any) => (typeof s === 'string' ? s : s?.name)).filter(Boolean))
+        : [];
+      const profileUpdate: any = {
+        updatedAt: serverTimestamp(),
+      };
+      if (personal.firstName) profileUpdate.firstName = String(personal.firstName).trim();
+      if (personal.lastName) profileUpdate.lastName = String(personal.lastName).trim();
+      if (personal.email) profileUpdate.email = String(personal.email).trim();
+      if (personal.phone) profileUpdate.phone = String(personal.phone).trim();
+      if (personal.dob) profileUpdate.dob = String(personal.dob).trim();
+      if (languages.length) profileUpdate.languages = languages;
+      if (certifications.length) profileUpdate.certifications = certifications;
+      if (skills.length) profileUpdate.skills = skills;
+      if (typeof eligibility.workAuthorized === 'boolean') profileUpdate.workEligibility = !!eligibility.workAuthorized;
+      if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
+      if (eligibility.veteranStatus) profileUpdate.veteranStatus = String(eligibility.veteranStatus);
+      if (eligibility.disabilityStatus) profileUpdate.disabilityStatus = String(eligibility.disabilityStatus);
+      await updateDoc(userRef, profileUpdate);
+
+      // Mark tenant application as submitted
+      try {
+        if (tenantId && (tenantAppId || (uid && jobId))) {
+          const tidAppId = tenantAppId || `${uid}_${jobId}`;
+          const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
+          await updateDoc(tRef, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        }
+      } catch {}
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderStep = () => {
+    switch (activeStep) {
+      case 0:
+        return <PersonalInfoStep value={formData.personal || {}} onChange={(v) => persist({ personal: v })} />;
+      case 1:
+        return <WorkEligibilityStep value={formData.eligibility || {}} onChange={(v) => persist({ eligibility: v })} />;
+      case 2:
+        return <ResumeStep value={{ ...(formData.resume || {}), userId: uid || '' }} onChange={(v) => persist({ resume: v })} tenantId={tenantId} />;
+      case 3:
+        return <QualificationsStep value={formData.qualifications || {}} onChange={(v) => persist({ qualifications: v })} />;
+      case 4:
+        return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} />;
+      case 5:
+        return (
+          <RequirementsAcknowledgementStep
+            requirements={requirements}
+            profile={userProfile}
+            uid={uid || ''}
+            value={formData.requirements || { acks: {}, uploaded: {} }}
+            onChange={(v) => persist({ requirements: v })}
+          />
+        );
+      case 6:
+        return <ReviewSubmitStep value={formData} onSubmit={handleSubmit} submitting={saving} tenantName={tenantName} />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Box sx={{ px: 3, py: 4 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h6" fontWeight={700}>{tenantName ? `${tenantName} Application` : 'Application'}</Typography>
+        <Typography variant="subtitle2" color="text.secondary">{saving ? 'Saving…' : 'All changes saved'}</Typography>
+      </Stack>
+      <Divider sx={{ my: 2 }} />
+
+      <Stepper activeStep={activeStep} alternativeLabel>
+        {steps.map((label) => (
+          <Step key={label}><StepLabel>{label}</StepLabel></Step>
+        ))}
+      </Stepper>
+
+      <Box sx={{ mt: 3 }}>
+        {renderStep()}
+      </Box>
+
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mt={3}>
+        <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
+        <Button
+          variant="contained"
+          onClick={handleNext}
+          disabled={
+            activeStep === steps.length - 1 ||
+            (activeStep === 5 && (
+              missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
+            ))
+          }
+        >
+          Next
+        </Button>
+      </Stack>
+    </Box>
+  );
+};
+
+export default Wizard;
+
+

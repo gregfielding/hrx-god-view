@@ -8,6 +8,7 @@
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
+    "deploy:hardening-phase1": "gcloud functions deploy firestoreLogTaskUpdated --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy updateActiveSalespeopleOnDeal --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy scheduledGmailMonitoring --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy executePendingCampaigns --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry",
     "logs": "firebase functions:log",
     "test": "mocha -r ts-node/register -r src/__tests__/setup.ts src/__tests__/**/*.test.ts",
     "test:triggers": "npx ts-node src/testTriggersCLI.ts",
@@ -24,7 +25,6 @@
   "dependencies": {
     "@google-cloud/tasks": "^6.2.0",
     "@sendgrid/mail": "^8.1.5",
-    "@types/cors": "^2.8.19",
     "busboy": "^1.6.0",
     "cheerio": "^1.1.2",
     "compromise": "^14.14.4",
@@ -40,10 +40,12 @@
     "openai": "^5.8.2",
     "pdf-parse": "^1.1.1",
     "puppeteer": "^24.14.0",
+    "twilio": "^5.10.2",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/chai": "^4.3.16",
+    "@types/cors": "^2.8.19",
     "@types/multer": "^1.4.11",
     "@types/sinon": "^10.0.20",
     "@typescript-eslint/eslint-plugin": "^5.12.0",

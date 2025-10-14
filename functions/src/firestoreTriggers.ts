@@ -1,4 +1,5 @@
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { ensureFirstTime, relevantChanges, enqueueOnce } from './utils/taskQueue';
 import { onlyIgnoredFieldsChanged } from './utils/safeFunctionTemplate';
 import { logAIAction } from './feedbackEngine';
 import * as admin from 'firebase-admin';
@@ -43,48 +44,36 @@ export const firestoreLogUserUpdated = onDocumentUpdated('users/{userId}', async
   
   if (!beforeData || !afterData) return;
   
+  // Idempotency: process this change only once
+  const ok = await ensureFirstTime(event.id || `${userId}:${afterData.updatedAt || ''}`, 'firestoreLogUserUpdated');
+  if (!ok) return;
+  
+  // Whitelist meaningful changes for user updates
+  const whitelist = ['displayName', 'email', 'phoneNumber', 'avatarUrl', 'timezone', 'role', 'roles', 'permissions', 'status', 'disabled', 'tenantId', 'agencyId', 'managerId', 'locationId', 'notificationPreferences', 'connectedProviders', 'googleAuth'];
+  if (!relevantChanges(beforeData, afterData, whitelist)) return;
+  
   try {
-    // Skip updates that only touched bookkeeping/meta fields
-    const IGNORE_FIELDS_USER = [
-      'updatedAt', 'lastUpdated', '_processingBy', '_processingAt',
-      'lastLoginAt', 'lastActiveAt', 'lastSeenAt', 'lastRefreshedAt',
-      'heartbeat', 'lastHeartbeatAt', 'sessionUpdatedAt',
-      'lastGmailSync', 'lastCalendarSync', 'gmailStatus', 'calendarStatus', 'googleStatus',
-      '_cache', '_tmp', '_lastAIStatusUpdateAt'
-    ];
-    if (onlyIgnoredFieldsChanged(beforeData, afterData, IGNORE_FIELDS_USER)) return;
-
     // Determine what fields changed
     const changedFields = Object.keys(afterData).filter(key => 
       JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
     );
-    // Only proceed if important fields changed
-    const IMPORTANT_FIELDS_USER = [
-      'displayName', 'email', 'phoneNumber', 'avatarUrl', 'timezone',
-      'role', 'roles', 'permissions', 'status', 'disabled',
-      'tenantId', 'agencyId', 'managerId', 'locationId',
-      'notificationPreferences', 'connectedProviders', 'googleAuth'
-    ];
-    const importantChanged = changedFields.filter(f => IMPORTANT_FIELDS_USER.includes(f));
-    if (importantChanged.length === 0) return;
     
-    await logAIAction({
-      userId: afterData.updatedBy || 'system',
-      actionType: 'user_updated',
-      sourceModule: 'FirestoreTrigger',
-      success: true,
-      eventType: 'user.updated',
-      targetType: 'user',
-      targetId: userId,
-      aiRelevant: true,
-      contextType: 'user',
-      traitsAffected: null,
-      aiTags: ['user', 'update', ...importantChanged],
-      urgencyScore: 4,
-      reason: `User "${afterData.displayName || afterData.email || 'Unknown'}" updated: ${importantChanged.join(', ')}`,
-      versionTag: 'v1',
-      latencyMs: 0
-    });
+    // Debounced enqueue to HTTP logger to avoid heavy work in triggers
+    await enqueueOnce(
+      `userlog_${userId}_${(afterData.updatedAt || Date.now()).toString()}`,
+      '/logUserUpdate',
+      {
+        userId,
+        changedFields,
+        payload: {
+          userId: afterData.updatedBy || 'system',
+          actionType: 'user_updated',
+          eventType: 'user.updated',
+          targetId: userId,
+          importantFields: changedFields.filter(f => whitelist.includes(f))
+        }
+      }
+    );
     return { success: true };
   } catch (error: any) {
     console.error('firestoreLogUserUpdated error:', error);
@@ -1465,7 +1454,13 @@ export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async
   const taskId = event.params.taskId;
   
   if (!beforeData || !afterData) return;
-  if (onlyIgnoredFieldsChanged(beforeData, afterData, [...IGNORE_FIELDS_COMMON, 'processingStartedAt', 'processingCompletedAt'])) return;
+  // Idempotency: process this change only once
+  const ok = await ensureFirstTime(event.id || `${taskId}:${afterData.updatedAt || ''}`, 'firestoreLogTaskUpdated');
+  if (!ok) return;
+
+  // Whitelist meaningful changes; ignore internal bookkeeping
+  const whitelist = ['title','status','priority','dueDate','assignees','dealId','associations'];
+  if (!relevantChanges(beforeData, afterData, whitelist)) return;
   
   try {
     // Determine what changed
@@ -1473,23 +1468,22 @@ export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async
       JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key])
     );
     
-    await logAIAction({
-      userId: afterData.createdBy || 'system',
-      actionType: 'task_updated',
-      sourceModule: 'FirestoreTrigger',
-      success: true,
-      eventType: 'deal.task_updated',
-      targetType: 'task',
-      targetId: afterData.dealId || taskId,
-      aiRelevant: true,
-      contextType: 'crm',
-      traitsAffected: null,
-      aiTags: ['task', 'update', 'deal', ...changedFields],
-      urgencyScore: afterData.priority === 'urgent' ? 8 : afterData.priority === 'high' ? 6 : 4,
-      reason: `Task updated: ${changedFields.join(', ')}`,
-      versionTag: 'v1',
-      latencyMs: 0
-    });
+    // Debounced enqueue to HTTP logger to avoid heavy work in triggers
+    await enqueueOnce(
+      `tasklog_${taskId}_${(afterData.updatedAt || Date.now()).toString()}`,
+      '/logTaskUpdate',
+      {
+        taskId,
+        changedFields,
+        payload: {
+          userId: afterData.createdBy || 'system',
+          actionType: 'task_updated',
+          eventType: 'deal.task_updated',
+          targetId: afterData.dealId || taskId,
+          priority: afterData.priority || 'normal'
+        }
+      }
+    );
     return { success: true };
   } catch (error: any) {
     console.error('firestoreLogTaskUpdated error:', error);

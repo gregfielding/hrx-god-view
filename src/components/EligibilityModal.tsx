@@ -26,10 +26,9 @@ import { validateDob } from '../utils/dobValidation';
 import {
   startPhoneVerification,
   confirmPhoneCode,
-  initRecaptcha,
-  cleanupRecaptcha,
   formatPhoneForDisplay,
-} from '../utils/phoneVerification';
+  cleanupPhoneVerification,
+} from '../utils/phoneVerificationTwilio';
 
 interface EligibilityModalProps {
   open: boolean;
@@ -57,6 +56,43 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
   const [dobError, setDobError] = useState<string | null>(null);
   const [dobCompleted, setDobCompleted] = useState(false);
 
+  // Format DOB input as user types
+  const formatDobInput = (value: string) => {
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, '');
+    
+    // Format based on length
+    if (digits.length <= 2) {
+      return digits;
+    } else if (digits.length <= 4) {
+      return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    } else {
+      return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+    }
+  };
+
+  const handleDobInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatDobInput(e.target.value);
+    setDobInput(formatted);
+  };
+
+  // Format phone input as user types
+  const formatPhoneInput = (value: string) => {
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, '');
+    
+    // Format based on length
+    if (digits.length === 0) return '';
+    if (digits.length <= 3) return `(${digits}`;
+    if (digits.length <= 6) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
+    return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+  };
+
+  const handlePhoneInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatPhoneInput(e.target.value);
+    setPhoneInput(formatted);
+  };
+
   // Phone state
   const [phoneInput, setPhoneInput] = useState('');
   const [phoneError, setPhoneError] = useState<string | null>(null);
@@ -71,25 +107,10 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
   if (needDOB) steps.push('Date of Birth');
   if (needPhone) steps.push('Phone Verification');
 
-  // Initialize reCAPTCHA when modal opens
-  useEffect(() => {
-    if (open && needPhone) {
-      // Small delay to ensure DOM is ready
-      const timer = setTimeout(() => {
-        try {
-          initRecaptcha();
-        } catch (err) {
-          console.error('Failed to initialize reCAPTCHA:', err);
-        }
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [open, needPhone]);
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      cleanupRecaptcha();
+      cleanupPhoneVerification();
     };
   }, []);
 
@@ -116,7 +137,7 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
     setSuccess(null);
     setDobCompleted(false);
     setPhoneCompleted(false);
-    cleanupRecaptcha();
+    cleanupPhoneVerification();
     onClose();
   };
 
@@ -249,32 +270,39 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
   };
 
   const getStepContent = () => {
-    const actualStep = needDOB ? currentStep : currentStep - 1;
-
     // DOB Step
-    if (needDOB && actualStep === 0) {
+    if (needDOB && currentStep === 0) {
       return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           <Typography variant="body1" sx={{ color: 'text.secondary' }}>
             To apply for jobs, we need to verify you're at least 18 years old.
           </Typography>
 
-          <TextField
-            fullWidth
-            label="Date of Birth"
-            placeholder="MM/DD/YYYY"
-            value={dobInput}
-            onChange={(e) => setDobInput(e.target.value)}
-            error={!!dobError}
-            helperText={dobError || 'Format: MM/DD/YYYY'}
-            disabled={loading || dobCompleted}
-            autoFocus
-            onKeyPress={(e) => {
-              if (e.key === 'Enter' && !loading) {
-                handleDobSubmit();
-              }
-            }}
-          />
+              <TextField
+                fullWidth
+                label="Date of Birth"
+                placeholder="MM/DD/YYYY"
+                value={dobInput}
+                onChange={handleDobInputChange}
+                error={!!dobError}
+                helperText={dobError || 'Enter numbers only - format will be applied automatically'}
+                disabled={loading || dobCompleted}
+                autoFocus
+                inputProps={{
+                  maxLength: 10,
+                  inputMode: 'numeric',
+                  pattern: '[0-9\\/]*'
+                }}
+                onKeyPress={(e) => {
+                  // Allow only digits, backspace, delete, tab, escape, enter
+                  if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Escape', 'Enter'].includes(e.key)) {
+                    e.preventDefault();
+                  }
+                  if (e.key === 'Enter' && !loading) {
+                    handleDobSubmit();
+                  }
+                }}
+              />
 
           {dobCompleted && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'success.main' }}>
@@ -287,7 +315,7 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
     }
 
     // Phone Verification Step
-    if (needPhone && (needDOB ? actualStep === 1 : actualStep === 0)) {
+    if (needPhone && (needDOB ? currentStep === 1 : currentStep === 0)) {
       return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {!codeSent ? (
@@ -296,25 +324,31 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
                 Enter your mobile phone number. We'll send you a verification code.
               </Typography>
 
-              <TextField
-                fullWidth
-                label="Phone Number"
-                placeholder="(702) 555-0147"
-                value={phoneInput}
-                onChange={(e) => setPhoneInput(e.target.value)}
-                error={!!phoneError}
-                helperText={phoneError || 'Use a mobile number that can receive SMS'}
-                disabled={loading || phoneCompleted}
-                autoFocus={!needDOB || currentStep > 0}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && !loading) {
-                    handleSendCode();
-                  }
-                }}
-              />
-
-              {/* reCAPTCHA container */}
-              <div id="recaptcha-container"></div>
+                  <TextField
+                    fullWidth
+                    label="Phone Number"
+                    placeholder="(702) 555-0147"
+                    value={phoneInput}
+                    onChange={handlePhoneInputChange}
+                    error={!!phoneError}
+                    helperText={phoneError || 'Enter numbers only - format will be applied automatically'}
+                    disabled={loading || phoneCompleted}
+                    autoFocus={!needDOB || currentStep > 0}
+                    inputProps={{
+                      maxLength: 14,
+                      inputMode: 'numeric',
+                      pattern: '[0-9\\-\\(\\) ]*'
+                    }}
+                    onKeyPress={(e) => {
+                      // Allow only digits, backspace, delete, tab, escape, enter
+                      if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Escape', 'Enter'].includes(e.key)) {
+                        e.preventDefault();
+                      }
+                      if (e.key === 'Enter' && !loading) {
+                        handleSendCode();
+                      }
+                    }}
+                  />
             </>
           ) : (
             <>
@@ -390,10 +424,9 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
   };
 
   const getActionButton = () => {
-    const actualStep = needDOB ? currentStep : currentStep - 1;
 
     // DOB Step
-    if (needDOB && actualStep === 0) {
+    if (needDOB && currentStep === 0) {
       return (
         <Button
           onClick={handleDobSubmit}
@@ -408,7 +441,7 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
     }
 
     // Phone Verification Step
-    if (needPhone && (needDOB ? actualStep === 1 : actualStep === 0)) {
+    if (needPhone && (needDOB ? currentStep === 1 : currentStep === 0)) {
       if (!codeSent) {
         return (
           <Button
@@ -440,16 +473,18 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
   };
 
   return (
-    <Dialog
-      open={open}
-      onClose={!loading ? handleClose : undefined}
-      maxWidth="sm"
-      fullWidth
-      PaperProps={{
-        sx: { borderRadius: 3 },
-      }}
-      aria-labelledby="eligibility-dialog-title"
-    >
+        <Dialog
+          open={open}
+          onClose={!loading ? handleClose : undefined}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{
+            sx: { borderRadius: 3 },
+          }}
+          aria-labelledby="eligibility-dialog-title"
+          aria-describedby="eligibility-dialog-description"
+          disableEnforceFocus
+        >
       <DialogTitle sx={{ pb: 1 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="h5" sx={{ fontWeight: 600 }} id="eligibility-dialog-title">
@@ -461,19 +496,19 @@ const EligibilityModal: React.FC<EligibilityModalProps> = ({
         </Box>
       </DialogTitle>
 
-      <DialogContent>
-        {/* Progress Stepper */}
-        {steps.length > 1 && (
-          <Box sx={{ mb: 4 }}>
-            <Stepper activeStep={currentStep}>
-              {steps.map((label) => (
-                <Step key={label}>
-                  <StepLabel>{label}</StepLabel>
-                </Step>
-              ))}
-            </Stepper>
-          </Box>
-        )}
+          <DialogContent id="eligibility-dialog-description">
+            {/* Progress Stepper */}
+            {steps.length > 1 && (
+              <Box sx={{ mb: 4 }}>
+                <Stepper activeStep={currentStep}>
+                  {steps.map((label) => (
+                    <Step key={label}>
+                      <StepLabel>{label}</StepLabel>
+                    </Step>
+                  ))}
+                </Stepper>
+              </Box>
+            )}
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>

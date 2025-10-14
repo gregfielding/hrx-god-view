@@ -1854,7 +1854,25 @@ export const scheduledGmailMonitoring = onSchedule({
     console.info('scheduledGmailMonitoring: disabled by ENABLE_GMAIL_MONITORING');
     return;
   }
+  
+  // Idempotency: process this run only once
+  const runId = `gmail_monitoring_${new Date().toISOString().split('T')[0]}`;
+  const db = admin.firestore();
+  const runRef = db.collection('function_runs').doc(runId);
+  
+  try {
+    await runRef.create({ createdAt: admin.firestore.FieldValue.serverTimestamp() });
+  } catch {
+    console.info('scheduledGmailMonitoring: already processed today, skipping');
+    return;
+  }
+  
   const started = Date.now();
+  const timeBudget = 45000; // 45 seconds max
+  let tenantsProcessed = 0;
+  let pagesProcessed = 0;
+  let newItems = 0;
+  
   try {
     console.log('🔄 Starting scheduled Gmail monitoring...');
     
