@@ -46,7 +46,6 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
   };
 
   // Google Places Autocomplete (street address)
-  const streetRef = useRef<HTMLInputElement | null>(null);
   const autocompleteRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
@@ -55,12 +54,10 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
   onChangeRef.current = onChange;
   valueRef.current = value;
   
-  useEffect(() => {
-    if (!streetRef.current || !(window as any).google?.maps?.places) return;
-    
-    // Only create autocomplete once
-    if (!autocompleteRef.current) {
-      autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(streetRef.current, {
+  // Callback ref to initialize autocomplete when the input is mounted
+  const streetRefCallback = (node: HTMLInputElement | null) => {
+    if (node && !autocompleteRef.current && (window as any).google?.maps?.places) {
+      autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(node, {
         fields: ['address_components', 'formatted_address'],
         types: ['address'],
       });
@@ -80,8 +77,13 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
       
       const listener = autocompleteRef.current.addListener('place_changed', () => {
         const place = autocompleteRef.current.getPlace();
-        if (!place?.address_components) return;
+        console.log('Place selected:', place); // Debug log
+        if (!place?.address_components) {
+          console.log('No address components found'); // Debug log
+          return;
+        }
         const parsed = parse(place.address_components);
+        console.log('Parsed address:', parsed); // Debug log
         // Use refs to get the latest values without causing re-renders
         onChangeRef.current({ 
           ...valueRef.current, 
@@ -95,13 +97,16 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
       // Store the listener for cleanup
       autocompleteRef.current._listener = listener;
     }
-    
+  };
+  
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
       if (autocompleteRef.current?._listener?.remove) {
         autocompleteRef.current._listener.remove();
       }
     };
-  }, []); // Empty dependency array - only run once
+  }, []);
 
   return (
     <Box>
@@ -130,7 +135,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           />
         </Grid>
         <Grid item xs={12}>
-          <TextField fullWidth label="Street Address" value={value.street || ''} onChange={(e) => handle('street', e.target.value)} inputRef={streetRef} />
+          <TextField fullWidth label="Street Address" value={value.street || ''} onChange={(e) => handle('street', e.target.value)} inputRef={streetRefCallback} />
         </Grid>
         <Grid item xs={12} md={6}>
           <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
