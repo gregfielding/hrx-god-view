@@ -47,41 +47,61 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
 
   // Google Places Autocomplete (street address)
   const streetRef = useRef<HTMLInputElement | null>(null);
+  const autocompleteRef = useRef<any>(null);
+  const onChangeRef = useRef(onChange);
+  const valueRef = useRef(value);
+  
+  // Keep refs updated
+  onChangeRef.current = onChange;
+  valueRef.current = value;
+  
   useEffect(() => {
     if (!streetRef.current || !(window as any).google?.maps?.places) return;
-    const autocomplete = new (window as any).google.maps.places.Autocomplete(streetRef.current, {
-      fields: ['address_components', 'formatted_address'],
-      types: ['address'],
-    });
-    const parse = (components: any[]) => {
-      const get = (type: string) => {
-        const comp = components.find((c) => c.types?.includes(type));
-        return comp ? comp.long_name : '';
-      };
-      return {
-        street: `${get('street_number')} ${get('route')}`.trim(),
-        city: get('locality') || get('sublocality') || get('postal_town') || '',
-        state: get('administrative_area_level_1') || '',
-        zip: get('postal_code') || '',
-      };
-    };
-    const listener = autocomplete.addListener('place_changed', () => {
-      const place = autocomplete.getPlace();
-      if (!place?.address_components) return;
-      const parsed = parse(place.address_components);
-      // Preserve all existing form data and only update address fields
-      onChange({ 
-        ...value, 
-        street: parsed.street,
-        city: parsed.city,
-        state: parsed.state,
-        zip: parsed.zip
+    
+    // Only create autocomplete once
+    if (!autocompleteRef.current) {
+      autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(streetRef.current, {
+        fields: ['address_components', 'formatted_address'],
+        types: ['address'],
       });
-    });
+      
+      const parse = (components: any[]) => {
+        const get = (type: string) => {
+          const comp = components.find((c) => c.types?.includes(type));
+          return comp ? comp.long_name : '';
+        };
+        return {
+          street: `${get('street_number')} ${get('route')}`.trim(),
+          city: get('locality') || get('sublocality') || get('postal_town') || '',
+          state: get('administrative_area_level_1') || '',
+          zip: get('postal_code') || '',
+        };
+      };
+      
+      const listener = autocompleteRef.current.addListener('place_changed', () => {
+        const place = autocompleteRef.current.getPlace();
+        if (!place?.address_components) return;
+        const parsed = parse(place.address_components);
+        // Use refs to get the latest values without causing re-renders
+        onChangeRef.current({ 
+          ...valueRef.current, 
+          street: parsed.street,
+          city: parsed.city,
+          state: parsed.state,
+          zip: parsed.zip
+        });
+      });
+      
+      // Store the listener for cleanup
+      autocompleteRef.current._listener = listener;
+    }
+    
     return () => {
-      if (listener && listener.remove) listener.remove();
+      if (autocompleteRef.current?._listener?.remove) {
+        autocompleteRef.current._listener.remove();
+      }
     };
-  }, [streetRef.current]);
+  }, []); // Empty dependency array - only run once
 
   return (
     <Box>
