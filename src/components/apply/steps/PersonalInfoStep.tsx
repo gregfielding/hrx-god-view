@@ -56,46 +56,69 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
   
   // Callback ref to initialize autocomplete when the input is mounted
   const streetRefCallback = (node: HTMLInputElement | null) => {
-    if (node && !autocompleteRef.current && (window as any).google?.maps?.places) {
-      autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(node, {
-        fields: ['address_components', 'formatted_address'],
-        types: ['address'],
-      });
+    if (node && !autocompleteRef.current) {
+      console.log('Initializing Google Places Autocomplete...');
       
-      const parse = (components: any[]) => {
-        const get = (type: string) => {
-          const comp = components.find((c) => c.types?.includes(type));
-          return comp ? comp.long_name : '';
-        };
-        return {
-          street: `${get('street_number')} ${get('route')}`.trim(),
-          city: get('locality') || get('sublocality') || get('postal_town') || '',
-          state: get('administrative_area_level_1') || '',
-          zip: get('postal_code') || '',
-        };
-      };
+      // Check if Google Maps API is loaded
+      if (!(window as any).google?.maps?.places) {
+        console.error('Google Maps API not loaded');
+        return;
+      }
       
-      const listener = autocompleteRef.current.addListener('place_changed', () => {
-        const place = autocompleteRef.current.getPlace();
-        console.log('Place selected:', place); // Debug log
-        if (!place?.address_components) {
-          console.log('No address components found'); // Debug log
-          return;
-        }
-        const parsed = parse(place.address_components);
-        console.log('Parsed address:', parsed); // Debug log
-        // Use refs to get the latest values without causing re-renders
-        onChangeRef.current({ 
-          ...valueRef.current, 
-          street: parsed.street,
-          city: parsed.city,
-          state: parsed.state,
-          zip: parsed.zip
+      try {
+        autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(node, {
+          fields: ['address_components', 'formatted_address', 'name'],
+          types: ['address'],
+          componentRestrictions: { country: 'us' }, // Restrict to US addresses
         });
-      });
-      
-      // Store the listener for cleanup
-      autocompleteRef.current._listener = listener;
+        
+        console.log('Google Places Autocomplete created successfully');
+        
+        const parse = (components: any[]) => {
+          const get = (type: string) => {
+            const comp = components.find((c) => c.types?.includes(type));
+            return comp ? comp.long_name : '';
+          };
+          return {
+            street: `${get('street_number')} ${get('route')}`.trim(),
+            city: get('locality') || get('sublocality') || get('postal_town') || '',
+            state: get('administrative_area_level_1') || '',
+            zip: get('postal_code') || '',
+          };
+        };
+        
+        const listener = autocompleteRef.current.addListener('place_changed', () => {
+          console.log('Place changed event triggered');
+          const place = autocompleteRef.current.getPlace();
+          console.log('Place selected:', place);
+          
+          if (!place || !place.address_components) {
+            console.log('No place or address components found');
+            return;
+          }
+          
+          const parsed = parse(place.address_components);
+          console.log('Parsed address:', parsed);
+          
+          // Use refs to get the latest values without causing re-renders
+          onChangeRef.current({ 
+            ...valueRef.current, 
+            street: parsed.street,
+            city: parsed.city,
+            state: parsed.state,
+            zip: parsed.zip
+          });
+          
+          console.log('Form updated with address data');
+        });
+        
+        // Store the listener for cleanup
+        autocompleteRef.current._listener = listener;
+        console.log('Event listener attached to autocomplete');
+        
+      } catch (error) {
+        console.error('Error creating Google Places Autocomplete:', error);
+      }
     }
   };
   
@@ -135,7 +158,17 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           />
         </Grid>
         <Grid item xs={12}>
-          <TextField fullWidth label="Street Address" value={value.street || ''} onChange={(e) => handle('street', e.target.value)} inputRef={streetRefCallback} />
+          <TextField 
+            fullWidth 
+            label="Street Address" 
+            value={value.street || ''} 
+            onChange={(e) => handle('street', e.target.value)} 
+            inputRef={streetRefCallback}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+          />
         </Grid>
         <Grid item xs={12} md={6}>
           <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
