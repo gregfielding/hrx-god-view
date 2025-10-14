@@ -103,6 +103,7 @@ service cloud.firestore {
       // --- REGIONS (Tenants) ---
       match /regions/{regionId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
       }
 
       // --- DIVISION TYPES (Tenants) ---

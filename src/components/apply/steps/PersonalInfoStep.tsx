@@ -19,6 +19,32 @@ const formatPhone = (raw: string) => {
 const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
   const handle = (field: string, v: string) => onChange({ ...value, [field]: v });
 
+  // Format date for display (convert YYYY-MM-DD to MM/DD/YYYY)
+  const formatDateForDisplay = (dateString: string) => {
+    if (!dateString) return '';
+    // If it's already in MM/DD/YYYY format, return as is
+    if (dateString.includes('/')) return dateString;
+    // If it's in YYYY-MM-DD format, convert to MM/DD/YYYY
+    if (dateString.includes('-') && dateString.length === 10) {
+      const [year, month, day] = dateString.split('-');
+      return `${month}/${day}/${year}`;
+    }
+    return dateString;
+  };
+
+  // Format date for storage (convert MM/DD/YYYY to YYYY-MM-DD)
+  const formatDateForStorage = (dateString: string) => {
+    if (!dateString) return '';
+    // If it's already in YYYY-MM-DD format, return as is
+    if (dateString.includes('-') && dateString.length === 10) return dateString;
+    // If it's in MM/DD/YYYY format, convert to YYYY-MM-DD
+    if (dateString.includes('/')) {
+      const [month, day, year] = dateString.split('/');
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    return dateString;
+  };
+
   // Google Places Autocomplete (street address)
   const streetRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -43,7 +69,14 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
       const place = autocomplete.getPlace();
       if (!place?.address_components) return;
       const parsed = parse(place.address_components);
-      onChange({ ...value, ...parsed });
+      // Preserve all existing form data and only update address fields
+      onChange({ 
+        ...value, 
+        street: parsed.street,
+        city: parsed.city,
+        state: parsed.state,
+        zip: parsed.zip
+      });
     });
     return () => {
       if (listener && listener.remove) listener.remove();
@@ -67,7 +100,14 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           <TextField fullWidth label="Phone" inputMode="numeric" value={formatPhone(value.phone || '')} onChange={(e) => handle('phone', e.target.value)} />
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="Date of Birth (MM/DD/YYYY)" inputMode="numeric" value={value.dob || ''} onChange={(e) => handle('dob', e.target.value)} />
+          <TextField 
+            fullWidth 
+            label="Date of Birth (MM/DD/YYYY)" 
+            inputMode="numeric" 
+            placeholder="MM/DD/YYYY"
+            value={formatDateForDisplay(value.dob || '')} 
+            onChange={(e) => handle('dob', formatDateForStorage(e.target.value))} 
+          />
         </Grid>
         <Grid item xs={12}>
           <TextField fullWidth label="Street Address" value={value.street || ''} onChange={(e) => handle('street', e.target.value)} inputRef={streetRef} />
