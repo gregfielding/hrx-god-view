@@ -1,4 +1,5 @@
 import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import nlp from 'compromise';
 import OpenAI from 'openai';
@@ -141,20 +142,15 @@ export interface AIAnalysis {
 // Remove: const EDUCATION_LEVELS = { ... }
 
 /**
- * Parse resume from uploaded file
+ * Core resume parsing logic
  */
-export const parseResume = functions.https.onCall(async (request, context) => {
-  const { fileUrl, fileName, fileSize, userId } = request.data;
+async function parseResumeCore(fileUrl: string, fileName: string, fileSize: number, userId: string): Promise<any> {
   const startTime = Date.now();
 
-  if (!request.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-
-  // Get OpenAI API key from Firebase config
-  const openaiApiKey = functions.config().openai?.key;
+  // Get OpenAI API key from environment variables
+  const openaiApiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
   if (!openaiApiKey) {
-    throw new functions.https.HttpsError('failed-precondition', 'OpenAI API key is not set in Firebase config.');
+    throw new Error('OpenAI API key is not set in environment variables.');
   }
   const OpenAI = (await import('openai')).default;
   const openai = new OpenAI({ apiKey: openaiApiKey });
@@ -273,7 +269,71 @@ export const parseResume = functions.https.onCall(async (request, context) => {
       processingTime: Date.now() - startTime
     });
 
-    throw new functions.https.HttpsError('internal', 'Failed to parse resume');
+    throw new Error('Failed to parse resume');
+  }
+}
+
+// HTTP wrapper for parseResume to support localhost development with proper CORS
+export const parseResumeHttp = onRequest({
+  cors: true,
+  timeoutSeconds: 540,
+  memory: '512MiB',
+  maxInstances: 5
+}, async (req, res) => {
+  const requestOrigin = (req.headers.origin as string) || '';
+  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
+  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Max-Age', '3600');
+    res.set('Vary', 'Origin');
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    // Verify authentication
+    if (!req.headers.authorization) {
+      res.set('Access-Control-Allow-Origin', corsOrigin);
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Extract token and verify
+    const token = req.headers.authorization.replace('Bearer ', '');
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    
+    const { fileUrl, fileName, fileSize, userId } = req.body || {};
+    
+    if (!fileUrl || !fileName || !userId) {
+      res.set('Access-Control-Allow-Origin', corsOrigin);
+      res.status(400).json({ error: 'Missing required parameters: fileUrl, fileName, userId' });
+      return;
+    }
+
+    // Verify user owns the userId or is authorized
+    if (decodedToken.uid !== userId) {
+      res.set('Access-Control-Allow-Origin', corsOrigin);
+      res.status(403).json({ error: 'Unauthorized to parse resume for this user' });
+      return;
+    }
+
+    // Call the core parseResume logic
+    const result = await parseResumeCore(fileUrl, fileName, fileSize, userId);
+    
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.status(200).json(result);
+  } catch (error: any) {
+    console.error('parseResumeHttp error:', error);
+    res.set('Access-Control-Allow-Origin', corsOrigin);
+    res.status(500).json({ 
+      error: error.message || 'Failed to parse resume',
+      code: error.code || 'internal'
+    });
   }
 });
 
