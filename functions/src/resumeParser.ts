@@ -14,9 +14,25 @@ const db = admin.firestore();
 // Remove global openai client initialization
 // const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Types for resume parsing
-export interface ParsedResume {
+// Types for resume parsing with versioning support
+export interface ResumeUpload {
+  uploadId: string;
   userId: string;
+  fileName: string;
+  fileType: string;
+  sizeKB: number;
+  status: 'processing' | 'parsed' | 'failed';
+  uploadDate: Date;
+  storagePath: string;
+  parsedResumeId?: string;
+  archived: boolean;
+  fileHash?: string; // For duplicate detection
+}
+
+export interface ParsedResume {
+  parsedResumeId: string;
+  userId: string;
+  uploadId: string;
   customerId?: string;
   agencyId?: string;
   fileName: string;
@@ -40,6 +56,17 @@ export interface ParsedResume {
   status: 'processing' | 'completed' | 'failed';
   error?: string;
   processingTime: number;
+  mergeProposal?: MergeProposal;
+}
+
+export interface MergeProposal {
+  uploadId: string;
+  userId: string;
+  acceptedChanges: any;
+  rejectedChanges: any;
+  confidenceThreshold: number;
+  createdAt: Date;
+  reviewedAt?: Date;
 }
 
 export interface ContactInfo {
@@ -53,6 +80,8 @@ export interface ContactInfo {
 
 export interface Skill {
   name: string;
+  canonicalId?: string; // Reference to HRX predefined list
+  source: 'predefined' | 'custom';
   category: 'technical' | 'soft' | 'language' | 'certification' | 'other';
   level?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
   yearsOfExperience?: number;
@@ -142,7 +171,112 @@ export interface AIAnalysis {
 // Remove: const EDUCATION_LEVELS = { ... }
 
 /**
- * Core resume parsing logic
+ * Generate unique upload ID
+ */
+function generateUploadId(): string {
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '_');
+  const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '');
+  return `${dateStr}_${timeStr}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+/**
+ * Calculate file hash for duplicate detection
+ */
+function calculateFileHash(buffer: Buffer): string {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * Archive previous resumes when uploading new one
+ */
+async function archivePreviousResumes(userId: string, newUploadId: string): Promise<void> {
+  const uploadsRef = db.collection('resumeUploads').doc(userId);
+  const uploadsSnapshot = await uploadsRef.collection('uploads').where('archived', '==', false).get();
+  
+  const batch = db.batch();
+  uploadsSnapshot.docs.forEach(doc => {
+    if (doc.id !== newUploadId) {
+      batch.update(doc.ref, { archived: true });
+    }
+  });
+  
+  if (!uploadsSnapshot.empty) {
+    await batch.commit();
+  }
+}
+
+/**
+ * Commit merge with atomic batch writes
+ */
+async function commitMerge(uid: string, uploadId: string, acceptedChanges: any = {}): Promise<void> {
+  const batch = db.batch();
+  
+  // Get parsed resume data
+  const parsedResumeRef = db.collection('parsedResumes').doc(uploadId);
+  const parsedResumeDoc = await parsedResumeRef.get();
+  
+  if (!parsedResumeDoc.exists) {
+    throw new Error('Parsed resume not found');
+  }
+  
+  const parsedResume = parsedResumeDoc.data() as ParsedResume;
+  const parsedData = parsedResume.parsedData;
+  
+  // Apply accepted changes with confidence-based merging
+  const mergedData = await applyConfidenceBasedMerge(parsedData, acceptedChanges);
+  
+  // Update user profile
+  const userRef = db.collection('users').doc(uid);
+  batch.update(userRef, mergedData);
+  
+  // Update merge proposal
+  const mergeProposalRef = db.collection('mergeProposals').doc(`${uid}_${uploadId}`);
+  batch.set(mergeProposalRef, {
+    uploadId,
+    userId: uid,
+    acceptedChanges,
+    rejectedChanges: {},
+    confidenceThreshold: 0.8,
+    createdAt: new Date(),
+    reviewedAt: new Date()
+  });
+  
+  // Log merge action
+  const logRef = db.collection('logs').doc('resume-merge').collection('logs').doc();
+  batch.set(logRef, {
+    uploadId,
+    userId: uid,
+    changesCount: Object.keys(acceptedChanges).length,
+    confidenceScores: Object.values(parsedData).map((item: any) => item.confidence || 0),
+    timestamp: new Date()
+  });
+  
+  await batch.commit();
+}
+
+/**
+ * Apply confidence-based merging
+ */
+async function applyConfidenceBasedMerge(parsedData: any, acceptedChanges: any): Promise<any> {
+  const mergedData: any = {};
+  
+  // Auto-merge high confidence fields (≥0.8)
+  Object.entries(parsedData).forEach(([key, value]: [string, any]) => {
+    if (typeof value === 'object' && value.confidence >= 0.8) {
+      mergedData[key] = value;
+    }
+  });
+  
+  // Apply user-accepted changes
+  Object.assign(mergedData, acceptedChanges);
+  
+  return mergedData;
+}
+
+/**
+ * Core resume parsing logic with versioning
  */
 async function parseResumeCore(fileUrl: string, fileName: string, fileSize: number, userId: string): Promise<any> {
   const startTime = Date.now();
@@ -165,25 +299,48 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     const customerId = userData?.customerId;
     const agencyId = userData?.agencyId;
 
-    // Create initial parsing record
-    const parsingId = `resume_${userId}_${Date.now()}`;
-    const parsingRef = db.collection('resumeParsing').doc(parsingId);
-    
-    await parsingRef.set({
-      userId,
-      customerId,
-      agencyId,
-      fileName,
-      fileSize,
-      uploadDate: new Date(),
-      status: 'processing',
-      processingTime: 0
-    });
+    // Generate upload ID and storage path
+    const uploadId = generateUploadId();
+    const storagePath = `resumes/${userId}/${uploadId}.${fileName.split('.').pop()}`;
 
     // Download and parse the file
     const fileBuffer = await downloadFile(fileUrl);
-    const fileExtension = fileName.toLowerCase().split('.').pop();
+    const fileHash = calculateFileHash(fileBuffer);
     
+    // Check for duplicate files
+    const existingUploads = await db.collection('resumeUploads').doc(userId)
+      .collection('uploads').where('fileHash', '==', fileHash).get();
+    
+    if (!existingUploads.empty) {
+      const existingUpload = existingUploads.docs[0].data();
+      return {
+        success: true,
+        uploadId: existingUpload.uploadId,
+        parsedData: existingUpload.parsedData,
+        duplicate: true
+      };
+    }
+
+    // Archive previous resumes
+    await archivePreviousResumes(userId, uploadId);
+
+    // Create upload record
+    const uploadRef = db.collection('resumeUploads').doc(userId).collection('uploads').doc(uploadId);
+    await uploadRef.set({
+      uploadId,
+      userId,
+      fileName,
+      fileType: fileName.split('.').pop() || '',
+      sizeKB: Math.round(fileSize / 1024),
+      status: 'processing',
+      uploadDate: new Date(),
+      storagePath,
+      archived: false,
+      fileHash
+    });
+
+    // Parse file content
+    const fileExtension = fileName.toLowerCase().split('.').pop();
     let parsedText = '';
     
     switch (fileExtension) {
@@ -204,9 +361,11 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     // Extract structured data using AI and NLP
     const parsedData = await extractResumeData(parsedText, fileName, openai);
 
-    // Create final parsed resume record
+    // Create parsed resume record
     const parsedResume: ParsedResume = {
+      parsedResumeId: uploadId,
       userId,
+      uploadId,
       customerId,
       agencyId,
       fileName,
@@ -217,17 +376,34 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       processingTime: Date.now() - startTime
     };
 
-    // Save parsed resume
-    await db.collection('parsedResumes').doc(parsingId).set(parsedResume);
-
-    // Update user profile with extracted information
-    await updateUserProfile(userId, parsedData);
-
-    // Update parsing status
-    await parsingRef.update({
-      status: 'completed',
-      processingTime: Date.now() - startTime
+    // Save to Firestore collections
+    const batch = db.batch();
+    
+    // Update upload record
+    batch.update(uploadRef, {
+      status: 'parsed',
+      parsedResumeId: uploadId
     });
+    
+    // Save parsed resume
+    const parsedResumeRef = db.collection('parsedResumes').doc(uploadId);
+    batch.set(parsedResumeRef, parsedResume);
+    
+    // Create merge proposal
+    const mergeProposalRef = db.collection('mergeProposals').doc(`${userId}_${uploadId}`);
+    batch.set(mergeProposalRef, {
+      uploadId,
+      userId,
+      acceptedChanges: {},
+      rejectedChanges: {},
+      confidenceThreshold: 0.8,
+      createdAt: new Date()
+    });
+    
+    await batch.commit();
+
+    // Auto-merge high confidence data
+    await commitMerge(userId, uploadId);
 
     // Log AI action
     await logAIAction({
@@ -236,37 +412,41 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       sourceModule: 'ResumeParser',
       success: true,
       latencyMs: Date.now() - startTime,
-      versionTag: 'v1',
+      versionTag: 'v2',
       reason: `Resume parsed successfully: ${fileName}`,
       eventType: 'profile.resume_parsed',
       targetType: 'resume',
-      targetId: parsingId,
+      targetId: uploadId,
       aiRelevant: true,
       contextType: 'profile',
       traitsAffected: null,
-      aiTags: ['resume_parsing', 'ai_extraction', 'profile_update'],
+      aiTags: ['resume_parsing', 'ai_extraction', 'profile_update', 'versioning'],
       urgencyScore: 5
     });
 
     return {
       success: true,
-      parsingId,
+      uploadId,
       parsedData
     };
 
   } catch (error) {
     console.error('Resume parsing error:', error);
     
-    // Update parsing status to failed
-    const parsingId = `resume_${userId}_${Date.now()}`;
-    await db.collection('resumeParsing').doc(parsingId).set({
+    // Update upload status to failed
+    const uploadId = generateUploadId();
+    const uploadRef = db.collection('resumeUploads').doc(userId).collection('uploads').doc(uploadId);
+    await uploadRef.set({
+      uploadId,
       userId,
       fileName,
-      fileSize,
-      uploadDate: new Date(),
+      fileType: fileName.split('.').pop() || '',
+      sizeKB: Math.round(fileSize / 1024),
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      processingTime: Date.now() - startTime
+      uploadDate: new Date(),
+      storagePath: '',
+      archived: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
 
     throw new Error('Failed to parse resume');
@@ -635,6 +815,8 @@ function extractSkillsFromText(text: string): Skill[] {
     if (text.toLowerCase().includes(skill)) {
       skills.push({
         name: skill,
+        canonicalId: skill, // Use skill name as canonical ID for predefined skills
+        source: 'predefined',
         category: 'technical',
         confidence: 0.8
       });
@@ -646,6 +828,8 @@ function extractSkillsFromText(text: string): Skill[] {
     if (text.toLowerCase().includes(skill)) {
       skills.push({
         name: skill,
+        canonicalId: skill, // Use skill name as canonical ID for predefined skills
+        source: 'predefined',
         category: 'soft',
         confidence: 0.7
       });
@@ -1026,7 +1210,82 @@ export const getResumeParsingStatus = functions.https.onCall(async (request, con
 });
 
 /**
- * Get user's parsed resumes
+ * Get user's resume uploads with versioning
+ */
+export const getUserResumeUploads = functions.https.onCall(async (request, context) => {
+  const { userId } = request.data;
+  
+  if (!request.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  
+  try {
+    const uploadsSnapshot = await db.collection('resumeUploads').doc(userId)
+      .collection('uploads')
+      .orderBy('uploadDate', 'desc')
+      .get();
+    
+    const uploads = uploadsSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
+    return { uploads };
+    
+  } catch (error) {
+    throw new functions.https.HttpsError('internal', 'Failed to get resume uploads');
+  }
+});
+
+/**
+ * Get signed URL for resume file viewing/downloading
+ */
+export const getResumeSignedUrl = functions.https.onCall(async (request, context) => {
+  const { userId, uploadId, action = 'read' } = request.data;
+  
+  if (!request.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+  
+  try {
+    // Get upload record
+    const uploadDoc = await db.collection('resumeUploads').doc(userId)
+      .collection('uploads').doc(uploadId).get();
+    
+    if (!uploadDoc.exists) {
+      throw new functions.https.HttpsError('not-found', 'Resume upload not found');
+    }
+    
+    const uploadData = uploadDoc.data();
+    if (!uploadData?.storagePath) {
+      throw new functions.https.HttpsError('not-found', 'Storage path not found');
+    }
+    
+    // Generate signed URL
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(uploadData.storagePath);
+    
+    const [signedUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: action === 'download' ? 'read' : 'read',
+      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+      responseDisposition: action === 'download' ? 'attachment' : 'inline'
+    });
+    
+    return { 
+      signedUrl,
+      fileName: uploadData.fileName,
+      fileSize: uploadData.sizeKB,
+      uploadDate: uploadData.uploadDate
+    };
+    
+  } catch (error) {
+    throw new functions.https.HttpsError('internal', 'Failed to generate signed URL');
+  }
+});
+
+/**
+ * Get user's parsed resumes (legacy function - keeping for compatibility)
  */
 export const getUserParsedResumes = functions.https.onCall(async (request, context) => {
   const { userId } = request.data;

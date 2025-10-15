@@ -21,7 +21,7 @@ import * as FirebaseFirestore from 'firebase-admin/firestore';
 import sgMail from '@sendgrid/mail';
 import { runFirestoreTriggerTests } from './testTriggersCLI';
 import type { TestResult } from './testFirestoreTriggers';
-import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes } from './resumeParser';
+import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
   getSSOConfig, updateSSOConfig, testSSOConnection,
@@ -4969,7 +4969,7 @@ export const validatePromptConsistency = onCall(async (request) => {
 });
 
 // Resume Parser Functions
-export { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes };
+export { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl };
 
 // Phase 4: HRXOne Worker Onboarding Flow Functions
 export const validateInviteToken = onCall(async (request) => {
