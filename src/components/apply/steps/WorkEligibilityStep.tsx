@@ -34,6 +34,11 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
             label="Gender (optional)"
             value={value.gender || ''}
             onChange={(e) => handle('gender', e.target.value)}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (selected: any) => (selected === '' ? 'Prefer not to say' : selected),
+            }}
+            InputLabelProps={{ shrink: true }}
           >
             <MenuItem value="">Prefer not to say</MenuItem>
             <MenuItem value="Male">Male</MenuItem>
@@ -49,6 +54,11 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
             label="Veteran status (optional)"
             value={value.veteranStatus || ''}
             onChange={(e) => handle('veteranStatus', e.target.value)}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (selected: any) => (selected === '' ? 'Prefer not to say' : selected),
+            }}
+            InputLabelProps={{ shrink: true }}
           >
             <MenuItem value="">Prefer not to say</MenuItem>
             <MenuItem value="Not a veteran">Not a veteran</MenuItem>
@@ -62,6 +72,11 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
             label="Disability (optional)"
             value={value.disabilityStatus || ''}
             onChange={(e) => handle('disabilityStatus', e.target.value)}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (selected: any) => (selected === '' ? 'Prefer not to say' : selected),
+            }}
+            InputLabelProps={{ shrink: true }}
           >
             <MenuItem value="">Prefer not to say</MenuItem>
             <MenuItem value="No disability">No disability</MenuItem>

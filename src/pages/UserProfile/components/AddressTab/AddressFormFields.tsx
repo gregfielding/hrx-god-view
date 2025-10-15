@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Box, Grid, TextField, Button, Snackbar, Alert } from '@mui/material';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Box, Grid, TextField, Button, Snackbar, Alert, Typography } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
-
 
 type Props = {
   uid: string;
@@ -14,12 +13,37 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
   const [originalForm, setOriginalForm] = useState(formData);
   const [showToast, setShowToast] = useState(false);
   const [message, setMessage] = useState('');
+  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
   const autocompleteRef = useRef<any>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout>();
+
+  // Check if Google Maps is loaded with retry logic
+  const checkGoogleMapsLoaded = useCallback(() => {
+    const isLoaded = !!(window as any).google?.maps?.places;
+    if (isLoaded) {
+      setIsGoogleMapsLoaded(true);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = undefined;
+      }
+    } else {
+      // Retry after 100ms if not loaded
+      retryTimeoutRef.current = setTimeout(checkGoogleMapsLoaded, 100);
+    }
+  }, []);
 
   useEffect(() => {
     setForm(formData);
     setOriginalForm(formData);
-  }, [formData]);
+    checkGoogleMapsLoaded();
+    
+    // Cleanup timeout on unmount
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+    };
+  }, [formData, checkGoogleMapsLoaded]);
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
 
@@ -28,23 +52,44 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
     setForm((prev: typeof form) => ({ ...prev, [name]: value }));
   };
 
-  const handlePlaceChanged = () => {
+  const handlePlaceChanged = useCallback(() => {
+    if (!autocompleteRef.current?.getPlace) return;
+    
     const place = autocompleteRef.current.getPlace();
-    if (!place || !place.geometry) return;
-    const components = place.address_components || [];
-    const getComponent = (types: string[]) =>
-      components.find((comp: any) => types.every((t) => comp.types.includes(t)))?.long_name || '';
+    if (!place || !place.address_components) return;
+    
+    const components = place.address_components;
+    const getComponent = (types: string[]) => {
+      const component = components.find((c: any) => 
+        types.every((t) => c.types?.includes(t))
+      );
+      return component?.long_name || '';
+    };
 
-    setForm((prev: typeof form) => ({
-      ...prev,
+    // Update only address fields to prevent clearing other form data
+    const newAddressData = {
       streetAddress: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
-      city: getComponent(['locality']),
+      city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
       state: getComponent(['administrative_area_level_1']),
       zip: getComponent(['postal_code']),
-      homeLat: place.geometry.location.lat(),
-      homeLng: place.geometry.location.lng(),
-    }));
-  };
+      homeLat: place.geometry?.location?.lat?.(),
+      homeLng: place.geometry?.location?.lng?.(),
+    };
+
+    // Only update fields that have values from the place
+    const updatedData = { ...form };
+    Object.entries(newAddressData).forEach(([key, val]) => {
+      if (val !== undefined && val !== '') {
+        updatedData[key] = val;
+      }
+    });
+
+    setForm(updatedData);
+  }, [form]);
+
+  const handleAutocompleteLoad = useCallback((autocomplete: any) => {
+    autocompleteRef.current = autocomplete;
+  }, []);
 
   const handleSave = async () => {
     await onFormChange(form);
@@ -55,10 +100,35 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
 
   return (
     <Box>
-      <Autocomplete
-        onLoad={(ref) => (autocompleteRef.current = ref)}
-        onPlaceChanged={handlePlaceChanged}
-      >
+      {isGoogleMapsLoaded ? (
+        <Autocomplete 
+          onLoad={handleAutocompleteLoad} 
+          onPlaceChanged={handlePlaceChanged}
+          options={{
+            componentRestrictions: { country: 'us' },
+            fields: ['address_components', 'formatted_address', 'geometry'],
+          }}
+        >
+          <TextField
+            label="Street Address"
+            value={form.streetAddress || ''}
+            onChange={handleManualChange}
+            name="streetAddress"
+            fullWidth
+            sx={{ mb: 2 }}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            inputProps={{
+              autoComplete: 'off',
+              autoCorrect: 'off',
+              autoCapitalize: 'off',
+              spellCheck: 'false',
+            }}
+          />
+        </Autocomplete>
+      ) : (
         <TextField
           label="Street Address"
           value={form.streetAddress || ''}
@@ -66,8 +136,18 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
           name="streetAddress"
           fullWidth
           sx={{ mb: 2 }}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck="false"
+          inputProps={{
+            autoComplete: 'off',
+            autoCorrect: 'off',
+            autoCapitalize: 'off',
+            spellCheck: 'false',
+          }}
         />
-      </Autocomplete>
+      )}
       <TextField
         label="Unit Number"
         value={form.unitNumber || ''}

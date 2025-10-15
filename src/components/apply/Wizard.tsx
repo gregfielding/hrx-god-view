@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography } from '@mui/material';
+import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar } from '@mui/material';
 import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
+import ProfilePictureStep from './steps/ProfilePictureStep';
 import ResumeStep from './steps/ResumeStep';
 import QualificationsStep from './steps/QualificationsStep';
 import JobPreferencesStep from './steps/JobPreferencesStep';
@@ -28,10 +29,21 @@ type DraftApplication = {
   data: any;
 };
 
-const steps = ['Personal Info', 'Work Eligibility', 'Resume', 'Qualifications', 'Preferences', 'Requirements', 'Review'];
+const steps = ['Personal Info', 'Work Eligibility', 'Profile Picture', 'Resume', 'Qualifications', 'Preferences', 'Requirements', 'Review'];
 
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => {
-  const [activeStep, setActiveStep] = useState(0);
+  // Create a unique key for this application session
+  const sessionKey = `app-wizard-${tenantId}-${jobId}-${uid}`;
+  
+  // Initialize activeStep from localStorage if available
+  const [activeStep, setActiveStep] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`${sessionKey}-step`);
+      return saved ? parseInt(saved, 10) : 0;
+    } catch {
+      return 0;
+    }
+  });
   const [saving, setSaving] = useState(false);
   const [appId, setAppId] = useState<string | null>(null);
   const [formData, setFormData] = useState<any>({});
@@ -46,6 +58,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
   const [posting, setPosting] = useState<any>(null);
   const prefilledRef = useRef(false);
   const [tenantAppId, setTenantAppId] = useState<string | null>(null);
+  const [stepRestored, setStepRestored] = useState(false);
+
+  // Check if step was restored from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`${sessionKey}-step`);
+      if (saved && parseInt(saved, 10) > 0) {
+        setStepRestored(true);
+      }
+    } catch (error) {
+      console.warn('Failed to check saved step:', error);
+    }
+  }, [sessionKey]);
 
   // Create draft doc on first load (user-owned path; fallback to localStorage if rules block)
   useEffect(() => {
@@ -173,6 +198,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       disabilityStatus: userProfile.disabilityStatus || '',
     };
 
+    const profilePicture = {
+      profilePicture: userProfile.avatar || '',
+    };
+
     const qualifications = {
       skills: Array.isArray(userProfile.skills) ? userProfile.skills : [],
       certifications: Array.isArray(userProfile.certifications) ? userProfile.certifications : [],
@@ -189,7 +218,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
     };
 
     // Persist prefill to draft if possible
-    persist({ personal, eligibility, qualifications, preferences });
+    persist({ personal, eligibility, profilePicture, qualifications, preferences });
   }, [userProfile]);
 
   // Compute missing required items using profile + acknowledgements
@@ -281,6 +310,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
             if (addr.city) update.city = addr.city;
             if (addr.state) update.state = addr.state;
             if (addr.zipCode) update.zipCode = addr.zipCode;
+
+            // Keep Profile page Home Address (AddressFormFields) in sync
+            // That component reads/writes users/{uid}.addressInfo.{streetAddress,unitNumber,city,state,zip}
+            if (p.street) update['addressInfo.streetAddress'] = String(p.street).trim();
+            if (p.unit) update['addressInfo.unitNumber'] = String(p.unit).trim();
+            if (p.city) update['addressInfo.city'] = String(p.city).trim();
+            if (p.state) update['addressInfo.state'] = String(p.state).trim();
+            if (p.zip) update['addressInfo.zip'] = String(p.zip).trim();
           }
           if (Object.keys(update).length > 1) {
             await updateDoc(userRef, update);
@@ -290,13 +327,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           const e = formData.eligibility || {};
           const update: any = { updatedAt: serverTimestamp() };
           if (typeof e.workAuthorized === 'boolean') update.workEligibility = !!e.workAuthorized;
-          if (e.gender) update.gender = String(e.gender);
-          if (e.veteranStatus) update.veteranStatus = String(e.veteranStatus);
-          if (e.disabilityStatus) update.disabilityStatus = String(e.disabilityStatus);
+          if (typeof e.requireSponsorship === 'boolean') update.requireSponsorship = !!e.requireSponsorship;
+          if (e.gender !== undefined) update.gender = String(e.gender || '');
+          if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
+          if (e.disabilityStatus !== undefined) update.disabilityStatus = String(e.disabilityStatus || '');
           if (Object.keys(update).length > 1) {
             await updateDoc(userRef, update);
           }
-        } else if (activeStep === 3) {
+        } else if (activeStep === 2) {
+          // Profile Picture → save profile picture URL
+          const p = formData.profilePicture || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          if (p.profilePicture) update.avatar = p.profilePicture;
+          if (Object.keys(update).length > 1) {
+            await updateDoc(userRef, update);
+          }
+        } else if (activeStep === 4) {
           // Qualifications → save key arrays to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -309,10 +355,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         }
       }
     } finally {
-      setActiveStep((s) => Math.min(s + 1, steps.length - 1));
+      const newStep = Math.min(activeStep + 1, steps.length - 1);
+      setActiveStep(newStep);
+      // Save current step to localStorage
+      try {
+        localStorage.setItem(`${sessionKey}-step`, newStep.toString());
+      } catch (error) {
+        console.warn('Failed to save step to localStorage:', error);
+      }
     }
   };
-  const handleBack = () => setActiveStep((s) => Math.max(s - 1, 0));
+  
+  const handleBack = () => {
+    const newStep = Math.max(activeStep - 1, 0);
+    setActiveStep(newStep);
+    // Save current step to localStorage
+    try {
+      localStorage.setItem(`${sessionKey}-step`, newStep.toString());
+    } catch (error) {
+      console.warn('Failed to save step to localStorage:', error);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!uid || !appId) return;
@@ -331,6 +394,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       const userRef = doc(db, 'users', uid!);
       const personal = formData.personal || {};
       const eligibility = formData.eligibility || {};
+      const profilePicture = formData.profilePicture || {};
       const quals = formData.qualifications || {};
       const languages = Array.isArray(quals.languages)
         ? quals.languages
@@ -356,6 +420,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus) profileUpdate.veteranStatus = String(eligibility.veteranStatus);
       if (eligibility.disabilityStatus) profileUpdate.disabilityStatus = String(eligibility.disabilityStatus);
+      if (profilePicture.profilePicture) profileUpdate.avatar = String(profilePicture.profilePicture);
       await updateDoc(userRef, profileUpdate);
 
       // Mark tenant application as submitted
@@ -366,6 +431,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           await updateDoc(tRef, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
         }
       } catch {}
+      
+      // Clear saved step from localStorage after successful submission
+      try {
+        localStorage.removeItem(`${sessionKey}-step`);
+      } catch (error) {
+        console.warn('Failed to clear step from localStorage:', error);
+      }
     } finally {
       setSaving(false);
     }
@@ -378,12 +450,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       case 1:
         return <WorkEligibilityStep value={formData.eligibility || {}} onChange={(v) => persist({ eligibility: v })} />;
       case 2:
-        return <ResumeStep value={{ ...(formData.resume || {}), userId: uid || '' }} onChange={(v) => persist({ resume: v })} tenantId={tenantId} />;
+        return <ProfilePictureStep value={formData.profilePicture || {}} onChange={(v) => persist({ profilePicture: v })} />;
       case 3:
-        return <QualificationsStep value={formData.qualifications || {}} onChange={(v) => persist({ qualifications: v })} />;
+        return <ResumeStep value={{ ...(formData.resume || {}), userId: uid || '' }} onChange={(v) => persist({ resume: v })} tenantId={tenantId} />;
       case 4:
-        return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} />;
+        return <QualificationsStep value={formData.qualifications || {}} onChange={(v) => persist({ qualifications: v })} />;
       case 5:
+        return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} />;
+      case 6:
         return (
           <RequirementsAcknowledgementStep
             requirements={requirements}
@@ -393,7 +467,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
             onChange={(v) => persist({ requirements: v })}
           />
         );
-      case 6:
+      case 7:
         return <ReviewSubmitStep value={formData} onSubmit={handleSubmit} submitting={saving} tenantName={tenantName} />;
       default:
         return null;
@@ -406,6 +480,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         <Typography variant="h6" fontWeight={700}>{tenantName ? `${tenantName} Application` : 'Application'}</Typography>
         <Typography variant="subtitle2" color="text.secondary">{saving ? 'Saving…' : 'All changes saved'}</Typography>
       </Stack>
+      
+      {stepRestored && (
+        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setStepRestored(false)}>
+          Welcome back! You've been restored to step {activeStep + 1}: {steps[activeStep]}
+        </Alert>
+      )}
+      
       <Divider sx={{ my: 2 }} />
 
       <Stepper activeStep={activeStep} alternativeLabel>
@@ -425,7 +506,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           onClick={handleNext}
           disabled={
             activeStep === steps.length - 1 ||
-            (activeStep === 5 && (
+            (activeStep === 6 && (
               missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
             ))
           }

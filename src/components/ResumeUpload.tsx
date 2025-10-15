@@ -23,6 +23,7 @@ import {
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getAuth } from 'firebase/auth';
 
 interface ResumeUploadProps {
   userId: string;
@@ -52,6 +53,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
   const [showPreview, setShowPreview] = useState(false);
 
   const functions = getFunctions();
+  const auth = getAuth();
   const parseResume = httpsCallable(functions, 'parseResume');
   const getResumeParsingStatus = httpsCallable(functions, 'getResumeParsingStatus');
 
@@ -124,15 +126,33 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         });
 
         try {
-          const result = await parseResume({
-            fileUrl,
-            fileName: file.name,
-            fileSize: file.size,
-            userId,
-            tenantId
+          // Use HTTP endpoint for localhost CORS support
+          const token = await auth.currentUser?.getIdToken();
+          if (!token) {
+            throw new Error('User not authenticated');
+          }
+
+          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/parseResumeHttp', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              fileUrl,
+              fileName: file.name,
+              fileSize: file.size,
+              userId,
+              tenantId
+            })
           });
 
-          const data = result.data as any;
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          const data = await response.json();
           
           if (data.success) {
             setParsingStatus({

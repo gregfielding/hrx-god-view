@@ -109,10 +109,12 @@ import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
-console.log('Google Maps API key available:', !!googleMapsApiKey);
+if (process.env.NODE_ENV === 'development') {
+  console.log('Google Maps API key available:', !!googleMapsApiKey);
+}
 
-// Static libraries array to prevent performance warnings
-const googleMapsLibraries: Libraries = ['places'];
+// Static libraries array to prevent performance warnings (shared across app)
+const googleMapsLibraries: Libraries = ['places', 'maps'];
 
 function UserGroupDetailsWrapper() {
   const { groupId } = useParams();
@@ -136,9 +138,13 @@ function CRMAccessGuard({ children }: { children: React.ReactNode }) {
 
 function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
   const { recruiterEnabled } = useAuth();
-  console.log('🔍 RecruiterAccessGuard: recruiterEnabled =', recruiterEnabled);
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 RecruiterAccessGuard: recruiterEnabled =', recruiterEnabled);
+  }
   if (!recruiterEnabled) {
-    console.log('🔍 RecruiterAccessGuard: Access denied, showing error message');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 RecruiterAccessGuard: Access denied, showing error message');
+    }
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
         <Typography variant="h5" color="error">Access Denied</Typography>
@@ -146,7 +152,9 @@ function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
       </Box>
     );
   }
-  console.log('🔍 RecruiterAccessGuard: Access granted, rendering children');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 RecruiterAccessGuard: Access granted, rendering children');
+  }
   return <>{children}</>;
 }
 
@@ -201,7 +209,9 @@ const IntegrationsTabWrapper: React.FC = () => {
 };
 
 function App() {
-  console.log('App rendered');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('App rendered');
+  }
   useEffect(() => {
     try {
       // Enable new associations read by default
@@ -824,7 +834,9 @@ function App() {
     </Routes>
   );
 
-  console.log('App component about to return JSX');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('App component about to return JSX');
+  }
   return (
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>

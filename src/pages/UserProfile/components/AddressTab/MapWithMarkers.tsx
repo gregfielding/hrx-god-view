@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
+import { GoogleMap, Marker } from '@react-google-maps/api';
 import { Box, Typography } from '@mui/material';
 
 type LatLng = {
@@ -29,10 +29,8 @@ const MapWithMarkers: React.FC<Props> = ({
   currentLat,
   currentLng,
 }) => {
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '',
-    libraries: ['places', 'maps'],
-  });
+  // Maps script is loaded globally in App via LoadScript; assume available here
+  const isLoaded = !!(window as any).google?.maps;
 
   const [center, setCenter] = useState<LatLng | null>(null);
 

@@ -60,8 +60,11 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   const mapOnetSkillsToInternal = (onetSkillsList: { name: string; category: string }[]) => {
     return onetSkillsList.map(skill => ({
       name: skill.name,
+      canonicalId: skill.name,
+      source: 'predefined' as const,
       type: skill.category,
-      level: 'Intermediate' // Default level
+      level: 'Intermediate' as const,
+      confidence: 1.0
     }));
   };
 
@@ -151,14 +154,35 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     'Non-profit', 'Entertainment', 'Real Estate', 'Consulting', 'Marketing'
   ];
 
-  // Skills & Competencies
-  const [skills, setSkills] = useState<{ name: string; type: string; level?: string }[]>(
+  // Skills & Competencies with new schema support
+  const [skills, setSkills] = useState<{ 
+    name: string; 
+    canonicalId?: string; 
+    source: 'predefined' | 'custom'; 
+    type: string; 
+    level?: string;
+    confidence?: number;
+  }[]>(
     (user.skills || []).map(
       (skillName: string) => {
         const foundSkill = onetSkills.find((s) => s.name === skillName);
         return foundSkill 
-          ? { name: foundSkill.name, type: foundSkill.category, level: 'Intermediate' }
-          : { name: skillName, type: 'Other', level: 'Intermediate' };
+          ? { 
+              name: foundSkill.name, 
+              canonicalId: foundSkill.name,
+              source: 'predefined',
+              type: foundSkill.category, 
+              level: 'Intermediate',
+              confidence: 1.0
+            }
+          : { 
+              name: skillName, 
+              canonicalId: undefined,
+              source: 'custom',
+              type: 'Other', 
+              level: 'Intermediate',
+              confidence: 0.8
+            };
       },
     ),
   );
@@ -274,7 +298,14 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
 
   const handleAddSkill = () => {
     if (skillInput) {
-      setSkills([...skills, { name: skillInput, type: 'Other', level: selectedSkillLevel }]);
+      setSkills([...skills, { 
+        name: skillInput, 
+        canonicalId: undefined,
+        source: 'custom',
+        type: 'Other', 
+        level: selectedSkillLevel,
+        confidence: 0.8
+      }]);
       setSkillInput('');
     }
   };
@@ -483,8 +514,15 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
       workEnvironmentPreferences,
       preferredLearningMethods,
       industryPreferences,
-      // Skills & Competencies
-      skills: skills.map((s) => ({ name: s.name, type: s.type, level: s.level })),
+      // Skills & Competencies with new schema
+      skills: skills.map((s) => ({ 
+        name: s.name, 
+        canonicalId: s.canonicalId,
+        source: s.source,
+        type: s.type, 
+        level: s.level,
+        confidence: s.confidence
+      })),
       assessments,
       // Certifications & References
       certifications,
@@ -785,18 +823,37 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 <Grid item xs={12} md={8}>
                   <Autocomplete
                     multiple
+                    freeSolo
                     options={mapOnetSkillsToInternal(onetSkills)}
                     groupBy={(option) => option.type}
-                    getOptionLabel={(option) => option.name}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.name}
                     value={skills}
-                    onChange={(_, newValue) => setSkills(newValue)}
+                    onChange={(_, newValue) => {
+                      const updatedSkills = newValue.map((value) => {
+                        if (typeof value === 'string') {
+                          // Custom skill entered
+                          return {
+                            name: value,
+                            canonicalId: undefined,
+                            source: 'custom' as const,
+                            type: 'Other',
+                            level: selectedSkillLevel,
+                            confidence: 0.8
+                          };
+                        } else {
+                          // Predefined skill selected
+                          return value;
+                        }
+                      });
+                      setSkills(updatedSkills);
+                    }}
                     renderTags={(value, getTagProps) =>
                       value.map((option, index) => (
                         <Chip
                           label={`${option.name}${option.level ? ` (${option.level})` : ''}`}
                           {...getTagProps({ index })}
-                          color={getSkillLevelColor(option.level || 'Intermediate')}
-                          variant="outlined"
+                          color={option.source === 'predefined' ? 'primary' : 'default'}
+                          variant={option.source === 'predefined' ? 'filled' : 'outlined'}
                           key={option.name}
                         />
                       ))

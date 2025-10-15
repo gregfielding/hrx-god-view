@@ -59,6 +59,14 @@ service firebase.storage {
       allow read: if request.auth != null;
     }
 
+    // Profile picture upload access
+    match /profile-pictures/{fileName} {
+      // Allow any authenticated user to upload/delete profile pictures
+      allow write, delete: if request.auth != null;
+      // Public read access for profile pictures
+      allow read: if true;
+    }
+
     // Allow authenticated users to upload to customer AI training docs
     match /customers/{customerId}/aiTraining/{folder}/{allPaths=**} {
       allow read, write: if request.auth != null;

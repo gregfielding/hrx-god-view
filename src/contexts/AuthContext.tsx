@@ -253,11 +253,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const tokenResult = await user.getIdTokenResult(true); // Force fresh token
       const claims = tokenResult.claims as CustomClaims;
-      console.log('=== CLAIMS DEBUG ===');
-      console.log('Raw claims:', claims);
-      console.log('claims.hrx:', claims.hrx);
-      console.log('claims.roles:', claims.roles);
-      console.log('=== END CLAIMS DEBUG ===');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('=== CLAIMS DEBUG ===');
+        console.log('Raw claims:', claims);
+        console.log('claims.hrx:', claims.hrx);
+        console.log('claims.roles:', claims.roles);
+        console.log('=== END CLAIMS DEBUG ===');
+      }
       return claims || {};
     } catch (error) {
       console.error('Failed to load claims from user token:', error);
@@ -304,38 +306,50 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     // Check if AuthDialog is currently creating a user profile
     if (isCreatingUserProfileRef.current) {
-      console.log('AuthDialog is creating user profile, skipping default document creation');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('AuthDialog is creating user profile, skipping default document creation');
+      }
       return null;
     }
     
     // Check if user document already exists to prevent overwriting
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
-      console.log('User document already exists, not creating default document');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('User document already exists, not creating default document');
+      }
       return userSnap.data();
     }
 
     // For new users from public jobs board, don't create default document
     // The AuthDialog should handle user profile creation
     // We'll wait longer to ensure AuthDialog has time to create the profile
-    console.log('Waiting for AuthDialog to create user profile...');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Waiting for AuthDialog to create user profile...');
+    }
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Check again after the delay
     if (isCreatingUserProfileRef.current) {
-      console.log('AuthDialog is still creating user profile after delay, skipping default document creation');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('AuthDialog is still creating user profile after delay, skipping default document creation');
+      }
       return null;
     }
-    
+
     const userSnapAfterDelay = await getDoc(userRef);
     if (userSnapAfterDelay.exists()) {
-      console.log('User document created by AuthDialog during delay, not creating default document');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('User document created by AuthDialog during delay, not creating default document');
+      }
       return userSnapAfterDelay.data();
     }
-    
+
     // Only create default document for users who weren't created via AuthDialog
     // If we're on the C1 public routes, initialize with the correct Tenant/Applicant profile
-    console.log('Creating fallback default user document');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Creating fallback default user document');
+    }
     const isC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
     const c1TenantId = 'BCiP2bQ9CgVOCTfV6MhD';
 

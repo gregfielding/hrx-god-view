@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
+import WorkEligibilityTab from './components/WorkEligibilityTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
@@ -103,6 +104,7 @@ const UserProfilePage = () => {
 
     const tabs = [
       { label: 'Overview', available: true },
+      { label: 'Work Eligibility', available: true },
       { 
         label: 'Qualifications', 
         available: parseInt(securityLevel) <= 4 
@@ -457,6 +459,13 @@ const UserProfilePage = () => {
             switch (currentTab.label) {
               case 'Overview':
                 return <ProfileOverview uid={uid} />;
+              case 'Work Eligibility':
+                return skillsData && (
+                  <WorkEligibilityTab
+                    user={skillsData}
+                    onUpdate={handleSkillsUpdate}
+                  />
+                );
               case 'Qualifications':
                 return skillsData && (
                   <SkillsTab

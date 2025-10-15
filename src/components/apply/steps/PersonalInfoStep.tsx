@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Box, Grid, TextField, Typography } from '@mui/material';
+import { Autocomplete } from '@react-google-maps/api';
 
 type Props = {
   value: any;
@@ -45,90 +46,73 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
     return dateString;
   };
 
-  // Google Places Autocomplete (street address)
+  // Google Places Autocomplete with robust initialization
   const autocompleteRef = useRef<any>(null);
-  const onChangeRef = useRef(onChange);
-  const valueRef = useRef(value);
-  
-  // Keep refs updated
-  onChangeRef.current = onChange;
-  valueRef.current = value;
-  
-  // Callback ref to initialize autocomplete when the input is mounted
-  const streetRefCallback = (node: HTMLInputElement | null) => {
-    if (node && !autocompleteRef.current) {
-      console.log('Initializing Google Places Autocomplete...');
-      
-      // Check if Google Maps API is loaded
-      if (!(window as any).google?.maps?.places) {
-        console.error('Google Maps API not loaded');
-        return;
+  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
+  const retryTimeoutRef = useRef<NodeJS.Timeout>();
+
+  // Check if Google Maps is loaded with retry logic
+  const checkGoogleMapsLoaded = useCallback(() => {
+    const isLoaded = !!(window as any).google?.maps?.places;
+    if (isLoaded) {
+      setIsGoogleMapsLoaded(true);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = undefined;
       }
-      
-      try {
-        autocompleteRef.current = new (window as any).google.maps.places.Autocomplete(node, {
-          fields: ['address_components', 'formatted_address', 'name'],
-          types: ['address'],
-          componentRestrictions: { country: 'us' }, // Restrict to US addresses
-        });
-        
-        console.log('Google Places Autocomplete created successfully');
-        
-        const parse = (components: any[]) => {
-          const get = (type: string) => {
-            const comp = components.find((c) => c.types?.includes(type));
-            return comp ? comp.long_name : '';
-          };
-          return {
-            street: `${get('street_number')} ${get('route')}`.trim(),
-            city: get('locality') || get('sublocality') || get('postal_town') || '',
-            state: get('administrative_area_level_1') || '',
-            zip: get('postal_code') || '',
-          };
-        };
-        
-        const listener = autocompleteRef.current.addListener('place_changed', () => {
-          console.log('Place changed event triggered');
-          const place = autocompleteRef.current.getPlace();
-          console.log('Place selected:', place);
-          
-          if (!place || !place.address_components) {
-            console.log('No place or address components found');
-            return;
-          }
-          
-          const parsed = parse(place.address_components);
-          console.log('Parsed address:', parsed);
-          
-          // Use refs to get the latest values without causing re-renders
-          onChangeRef.current({ 
-            ...valueRef.current, 
-            street: parsed.street,
-            city: parsed.city,
-            state: parsed.state,
-            zip: parsed.zip
-          });
-          
-          console.log('Form updated with address data');
-        });
-        
-        // Store the listener for cleanup
-        autocompleteRef.current._listener = listener;
-        console.log('Event listener attached to autocomplete');
-        
-      } catch (error) {
-        console.error('Error creating Google Places Autocomplete:', error);
-      }
+    } else {
+      // Retry after 100ms if not loaded
+      retryTimeoutRef.current = setTimeout(checkGoogleMapsLoaded, 100);
     }
-  };
-  
-  // Cleanup on unmount
+  }, []);
+
+  // Initialize Google Maps check on mount
   useEffect(() => {
+    checkGoogleMapsLoaded();
+    
+    // Cleanup timeout on unmount
     return () => {
-      if (autocompleteRef.current?._listener?.remove) {
-        autocompleteRef.current._listener.remove();
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
     };
+  }, [checkGoogleMapsLoaded]);
+
+  const handlePlaceChanged = useCallback(() => {
+    if (!autocompleteRef.current?.getPlace) return;
+    
+    const place = autocompleteRef.current.getPlace();
+    if (!place || !place.address_components) return;
+    
+    const components = place.address_components;
+    const getComponent = (types: string[]) => {
+      const component = components.find((c: any) => 
+        types.every((t) => c.types?.includes(t))
+      );
+      return component?.long_name || '';
+    };
+
+    // Update only address fields to prevent clearing other form data
+    const newAddressData = {
+      street: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
+      city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
+      state: getComponent(['administrative_area_level_1']),
+      zip: getComponent(['postal_code']),
+    };
+
+    // Only update fields that have values from the place
+    const updatedData = { ...value };
+    Object.entries(newAddressData).forEach(([key, val]) => {
+      if (val) {
+        updatedData[key] = val;
+      }
+    });
+
+    onChange(updatedData);
+  }, [value, onChange]);
+
+  const handleAutocompleteLoad = useCallback((autocomplete: any) => {
+    autocompleteRef.current = autocomplete;
   }, []);
 
   return (
@@ -158,17 +142,54 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           />
         </Grid>
         <Grid item xs={12}>
-          <TextField 
-            fullWidth 
-            label="Street Address" 
-            value={value.street || ''} 
-            onChange={(e) => handle('street', e.target.value)} 
-            inputRef={streetRefCallback}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck="false"
-          />
+          {isGoogleMapsLoaded ? (
+            <Autocomplete 
+              onLoad={handleAutocompleteLoad} 
+              onPlaceChanged={handlePlaceChanged}
+              options={{
+                componentRestrictions: { country: 'us' },
+                fields: ['address_components', 'formatted_address'],
+              }}
+            >
+              <TextField 
+                fullWidth 
+                label="Street Address" 
+                value={value.street || ''} 
+                onChange={(e) => handle('street', e.target.value)} 
+                id="apply-street-address"
+                name="street-address"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
+                inputProps={{
+                  autoComplete: 'off',
+                  autoCorrect: 'off',
+                  autoCapitalize: 'off',
+                  spellCheck: 'false',
+                }}
+              />
+            </Autocomplete>
+          ) : (
+            <TextField 
+              fullWidth 
+              label="Street Address" 
+              value={value.street || ''} 
+              onChange={(e) => handle('street', e.target.value)} 
+              id="apply-street-address"
+              name="street-address"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              inputProps={{
+                autoComplete: 'off',
+                autoCorrect: 'off',
+                autoCapitalize: 'off',
+                spellCheck: 'false',
+              }}
+            />
+          )}
         </Grid>
         <Grid item xs={12} md={6}>
           <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
