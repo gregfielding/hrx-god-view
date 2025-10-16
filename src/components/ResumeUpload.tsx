@@ -24,6 +24,7 @@ import {
 import { useDropzone } from 'react-dropzone';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
+import { logger } from '../utils/logger';
 
 interface ResumeUploadProps {
   userId: string;
@@ -107,6 +108,14 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
 
   const handleFileUpload = async (file: File) => {
     try {
+      logger.debug('Starting file upload', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        userId,
+        tenantId
+      });
+
       setParsingStatus({
         status: 'uploading',
         progress: 0,
@@ -119,6 +128,11 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         const base64Data = reader.result as string;
         const fileUrl = `data:${file.type};base64,${base64Data.split(',')[1]}`;
 
+        logger.debug('File converted to base64', {
+          base64Length: base64Data.length,
+          fileUrlPrefix: fileUrl.substring(0, 100) + '...'
+        });
+
         setParsingStatus({
           status: 'parsing',
           progress: 30,
@@ -129,8 +143,27 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
           // Use HTTP endpoint for localhost CORS support
           const token = await auth.currentUser?.getIdToken();
           if (!token) {
+            logger.error('No auth token available');
             throw new Error('User not authenticated');
           }
+
+          logger.debug('Auth token obtained, making request to parseResumeHttp');
+
+          const requestBody = {
+            fileUrl,
+            fileName: file.name,
+            fileSize: file.size,
+            userId,
+            tenantId
+          };
+
+          logger.debug('Request payload', {
+            fileName: requestBody.fileName,
+            fileSize: requestBody.fileSize,
+            userId: requestBody.userId,
+            tenantId: requestBody.tenantId,
+            fileUrlLength: requestBody.fileUrl.length
+          });
 
           const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/parseResumeHttp', {
             method: 'POST',
@@ -138,21 +171,36 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({
-              fileUrl,
-              fileName: file.name,
-              fileSize: file.size,
-              userId,
-              tenantId
-            })
+            body: JSON.stringify(requestBody)
+          });
+
+          logger.debug('Response received', {
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok,
+            headers: Object.fromEntries(response.headers.entries())
           });
 
           if (!response.ok) {
-            const errorData = await response.json();
+            let errorData;
+            try {
+              errorData = await response.json();
+              logger.error('Error response data:', errorData);
+            } catch (parseError) {
+              logger.error('Could not parse error response:', parseError);
+              const textError = await response.text();
+              logger.error('Raw error response:', textError);
+              errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+            }
             throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
           }
 
           const data = await response.json();
+          logger.debug('Response data received', {
+            success: data.success,
+            hasParsedData: !!data.parsedData,
+            error: data.error
+          });
           
           if (data.success) {
             setParsingStatus({
@@ -162,13 +210,22 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
               parsedData: data.parsedData
             });
             
+            logger.debug('Resume parsing completed successfully');
+            
             if (onResumeParsed) {
               onResumeParsed(data.parsedData);
             }
           } else {
+            logger.error('Parsing failed:', data.error);
             throw new Error(data.error || 'Failed to parse resume');
           }
         } catch (error: any) {
+          logger.error('Error during parsing:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          });
+
           setParsingStatus({
             status: 'error',
             progress: 0,
@@ -180,6 +237,12 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
 
       reader.readAsDataURL(file);
     } catch (error: any) {
+      logger.error('Error during file upload:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+
       setParsingStatus({
         status: 'error',
         progress: 0,

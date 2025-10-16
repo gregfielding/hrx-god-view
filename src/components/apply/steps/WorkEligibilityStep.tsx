@@ -15,18 +15,25 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
       <Grid container spacing={2}>
         <Grid item xs={12}>
           <FormControlLabel
-            control={<Checkbox checked={!!value.workAuthorized} onChange={(e) => handle('workAuthorized', e.target.checked)} />}
+            control={<Checkbox checked={!!value.workAuthorized} onChange={(e) => handle('workAuthorized', e.target.checked)} aria-label="Authorized to work in the US" />}
             label="I am legally authorized to work in the United States"
           />
         </Grid>
         <Grid item xs={12}>
           <FormControlLabel
-            control={<Checkbox checked={!!value.requireSponsorship} onChange={(e) => handle('requireSponsorship', e.target.checked)} />}
+            control={<Checkbox checked={!!value.requireSponsorship} onChange={(e) => handle('requireSponsorship', e.target.checked)} aria-label="Require employer sponsorship" />}
             label="I now or in the future will require employer sponsorship"
           />
         </Grid>
 
-        {/* Optional EEO self-identification (always optional) */}
+        {value.workAuthorized !== true && (
+          <Grid item xs={12}>
+            <Typography variant="caption" color="text.secondary">
+              To continue, please confirm you are legally authorized to work in the United States.
+            </Typography>
+          </Grid>
+        )}
+        {/* Optional EEO self-identification (always visible) */}
         <Grid item xs={12} md={4}>
           <TextField
             select

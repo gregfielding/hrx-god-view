@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Box, Grid, TextField, Typography } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
+import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 
 type Props = {
   value: any;
@@ -19,6 +20,15 @@ const formatPhone = (raw: string) => {
 
 const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
   const handle = (field: string, v: string) => onChange({ ...value, [field]: v });
+
+  // Helper function to check if a field value came from resume parsing
+  const isFieldFromResume = (fieldName: string) => {
+    return value?.resumeSuggestions?.[fieldName] === true;
+  };
+
+  const getFieldConfidence = (fieldName: string) => {
+    return value?.resumeConfidence?.[fieldName] || 1.0;
+  };
 
   // Format date for display (convert YYYY-MM-DD to MM/DD/YYYY)
   const formatDateForDisplay = (dateString: string) => {
@@ -92,13 +102,15 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
       return component?.long_name || '';
     };
 
-    // Update only address fields to prevent clearing other form data
-    const newAddressData = {
-      street: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
-      city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
-      state: getComponent(['administrative_area_level_1']),
-      zip: getComponent(['postal_code']),
-    };
+          // Update only address fields to prevent clearing other form data
+          const newAddressData = {
+            street: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
+            city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
+            state: getComponent(['administrative_area_level_1']),
+            zip: getComponent(['postal_code']),
+            homeLat: place.geometry?.location?.lat?.(),
+            homeLng: place.geometry?.location?.lng?.(),
+          };
 
     // Only update fields that have values from the place
     const updatedData = { ...value };
@@ -120,20 +132,41 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>Tell us a bit about you</Typography>
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="First name" value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('firstName')} 
+            confidence={getFieldConfidence('firstName')}
+          >
+            <TextField fullWidth required label="First name" value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="Last name" value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('lastName')} 
+            confidence={getFieldConfidence('lastName')}
+          >
+            <TextField fullWidth required label="Last name" value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth type="email" label="Email" value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('email')} 
+            confidence={getFieldConfidence('email')}
+          >
+            <TextField fullWidth required type="email" label="Email" value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="Phone" inputMode="numeric" value={formatPhone(value.phone || '')} onChange={(e) => handle('phone', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('phone')} 
+            confidence={getFieldConfidence('phone')}
+          >
+            <TextField fullWidth required label="Phone" inputMode="numeric" value={formatPhone(value.phone || '')} onChange={(e) => handle('phone', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
           <TextField 
             fullWidth 
+            required
             label="Date of Birth (MM/DD/YYYY)" 
             inputMode="numeric" 
             placeholder="MM/DD/YYYY"
@@ -153,6 +186,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
             >
               <TextField 
                 fullWidth 
+                required
                 label="Street Address" 
                 value={value.street || ''} 
                 onChange={(e) => handle('street', e.target.value)} 
@@ -173,6 +207,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           ) : (
             <TextField 
               fullWidth 
+              required
               label="Street Address" 
               value={value.street || ''} 
               onChange={(e) => handle('street', e.target.value)} 
@@ -192,16 +227,36 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
           )}
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('unit')} 
+            confidence={getFieldConfidence('unit')}
+          >
+            <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="City" value={value.city || ''} onChange={(e) => handle('city', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('city')} 
+            confidence={getFieldConfidence('city')}
+          >
+            <TextField fullWidth required label="City" value={value.city || ''} onChange={(e) => handle('city', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="State" value={value.state || ''} onChange={(e) => handle('state', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('state')} 
+            confidence={getFieldConfidence('state')}
+          >
+            <TextField fullWidth required label="State" value={value.state || ''} onChange={(e) => handle('state', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth label="Zip Code" inputMode="numeric" value={value.zip || ''} onChange={(e) => handle('zip', e.target.value)} />
+          <ResumeSuggestionField 
+            isFromResume={isFieldFromResume('zip')} 
+            confidence={getFieldConfidence('zip')}
+          >
+            <TextField fullWidth required label="Zip Code" inputMode="numeric" value={value.zip || ''} onChange={(e) => handle('zip', e.target.value)} />
+          </ResumeSuggestionField>
         </Grid>
       </Grid>
     </Box>

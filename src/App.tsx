@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
+import { logger } from './utils/logger';
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
@@ -109,9 +110,7 @@ import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
-if (process.env.NODE_ENV === 'development') {
-  console.log('Google Maps API key available:', !!googleMapsApiKey);
-}
+logger.debug('Google Maps API key available:', !!googleMapsApiKey);
 
 // Static libraries array to prevent performance warnings (shared across app)
 const googleMapsLibraries: Libraries = ['places', 'maps'];
@@ -209,9 +208,7 @@ const IntegrationsTabWrapper: React.FC = () => {
 };
 
 function App() {
-  if (process.env.NODE_ENV === 'development') {
-    console.log('App rendered');
-  }
+  logger.debug('App rendered');
   useEffect(() => {
     try {
       // Enable new associations read by default
@@ -834,9 +831,7 @@ function App() {
     </Routes>
   );
 
-  if (process.env.NODE_ENV === 'development') {
-    console.log('App component about to return JSX');
-  }
+  logger.debug('App component about to return JSX');
   return (
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>

@@ -134,17 +134,12 @@ export const handleManageAssociations = async (request: any, context: any) => {
       throw new functions.https.HttpsError('not-found', `Target entity ${targetEntityType}:${targetEntityId} not found`);
     }
 
-    // Feature flags
+    // Feature flags - use environment variables instead of functions.config()
     const enableDualWrite = (() => {
-      try {
-        const cfg = functions.config() as any;
-        const v = cfg?.flags?.enable_dual_write;
-        if (v === 'false') return false;
-        if (v === false) return false;
-        return true; // default on
-      } catch {
-        return true;
-      }
+      const envValue = process.env.ENABLE_DUAL_WRITE || process.env.enable_dual_write;
+      if (envValue === 'false') return false;
+      if (envValue === '0') return false;
+      return true; // default on
     })();
 
     // Prepare update operations

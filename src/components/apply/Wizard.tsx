@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar } from '@mui/material';
+import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme } from '@mui/material';
 import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { auth } from '../../firebase';
+import { updateEmail } from 'firebase/auth';
 import { db } from '../../firebase';
 
 import PersonalInfoStep from './steps/PersonalInfoStep';
@@ -11,6 +13,8 @@ import QualificationsStep from './steps/QualificationsStep';
 import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
 import ReviewSubmitStep from './steps/ReviewSubmitStep';
+import MilestoneProgress from '../common/MilestoneProgress';
+import EligibilityModal from '../../components/EligibilityModal';
 
 type WizardProps = {
   tenantId: string;
@@ -32,6 +36,8 @@ type DraftApplication = {
 const steps = ['Personal Info', 'Work Eligibility', 'Profile Picture', 'Resume', 'Qualifications', 'Preferences', 'Requirements', 'Review'];
 
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   // Create a unique key for this application session
   const sessionKey = `app-wizard-${tenantId}-${jobId}-${uid}`;
   
@@ -59,6 +65,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
   const prefilledRef = useRef(false);
   const [tenantAppId, setTenantAppId] = useState<string | null>(null);
   const [stepRestored, setStepRestored] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
 
   // Check if step was restored from localStorage
   useEffect(() => {
@@ -86,6 +94,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         uid,
         data: {}
       };
+      // In local dev, avoid Firestore writes that may be blocked by rules; use localStorage draft instead
+      try {
+        const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+        if (isLocalDev) {
+          const key = `appDraft:${uid}:${tenantId || 'na'}:${jobId || 'na'}`;
+          try { localStorage.setItem(key, JSON.stringify({ ...draft, createdAt: Date.now(), updatedAt: Date.now() })); } catch {}
+          setAppId(key);
+          return;
+        }
+      } catch {}
       try {
         // Save under user to avoid tenant write restrictions for applicants
         const colRef = collection(db, 'users', uid, 'applicationDrafts');
@@ -99,7 +117,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
 
       // Mirror to tenant applications (best-effort) so recruiters can see in-progress
       try {
-        if (tenantId && jobId && uid) {
+        const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+        if (!isLocalDev && tenantId && jobId && uid) {
           const tidAppId = `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           await setDoc(tRef, {
@@ -209,6 +228,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       education: Array.isArray(userProfile.education) ? userProfile.education : [],
       workHistory: Array.isArray(userProfile.workHistory) ? userProfile.workHistory : [],
       salaryExpectations: userProfile.salaryExpectations || undefined,
+      bio: userProfile.bio || '',
     };
 
     const preferences = formData.preferences || {
@@ -264,7 +284,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
 
       // Best-effort mirror to tenant application
       try {
-        if (tenantId && (tenantAppId || (uid && jobId))) {
+        const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+        if (!isLocalDev && tenantId && (tenantAppId || (uid && jobId))) {
           const tidAppId = tenantAppId || `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           const personal = (partial.personal || formData.personal) || {};
@@ -297,6 +318,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           if (p.firstName) update.firstName = String(p.firstName).trim();
           if (p.lastName) update.lastName = String(p.lastName).trim();
           if (p.email) update.email = String(p.email).trim();
+          // If email changed from auth user, update Firebase Auth email as well
+          try {
+            const user = auth.currentUser;
+            if (user && p.email && user.email !== String(p.email).trim()) {
+              await updateEmail(user, String(p.email).trim());
+            }
+          } catch (e) {
+            // ignore auth update failure; profile still updates
+          }
           if (p.phone) update.phone = String(p.phone).trim();
           if (p.dob) update.dob = String(p.dob).trim();
           const addr: any = {};
@@ -318,9 +348,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
             if (p.city) update['addressInfo.city'] = String(p.city).trim();
             if (p.state) update['addressInfo.state'] = String(p.state).trim();
             if (p.zip) update['addressInfo.zip'] = String(p.zip).trim();
+            
+            // Save coordinates for location-based job matching and candidate proximity searches
+            if (p.homeLat !== undefined && p.homeLng !== undefined) {
+              update['addressInfo.homeLat'] = Number(p.homeLat);
+              update['addressInfo.homeLng'] = Number(p.homeLng);
+            }
           }
           if (Object.keys(update).length > 1) {
             await updateDoc(userRef, update);
+          }
+
+          // If phone changed, enforce Twilio verification via modal
+          const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
+          if (onlyDigits(p.phone || '') !== onlyDigits(userProfile?.phone || '')) {
+            setVerifyOpen(true);
+            return; // pause progression until verification completes
           }
         } else if (activeStep === 1) {
           // Work Eligibility → save EEO fields
@@ -438,6 +481,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       } catch (error) {
         console.warn('Failed to clear step from localStorage:', error);
       }
+      setSubmitOpen(true);
     } finally {
       setSaving(false);
     }
@@ -468,52 +512,161 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           />
         );
       case 7:
-        return <ReviewSubmitStep value={formData} onSubmit={handleSubmit} submitting={saving} tenantName={tenantName} />;
+        return <ReviewSubmitStep value={formData} onSubmit={handleSubmit} submitting={saving} tenantName={tenantName} onEditStep={(i) => setActiveStep(i)} />;
       default:
         return null;
     }
   };
 
-  return (
-    <Box sx={{ px: 3, py: 4 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h6" fontWeight={700}>{tenantName ? `${tenantName} Application` : 'Application'}</Typography>
-        <Typography variant="subtitle2" color="text.secondary">{saving ? 'Saving…' : 'All changes saved'}</Typography>
-      </Stack>
-      
-      {stepRestored && (
-        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setStepRestored(false)}>
-          Welcome back! You've been restored to step {activeStep + 1}: {steps[activeStep]}
-        </Alert>
-      )}
-      
-      <Divider sx={{ my: 2 }} />
+  const pctComplete = Math.round(((activeStep + 1) / steps.length) * 100);
 
-      <Stepper activeStep={activeStep} alternativeLabel>
+  const conversationalTitles = [
+    'Tell us a bit about you',
+    'Work authorization',
+    'Add a profile picture',
+    'Upload your resume (optional)',
+    'Qualifications & skills',
+    'Job preferences',
+    'Requirements',
+    'Review & submit'
+  ];
+
+  const personalValid = !!(
+    formData?.personal?.firstName &&
+    formData?.personal?.lastName &&
+    formData?.personal?.email &&
+    formData?.personal?.phone &&
+    formData?.personal?.dob &&
+    formData?.personal?.street &&
+    formData?.personal?.city &&
+    formData?.personal?.state &&
+    formData?.personal?.zip
+  );
+
+  // Require Twilio re-verification if phone differs from profile
+  const phoneNeedsVerification = (() => {
+    const newPhone = formData?.personal?.phone || '';
+    const currentPhone = userProfile?.phone || '';
+    if (!newPhone) return false;
+    // Simple compare on digits only
+    const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
+    return onlyDigits(newPhone) !== onlyDigits(currentPhone);
+  })();
+
+  return (
+    <Box sx={{ px: 0, py: 0 }}>
+      {/* Full-bleed sticky progress under top bar (no side spacing) */}
+      <MilestoneProgress
+        total={steps.length}
+        completed={activeStep}
+        labels={steps}
+        sticky="top"
+        onJump={undefined}
+        sx={{ px: 2, py: 1 }}
+      />
+      {saving && (
+        <Box sx={{ mb: 2 }} aria-live="polite" aria-atomic>
+          <LinearProgress />
+        </Box>
+      )}
+
+      {/* Keep stepper for structure but hide visually to reduce clutter (a11y preserved) */}
+      <Box sx={{ display: { xs: 'none', md: 'none' } }} aria-hidden>
+        <Stepper activeStep={activeStep} alternativeLabel>
         {steps.map((label) => (
           <Step key={label}><StepLabel>{label}</StepLabel></Step>
         ))}
-      </Stepper>
+        </Stepper>
+      </Box>
 
-      <Box sx={{ mt: 3 }}>
+      <Box sx={{ mt: 2, mb: 12, mx: 0, px: 0, py: 0 }}>
         {renderStep()}
       </Box>
 
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mt={3}>
-        <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
-        <Button
-          variant="contained"
-          onClick={handleNext}
-          disabled={
-            activeStep === steps.length - 1 ||
-            (activeStep === 6 && (
-              missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
-            ))
-          }
-        >
-          Next
-        </Button>
-      </Stack>
+      {/* Bottom content bar (fixed to bottom; 24px offset on md+, 0 on mobile) */}
+      <Box
+        sx={{
+          position: 'fixed',
+          // Use CSS var set by Layout for current drawer width if available; fallback to 64px collapsed width
+          left: { xs: 0, md: 'calc(var(--drawer-width, 64px) + 32px)' },
+          right: { xs: 0, md: 32 },
+          bottom: { xs: 0, md: 24 },
+          width: { xs: '100%', md: 'calc(100% - (var(--drawer-width, 64px) + 64px))' },
+          bgcolor: 'background.paper',
+          borderTop: 1,
+          borderColor: 'divider',
+          px: { xs: 2, md: 4 },
+          py: 1.5,
+          zIndex: (t) => t.zIndex.appBar,
+          boxShadow: 1,
+          borderTopLeftRadius: { xs: 0, md: 8 },
+          borderBottomLeftRadius: { xs: 0, md: 8 },
+          borderTopRightRadius: { xs: 0, md: 8 },
+          borderBottomRightRadius: { xs: 0, md: 8 },
+        }}
+      >
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
+          <Button
+            variant="contained"
+            onClick={handleNext}
+            disabled={
+              activeStep === steps.length - 1 ||
+              (activeStep === 6 && (
+                missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
+              )) ||
+              (activeStep === 0 && (!personalValid || phoneNeedsVerification)) ||
+              (activeStep === 1 && formData?.eligibility?.workAuthorized !== true)
+            }
+          >
+            Next
+          </Button>
+        </Stack>
+      </Box>
+
+      {/* Phone verification modal when phone changes */}
+      <EligibilityModal
+        open={verifyOpen}
+        onClose={() => setVerifyOpen(false)}
+        onComplete={() => {
+          setVerifyOpen(false);
+          // advance to next step after successful verification
+          setActiveStep((s) => Math.min(s + 1, steps.length - 1));
+        }}
+        needDOB={false}
+        needPhone={true}
+      />
+
+      {/* Optional sticky bottom bar (kept for future, hidden) */}
+      <Box
+        sx={{
+          display: 'none',
+        }}
+      >
+        <Stack direction="row" justifyContent="space-between" alignItems="center">
+          <Button onClick={handleBack} disabled={activeStep === 0} aria-label="Back">
+            Back
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleNext}
+            aria-label="Next"
+            disabled={
+              activeStep === steps.length - 1 ||
+              (activeStep === 6 && (
+                missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
+              ))
+            }
+          >
+            Next
+          </Button>
+        </Stack>
+      </Box>
+      <Snackbar open={submitOpen} autoHideDuration={4000} onClose={() => setSubmitOpen(false)} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert onClose={() => setSubmitOpen(false)} severity="success" sx={{ width: '100%' }}>
+          Thanks — your application has been submitted!
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

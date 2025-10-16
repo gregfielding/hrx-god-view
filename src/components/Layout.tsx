@@ -121,7 +121,7 @@ const Layout: React.FC = React.memo(function Layout() {
     }
     
     // Default fallback
-    return 'HRX Platform';
+    return pathname.includes('/apply') ? 'Submit Application' : 'HRX Platform';
   };
 
   const [open, setOpen] = useState(true);
@@ -555,7 +555,9 @@ const Layout: React.FC = React.memo(function Layout() {
           // New claims-based parameters
           isHRX,
           currentClaimsRole,
-          claimsRoles
+          claimsRoles,
+          // User profile flags
+          jobsBoardEnabled
         );
         // Hide menu items by per-user flags
         items = items.filter((mi) => {
@@ -870,6 +872,7 @@ const Layout: React.FC = React.memo(function Layout() {
           flexDirection: 'column',
           height: '100vh',
           overflow: 'hidden',
+          '--drawer-width': `${drawerWidth}px`,
           transition: (theme) =>
             theme.transitions.create(['margin', 'width'], {
               easing: theme.transitions.easing.sharp,

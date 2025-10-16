@@ -1,13 +1,4 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-
-import './index.css';
-import './setupConsoleFilters';
-import App from './App';
-import reportWebVitals from './reportWebVitals';
-import { ThemeModeProvider } from './theme/theme';
-
-// Development-only console noise suppression (runs before components mount)
+// Runs before App mounts to suppress benign dev-only console noise
 if (process.env.NODE_ENV === 'development') {
   const originalError = console.error;
   const originalWarn = console.warn;
@@ -22,34 +13,43 @@ if (process.env.NODE_ENV === 'development') {
     }
   };
 
-  console.error = (...args: any[]) => {
+  const isTerminateNoise = (...args: any[]) => {
     const needles = [
       'TYPE=terminate',
       'webchannel_blob_es2018.js',
       'google.firestore.v1.Firestore/Write/channel',
       'Firestore/Write/channel',
       'POST https://firestore.googleapis.com',
+      // CSP report-only iframe noise (e.g., Google widgets)
+      'Content Security Policy directive: "frame-ancestors',
+      'Refused to frame',
+      "frame-ancestors 'self'",
+      'Report Only'
     ];
-    const isTerminateNoise = args.some((a) => argContains(a, needles)) ||
-      argContains(args?.map?.(String)?.join(' '), needles);
+    return args.some((a) => argContains(a, needles)) || argContains(args?.map?.(String)?.join(' '), needles);
+  };
 
-    if (isTerminateNoise) return;
+  console.error = (...args: any[]) => {
+    if (isTerminateNoise(...args)) return;
     originalError.apply(console, args as unknown as any);
   };
 
   console.warn = (...args: any[]) => {
-    const message = args[0];
-    if (typeof message === 'string' && (
-      message.includes('google.maps.places.Autocomplete is not available') ||
-      message.includes('Performance warning! LoadScript has been reloaded') ||
-      message.includes('Google Maps already loaded outside')
+    const msg = args[0];
+    if (typeof msg === 'string' && (
+      msg.includes('google.maps.places.Autocomplete is not available') ||
+      msg.includes('Performance warning! LoadScript has been reloaded') ||
+      msg.includes('Google Maps already loaded outside') ||
+      msg.includes('Content Security Policy directive: "frame-ancestors') ||
+      msg.includes('Refused to frame') ||
+      msg.includes("frame-ancestors 'self'") ||
+      msg.includes('Report Only')
     )) {
       return;
     }
     originalWarn.apply(console, args as unknown as any);
   };
 
-  // Also suppress uncaught errors/unhandled rejections that match the benign Firestore terminate noise
   const shouldSuppress = (text?: string) => {
     if (!text) return false;
     return (
@@ -57,13 +57,17 @@ if (process.env.NODE_ENV === 'development') {
       text.includes('https://firestore.googleapis.com/google.firestore.v1.Firestore/Write/channel') ||
       (text.includes('google.firestore.v1.Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
       (text.includes('Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
-      (text.includes('POST https://firestore.googleapis.com') && text.includes('TYPE=terminate'))
+      (text.includes('POST https://firestore.googleapis.com') && text.includes('TYPE=terminate')) ||
+      text.includes('Content Security Policy directive: "frame-ancestors') ||
+      text.includes('Refused to frame') ||
+      text.includes("frame-ancestors 'self'") ||
+      text.includes('Report Only')
     );
   };
 
   window.addEventListener('error', (event) => {
     try {
-      const msg = String(event.message || '');
+      const msg = String((event as any).message || '');
       const fname = (event as any).filename ? String((event as any).filename) : '';
       const errMsg = (event as any).error?.message ? String((event as any).error?.message) : '';
       if (shouldSuppress(msg) || shouldSuppress(fname) || shouldSuppress(errMsg)) {
@@ -89,14 +93,6 @@ if (process.env.NODE_ENV === 'development') {
   }, true);
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+export {};
 
-root.render(
-  <React.StrictMode>
-    <ThemeModeProvider>
-      <App />
-    </ThemeModeProvider>
-  </React.StrictMode>
-);
 
-reportWebVitals();

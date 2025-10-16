@@ -37,22 +37,9 @@ export function readBooleanConfig(key: string, defaultValue: boolean = false): b
     return FEATUREFLAGS_ENV.toLowerCase() === 'true';
   }
   
-  // 4. Firebase config value
-  try {
-    const config = functions.config();
-    const configValue = config?.featureflags?.[key];
-    if (configValue !== undefined) {
-      if (typeof configValue === 'string') {
-        return configValue.toLowerCase() === 'true';
-      }
-      if (typeof configValue === 'boolean') {
-        return configValue;
-      }
-    }
-  } catch (error) {
-    // Ignore config errors (e.g., when running locally without Firebase config)
-    console.warn(`Could not read Firebase config for ${key}:`, error);
-  }
+  // 4. Firebase config value (deprecated in v2, skip)
+  // Note: functions.config() is not available in Firebase Functions v2
+  // Use environment variables instead
   
   return defaultValue;
 }
@@ -82,17 +69,9 @@ export function readStringConfig(key: string, defaultValue: string = ''): string
     return FEATUREFLAGS_ENV;
   }
   
-  // 4. Firebase config value
-  try {
-    const config = functions.config();
-    const configValue = config?.featureflags?.[key];
-    if (configValue !== undefined && typeof configValue === 'string') {
-      return configValue;
-    }
-  } catch (error) {
-    // Ignore config errors
-    console.warn(`Could not read Firebase config for ${key}:`, error);
-  }
+  // 4. Firebase config value (deprecated in v2, skip)
+  // Note: functions.config() is not available in Firebase Functions v2
+  // Use environment variables instead
   
   return defaultValue;
 }
@@ -125,23 +104,9 @@ export function readNumberConfig(key: string, defaultValue: number = 0): number 
     if (!isNaN(parsed)) return parsed;
   }
   
-  // 4. Firebase config value
-  try {
-    const config = functions.config();
-    const configValue = config?.featureflags?.[key];
-    if (configValue !== undefined) {
-      if (typeof configValue === 'number') {
-        return configValue;
-      }
-      if (typeof configValue === 'string') {
-        const parsed = parseInt(configValue, 10);
-        if (!isNaN(parsed)) return parsed;
-      }
-    }
-  } catch (error) {
-    // Ignore config errors
-    console.warn(`Could not read Firebase config for ${key}:`, error);
-  }
+  // 4. Firebase config value (deprecated in v2, skip)
+  // Note: functions.config() is not available in Firebase Functions v2
+  // Use environment variables instead
   
   return defaultValue;
 }

@@ -3,6 +3,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import nlp from 'compromise';
 import OpenAI from 'openai';
+import { z } from 'zod';
 
 // Add at the top for missing types
 // @ts-ignore
@@ -10,9 +11,207 @@ const pdfParse = require('pdf-parse');
 // @ts-ignore
 const mammoth = require('mammoth');
 
+// Google Cloud Vision for OCR
+const vision = require('@google-cloud/vision');
+
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
+
+// Validation functions using Zod schemas
+function validateParsedResumeData(data: any): any {
+  try {
+    return ParsedResumeDataSchema.parse(data);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      console.error('ParsedResumeData validation failed:', error.errors);
+      console.warn('Using unvalidated parsed resume data due to schema validation failure');
+      // Return the data as-is but log the issues
+      return data;
+    }
+    throw error;
+  }
+}
+
+function validateResumeUpload(data: any): ResumeUpload {
+  try {
+    const validated = ResumeUploadSchema.parse(data);
+    return validated as ResumeUpload;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      console.error('ResumeUpload validation failed:', error.errors);
+      // For validation errors, return the data as-is but log the issues
+      console.warn('Using unvalidated resume upload data due to schema validation failure');
+      return data as ResumeUpload;
+    }
+    throw error;
+  }
+}
+
+function validateParsedResume(data: any): ParsedResume {
+  try {
+    const validated = ParsedResumeSchema.parse(data);
+    return validated as ParsedResume;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      console.error('ParsedResume validation failed:', error.errors);
+      // For validation errors, return the data as-is but log the issues
+      console.warn('Using unvalidated parsed resume data due to schema validation failure');
+      return data as ParsedResume;
+    }
+    throw error;
+  }
+}
 // Remove global openai client initialization
 // const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Zod schemas for validation
+const ContactInfoSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  linkedin: z.string().url().optional(),
+  website: z.string().url().optional(),
+});
+
+const SkillSchema = z.object({
+  name: z.string().min(1),
+  canonicalId: z.string().optional(),
+  source: z.enum(['predefined', 'custom']),
+  category: z.enum(['technical', 'soft', 'language', 'certification', 'other']),
+  level: z.enum(['beginner', 'intermediate', 'advanced', 'expert']).optional(),
+  yearsOfExperience: z.number().min(0).optional(),
+  confidence: z.number().min(0).max(1),
+});
+
+const EducationSchema = z.object({
+  institution: z.string().min(1),
+  degree: z.string().min(1),
+  field: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  gpa: z.string().optional(),
+  honors: z.string().optional(),
+  location: z.string().optional(),
+});
+
+const WorkExperienceSchema = z.object({
+  jobTitle: z.string().min(1),
+  company: z.string().min(1),
+  location: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  current: z.boolean().optional(),
+  description: z.string().optional(),
+  responsibilities: z.array(z.string()).optional(),
+  achievements: z.array(z.string()).optional(),
+  skillsUsed: z.array(z.string()).optional(),
+});
+
+const CertificationSchema = z.object({
+  name: z.string().min(1),
+  issuer: z.string().min(1),
+  dateObtained: z.string().optional(),
+  expiryDate: z.string().optional(),
+  credentialId: z.string().optional(),
+});
+
+const LanguageSchema = z.object({
+  language: z.string().min(1),
+  proficiency: z.enum(['basic', 'conversational', 'fluent', 'native']),
+  isNative: z.boolean().optional(),
+});
+
+const ProjectSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  technologies: z.array(z.string()).optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  url: z.string().url().optional(),
+});
+
+const AwardSchema = z.object({
+  name: z.string().min(1),
+  issuer: z.string().min(1),
+  date: z.string().optional(),
+  description: z.string().optional(),
+});
+
+const VolunteerWorkSchema = z.object({
+  organization: z.string().min(1),
+  role: z.string().min(1),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  description: z.string().optional(),
+});
+
+const AIAnalysisSchema = z.object({
+  overallScore: z.number().min(1).max(10),
+  skillGaps: z.array(z.string()),
+  recommendations: z.array(z.string()),
+  marketability: z.number().min(1).max(10),
+  yearsOfExperience: z.number().min(0),
+  educationLevel: z.string(),
+  keyStrengths: z.array(z.string()),
+  areasForImprovement: z.array(z.string()),
+  jobFit: z.record(z.string(), z.number().min(0).max(10)),
+});
+
+const ParsedResumeDataSchema = z.object({
+  contact: ContactInfoSchema,
+  summary: z.string(),
+  bio: z.string().optional(),
+  skills: z.array(SkillSchema),
+  education: z.array(EducationSchema),
+  experience: z.array(WorkExperienceSchema),
+  certifications: z.array(CertificationSchema),
+  languages: z.array(LanguageSchema),
+  projects: z.array(ProjectSchema),
+  awards: z.array(AwardSchema),
+  volunteerWork: z.array(VolunteerWorkSchema),
+  parsedText: z.string(),
+  confidence: z.number().min(0).max(1),
+  aiAnalysis: AIAnalysisSchema,
+});
+
+const ResumeUploadSchema = z.object({
+  uploadId: z.string().min(1),
+  userId: z.string().min(1),
+  fileName: z.string().min(1),
+  fileType: z.string().min(1),
+  sizeKB: z.number().min(0),
+  status: z.enum(['processing', 'parsed', 'failed']),
+  uploadDate: z.date(),
+  storagePath: z.string().min(1),
+  parsedResumeId: z.string().optional(),
+  archived: z.boolean(),
+  fileHash: z.string().optional(),
+});
+
+const ParsedResumeSchema = z.object({
+  parsedResumeId: z.string().min(1),
+  userId: z.string().min(1),
+  uploadId: z.string().min(1),
+  customerId: z.string().optional(),
+  agencyId: z.string().optional(),
+  fileName: z.string().min(1),
+  fileSize: z.number().min(0),
+  uploadDate: z.date(),
+  parsedData: ParsedResumeDataSchema,
+  status: z.enum(['processing', 'completed', 'failed']),
+  error: z.string().optional(),
+  processingTime: z.number().min(0),
+  mergeProposal: z.object({
+    uploadId: z.string(),
+    userId: z.string(),
+    acceptedChanges: z.any(),
+    rejectedChanges: z.any(),
+    confidenceThreshold: z.number().min(0).max(1),
+    createdAt: z.date(),
+    reviewedAt: z.date().optional(),
+  }).optional(),
+});
 
 // Types for resume parsing with versioning support
 export interface ResumeUpload {
@@ -38,9 +237,11 @@ export interface ParsedResume {
   fileName: string;
   fileSize: number;
   uploadDate: Date;
+  storagePath: string;
   parsedData: {
     contact: ContactInfo;
     summary: string;
+    bio?: string;
     skills: Skill[];
     education: Education[];
     experience: WorkExperience[];
@@ -189,6 +390,29 @@ function calculateFileHash(buffer: Buffer): string {
 }
 
 /**
+ * Geocode an address string to get coordinates
+ */
+async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${process.env.GOOGLE_MAPS_API_KEY}`);
+    const data = await response.json();
+    
+    if (data.status === 'OK' && data.results && data.results.length > 0) {
+      const location = data.results[0].geometry.location;
+      return {
+        lat: location.lat,
+        lng: location.lng
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Geocoding failed:', error);
+    return null;
+  }
+}
+
+/**
  * Archive previous resumes when uploading new one
  */
 async function archivePreviousResumes(userId: string, newUploadId: string): Promise<void> {
@@ -204,6 +428,41 @@ async function archivePreviousResumes(userId: string, newUploadId: string): Prom
   
   if (!uploadsSnapshot.empty) {
     await batch.commit();
+  }
+}
+
+/**
+ * Generate a signed URL for resume download
+ */
+async function generateResumeDownloadUrl(storagePath: string): Promise<string> {
+  try {
+    console.log('generateResumeDownloadUrl called with storagePath:', storagePath);
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+    
+    // Check if file exists first
+    const [exists] = await file.exists();
+    console.log('File exists check:', exists);
+    
+    if (!exists) {
+      throw new Error(`File does not exist at path: ${storagePath}`);
+    }
+    
+    // Generate a signed URL that expires in 1 year
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
+    });
+    
+    console.log('Generated signed URL successfully');
+    return signedUrl;
+  } catch (error) {
+    console.error('Failed to generate signed URL:', {
+      error,
+      storagePath,
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
   }
 }
 
@@ -226,6 +485,42 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
   
   // Apply accepted changes with confidence-based merging
   const mergedData = await applyConfidenceBasedMerge(parsedData, acceptedChanges);
+  
+  // Generate resume URL and add to merged data
+  try {
+    console.log('Generating resume download URL for storagePath:', parsedResume.storagePath);
+    const resumeUrl = await generateResumeDownloadUrl(parsedResume.storagePath);
+    console.log('Generated resume URL:', resumeUrl);
+    
+    // Add resume URL and metadata to the merged data
+    mergedData.resumeUrl = resumeUrl;
+    mergedData.resumeFileName = parsedResume.fileName;
+    mergedData.resumeUploadDate = parsedResume.uploadDate;
+    
+    console.log('Resume URL added to merged data:', {
+      resumeUrl,
+      resumeFileName: parsedResume.fileName,
+      resumeUploadDate: parsedResume.uploadDate
+    });
+  } catch (urlError) {
+    console.error('Failed to generate resume URL:', {
+      error: urlError,
+      storagePath: parsedResume.storagePath,
+      fileName: parsedResume.fileName
+    });
+    
+    // Even if URL generation fails, save the storage path and metadata
+    // The frontend can use getResumeSignedUrl as a fallback
+    mergedData.resumeStoragePath = parsedResume.storagePath;
+    mergedData.resumeFileName = parsedResume.fileName;
+    mergedData.resumeUploadDate = parsedResume.uploadDate;
+    
+    console.log('Saved resume metadata without URL:', {
+      resumeStoragePath: parsedResume.storagePath,
+      resumeFileName: parsedResume.fileName,
+      resumeUploadDate: parsedResume.uploadDate
+    });
+  }
   
   // Update user profile
   const userRef = db.collection('users').doc(uid);
@@ -262,14 +557,14 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
 async function applyConfidenceBasedMerge(parsedData: any, acceptedChanges: any): Promise<any> {
   const mergedData: any = {};
   
-  // Auto-merge high confidence fields (≥0.8)
+  // Merge all parsed data directly (AI extraction results)
   Object.entries(parsedData).forEach(([key, value]: [string, any]) => {
-    if (typeof value === 'object' && value.confidence >= 0.8) {
+    if (value !== null && value !== undefined) {
       mergedData[key] = value;
     }
   });
   
-  // Apply user-accepted changes
+  // Apply user-accepted changes (override any conflicting fields)
   Object.assign(mergedData, acceptedChanges);
   
   return mergedData;
@@ -306,19 +601,52 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     // Download and parse the file
     const fileBuffer = await downloadFile(fileUrl);
     const fileHash = calculateFileHash(fileBuffer);
+    console.log('File downloaded, size:', fileBuffer.length, 'bytes');
+    
+    // Upload file to Firebase Storage
+    console.log('Uploading file to Firebase Storage at path:', storagePath);
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(storagePath);
+    await file.save(fileBuffer, {
+      metadata: {
+        contentType: fileName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+        metadata: {
+          originalName: fileName,
+          userId: userId,
+          uploadId: uploadId
+        }
+      }
+    });
+    console.log('File uploaded to Storage successfully');
     
     // Check for duplicate files
     const existingUploads = await db.collection('resumeUploads').doc(userId)
       .collection('uploads').where('fileHash', '==', fileHash).get();
     
+    console.log('Checking for duplicates, found:', existingUploads.size, 'existing uploads');
+    
     if (!existingUploads.empty) {
-      const existingUpload = existingUploads.docs[0].data();
-      return {
-        success: true,
-        uploadId: existingUpload.uploadId,
-        parsedData: existingUpload.parsedData,
-        duplicate: true
-      };
+      const existingUpload = existingUploads.docs[0].data() as ResumeUpload;
+      console.log('Duplicate file detected:', existingUpload.uploadId, 'parsedResumeId:', existingUpload.parsedResumeId);
+      
+      // If the existing upload has a parsed resume, fetch it
+      if (existingUpload.parsedResumeId) {
+        const parsedResumeDoc = await db.collection('parsedResumes').doc(existingUpload.parsedResumeId).get();
+        if (parsedResumeDoc.exists) {
+          const parsedResume = parsedResumeDoc.data() as ParsedResume;
+          console.log('Returning existing parsed data for duplicate file');
+          return {
+            success: true,
+            uploadId: existingUpload.uploadId,
+            parsedData: parsedResume.parsedData,
+            duplicate: true,
+            message: 'Resume already parsed - returning existing results'
+          };
+        }
+      }
+      
+      // If no parsed data available, continue with parsing (don't skip)
+      console.log('Duplicate file found but no parsed data - proceeding with parsing');
     }
 
     // Archive previous resumes
@@ -326,22 +654,27 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
 
     // Create upload record
     const uploadRef = db.collection('resumeUploads').doc(userId).collection('uploads').doc(uploadId);
-    await uploadRef.set({
+    const resumeUpload = {
       uploadId,
       userId,
       fileName,
       fileType: fileName.split('.').pop() || '',
       sizeKB: Math.round(fileSize / 1024),
-      status: 'processing',
+      status: 'processing' as const,
       uploadDate: new Date(),
       storagePath,
       archived: false,
       fileHash
-    });
+    };
+
+    // Validate resume upload data
+    const validatedResumeUpload = validateResumeUpload(resumeUpload);
+    await uploadRef.set(validatedResumeUpload);
 
     // Parse file content
     const fileExtension = fileName.toLowerCase().split('.').pop();
     let parsedText = '';
+    console.log('File extension:', fileExtension);
     
     switch (fileExtension) {
       case 'pdf':
@@ -357,11 +690,33 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       default:
         throw new functions.https.HttpsError('invalid-argument', 'Unsupported file format');
     }
+    
+    console.log('Extracted text length:', parsedText.length);
+    console.log('Extracted text preview:', parsedText.substring(0, 500));
 
     // Extract structured data using AI and NLP
     const parsedData = await extractResumeData(parsedText, fileName, openai);
 
+    // Generate enhanced bio from resume summary
+    if (parsedData.summary) {
+      try {
+        console.log('Generating enhanced bio from resume summary...');
+        const enhancedBio = await generateEnhancedBio(parsedData.summary, parsedData.contact.name, openai);
+        if (enhancedBio) {
+          parsedData.bio = enhancedBio;
+          console.log('Enhanced bio generated:', enhancedBio);
+        }
+      } catch (error) {
+        console.warn('Failed to generate enhanced bio:', error);
+        // Fallback to original summary if bio generation fails
+        parsedData.bio = parsedData.summary;
+      }
+    }
+
     // Create parsed resume record
+    // Validate parsed data before saving
+    const validatedParsedData = validateParsedResumeData(parsedData);
+
     const parsedResume: ParsedResume = {
       parsedResumeId: uploadId,
       userId,
@@ -371,25 +726,33 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       fileName,
       fileSize,
       uploadDate: new Date(),
-      parsedData,
+      storagePath,
+      parsedData: validatedParsedData,
       status: 'completed',
       processingTime: Date.now() - startTime
     };
 
+    // Validate the complete parsed resume object
+    const validatedParsedResume = validateParsedResume(parsedResume);
+
     // Save to Firestore collections
+    console.log('Starting Firestore batch write...');
     const batch = db.batch();
     
     // Update upload record
+    console.log('Updating upload record with status: parsed');
     batch.update(uploadRef, {
       status: 'parsed',
       parsedResumeId: uploadId
     });
     
     // Save parsed resume
+    console.log('Saving parsed resume to collection');
     const parsedResumeRef = db.collection('parsedResumes').doc(uploadId);
-    batch.set(parsedResumeRef, parsedResume);
+    batch.set(parsedResumeRef, validatedParsedResume);
     
     // Create merge proposal
+    console.log('Creating merge proposal');
     const mergeProposalRef = db.collection('mergeProposals').doc(`${userId}_${uploadId}`);
     batch.set(mergeProposalRef, {
       uploadId,
@@ -400,10 +763,14 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       createdAt: new Date()
     });
     
+    console.log('Committing batch write...');
     await batch.commit();
+    console.log('Batch write completed successfully');
 
     // Auto-merge high confidence data
+    console.log('Starting auto-merge...');
     await commitMerge(userId, uploadId);
+    console.log('Auto-merge completed');
 
     // Log AI action
     await logAIAction({
@@ -431,7 +798,14 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     };
 
   } catch (error) {
-    console.error('Resume parsing error:', error);
+    console.error('Resume parsing error:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : undefined,
+      fileName,
+      userId,
+      fileSize
+    });
     
     // Update upload status to failed
     const uploadId = generateUploadId();
@@ -449,7 +823,7 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       error: error instanceof Error ? error.message : 'Unknown error'
     });
 
-    throw new Error('Failed to parse resume');
+    throw new Error(`Failed to parse resume: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -529,14 +903,67 @@ async function downloadFile(fileUrl: string): Promise<Buffer> {
 }
 
 /**
- * Parse PDF file
+ * Parse PDF file with OCR fallback for scanned documents
  */
 async function parsePDF(buffer: Buffer): Promise<string> {
   try {
+    // First try standard PDF parsing
     const data = await pdfParse(buffer);
-    return data.text;
+    
+    // Check if we got meaningful text (more than just whitespace and minimal content)
+    const text = data.text.trim();
+    const wordCount = text.split(/\s+/).filter(word => word.length > 0).length;
+    
+    // If we have less than 10 meaningful words, likely a scanned PDF
+    if (wordCount < 10) {
+      console.log('PDF appears to be scanned, attempting OCR...');
+      return await performOCR(buffer);
+    }
+    
+    return text;
   } catch (error) {
-    throw new Error(`PDF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.log('Standard PDF parsing failed, attempting OCR fallback...', error);
+    // If standard parsing fails, try OCR
+    try {
+      return await performOCR(buffer);
+    } catch (ocrError) {
+      throw new Error(`Both PDF parsing and OCR failed. PDF: ${error instanceof Error ? error.message : 'Unknown error'}, OCR: ${ocrError instanceof Error ? ocrError.message : 'Unknown error'}`);
+    }
+  }
+}
+
+/**
+ * Perform OCR on PDF/image using Google Cloud Vision
+ */
+async function performOCR(buffer: Buffer): Promise<string> {
+  try {
+    const client = new vision.ImageAnnotatorClient();
+    
+    // Convert buffer to base64 for Vision API
+    const base64Image = buffer.toString('base64');
+    
+    const [result] = await client.textDetection({
+      image: {
+        content: base64Image
+      }
+    });
+    
+    const detections = result.textAnnotations;
+    if (!detections || detections.length === 0) {
+      throw new Error('No text detected in image');
+    }
+    
+    // The first detection contains all text
+    const fullText = detections[0].description || '';
+    
+    if (fullText.trim().length < 10) {
+      throw new Error('OCR detected minimal text, likely not a readable document');
+    }
+    
+    console.log(`OCR extracted ${fullText.length} characters`);
+    return fullText;
+  } catch (error) {
+    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -561,12 +988,15 @@ async function extractResumeData(text: string, fileName: string, openai: OpenAI)
   
   // Use AI to extract structured information
   const aiExtraction = await extractWithAI(cleanedText, openai);
+  console.log('AI Extraction result:', JSON.stringify(aiExtraction, null, 2));
   
   // Use NLP for additional extraction and validation
   const nlpExtraction = extractWithNLP(cleanedText);
+  console.log('NLP Extraction result:', JSON.stringify(nlpExtraction, null, 2));
   
   // Merge and validate results
   const mergedData = mergeExtractions(aiExtraction, nlpExtraction);
+  console.log('Merged data result:', JSON.stringify(mergedData, null, 2));
   
   // Generate AI analysis
   const aiAnalysis = await generateAIAnalysis(mergedData, cleanedText, openai);
@@ -697,8 +1127,12 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
 `;
 
   try {
+    console.log('Starting AI extraction with OpenAI...');
+    console.log('Prompt length:', prompt.length);
+    console.log('Text length:', text.length);
+    
     const completion = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4",
       messages: [
         {
           role: "system",
@@ -713,7 +1147,11 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
       max_completion_tokens: 2000
     });
 
+    console.log('OpenAI API call completed');
     const response = completion.choices[0]?.message?.content;
+    console.log('AI response length:', response?.length || 0);
+    console.log('AI response preview:', response?.substring(0, 200) || 'No response');
+    
     if (!response) {
       throw new Error('No response from AI');
     }
@@ -721,12 +1159,20 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
     // Extract JSON from response
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
+      console.error('No JSON found in AI response. Full response:', response);
       throw new Error('No JSON found in AI response');
     }
 
-    return JSON.parse(jsonMatch[0]);
+    const parsedResult = JSON.parse(jsonMatch[0]);
+    console.log('Successfully parsed AI response:', JSON.stringify(parsedResult, null, 2));
+    return parsedResult;
   } catch (error) {
     console.error('AI extraction failed:', error);
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : undefined
+    });
     // Return empty structure if AI fails
     return {
       contact: { name: '', email: '', phone: '', address: '' },
@@ -972,7 +1418,7 @@ ${originalText.substring(0, 2000)}
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-5",
+      model: "gpt-4",
       messages: [
         {
           role: "system",
@@ -1044,6 +1490,62 @@ function calculateConfidence(parsedData: any): number {
 }
 
 /**
+ * Generate an enhanced bio from resume summary using AI
+ */
+async function generateEnhancedBio(summary: string, name: string, openai: OpenAI): Promise<string> {
+  const prompt = `
+Transform this resume summary/objective into an engaging, professional bio for a user profile. The bio should be:
+
+1. More conversational and engaging than a formal resume summary
+2. Written in first person (using "I" instead of third person)
+3. Highlight key achievements and strengths
+4. Be 2-3 sentences long, concise but impactful
+5. Sound natural and personal, like someone describing themselves
+6. Remove overly formal resume language
+
+Original resume summary:
+"${summary}"
+
+Generate a compelling bio that captures the essence of this professional's story and value proposition.
+`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert at writing compelling professional bios. Transform resume summaries into engaging, first-person bios that sound natural and highlight key strengths."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.7,
+      max_completion_tokens: 200
+    });
+
+    const response = completion.choices[0]?.message?.content;
+    if (!response) {
+      throw new Error('No response from AI bio generation');
+    }
+
+    // Clean up the response (remove quotes if present)
+    let bio = response.trim();
+    if (bio.startsWith('"') && bio.endsWith('"')) {
+      bio = bio.slice(1, -1);
+    }
+
+    console.log('Generated enhanced bio:', bio);
+    return bio;
+  } catch (error) {
+    console.error('AI bio generation failed:', error);
+    throw error;
+  }
+}
+
+/**
  * Update user profile with parsed resume data
  */
 async function updateUserProfile(userId: string, parsedData: any) {
@@ -1051,22 +1553,36 @@ async function updateUserProfile(userId: string, parsedData: any) {
   
   const updates: any = {};
   
-  // Update contact information
-  if (parsedData.contact.name) {
-    const nameParts = parsedData.contact.name.split(' ');
-    if (nameParts.length >= 2) {
-      updates.firstName = nameParts[0];
-      updates.lastName = nameParts.slice(1).join(' ');
+    // Update contact information
+    if (parsedData.contact.name) {
+      const nameParts = parsedData.contact.name.split(' ');
+      if (nameParts.length >= 2) {
+        updates.firstName = nameParts[0];
+        updates.lastName = nameParts.slice(1).join(' ');
+      }
     }
-  }
-  
-  if (parsedData.contact.email) {
-    updates.email = parsedData.contact.email;
-  }
-  
-  if (parsedData.contact.phone) {
-    updates.phone = parsedData.contact.phone;
-  }
+    
+    if (parsedData.contact.email) {
+      updates.email = parsedData.contact.email;
+    }
+    
+    if (parsedData.contact.phone) {
+      updates.phone = parsedData.contact.phone;
+    }
+    
+    // Geocode address if available for location-based job matching
+    if (parsedData.contact.address) {
+      try {
+        const coordinates = await geocodeAddress(parsedData.contact.address);
+        if (coordinates) {
+          updates['addressInfo.streetAddress'] = parsedData.contact.address;
+          updates['addressInfo.homeLat'] = coordinates.lat;
+          updates['addressInfo.homeLng'] = coordinates.lng;
+        }
+      } catch (error) {
+        console.warn('Failed to geocode address from resume:', error);
+      }
+    }
   
   // Update skills
   if (parsedData.skills.length > 0) {
@@ -1086,7 +1602,7 @@ async function updateUserProfile(userId: string, parsedData: any) {
   
   // Update work experience
   if (parsedData.experience.length > 0) {
-    updates.employmentHistory = parsedData.experience;
+    updates.workHistory = parsedData.experience;
     
     // Calculate years of experience
     const totalYears = calculateTotalExperience(parsedData.experience);
@@ -1118,7 +1634,11 @@ async function updateUserProfile(userId: string, parsedData: any) {
   
   // Apply updates if any
   if (Object.keys(updates).length > 0) {
+    console.log('Updating user profile with:', JSON.stringify(updates, null, 2));
     await userRef.update(updates);
+    console.log('User profile updated successfully');
+  } else {
+    console.log('No updates to apply to user profile');
   }
 }
 
@@ -1215,25 +1735,44 @@ export const getResumeParsingStatus = functions.https.onCall(async (request, con
 export const getUserResumeUploads = functions.https.onCall(async (request, context) => {
   const { userId } = request.data;
   
+  console.log('getUserResumeUploads called with userId:', userId);
+  
   if (!request.auth) {
+    console.log('User not authenticated');
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
   
-  try {
-    const uploadsSnapshot = await db.collection('resumeUploads').doc(userId)
-      .collection('uploads')
-      .orderBy('uploadDate', 'desc')
-      .get();
+          try {
+            // Get the user's resume uploads from the subcollection
+            const userUploadsRef = db.collection('resumeUploads').doc(userId);
+            console.log('Checking user uploads ref:', userUploadsRef.path);
+            
+            const uploadsSnapshot = await userUploadsRef
+              .collection('uploads')
+              .orderBy('uploadDate', 'desc')
+              .get();
+    
+    console.log('Found uploads:', uploadsSnapshot.size);
+    uploadsSnapshot.docs.forEach((doc, index) => {
+      console.log(`Upload ${index + 1}:`, {
+        id: doc.id,
+        data: doc.data()
+      });
+    });
     
     const uploads = uploadsSnapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data()
     }));
     
+    console.log('Returning uploads:', uploads);
     return { uploads };
     
   } catch (error) {
-    throw new functions.https.HttpsError('internal', 'Failed to get resume uploads');
+    console.error('Error getting resume uploads:', error);
+    // If there's an error (like permission denied), return empty array instead of throwing
+    // This prevents showing error messages for users who simply haven't uploaded resumes yet
+    return { uploads: [] };
   }
 });
 

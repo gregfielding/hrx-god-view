@@ -13,7 +13,10 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>Preferences (availability, shift, pay)</Typography>
+      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Preferences (availability, shift, pay)</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+        Not shown to employers. Used only to match you with roles around this range.
+      </Typography>
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
           <TextField

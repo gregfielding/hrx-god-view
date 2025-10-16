@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, setLogLevel } from 'firebase/firestore';
+import { getFirestore, setLogLevel, initializeFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
@@ -17,7 +17,31 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export { app };
-export const db = getFirestore(app);
+// Use initializeFirestore in browser to avoid WebChannel (reduces terminate 400 noise)
+export const db = (() => {
+  try {
+    const isBrowser = typeof window !== 'undefined';
+    if (isBrowser) {
+      const isDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
+      const settings: any = {
+        ignoreUndefinedProperties: true,
+      };
+      if (isDev) {
+        // Force long polling in development to avoid WebChannel terminate noise
+        settings.experimentalForceLongPolling = true;
+        settings.useFetchStreams = false;
+      } else {
+        // Production: default transport; allow fetch streams
+        settings.useFetchStreams = true;
+      }
+      return initializeFirestore(app, settings as any);
+    }
+    return getFirestore(app);
+  } catch {
+    // Fallback if initializeFirestore is unavailable
+    return getFirestore(app);
+  }
+})();
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, 'us-central1');
@@ -36,7 +60,8 @@ try {
     // eslint-disable-next-line no-console
     console.info('[Firestore] Debug logging enabled (opt-in)');
   } else {
-    setLogLevel('error'); // keep console noise low by default
+    // Use 'silent' to best-effort suppress SDK logs that bubble to console
+    setLogLevel('silent');
   }
 } catch {
   // ignore if setLogLevel is unavailable in some environments

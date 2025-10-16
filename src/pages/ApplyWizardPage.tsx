@@ -80,7 +80,7 @@ const ApplyWizardPage: React.FC = () => {
   }
 
   return (
-    <Box sx={{ px: 0, py: 4 }}>
+    <Box sx={{ px: 0, py: 0 }}>
       <Wizard
         tenantId={tenantId}
         tenantName={tenantName || undefined}

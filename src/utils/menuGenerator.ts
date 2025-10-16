@@ -31,7 +31,9 @@ export async function generateMenuItems(
   // New claims-based parameters
   isHRXUser?: boolean,
   currentClaimsRole?: ClaimsRole,
-  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } }
+  claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } },
+  // User profile flags
+  userJobsBoardEnabled?: boolean
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
 
@@ -139,8 +141,8 @@ export async function generateMenuItems(
       //   icon: 'assignment',
       //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       // }] : []),
-      // Only show Jobs Board if HRX Jobs Board module is enabled
-      ...(jobsBoardModuleEnabled ? [{
+      // Show Jobs Board if HRX Jobs Board module is enabled OR user has jobsBoard flag
+      ...((jobsBoardModuleEnabled || userJobsBoardEnabled) ? [{
         text: 'Jobs Board',
         to: '/jobs-dashboard',
         icon: 'work',

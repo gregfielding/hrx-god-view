@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { logger } from '../utils/logger';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -251,18 +252,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Helper function to load claims from user token (force fresh token)
   const loadClaimsFromUser = async (user: User): Promise<CustomClaims> => {
     try {
-      const tokenResult = await user.getIdTokenResult(true); // Force fresh token
+      // Avoid forcing a token refresh on localhost development to prevent
+      // Firestore WebChannel terminate noise due to credential changes
+      const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+      const forceRefresh = !isLocalDev;
+      const tokenResult = await user.getIdTokenResult(forceRefresh);
       const claims = tokenResult.claims as CustomClaims;
-      if (process.env.NODE_ENV === 'development') {
-        console.log('=== CLAIMS DEBUG ===');
-        console.log('Raw claims:', claims);
-        console.log('claims.hrx:', claims.hrx);
-        console.log('claims.roles:', claims.roles);
-        console.log('=== END CLAIMS DEBUG ===');
-      }
+      logger.debug('Claims loaded');
       return claims || {};
     } catch (error) {
-      console.error('Failed to load claims from user token:', error);
+      logger.error('Failed to load claims from user token:', error);
       return {};
     }
   };
@@ -295,7 +294,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           setSecurityLevel(convertClaimsSecurityToLegacy(claimsRole.securityLevel));
         }
       } catch (error) {
-        console.error('Failed to refresh user claims:', error);
+        logger.error('Failed to refresh user claims:', error);
       }
     }
   };
@@ -306,50 +305,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     // Check if AuthDialog is currently creating a user profile
     if (isCreatingUserProfileRef.current) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('AuthDialog is creating user profile, skipping default document creation');
-      }
+      logger.debug('AuthDialog is creating user profile, skipping default document creation');
       return null;
     }
     
     // Check if user document already exists to prevent overwriting
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('User document already exists, not creating default document');
-      }
+      logger.debug('User document already exists, not creating default document');
       return userSnap.data();
     }
 
     // For new users from public jobs board, don't create default document
     // The AuthDialog should handle user profile creation
     // We'll wait longer to ensure AuthDialog has time to create the profile
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Waiting for AuthDialog to create user profile...');
-    }
+    logger.debug('Waiting for AuthDialog to create user profile...');
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Check again after the delay
     if (isCreatingUserProfileRef.current) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('AuthDialog is still creating user profile after delay, skipping default document creation');
-      }
+      logger.debug('AuthDialog is still creating user profile after delay, skipping default document creation');
       return null;
     }
 
     const userSnapAfterDelay = await getDoc(userRef);
     if (userSnapAfterDelay.exists()) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('User document created by AuthDialog during delay, not creating default document');
-      }
+      logger.debug('User document created by AuthDialog during delay, not creating default document');
       return userSnapAfterDelay.data();
     }
 
     // Only create default document for users who weren't created via AuthDialog
     // If we're on the C1 public routes, initialize with the correct Tenant/Applicant profile
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Creating fallback default user document');
-    }
+    logger.debug('Creating fallback default user document');
     const isC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
     const c1TenantId = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -410,6 +397,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           avatar: user.photoURL || '',
           activeTenantId: null, // Will be set when user switches to a tenant
         };
+
+    // In localhost development, avoid client Firestore writes to prevent WebChannel noise
+    try {
+      const isLocalDev = typeof window !== 'undefined' && window.location.hostname === 'localhost' && process.env.NODE_ENV === 'development';
+      if (isLocalDev) {
+        try {
+          const key = `dev:userDoc:${user.uid}`;
+          localStorage.setItem(key, JSON.stringify({ ...defaultUserDoc, createdAt: Date.now(), lastLogin: Date.now() }));
+        } catch {}
+        return defaultUserDoc;
+      }
+    } catch {}
 
     await setDoc(userRef, defaultUserDoc);
     return defaultUserDoc;
