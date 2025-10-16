@@ -557,7 +557,8 @@ const Layout: React.FC = React.memo(function Layout() {
           currentClaimsRole,
           claimsRoles,
           // User profile flags
-          jobsBoardEnabled
+          jobsBoardEnabled,
+          currentClaimsSecurityLevel
         );
         // Hide menu items by per-user flags
         items = items.filter((mi) => {

@@ -33,7 +33,8 @@ export async function generateMenuItems(
   currentClaimsRole?: ClaimsRole,
   claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } },
   // User profile flags
-  userJobsBoardEnabled?: boolean
+  userJobsBoardEnabled?: boolean,
+  currentSecurityLevel?: string
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
 
@@ -144,9 +145,12 @@ export async function generateMenuItems(
       // Show Jobs Board if HRX Jobs Board module is enabled OR user has jobsBoard flag
       ...((jobsBoardModuleEnabled || userJobsBoardEnabled) ? [{
         text: 'Jobs Board',
-        to: '/jobs-dashboard',
+        // Security levels 1-4 go to /c1/jobs-board, others go to /jobs-dashboard
+        to: (currentSecurityLevel && ['1', '2', '3', '4'].includes(currentSecurityLevel)) 
+          ? '/c1/jobs-board' 
+          : '/jobs-dashboard',
         icon: 'work',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
+        requiredRoles: ['Admin', 'Manager', 'Worker', 'Staff'] as ClaimsRole[], // Security levels 1-4 and higher
       }] : []),
       // Recruiter (role-gated; no module gate)
       ...([{
