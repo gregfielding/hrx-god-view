@@ -150,7 +150,10 @@ export async function generateMenuItems(
           ? '/c1/jobs-board' 
           : '/jobs-dashboard',
         icon: 'work',
-        requiredRoles: ['Admin', 'Manager', 'Worker', 'Staff'] as ClaimsRole[], // Security levels 1-4 and higher
+        // Allow access for security levels 1-4 (Applicant, Flex, Hired Staff) and higher levels
+        requiredRoles: (currentSecurityLevel && ['1', '2', '3', '4'].includes(currentSecurityLevel))
+          ? ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[]
+          : ['Admin', 'Manager'] as ClaimsRole[],
       }] : []),
       // Recruiter (role-gated; no module gate)
       ...([{
