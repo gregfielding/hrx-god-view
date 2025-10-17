@@ -541,7 +541,7 @@ const Layout: React.FC = React.memo(function Layout() {
     const generateMenu = async () => {
       setMenuLoading(true);
       try {
-        // REMOVED: Excessive logging causing re-renders
+        
         let items = await generateMenuItems(
           userAccessRole, 
           (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), 
@@ -578,7 +578,7 @@ const Layout: React.FC = React.memo(function Layout() {
       }
     };
     generateMenu();
-  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled]);
+  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled, currentClaimsSecurityLevel]);
 
   const menuItemsWithIcons = menuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -623,10 +623,14 @@ const Layout: React.FC = React.memo(function Layout() {
       'Data Operations': <SettingsIcon />,
       'Log out': <LogoutIcon />,
     };
+    
+    // Only show ChatGPT for security levels 5, 6, 7 (Worker, Manager, Admin)
+    const shouldShowChatGPT = currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel);
+    
     return {
       ...item,
-      text: item.text === 'Dashboard' ? 'Chat GPT' : item.text,
-      icon: iconMap[item.text === 'Dashboard' ? 'Chat GPT' : item.text] || <SettingsIcon />,
+      text: (item.text === 'Dashboard' && shouldShowChatGPT) ? 'Chat GPT' : item.text,
+      icon: iconMap[(item.text === 'Dashboard' && shouldShowChatGPT) ? 'Chat GPT' : item.text] || <SettingsIcon />,
     };
   });
 

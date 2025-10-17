@@ -97,6 +97,9 @@ export async function generateMenuItems(
   // Check if this is HRX based on specific tenant ID (not user claims)
   // HRX user status (isHRXUser) gives access to switch tenants, but doesn't force HRX menu
   const isHRX = activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
+  
+  // Use Firestore security level as fallback when claims security level is not available
+  const effectiveSecurityLevel = currentSecurityLevel || activeTenantData?.securityLevel;
   // REMOVED: Excessive logging causing re-renders
   // REMOVED: Excessive logging causing re-renders
 
@@ -106,19 +109,22 @@ export async function generateMenuItems(
 
   if (!isHRX) {
     // Add basic menu items that don't require specific roles (for users without claims)
-    menuItems.push(
-      {
-        text: 'Dashboard',
-        to: '/dashboard',
-        icon: 'dashboard',
-        // No role requirements - available to all users
-      },
-      // {
-      //   text: 'My Profile',
-      //   to: '/profile',
-      //   icon: 'person',
-      // },
-    );
+    // Only show Dashboard for security levels 5+ (Worker, Manager, Admin)
+    if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
+      menuItems.push(
+        {
+          text: 'Dashboard',
+          to: '/dashboard',
+          icon: 'dashboard',
+          // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
+        },
+      );
+    }
+    // {
+    //   text: 'My Profile',
+    //   to: '/profile',
+    //   icon: 'person',
+    // },
 
     // Add tenant-specific menu items with claims-based role requirements
     menuItems.push(
@@ -143,18 +149,27 @@ export async function generateMenuItems(
       //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       // }] : []),
       // Show Jobs Board if HRX Jobs Board module is enabled OR user has jobsBoard flag
-      ...((jobsBoardModuleEnabled || userJobsBoardEnabled) ? [{
-        text: 'Jobs Board',
-        // Security levels 1-4 go to /c1/jobs-board, others go to /jobs-dashboard
-        to: (currentSecurityLevel && ['1', '2', '3', '4'].includes(currentSecurityLevel)) 
-          ? '/c1/jobs-board' 
-          : '/jobs-dashboard',
-        icon: 'work',
-        // Allow access for security levels 1-4 (Applicant, Flex, Hired Staff) and higher levels
-        requiredRoles: (currentSecurityLevel && ['1', '2', '3', '4'].includes(currentSecurityLevel))
-          ? ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[]
-          : ['Admin', 'Manager'] as ClaimsRole[],
-      }] : []),
+      ...((jobsBoardModuleEnabled || userJobsBoardEnabled) ? (() => {
+        
+        return [{
+          text: 'Jobs Board',
+          // Security levels 1-4 go to /c1/jobs-board, others go to /jobs-dashboard
+          to: (effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) 
+            ? '/c1/jobs-board' 
+            : '/jobs-dashboard',
+          icon: 'work',
+          // Allow access for security levels 1-4 (Applicant, Flex, Hired Staff) and higher levels
+          requiredRoles: (effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel))
+            ? ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[]
+            : ['Admin', 'Manager'] as ClaimsRole[],
+        }];
+      })() : (() => {
+        console.log('=== JOBS BOARD MENU DEBUG ===');
+        console.log('jobsBoardModuleEnabled:', jobsBoardModuleEnabled);
+        console.log('userJobsBoardEnabled:', userJobsBoardEnabled);
+        console.log('NOT creating Jobs Board menu item');
+        return [];
+      })()),
       // Recruiter (role-gated; no module gate)
       ...([{
         text: 'Recruiter',
@@ -242,18 +257,22 @@ export async function generateMenuItems(
 
   if (isHRX) {
     // Add basic menu items for HRX users (no role requirements)
-    menuItems.push(
-      {
-        text: 'Dashboard',
-        to: '/dashboard',
-        icon: 'dashboard',
-        // No role requirements - available to all HRX users
-      },
-      {
-        text: 'My Profile',
-        to: '/profile',
-        icon: 'person',
-        // No role requirements - available to all HRX users
+    // Only show Dashboard for security levels 5+ (Worker, Manager, Admin)
+    if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
+      menuItems.push(
+        {
+          text: 'Dashboard',
+          to: '/dashboard',
+          icon: 'dashboard',
+          // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
+        },
+      );
+    }
+    menuItems.push({
+      text: 'My Profile',
+      to: '/profile',
+      icon: 'person',
+      // No role requirements - available to all HRX users
       },
     );
 
@@ -516,7 +535,7 @@ export async function generateMenuItems(
   }
 
   // Filter menu items based on ONLY the active tenant's role and security level
-  return menuItems.filter(item => {
+  const filteredItems = menuItems.filter(item => {
     // Always allow items without explicit requirements
     if (!item.accessRoles && !item.requiredRoles) return true;
 
@@ -534,11 +553,22 @@ export async function generateMenuItems(
       else if (tenantLevel >= 5) effectiveRole = 'Worker';
       else effectiveRole = 'Tenant';
     }
-    // If an explicit role exists, prefer it when it is stronger than derived
-    const priorityOrder: ClaimsRole[] = ['Tenant','Worker','Recruiter','Manager','Admin','HRX'];
-    const pickStronger = (a: ClaimsRole, b: ClaimsRole) =>
-      priorityOrder.indexOf(a) > priorityOrder.indexOf(b) ? a : b;
-    const tenantRole = tenantRoleRaw ? pickStronger(tenantRoleRaw as ClaimsRole, effectiveRole) : effectiveRole;
+    // For admin users (security level 7), always use the derived role from security level
+    // For other users, use Firestore role if available, otherwise use derived role
+    const tenantRole = (tenantLevel >= 7) 
+      ? effectiveRole  // Admin users: use security level derived role
+      : (tenantRoleRaw ? (tenantRoleRaw as ClaimsRole) : effectiveRole); // Others: use Firestore role if available
+    
+    // Temporary debug for admin users
+    if (tenantLevel >= 7 || tenantRoleRaw === 'Admin' || tenantRole === 'Admin') {
+      console.log('[ADMIN DEBUG]', {
+        tenantLevel,
+        tenantRoleRaw,
+        effectiveRole,
+        tenantRole,
+        activeTenantData
+      });
+    }
 
     // Legacy accessRoles check using computed tenant access key
     if (item.accessRoles && item.accessRoles.length > 0) {
@@ -548,15 +578,26 @@ export async function generateMenuItems(
     // Required roles check using tenant role only
     if (item.requiredRoles && item.requiredRoles.length > 0) {
       const ok = item.requiredRoles.includes(tenantRole as ClaimsRole);
-      if (!ok && isMenuDebugEnabled()) {
-        // eslint-disable-next-line no-console
-        console.log('[menuGenerator] hiding item due to role mismatch:', item.text, 'required:', item.requiredRoles, 'have:', tenantRole);
+      
+      // Temporary debug for admin users
+      if (tenantLevel >= 7 && item.text === 'Dashboard') {
+        console.log('[ADMIN DEBUG] Dashboard access:', {
+          tenantLevel,
+          tenantRoleRaw,
+          effectiveRole,
+          tenantRole,
+          requiredRoles: item.requiredRoles,
+          hasAccess: ok
+        });
       }
+      
       return ok;
     }
 
     return true;
   });
+  
+  return filteredItems;
 }
 
 export function hasMenuAccess(
