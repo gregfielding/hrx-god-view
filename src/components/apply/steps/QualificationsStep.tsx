@@ -97,8 +97,8 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
   // Show Experience immediately while posting loads; then respect explicit flag when available
   // Default to showing while posting loads (null/undefined), then respect flag
   const showExperience = context === 'profile' || (job == null ? true : !!job.showExperience);
-  const showLanguages = context === 'profile' || !!job?.showLanguages;
-  const showEducation = context === 'profile' || !!job?.showEducation;
+  const showLanguages = context === 'profile' || (job == null ? true : !!job.showLanguages);
+  const showEducation = context === 'profile' || (job == null ? true : !!job.showEducation);
 
   const [expSummary, setExpSummary] = React.useState<string>(value?.experienceSummary || '');
   // Only adopt incoming prop value when it is defined to avoid clearing local edits
