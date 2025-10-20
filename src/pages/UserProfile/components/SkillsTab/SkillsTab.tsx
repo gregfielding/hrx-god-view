@@ -1289,15 +1289,14 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
           </Box>
         </Grid> */}
 
-        {/* Certifications */}
         {!hideCertsAndReferences && (
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <EmojiEventsIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Certifications & Licenses</Typography>
-            </Box>
-            <List dense>
+          <Grid item xs={12} md={6}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <EmojiEventsIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Certifications & Licenses</Typography>
+              </Box>
+              <List dense>
               {certifications.map((cert, idx) => (
                 <Paper key={idx} sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
                   <Box display="flex" justifyContent="space-between" alignItems="flex-start">
@@ -1348,13 +1347,13 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
         </Grid>)}
 
         {!hideLanguages && (
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <LanguageIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Languages</Typography>
-            </Box>
-            <List dense>
+          <Grid item xs={12} md={6}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <LanguageIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Languages</Typography>
+              </Box>
+              <List dense>
               {languages.map((lang, idx) => (
                 <Box key={idx} display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                   <Box display="flex" alignItems="center" gap={1}>
@@ -1407,34 +1406,34 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
           </Box>
         </Grid>)}
 
-        {/* Education Section (gated) */}
         {!hideEducation && (
-        <Grid item xs={12}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <SchoolIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Education & Training</Typography>
+          <Grid item xs={12}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <SchoolIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Education & Training</Typography>
+              </Box>
+              <EducationSection value={education} onChange={setEducation} />
             </Box>
-            <EducationSection value={education} onChange={setEducation} />
-          </Box>
-        </Grid>)}
+          </Grid>
+        )}
 
-        {/* Work Experience Section (gated) */}
         {!hideWorkExperience && (
-        <Grid item xs={12}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <WorkIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Work Experience</Typography>
-            </Box>
-            <WorkExperienceSection
+          <Grid item xs={12}>
+            <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
+              <Box display="flex" alignItems="center" mb={2}>
+                <WorkIcon color="primary" sx={{ mr: 1 }} />
+                <Typography variant="h6">Work Experience</Typography>
+              </Box>
+              <WorkExperienceSection
                 value={employmentHistory}
                 onChange={setEmploymentHistory}
                 onetSkills={onetSkills}
                 onetJobTitles={onetJobTitles}
               />
-          </Box>
-        </Grid>)}
+            </Box>
+          </Grid>
+        )}
 
         {/* Compliance & Background */}
         {/* <Grid item xs={12} md={6}>
