@@ -1,5 +1,6 @@
 import React from 'react';
-import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip } from '@mui/material';
+import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip, Grid } from '@mui/material';
+import { CheckCircle } from '@mui/icons-material';
 import Autocomplete from '@mui/material/Autocomplete';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
@@ -315,28 +316,83 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
           <CardHeader title={<Typography variant="h6">Languages</Typography>} />
           <CardContent>
             {languagesHelper && <Alert severity="info" sx={{ mb: 2 }}>{languagesHelper}</Alert>}
-            <Autocomplete
-              multiple
-              fullWidth
-              options={[
-                'English','Spanish','French','German','Italian','Portuguese','Chinese','Japanese','Korean','Arabic','Russian','Hindi','Dutch','Swedish','Norwegian','Danish','Finnish','Polish','Czech','Hungarian','Greek','Turkish','Hebrew','Thai','Vietnamese','Indonesian','Malay','Tagalog','Other'
-              ]}
-              value={userLanguages}
-              onChange={(event, newValue) => {
-                setUserLanguages(newValue);
-                onChange({ ...value, languages: newValue });
-                const uid = auth.currentUser?.uid;
-                if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newValue, updatedAt: serverTimestamp() });
-              }}
-              renderInput={(params) => (
-                <TextField {...params} label="Language Requirements" placeholder="Add languages" />
-              )}
-              renderTags={(tagValue, getTagProps) =>
-                tagValue.map((option, index) => (
-                  <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />
-                ))
-              }
-            />
+            
+            <Grid container spacing={2}>
+              {/* Selected Languages */}
+              <Grid item xs={12} md={8}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Selected languages
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
+                  {userLanguages.map((lang) => (
+                    <Chip
+                      key={lang}
+                      label={lang}
+                      onDelete={() => {
+                        const newLanguages = userLanguages.filter(l => l !== lang);
+                        setUserLanguages(newLanguages);
+                        onChange({ ...value, languages: newLanguages });
+                        const uid = auth.currentUser?.uid;
+                        if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
+                      }}
+                      color="primary"
+                      variant="filled"
+                      icon={<CheckCircle fontSize="small" />}
+                      sx={{
+                        '& .MuiChip-icon': { color: 'inherit' },
+                      }}
+                    />
+                  ))}
+                </Box>
+                <TextField
+                  fullWidth
+                  label="Add languages"
+                  placeholder="Type to search or select from suggestions..."
+                  value=""
+                  onChange={(e) => {
+                    const inputValue = e.target.value.trim();
+                    if (inputValue && !userLanguages.includes(inputValue)) {
+                      const newLanguages = [...userLanguages, inputValue];
+                      setUserLanguages(newLanguages);
+                      onChange({ ...value, languages: newLanguages });
+                      const uid = auth.currentUser?.uid;
+                      if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
+                    }
+                  }}
+                />
+              </Grid>
+              
+              {/* Suggested Languages */}
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Suggested languages (tap to add)
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {[
+                    'English','Spanish','French','German','Italian','Portuguese','Chinese','Japanese','Korean','Arabic','Russian','Hindi','Dutch','Swedish','Norwegian','Danish','Finnish','Polish','Czech','Hungarian','Greek','Turkish','Hebrew','Thai','Vietnamese','Indonesian','Malay','Tagalog'
+                  ].map((lang) => (
+                    <Chip
+                      key={lang}
+                      label={lang}
+                      onClick={() => {
+                        if (userLanguages.includes(lang)) return;
+                        const newLanguages = [...userLanguages, lang];
+                        setUserLanguages(newLanguages);
+                        onChange({ ...value, languages: newLanguages });
+                        const uid = auth.currentUser?.uid;
+                        if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
+                      }}
+                      size="small"
+                      variant="outlined"
+                      sx={{
+                        cursor: userLanguages.includes(lang) ? 'default' : 'pointer',
+                        opacity: userLanguages.includes(lang) ? 0.5 : 1,
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Grid>
+            </Grid>
           </CardContent>
         </Card>
       )}
