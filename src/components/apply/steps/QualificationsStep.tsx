@@ -108,6 +108,14 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     }
   }, [value?.experienceSummary]);
 
+  const [userLanguages, setUserLanguages] = React.useState<string[]>(value?.languages || []);
+  // Only adopt incoming prop value when it is defined to avoid clearing local edits
+  React.useEffect(() => {
+    if (Array.isArray(value?.languages)) {
+      setUserLanguages(value.languages);
+    }
+  }, [value?.languages]);
+
   const [workRows, setWorkRows] = React.useState<Array<{ id: string; employer: string; title: string; startDate?: string; endDate?: string }>>(value?.workHistory || []);
   // Hydrate from Firestore directly to avoid draft state overwriting persisted rows
   React.useEffect(() => {
@@ -313,8 +321,9 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
               options={[
                 'English','Spanish','French','German','Italian','Portuguese','Chinese','Japanese','Korean','Arabic','Russian','Hindi','Dutch','Swedish','Norwegian','Danish','Finnish','Polish','Czech','Hungarian','Greek','Turkish','Hebrew','Thai','Vietnamese','Indonesian','Malay','Tagalog','Other'
               ]}
-              value={Array.isArray(userData.languages) ? userData.languages : []}
+              value={userLanguages}
               onChange={(event, newValue) => {
+                setUserLanguages(newValue);
                 onChange({ ...value, languages: newValue });
                 const uid = auth.currentUser?.uid;
                 if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newValue, updatedAt: serverTimestamp() });
