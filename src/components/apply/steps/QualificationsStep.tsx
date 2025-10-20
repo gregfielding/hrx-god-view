@@ -323,7 +323,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
                 <Typography variant="subtitle2" gutterBottom>
                   Selected languages
                 </Typography>
-                <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
+                <Box display="flex" flexWrap="wrap" gap={1}>
                   {userLanguages.map((lang) => (
                     <Chip
                       key={lang}
@@ -344,22 +344,6 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
                     />
                   ))}
                 </Box>
-                <TextField
-                  fullWidth
-                  label="Add languages"
-                  placeholder="Type to search or select from suggestions..."
-                  value=""
-                  onChange={(e) => {
-                    const inputValue = e.target.value.trim();
-                    if (inputValue && !userLanguages.includes(inputValue)) {
-                      const newLanguages = [...userLanguages, inputValue];
-                      setUserLanguages(newLanguages);
-                      onChange({ ...value, languages: newLanguages });
-                      const uid = auth.currentUser?.uid;
-                      if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
-                    }
-                  }}
-                />
               </Grid>
               
               {/* Suggested Languages */}
