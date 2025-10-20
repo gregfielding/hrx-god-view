@@ -66,6 +66,10 @@ export interface UserProfile {
   preferredName?: string;
   email: string;
   phone: string;
+  phoneE164?: string; // E.164 formatted phone number
+  phoneVerified?: boolean; // Phone verification status
+  phoneVerifiedAt?: Date; // When phone was verified
+  dob?: string; // Date of birth for eligibility verification
   dateOfBirth?: Date;
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   avatar?: string; // file URL
@@ -126,11 +130,19 @@ export interface UserProfile {
   backgroundCheckStatus?: string;
   vaccinationStatus?: string;
   specialTraining?: string;
-  resume?: any;
   // Module access flags (per-user overrides)
   crm_sales?: boolean;
   recruiter?: boolean;
   jobsBoard?: boolean;
+  // Resume object - single resume per user
+  resume?: {
+    fileName: string; // Original filename (e.g., "GregResume.pdf")
+    size: number; // File size in bytes (e.g., 106 * 1024 = 108544)
+    sizeKB?: number; // File size in KB for display (e.g., 106)
+    timestamp: Date; // Upload date
+    storagePath: string; // Firebase Storage path
+    downloadUrl?: string; // Generated download URL (optional, can be generated client-side)
+  };
 }
 
 // Form interface for editing user profiles

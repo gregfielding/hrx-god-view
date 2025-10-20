@@ -74,6 +74,14 @@ service firebase.storage {
       // allow write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "HRX";
     }
 
+    // Resume upload access
+    match /resumes/{userId}/{fileName} {
+      // Allow authenticated users to upload/delete their own resumes
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
+      // Public read access for resumes (since they're made public)
+      allow read: if true;
+    }
+
     // Block everything else by default
     match /{allPaths=**} {
       allow read, write, delete: if false;

@@ -617,7 +617,18 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
         }
       }
     });
-    console.log('File uploaded to Storage successfully');
+    
+    // Make the file publicly readable
+    console.log('Setting file permissions to public read...');
+    await file.makePublic();
+    console.log('File uploaded to Storage successfully and made public');
+    
+    // Generate the public URL
+    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(storagePath)}?alt=media`;
+    console.log('Generated public URL:', publicUrl);
+    
+    // Store the storage path and public URL
+    console.log('Resume uploaded to storage path:', storagePath);
     
     // Check for duplicate files
     const existingUploads = await db.collection('resumeUploads').doc(userId)
@@ -750,6 +761,21 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     console.log('Saving parsed resume to collection');
     const parsedResumeRef = db.collection('parsedResumes').doc(uploadId);
     batch.set(parsedResumeRef, validatedParsedResume);
+    
+    // Update user profile with single resume object
+    console.log('Updating user profile with resume object');
+    const userRef = db.collection('users').doc(userId);
+    batch.update(userRef, {
+      resume: {
+        fileName: fileName,
+        size: fileSize,
+        sizeKB: Math.round(fileSize / 1024),
+        timestamp: new Date(),
+        storagePath: storagePath,
+        downloadUrl: publicUrl
+      },
+      updatedAt: new Date()
+    });
     
     // Create merge proposal
     console.log('Creating merge proposal');

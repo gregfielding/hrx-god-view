@@ -116,6 +116,7 @@ export const sendOtp = onCall(
   // }
 
   const { phoneE164 } = request.data as { phoneE164: string };
+  const uid = request.auth?.uid; // Get uid from request auth if available
 
   // Validate phone format (E.164)
   if (!phoneE164 || !/^\+[1-9]\d{7,14}$/.test(phoneE164)) {
@@ -131,6 +132,15 @@ export const sendOtp = onCall(
       to: phoneE164,
       channel: 'sms',
     });
+
+    // Store phone number in user profile when sending OTP
+    if (uid) {
+      await db.doc(`users/${uid}`).set({
+        phoneE164,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      logger.info(`Stored phone number for user ${uid}: ${phoneE164}`);
+    }
 
     logger.info(`OTP sent to ${phoneE164}`);
     return { success: true };
@@ -167,7 +177,7 @@ export const checkOtp = onCall(
   // }
 
   const { phoneE164, code } = request.data as { phoneE164: string; code: string };
-  // const uid = request.auth.uid; // TODO: Get uid from request when auth is restored
+  const uid = request.auth?.uid; // Get uid from request auth if available
 
   // Validate inputs
   if (!phoneE164 || !/^\+[1-9]\d{7,14}$/.test(phoneE164)) {
@@ -193,12 +203,34 @@ export const checkOtp = onCall(
       throw new HttpsError('permission-denied', 'Invalid verification code. Please try again.');
     }
 
-    // TODO: Update user profile with verified phone when auth is restored
-    // await db.doc(`users/${uid}`).set({
-    //   phoneE164,
-    //   phoneVerified: true,
-    //   updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    // }, { merge: true });
+    // Update user profile with verified phone
+    if (uid) {
+      await db.doc(`users/${uid}`).set({
+        phoneE164,
+        phoneVerified: true,
+        phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      logger.info(`Updated user ${uid} with verified phone: ${phoneE164}`);
+    } else {
+      // If no UID available, try to find user by phone number
+      const usersQuery = await db.collection('users')
+        .where('phoneE164', '==', phoneE164)
+        .limit(1)
+        .get();
+      
+      if (!usersQuery.empty) {
+        const userDoc = usersQuery.docs[0];
+        await userDoc.ref.update({
+          phoneVerified: true,
+          phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        logger.info(`Updated user ${userDoc.id} with verified phone: ${phoneE164}`);
+      } else {
+        logger.warn(`Phone verified but no user found for ${phoneE164}`);
+      }
+    }
 
     logger.info(`Phone verified: ${phoneE164}`);
     return { success: true };

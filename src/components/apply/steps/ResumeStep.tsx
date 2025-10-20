@@ -15,32 +15,17 @@ type Props = {
   onChange: (v: any) => void;
 };
 
-interface ResumeUpload {
-  id: string;
-  uploadId: string;
+interface UserResume {
   fileName: string;
-  fileType: string;
+  size: number;
   sizeKB: number;
-  status: 'processing' | 'parsed' | 'failed';
-  uploadDate: Date;
+  timestamp: Date;
   storagePath: string;
-  parsedResumeId?: string;
-  archived: boolean;
-}
-
-interface GetUserResumeUploadsResponse {
-  uploads: ResumeUpload[];
-}
-
-interface GetResumeSignedUrlResponse {
-  signedUrl: string;
-  fileName: string;
-  fileSize: number;
-  uploadDate: Date;
+  downloadUrl?: string;
 }
 
 const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
-  const [previousUploads, setPreviousUploads] = useState<ResumeUpload[]>([]);
+  const [currentResume, setCurrentResume] = useState<UserResume | null>(null);
   const [loading, setLoading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,155 +47,89 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setUserProfile(data);
-        logger.debug('UserProfile updated:', {
-          resumeUrl: data?.resumeUrl,
-          resumeFileName: data?.resumeFileName,
-          resumeUploadDate: data?.resumeUploadDate,
-          resumeStoragePath: data?.resumeStoragePath,
-        });
+        
+        // Update current resume from user profile
+        if (data?.resume) {
+          setCurrentResume(data.resume);
+          logger.debug('Current resume updated:', data.resume);
+        } else {
+          setCurrentResume(null);
+          logger.debug('No resume found in user profile');
+        }
       }
     });
 
     return () => unsubscribe();
   }, [user?.uid]);
 
-  // Get user's resume uploads
-  const getUserResumeUploads = httpsCallable(functions, 'getUserResumeUploads');
   const getResumeSignedUrl = httpsCallable(functions, 'getResumeSignedUrl');
 
-  useEffect(() => {
-    if (userId) {
-      fetchResumeUploads();
-    }
-  }, [userId]);
-
-  const fetchResumeUploads = async () => {
-    if (!userId) {
-      logger.debug('ResumeStep - No userId, skipping fetch');
+  const handleViewResume = async () => {
+    if (!currentResume) {
+      setError('No resume available to view');
       return;
     }
-    
-    logger.debug('ResumeStep - Fetching resume uploads for userId:', userId);
-    setLoading(true);
-    setError(null); // Clear any previous errors
-    try {
-      const result = await getUserResumeUploads({ userId }) as { data: GetUserResumeUploadsResponse };
-      logger.debug('ResumeStep - Fetch result:', result);
-      setPreviousUploads(result.data.uploads || []);
-    } catch (err) {
-      logger.error('Failed to fetch resume uploads:', err);
-      logger.debug('Error details:', {
-        message: err instanceof Error ? err.message : 'Unknown error',
-        code: (err as any)?.code,
-        data: (err as any)?.data,
-        fullError: err
-      });
-      
-      // Only show error if it's not a "not found" type error (empty collection is normal)
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      const errorCode = (err as any)?.code;
-      
-      // Don't show error for common "no data" scenarios
-      if (
-        errorMessage.includes('not found') || 
-        errorMessage.includes('permission') ||
-        errorMessage.includes('No document to update') ||
-        errorCode === 'not-found' ||
-        errorCode === 'permission-denied' ||
-        // If the function returns empty array, that's normal
-        (Array.isArray((err as any)?.data?.uploads) && (err as any).data.uploads.length === 0)
-      ) {
-        logger.debug('No previous resume uploads found - this is normal for new users');
-      } else {
-        logger.debug('Showing error because:', { errorMessage, errorCode });
-        setError('Failed to load previous resumes');
-      }
-      setPreviousUploads([]); // Set empty array on error
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const handleViewResume = async (uploadId: string) => {
     try {
-      logger.debug('handleViewResume called with uploadId:', uploadId);
-      logger.debug('userProfile data:', {
-        hasUserProfile: !!userProfile,
-        resumeUrl: userProfile?.resumeUrl,
-        resumeFileName: userProfile?.resumeFileName,
-        resumeUploadDate: userProfile?.resumeUploadDate,
-        resumeStoragePath: userProfile?.resumeStoragePath
-      });
-
-      // First try to use the resume URL from the user document
-      if (userProfile?.resumeUrl) {
-        logger.debug('Using resume URL from user document:', userProfile.resumeUrl);
-        window.open(userProfile.resumeUrl, '_blank');
+      logger.debug('handleViewResume called for resume:', currentResume.fileName);
+      
+      // First try to use the stored download URL (if available)
+      if (currentResume.downloadUrl) {
+        logger.debug('Using stored download URL:', currentResume.downloadUrl);
+        window.open(currentResume.downloadUrl, '_blank');
         return;
       }
       
-      // Always prefer a signed URL when no direct URL is saved
-      try {
-        const result = await getResumeSignedUrl({ userId, uploadId, action: 'view' }) as { data: GetResumeSignedUrlResponse };
-        logger.debug('Signed URL obtained for view');
-        window.open(result.data.signedUrl, '_blank');
+      // Use public URL directly (since file is made public)
+      if (currentResume.storagePath) {
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
+        logger.debug('Using public URL:', publicUrl);
+        window.open(publicUrl, '_blank');
         return;
-      } catch (signedErr) {
-        logger.error('Signed URL generation failed, attempting getDownloadURL fallback:', signedErr);
-        // Fallback to Firebase Storage client getDownloadURL
-        const path = userProfile?.resumeStoragePath || previousUploads.find(u => u.uploadId === uploadId)?.storagePath;
-        if (path) {
-          const url = await getDownloadURL(storageRef(storage, path));
-          window.open(url, '_blank');
-          return;
-        }
-        throw signedErr;
       }
+      
+      setError('No valid storage path found for resume');
     } catch (err) {
-      logger.error('Failed to get signed URL:', err);
+      logger.error('Failed to open resume:', err);
       setError('Failed to open resume');
     }
   };
 
-  const handleDownloadResume = async (uploadId: string) => {
+  const handleDownloadResume = async () => {
+    if (!currentResume) {
+      setError('No resume available to download');
+      return;
+    }
+
     try {
-      // First try to use the resume URL from the user document
-      if (userProfile?.resumeUrl) {
-        logger.debug('Using resume URL from user document for download:', userProfile.resumeUrl);
+      logger.debug('handleDownloadResume called for resume:', currentResume.fileName);
+      
+      // First try to use the stored download URL (if available)
+      if (currentResume.downloadUrl) {
+        logger.debug('Using stored download URL for download:', currentResume.downloadUrl);
         const link = document.createElement('a');
-        link.href = userProfile.resumeUrl;
-        link.download = userProfile.resumeFileName || 'resume.pdf';
+        link.href = currentResume.downloadUrl;
+        link.download = currentResume.fileName;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         return;
       }
       
-      // Use signed URL for download when no direct URL is saved
-      try {
-        const result = await getResumeSignedUrl({ userId, uploadId, action: 'download' }) as { data: GetResumeSignedUrlResponse };
+      // Use public URL directly (since file is made public)
+      if (currentResume.storagePath) {
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(currentResume.storagePath)}?alt=media`;
+        logger.debug('Using public URL for download:', publicUrl);
         const link = document.createElement('a');
-        link.href = result.data.signedUrl;
-        link.download = result.data.fileName;
+        link.href = publicUrl;
+        link.download = currentResume.fileName;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         return;
-      } catch (signedErr) {
-        logger.error('Signed URL download failed, attempting getDownloadURL fallback:', signedErr);
-        const path = userProfile?.resumeStoragePath || previousUploads.find(u => u.uploadId === uploadId)?.storagePath;
-        if (path) {
-          const url = await getDownloadURL(storageRef(storage, path));
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = previousUploads.find(u => u.uploadId === uploadId)?.fileName || 'resume.pdf';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          return;
-        }
-        throw signedErr;
       }
+      
+      setError('No valid storage path found for resume');
     } catch (err) {
       logger.error('Failed to download resume:', err);
       setError('Failed to download resume');
@@ -264,7 +183,6 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
     };
     
     onChange(updatedValue);
-    fetchResumeUploads(); // Refresh the list
     setShowUpload(false);
   };
 
@@ -319,15 +237,10 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
     }
   };
 
-  const activeUploads = previousUploads.filter(upload => !upload.archived);
-  const hasActiveUpload = activeUploads.length > 0;
-
   logger.debug('ResumeStep - Render state:', {
     userId,
     loading,
-    previousUploads,
-    activeUploads,
-    hasActiveUpload,
+    currentResume,
     showUpload
   });
 
@@ -343,13 +256,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         </Alert>
       )}
 
-      {loading && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Loading resume information...
-        </Alert>
-      )}
-
-      {hasActiveUpload && (
+      {currentResume && (
         <Card sx={{ mb: 2 }}>
           <CardContent>
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
@@ -357,56 +264,47 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
               <Typography variant="h6">Current Resume</Typography>
             </Stack>
             
-            {activeUploads.map((upload) => (
-              <Box key={upload.id} sx={{ mb: 2, p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                  <Typography variant="subtitle1" fontWeight="medium">
-                    {upload.fileName}
-                  </Typography>
-                  <Chip 
-                    label={upload.status} 
-                    color={getStatusColor(upload.status) as any}
-                    size="small"
-                  />
-                </Stack>
-                
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  {formatFileSize(upload.sizeKB)} • Uploaded {formatDate(upload.uploadDate)}
-                </Typography>
-                
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    startIcon={<Visibility />}
-                    size="small"
-                    variant="outlined"
-                    onClick={() => handleViewResume(upload.uploadId)}
-                  >
-                    View
-                  </Button>
-                  <Button
-                    startIcon={<Download />}
-                    size="small"
-                    variant="outlined"
-                    onClick={() => handleDownloadResume(upload.uploadId)}
-                  >
-                    Download
-                  </Button>
-                  <Button
-                    startIcon={<Upload />}
-                    size="small"
-                    variant="contained"
-                    onClick={() => setShowUpload(true)}
-                  >
-                    Upload New Resume
-                  </Button>
-                </Stack>
-              </Box>
-            ))}
+            <Box sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+              <Typography variant="subtitle1" fontWeight="medium" sx={{ mb: 1 }}>
+                {currentResume.fileName}
+              </Typography>
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {currentResume.sizeKB} KB • Uploaded {formatDate(currentResume.timestamp)}
+              </Typography>
+              
+              <Stack direction="row" spacing={1}>
+                <Button
+                  startIcon={<Visibility />}
+                  size="small"
+                  variant="outlined"
+                  onClick={handleViewResume}
+                >
+                  View
+                </Button>
+                <Button
+                  startIcon={<Download />}
+                  size="small"
+                  variant="outlined"
+                  onClick={handleDownloadResume}
+                >
+                  Download
+                </Button>
+                <Button
+                  startIcon={<Upload />}
+                  size="small"
+                  variant="contained"
+                  onClick={() => setShowUpload(true)}
+                >
+                  Upload New Resume
+                </Button>
+              </Stack>
+            </Box>
           </CardContent>
         </Card>
       )}
 
-      {!hasActiveUpload && !loading && userId && (
+      {!currentResume && !loading && userId && (
         <>
           <Alert severity="info" sx={{ mb: 1 }}>
             Resume is optional. You can skip this step and continue, or upload your resume below.
@@ -419,13 +317,13 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         </>
       )}
 
-      {hasActiveUpload && !showUpload && (
+      {currentResume && !showUpload && (
         <Alert severity="success" sx={{ mb: 2 }}>
-          Resume uploaded {formatDate(activeUploads[0].uploadDate)} -{' '}
+          Resume uploaded {formatDate(currentResume.timestamp)} -{' '}
           <Button 
             variant="text" 
             size="small" 
-            onClick={() => handleViewResume(activeUploads[0].uploadId)}
+            onClick={handleViewResume}
             sx={{ textDecoration: 'underline', p: 0, minWidth: 'auto' }}
           >
             click to open
@@ -433,11 +331,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         </Alert>
       )}
 
-      {(!hasActiveUpload || showUpload) && (
+      {(!currentResume || showUpload) && (
         <Box>
-          {hasActiveUpload && (
+          {currentResume && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Uploading a new resume will archive your current resume.
+              Uploading a new resume will replace your current resume.
             </Typography>
           )}
           

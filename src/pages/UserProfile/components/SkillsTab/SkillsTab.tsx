@@ -56,11 +56,16 @@ const languageProficiencies = ['Basic', 'Conversational', 'Fluent', 'Native'];
 export interface SkillsTabProps {
   user: any;
   onUpdate: (updated: any) => void;
-  onetSkills: { name: string; category: string }[];
-  onetJobTitles: string[];
+  hideCertsAndReferences?: boolean;
+  onetSkills?: any[];
+  onetJobTitles?: any[];
+  hideIndustryPreferences?: boolean;
+  hideEducation?: boolean;
+  hideWorkExperience?: boolean;
+  hideLanguages?: boolean;
 }
 
-const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJobTitles }) => {
+const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJobTitles, hideCertsAndReferences, hideIndustryPreferences, hideEducation, hideWorkExperience, hideLanguages }) => {
   logger.debug('SkillsTab - Component rendered with props:', { 
     user, 
     userSkills: user?.skills, 
@@ -1037,7 +1042,8 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
           </Box>
         </Grid> */}
 
-        {/* Industry Preferences (Optional) – same layout/behavior as Skills */}
+        {/* Industry Preferences (Optional) – gated */}
+        {!hideIndustryPreferences && (
         <Grid item xs={12}>
           <Card variant="outlined">
             <CardHeader title={<Typography variant="h6">Industry Preferences (optional)</Typography>} />
@@ -1119,7 +1125,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Grid>
             </CardContent>
           </Card>
-        </Grid>
+        </Grid>)}
 
         {/* Work & Cultural Preferences */}
         {/* <Grid item xs={12}>
@@ -1283,49 +1289,8 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
           </Box>
         </Grid> */}
 
-        {/* References */}
-        <Grid item xs={12} md={6}>
-          <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
-            <Box display="flex" alignItems="center" mb={2}>
-              <PersonIcon color="primary" sx={{ mr: 1 }} />
-              <Typography variant="h6">Professional References</Typography>
-            </Box>
-            <List dense>
-              {references.map((ref, idx) => (
-                <Paper key={idx} sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                    <Box flex={1}>
-                      <Typography variant="subtitle2" fontWeight="bold">
-                        {ref.name} - {ref.title}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {ref.company} • {ref.relationship}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {ref.phone} • {ref.email}
-                      </Typography>
-                      <Chip 
-                        label={ref.status} 
-                        size="small" 
-                        color={ref.status === 'completed' ? 'success' : ref.status === 'failed' ? 'error' : 'warning'}
-                        sx={{ mt: 1 }}
-                      />
-                    </Box>
-                    <IconButton size="small" onClick={() => handleDeleteReference(idx)}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                </Paper>
-              ))}
-              
-              <Button variant="outlined" onClick={handleAddReference} startIcon={<AddIcon />} fullWidth>
-                Add Reference
-              </Button>
-            </List>
-          </Box>
-        </Grid>
-
-        {/* Certifications & Languages Row */}
+        {/* Certifications */}
+        {!hideCertsAndReferences && (
         <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
@@ -1380,8 +1345,9 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Box>
             </List>
           </Box>
-        </Grid>
+        </Grid>)}
 
+        {!hideLanguages && (
         <Grid item xs={12} md={6}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
@@ -1439,9 +1405,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
               </Box>
             </List>
           </Box>
-        </Grid>
+        </Grid>)}
 
-        {/* Education Section */}
+        {/* Education Section (gated) */}
+        {!hideEducation && (
         <Grid item xs={12}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
@@ -1450,9 +1417,10 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
             </Box>
             <EducationSection value={education} onChange={setEducation} />
           </Box>
-        </Grid>
+        </Grid>)}
 
-        {/* Work Experience Section */}
+        {/* Work Experience Section (gated) */}
+        {!hideWorkExperience && (
         <Grid item xs={12}>
           <Box sx={{ pt: 3, pb: 3, borderRadius: 2 }}>
             <Box display="flex" alignItems="center" mb={2}>
@@ -1466,7 +1434,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                 onetJobTitles={onetJobTitles}
               />
           </Box>
-        </Grid>
+        </Grid>)}
 
         {/* Compliance & Background */}
         {/* <Grid item xs={12} md={6}>

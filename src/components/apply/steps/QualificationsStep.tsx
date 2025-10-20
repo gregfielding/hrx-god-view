@@ -1,19 +1,35 @@
 import React from 'react';
-import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack } from '@mui/material';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
+import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 import { logger } from '../../../utils/logger';
 import onetSkills from '../../../data/onetSkills.json';
 import onetJobTitles from '../../../data/onetJobTitles.json';
 import SkillsTab from '../../../pages/UserProfile/components/SkillsTab/SkillsTab';
+import { mapParsedExperienceToRows } from '../../../utils/resumeToWorkHistory';
+// Local debounce for onChange/onBlur saves (keeps dependencies minimal)
+// Using native month inputs for broad compatibility without extra dependencies
 
 type Props = {
   value: any;
   onChange: (v: any) => void;
+  context?: 'application' | 'profile';
+  tenantId?: string;
+  jobId?: string;
+  jobPosting?: any;
 };
 
-const QualificationsStep: React.FC<Props> = ({ value, onChange }) => {
+const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
   logger.debug('QualificationsStep - value:', value);
+  const job = jobPosting; // job-driven gating comes from parent (Wizard)
+  const debounceRef = React.useRef<any>(null);
+  const debouncedUpdate = (ref: any, data: any) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try { await updateDoc(ref, data); } catch {}
+    }, 500);
+  };
   
   // Transform the qualifications data into user-like format for SkillsTab
   const userData = {
@@ -40,9 +56,20 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange }) => {
     const userRef = doc(db, 'users', currentUser.uid);
     const unsub = onSnapshot(userRef, (snap) => {
       const bioFromDb = (snap.data() as any)?.bio || '';
+      const resumeFromDb = (snap.data() as any)?.resume || null;
+      const expFromDb = (snap.data() as any)?.experienceSummary || '';
       if (!value?.bio && !tempBio && bioFromDb) {
         setTempBio(bioFromDb);
         onChange({ ...value, bio: bioFromDb });
+      }
+      // Determine resume presence for gating Professional Bio
+      try {
+        const has = !!(resumeFromDb?.downloadUrl || resumeFromDb?.storagePath);
+        setHasResume(has);
+      } catch {}
+      // Keep expSummary synced with DB value to avoid clearing on save
+      if (typeof expFromDb === 'string' && expFromDb !== expSummary) {
+        setExpSummary(expFromDb);
       }
     });
     return () => unsub();
@@ -64,37 +91,257 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange }) => {
     } catch {}
   };
 
+  const [hasResume, setHasResume] = React.useState<boolean>(false);
+  const showBio = context === 'profile' ? true : hasResume;
+
+  // Show Experience immediately while posting loads; then respect explicit flag when available
+  // Default to showing while posting loads (null/undefined), then respect flag
+  const showExperience = context === 'profile' || (job == null ? true : !!job.showExperience);
+  const showLanguages = context === 'profile' || !!job?.showLanguages;
+  const showEducation = context === 'profile' || !!job?.showEducation;
+
+  const [expSummary, setExpSummary] = React.useState<string>(value?.experienceSummary || '');
+  // Only adopt incoming prop value when it is defined to avoid clearing local edits
+  React.useEffect(() => {
+    if (typeof value?.experienceSummary === 'string') {
+      setExpSummary(value.experienceSummary);
+    }
+  }, [value?.experienceSummary]);
+
+  const [workRows, setWorkRows] = React.useState<Array<{ id: string; employer: string; title: string; startDate?: string; endDate?: string }>>(value?.workHistory || []);
+  // Hydrate from Firestore directly to avoid draft state overwriting persisted rows
+  React.useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const ref = doc(db, 'users', uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      const data = snap.data() as any;
+      const rows = Array.isArray(data?.workHistory) ? data.workHistory : [];
+      setWorkRows((prev) => {
+        // If local has edits (ids not in Firestore), merge uniquely by id
+        const byId: Record<string, any> = {};
+        rows.forEach((r: any) => { if (r?.id) byId[r.id] = r; });
+        prev.forEach((r) => { if (r?.id && !(r.id in byId)) byId[r.id] = r; });
+        return Object.values(byId);
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  const addWorkRow = () => {
+    const row = { id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`, employer: '', title: '', startDate: '', endDate: '' };
+    setWorkRows((prev) => {
+      const next = [...prev, row];
+      onChange({ ...value, workHistory: next });
+      const uid = auth.currentUser?.uid;
+      if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+      return next;
+    });
+  };
+  const removeWorkRow = (id: string) => {
+    const next = workRows.filter(r => r.id !== id);
+    setWorkRows(next);
+    onChange({ ...value, workHistory: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+  };
+
+  const updateRow = (id: string, field: string, v: string) => {
+    setWorkRows((prev) => {
+      const next = prev.map(r => r.id === id ? { ...r, [field]: v } : r);
+      onChange({ ...value, workHistory: next });
+      const uid = auth.currentUser?.uid;
+      if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+      return next;
+    });
+  };
+
+  const saveExpSummary = async () => {
+    // Persist both summary and latest rows to avoid losing in-progress rows on re-render
+    onChange({ ...value, experienceSummary: expSummary, workHistory: workRows });
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    try { await updateDoc(doc(db, 'users', uid), { experienceSummary: expSummary, workHistory: workRows, updatedAt: serverTimestamp() }); } catch {}
+  };
+
+  // Helpers to convert between display MM/yyyy and input type=month (YYYY-MM)
+  const toInputMonth = (val?: string) => {
+    if (!val) return '';
+    if (/^\d{2}\/\d{4}$/.test(val)) {
+      const [mm, yyyy] = val.split('/');
+      return `${yyyy}-${mm}`;
+    }
+    if (/^\d{4}-\d{2}$/.test(val)) return val;
+    return '';
+  };
+  const fromInputMonth = (val?: string) => {
+    if (!val) return '';
+    if (/^\d{4}-\d{2}$/.test(val)) {
+      const [yyyy, mm] = val.split('-');
+      return `${mm}/${yyyy}`;
+    }
+    return '';
+  };
+
+  const languagesHelper = Array.isArray(job?.languages) && job.languages.length ? `Language Requirements: ${job.languages.join(', ')}` : undefined;
+  const educationHelper = Array.isArray(job?.educationLevels) && job.educationLevels.length ? `Education Requirements: ${job.educationLevels.join(', ')}` : undefined;
+
+  // One-time autofill of workHistory from latest parsed resume if empty
+  React.useEffect(() => {
+    const run = async () => {
+      if (context !== 'application') return;
+      if (!showExperience) return;
+      const uid = auth.currentUser?.uid;
+      if (!uid) return;
+      if ((workRows || []).length > 0) return;
+      // Avoid repeated autofills within this session
+      if ((value && value._workHistoryPrefilled) === true) return;
+      try {
+        const q = query(
+          collection(db, 'parsedResumes'),
+          where('userId', '==', uid),
+          orderBy('uploadDate', 'desc'),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) return;
+        const parsed = snap.docs[0].data() as any;
+        const rows = mapParsedExperienceToRows(parsed?.parsedData || {});
+        if (rows.length === 0) return;
+        setWorkRows(rows);
+        onChange({ ...value, workHistory: rows, _workHistoryPrefilled: true });
+        await updateDoc(doc(db, 'users', uid), { workHistory: rows, workHistoryAutoFilledAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      } catch {}
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context, showExperience]);
+
   return (
     <Box>
-      {/* Bio card */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardHeader
-          title={<Typography variant="h6">Professional Bio</Typography>}
-          action={
-            <Button variant="contained" size="small" onClick={handleSaveBio} disabled={(tempBio || '') === (value?.bio || '')}>
-              Save
-            </Button>
-          }
-        />
-        <CardContent>
-          <TextField
-            fullWidth
-            multiline
-            minRows={6}
-            placeholder="Write a short bio about yourself. You can edit the one we generated from your resume."
-            value={tempBio}
-            onChange={handleBioChange}
+      {showBio && (
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardHeader
+            title={<Typography variant="h6">Professional Bio</Typography>}
+            action={
+              <Button variant="contained" size="small" onClick={handleSaveBio} disabled={(tempBio || '') === (value?.bio || '')}>
+                Save
+              </Button>
+            }
           />
-        </CardContent>
-      </Card>
+          <CardContent>
+            <TextField
+              fullWidth
+              multiline
+              minRows={6}
+              placeholder="Write a short bio about yourself. You can edit the one we generated from your resume."
+              value={tempBio}
+              onChange={handleBioChange}
+            />
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Skills & Industry sections render their own cards; no outer container */}
+      {showExperience && (
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6">Experience & Work History</Typography>} action={<></>} />
+          <CardContent>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Tell us about your most relevant work experience</Typography>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
+              <TextField fullWidth multiline minRows={5} value={expSummary} onChange={(e) => setExpSummary(e.target.value)} placeholder="Describe your most relevant experience..." />
+              <Button sx={{ ml: 2, whiteSpace: 'nowrap', alignSelf: 'flex-start' }} variant="contained" size="small" onClick={saveExpSummary} disabled={(expSummary || '') === (value?.experienceSummary || '')}>Save</Button>
+            </Stack>
+
+            <Divider sx={{ my: 2 }} />
+
+            <Stack spacing={1} sx={{ mb: 2 }}>
+              {workRows.map((row) => (
+                <Stack key={row.id} direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ xs: 'stretch', md: 'center' }}>
+                  <TextField label="Employer" value={row.employer} onChange={(e) => updateRow(row.id, 'employer', e.target.value)} onBlur={(e) => updateRow(row.id, 'employer', e.target.value)} sx={{ flex: 2 }} />
+                  <TextField label="Job Title" value={row.title} onChange={(e) => updateRow(row.id, 'title', e.target.value)} onBlur={(e) => updateRow(row.id, 'title', e.target.value)} sx={{ flex: 2 }} />
+                  <TextField
+                    label="Start Date"
+                    type="month"
+                    value={toInputMonth(row.startDate)}
+                    onChange={(e) => updateRow(row.id, 'startDate', fromInputMonth(e.target.value))}
+                    sx={{ flex: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ autoComplete: 'off' }}
+                  />
+                  <TextField
+                    label="End Date"
+                    type="month"
+                    value={toInputMonth(row.endDate)}
+                    onChange={(e) => updateRow(row.id, 'endDate', fromInputMonth(e.target.value))}
+                    sx={{ flex: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ autoComplete: 'off' }}
+                  />
+                  <Button color="error" onClick={() => removeWorkRow(row.id)}>Delete</Button>
+                </Stack>
+              ))}
+            </Stack>
+            <Button variant="outlined" size="small" onClick={addWorkRow}>Add Work History</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Skills 
+         - Keep only core skills here
+         - Hide Industry, Education, Work Experience, Certs/References to avoid duplication on Application */}
       <SkillsTab
         user={userData}
-        onUpdate={(updated) => onChange(updated)}
+        onUpdate={(updated) => onChange({ ...value, ...updated })}
         onetSkills={onetSkills as any}
         onetJobTitles={onetJobTitles as any}
+        hideCertsAndReferences={true}
+        hideIndustryPreferences={true}
+        hideEducation={true}
+        hideWorkExperience={true}
+        hideLanguages={true}
       />
+
+      {/* Conditional Languages */}
+      {showLanguages && (
+        <Card variant="outlined" sx={{ mt: 3 }}>
+          <CardHeader title={<Typography variant="h6">Languages</Typography>} />
+          <CardContent>
+            {languagesHelper && <Alert severity="info" sx={{ mb: 2 }}>{languagesHelper}</Alert>}
+            <Autocomplete
+              multiple
+              fullWidth
+              options={[
+                'English','Spanish','French','German','Italian','Portuguese','Chinese','Japanese','Korean','Arabic','Russian','Hindi','Dutch','Swedish','Norwegian','Danish','Finnish','Polish','Czech','Hungarian','Greek','Turkish','Hebrew','Thai','Vietnamese','Indonesian','Malay','Tagalog','Other'
+              ]}
+              value={Array.isArray(userData.languages) ? userData.languages : []}
+              onChange={(event, newValue) => {
+                onChange({ ...value, languages: newValue });
+                const uid = auth.currentUser?.uid;
+                if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newValue, updatedAt: serverTimestamp() });
+              }}
+              renderInput={(params) => (
+                <TextField {...params} label="Language Requirements" placeholder="Add languages" />
+              )}
+              renderTags={(tagValue, getTagProps) =>
+                tagValue.map((option, index) => (
+                  <Chip variant="outlined" label={option} {...getTagProps({ index })} key={option} />
+                ))
+              }
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Conditional Education */}
+      {showEducation && (
+        <Card variant="outlined" sx={{ mt: 3 }}>
+          <CardHeader title={<Typography variant="h6">Education</Typography>} />
+          <CardContent>
+            {educationHelper && <Alert severity="info" sx={{ mb: 2 }}>{educationHelper}</Alert>}
+            <Typography variant="body2" color="text.secondary">Add or update education in your profile. (Inline editor to be expanded if needed.)</Typography>
+          </CardContent>
+        </Card>
+      )}
     </Box>
   );
 };

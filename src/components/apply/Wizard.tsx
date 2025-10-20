@@ -498,7 +498,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       case 3:
         return <ResumeStep value={{ ...(formData.resume || {}), userId: uid || '' }} onChange={(v) => persist({ resume: v })} tenantId={tenantId} />;
       case 4:
-        return <QualificationsStep value={formData.qualifications || {}} onChange={(v) => persist({ qualifications: v })} />;
+        return (
+          <QualificationsStep
+            value={formData.qualifications || {}}
+            onChange={(v) => persist({ qualifications: v })}
+            context="application"
+            tenantId={tenantId}
+            jobId={jobId}
+            jobPosting={posting}
+          />
+        );
       case 5:
         return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} />;
       case 6:
@@ -616,7 +625,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
                 missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
               )) ||
               (activeStep === 0 && (!personalValid || phoneNeedsVerification)) ||
-              (activeStep === 1 && formData?.eligibility?.workAuthorized !== true)
+              (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
+              (activeStep === 4 && posting?.showExperience === true && !(formData?.qualifications?.experienceSummary || '').trim())
             }
           >
             Next
