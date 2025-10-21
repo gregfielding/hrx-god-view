@@ -116,6 +116,7 @@ interface PublicJobPosting {
   showEndTime?: boolean;
   status: string;
   visibility: string;
+  restrictedGroups?: string[];
   createdAt: Date;
   benefits?: string;
 }
@@ -152,6 +153,7 @@ const PublicJobsBoard: React.FC = () => {
   
   // Track user's application IDs for showing "Application Submitted"
   const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
+  const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
 
   // Check if we're on the C1 route and should use specific tenantId
   const isC1Route = location.pathname.startsWith('/c1/');
@@ -162,11 +164,12 @@ const PublicJobsBoard: React.FC = () => {
     requestLocationPermission();
   }, [specificTenantId]);
   
-  // Load user's application IDs when logged in
+  // Load user's application IDs and group memberships when logged in
   useEffect(() => {
-    const loadUserApplications = async () => {
+    const loadUserData = async () => {
       if (!user?.uid) {
         setUserApplicationIds([]);
+        setUserGroupIds([]);
         return;
       }
       try {
@@ -175,12 +178,13 @@ const PublicJobsBoard: React.FC = () => {
         if (userSnap.exists()) {
           const userData = userSnap.data();
           setUserApplicationIds(Array.isArray(userData?.applicationIds) ? userData.applicationIds : []);
+          setUserGroupIds(Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : []);
         }
       } catch (error) {
-        console.error('Error loading user applications:', error);
+        console.error('Error loading user data:', error);
       }
     };
-    loadUserApplications();
+    loadUserData();
   }, [user?.uid]);
 
   // Request user's location permission and get coordinates
@@ -228,12 +232,18 @@ const PublicJobsBoard: React.FC = () => {
       const allJobs: PublicJobPosting[] = [];
 
       if (specificTenantId) {
-        // If we're on the C1 route, only load jobs from the specific tenant
+        // If we're on the C1 route, load all jobs from the specific tenant (will filter by visibility client-side)
         try {
-          const publicPosts = await jobsBoardService.getPostsByVisibility(specificTenantId, 'public');
+          // Load public, restricted, and private jobs (client-side filtering will handle visibility)
+          const [publicPosts, restrictedPosts] = await Promise.all([
+            jobsBoardService.getPostsByVisibility(specificTenantId, 'public'),
+            jobsBoardService.getPostsByVisibility(specificTenantId, 'restricted')
+          ]);
+          
+          const allPosts = [...publicPosts, ...restrictedPosts];
           
           // Filter for active posts only
-          const activePosts = publicPosts.filter(post => post.status === 'active');
+          const activePosts = allPosts.filter(post => post.status === 'active');
           
           // Convert to PublicJobPosting format
           const convertedPosts: PublicJobPosting[] = activePosts.map(post => ({
@@ -285,6 +295,7 @@ const PublicJobsBoard: React.FC = () => {
             showEndTime: post.showEndTime,
             status: post.status,
             visibility: post.visibility,
+            restrictedGroups: (post as any).restrictedGroups,
             createdAt: post.createdAt,
             benefits: post.benefits,
           }));
@@ -357,6 +368,7 @@ const PublicJobsBoard: React.FC = () => {
               showEndTime: post.showEndTime,
               status: post.status,
               visibility: post.visibility,
+              restrictedGroups: (post as any).restrictedGroups,
               createdAt: post.createdAt,
               benefits: post.benefits,
             }));
@@ -413,6 +425,33 @@ const PublicJobsBoard: React.FC = () => {
     if (showFavoritesOnly) {
       filtered = filtered.filter((job) => favorites.includes(job.id));
     }
+    
+    // Apply visibility filtering
+    filtered = filtered.filter((job) => {
+      // Public jobs are visible to everyone
+      if (job.visibility === 'public') return true;
+      
+      // Private jobs are hidden from job board (only visible in admin/recruiter dashboards)
+      if (job.visibility === 'private') return false;
+      
+      // Restricted jobs are only visible to users in the specified groups
+      if (job.visibility === 'restricted') {
+        // If user is not logged in, hide restricted jobs
+        if (!user?.uid) return false;
+        
+        // Check if job has restrictedGroups array
+        if (!Array.isArray(job.restrictedGroups) || job.restrictedGroups.length === 0) {
+          // No groups specified, hide the job
+          return false;
+        }
+        
+        // Check if user is a member of at least one of the required groups
+        return job.restrictedGroups.some((groupId: string) => userGroupIds.includes(groupId));
+      }
+      
+      // Default: show the job (for backwards compatibility)
+      return true;
+    });
 
     // Apply sorting
     if (sortBy === 'closest' && userLocation) {
@@ -461,7 +500,7 @@ const PublicJobsBoard: React.FC = () => {
     }
 
     setFilteredJobs(filtered);
-  }, [jobs, searchTerm, locationFilter, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation]);
+  }, [jobs, searchTerm, locationFilter, jobTypeFilter, showFavoritesOnly, favorites, sortBy, userLocation, userGroupIds, user?.uid]);
 
   const getUniqueLocations = () => {
     const locations = new Set<string>();
