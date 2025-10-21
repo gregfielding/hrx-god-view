@@ -617,8 +617,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
           {/* 🧍 Basic Identity Section */}
           <Grid item xs={12}>
             <Card variant="outlined">
-              <CardContent sx={{ px: 3, py: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                   <PersonIcon sx={{ mr: 1 }} color="primary" />
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
                 </Box>
@@ -785,8 +785,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
           {canSeeSensitiveSections() && (
             <Grid item xs={12}>
               <Card variant="outlined">
-                <CardContent sx={{ px: 3, py: 4 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <WorkIcon sx={{ mr: 1 }} color="primary" />
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>Employment Details</Typography>
                   </Box>
@@ -1029,8 +1029,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
           {/* Address Section */}
           <Grid item xs={12}>
             <Card variant="outlined">
-              <CardContent sx={{ px: 3, py: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                   <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>
                 </Box>

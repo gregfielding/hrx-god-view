@@ -119,8 +119,8 @@ const UserProfilePage = () => {
         available: true // Everyone can see
       },
       { 
-        label: 'Assignments', 
-        available: true // Everyone can see
+        label: 'My Assignments', 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'Background & Vaccination', 
@@ -495,7 +495,7 @@ const UserProfilePage = () => {
                     onetJobTitles={onetJobTitles}
                   />
                 );
-              case 'Assignments':
+              case 'My Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':
                 return <CombinedBackgroundAndVaccinationTab uid={uid} />;
