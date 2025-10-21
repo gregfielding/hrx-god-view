@@ -11,8 +11,7 @@ import {
   Paper,
   Chip,
   CircularProgress,
-  Alert,
-  Container
+  Alert
 } from '@mui/material';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -173,34 +172,30 @@ const UserApplications: React.FC = () => {
 
   if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-          <CircularProgress />
-        </Box>
-      </Container>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+        <CircularProgress />
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Box sx={{ p: 3 }}>
         <Alert severity="error">{error}</Alert>
-      </Container>
+      </Box>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" sx={{ mb: 3, fontWeight: 600 }}>
-        My Applications
-      </Typography>
-
+    <Box>
       {applications.length === 0 ? (
-        <Alert severity="info">
-          You haven't applied to any jobs yet. Visit the Jobs Board to find opportunities!
-        </Alert>
+        <Box sx={{ p: 3 }}>
+          <Alert severity="info">
+            You haven't applied to any jobs yet. Visit the Jobs Board to find opportunities!
+          </Alert>
+        </Box>
       ) : (
-        <TableContainer component={Paper} elevation={2}>
+        <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 0 }}>
           <Table>
             <TableHead>
               <TableRow sx={{ backgroundColor: 'grey.100' }}>
@@ -265,7 +260,7 @@ const UserApplications: React.FC = () => {
           </Table>
         </TableContainer>
       )}
-    </Container>
+    </Box>
   );
 };
 
