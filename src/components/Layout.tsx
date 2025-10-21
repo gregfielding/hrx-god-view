@@ -37,6 +37,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import PhoneIphoneIcon from '@mui/icons-material/PhoneIphone';
 import LogoutIcon from '@mui/icons-material/Logout';
 import WorkIcon from '@mui/icons-material/Work';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
 
 import { db } from '../firebase';
 import { useThemeMode } from '../theme/theme';
@@ -609,6 +610,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,
       'Sales CRM': <BusinessIcon />,
+      'My Applications': <FactCheckIcon />,
       'My Assignments': <AssignmentTurnedInIcon />,
       'Locations': <LocationOnIcon />,
       'Schedules': <GroupWorkIcon />,

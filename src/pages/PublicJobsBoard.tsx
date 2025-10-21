@@ -878,11 +878,17 @@ const PublicJobsBoard: React.FC = () => {
                       if (hasApplied) {
                         return (
                           <Button 
-                            variant="outlined" 
-                            disabled
+                            variant="contained" 
                             sx={{ 
                               width: '50%',
-                              ml: job.eVerifyRequired ? 'auto' : 0
+                              ml: job.eVerifyRequired ? 'auto' : 0,
+                              backgroundColor: '#D4A017',
+                              color: 'white',
+                              '&:hover': {
+                                backgroundColor: '#B8860B',
+                              },
+                              cursor: 'default',
+                              pointerEvents: 'none',
                             }}
                           >
                             Application Submitted
@@ -1272,19 +1278,46 @@ const PublicJobsBoard: React.FC = () => {
               <Button onClick={handleCloseDialog} sx={{ mr: 1 }}>
                 Close
               </Button>
-              <Button 
-                variant="contained" 
-                onClick={() => handleApply(selectedJob)}
+              {(() => {
+                const applicationId = selectedJob ? `${selectedJob.tenantId}_${selectedJob.id}` : '';
+                const hasApplied = userApplicationIds.includes(applicationId);
+                
+                if (hasApplied) {
+                  return (
+                    <Button 
+                      variant="contained" 
+                      sx={{ 
+                        minWidth: 120,
+                        backgroundColor: '#D4A017',
+                        color: 'white',
+                        '&:hover': {
+                          backgroundColor: '#B8860B',
+                        },
+                        cursor: 'default',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      Application Submitted
+                    </Button>
+                  );
+                }
+                
+                return (
+                  <Button 
+                    variant="contained" 
+                    onClick={() => handleApply(selectedJob)}
                     sx={{ 
-                  minWidth: 120,
-                  backgroundColor: 'success.main',
+                      minWidth: 120,
+                      backgroundColor: 'success.main',
                       '&:hover': {
-                    backgroundColor: 'success.dark',
-                  }
-                }}
-              >
-                Apply Now
-              </Button>
+                        backgroundColor: 'success.dark',
+                      }
+                    }}
+                  >
+                    Apply Now
+                  </Button>
+                );
+              })()}
             </DialogActions>
           </>
         )}
