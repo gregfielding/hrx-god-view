@@ -223,8 +223,8 @@ const UserApplications: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Navigate to job details or application details
-                    navigate(`/c1/jobs-board`); // Can be updated to go to specific job details
+                    // Navigate back to jobs board (could be updated to show job details modal)
+                    navigate(`/c1/jobs-board`);
                   }}
                 >
                   <TableCell>
