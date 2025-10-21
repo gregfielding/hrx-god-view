@@ -21,14 +21,20 @@ const Login = () => {
 
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
-    if (!loading && user) {
-      // Staff (security levels 0-4) go to their profile
-      const secLevel = parseInt(securityLevel || '5');
-      if (secLevel >= 0 && secLevel <= 4) {
-        const tenantSlug = activeTenant?.slug || 'c1';
-        navigate(`/${tenantSlug}/users/${user.uid}`);
-      } else {
-        // Admins go to dashboard
+    if (!loading && user && securityLevel) {
+      try {
+        // Staff (security levels 0-4) go to their profile
+        const secLevel = parseInt(securityLevel);
+        if (secLevel >= 0 && secLevel <= 4) {
+          const tenantSlug = activeTenant?.slug || 'c1';
+          navigate(`/${tenantSlug}/users/${user.uid}`);
+        } else {
+          // Admins go to dashboard
+          navigate('/');
+        }
+      } catch (error) {
+        console.error('Error during login redirect:', error);
+        // Fallback to dashboard
         navigate('/');
       }
     }
