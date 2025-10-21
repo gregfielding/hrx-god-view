@@ -156,7 +156,8 @@ const PublicJobsBoard: React.FC = () => {
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
 
   // Check if we're on the C1 route and should use specific tenantId
-  const isC1Route = location.pathname.startsWith('/c1/');
+  // Also treat /jobs-board (without /c1/) as C1 route for backwards compatibility
+  const isC1Route = location.pathname.startsWith('/c1/') || location.pathname === '/jobs-board';
   const specificTenantId = isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null;
 
   useEffect(() => {
