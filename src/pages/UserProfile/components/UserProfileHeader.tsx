@@ -30,6 +30,8 @@ interface UserProfileHeaderProps {
   jobTitle?: string;
   phone?: string;
   email?: string;
+  city?: string;
+  state?: string;
   workStatus?: string;
   securityLevel?: string; // '0'..'7'
   employmentType?: string;
@@ -43,6 +45,7 @@ interface UserProfileHeaderProps {
   managerId?: string;
   showBreadcrumbs?: boolean;
   breadcrumbPath?: Array<{ label: string; href?: string }>;
+  isAdminView?: boolean; // True if viewer is admin (security >= 5)
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -57,6 +60,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   jobTitle,
   phone,
   email,
+  city,
+  state,
   workStatus,
   securityLevel,
   employmentType,
@@ -70,6 +75,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   managerId,
   showBreadcrumbs = false,
   breadcrumbPath = [],
+  isAdminView = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -377,24 +383,34 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
             </Stack>
           )}
-          <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-            {email && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <EmailOutlinedIcon fontSize="small" color="primary" />
-                <Link href={`mailto:${email}`} underline="hover" color="inherit">
-                  <Typography variant="body2">{email}</Typography>
-                </Link>
-              </Stack>
-            )}
-            {phone && (
-              <Stack direction="row" spacing={1} alignItems="center">
-                <PhoneOutlinedIcon fontSize="small" color="primary" />
-                <Link href={`tel:${phone}`} underline="hover" color="inherit">
-                  <Typography variant="body2">{phone}</Typography>
-                </Link>
-              </Stack>
-            )}
-          </Stack>
+          {city && state && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+              <LocationOnOutlinedIcon fontSize="small" color="primary" />
+              <Typography variant="body2" color="text.secondary">
+                {city}, {state}
+              </Typography>
+            </Stack>
+          )}
+          {isAdminView && (
+            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+              {email && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <EmailOutlinedIcon fontSize="small" color="primary" />
+                  <Link href={`mailto:${email}`} underline="hover" color="inherit">
+                    <Typography variant="body2">{email}</Typography>
+                  </Link>
+                </Stack>
+              )}
+              {phone && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <PhoneOutlinedIcon fontSize="small" color="primary" />
+                  <Link href={`tel:${phone}`} underline="hover" color="inherit">
+                    <Typography variant="body2">{phone}</Typography>
+                  </Link>
+                </Stack>
+              )}
+            </Stack>
+          )}
           {linkedinUrl && (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
               <LinkedInIcon fontSize="small" color="primary" />
@@ -409,7 +425,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               </Link>
             </Stack>
           )}
-          {(workStatus || securityLevel || employmentType) && (
+          {isAdminView && (workStatus || securityLevel || employmentType) && (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap' }}>
               {workStatus && (
                 <>

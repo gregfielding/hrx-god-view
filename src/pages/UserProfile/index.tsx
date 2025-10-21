@@ -41,6 +41,8 @@ const UserProfilePage = () => {
   const [jobTitle, setJobTitle] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [email, setEmail] = useState<string>('');
+  const [city, setCity] = useState<string>('');
+  const [state, setState] = useState<string>('');
   const [linkedinUrl, setLinkedinUrl] = useState<string>('');
   const [tenantId, setCustomerId] = useState<string | null>(null);
   const [workStatus, setWorkStatus] = useState<string>('');
@@ -180,6 +182,8 @@ const UserProfilePage = () => {
           setJobTitle(tenantData.jobTitle || data.jobTitle || data.primaryJobTitle || '');
           setPhone(data.phone || '');
           setEmail(data.email || '');
+          setCity(data.city || data.address?.city || '');
+          setState(data.state || data.address?.state || '');
           setLinkedinUrl(data.linkedinUrl || '');
           setCustomerId(data.tenantId || null);
           // Provide sensible defaults so header chips render consistently
@@ -409,6 +413,8 @@ const UserProfilePage = () => {
     { label: `${firstName} ${lastName}${preferredName && preferredName !== firstName ? ` (${preferredName})` : ''}` }
   ];
 
+  const isAdminView = parseInt(securityLevel) >= 5;
+
   return (
     <>
       <Box sx={{ p: 0 }}>
@@ -424,6 +430,8 @@ const UserProfilePage = () => {
           jobTitle={jobTitle}
           phone={phone}
           email={email}
+          city={city}
+          state={state}
           linkedinUrl={linkedinUrl}
           canEditAvatar={user?.uid === uid || parseInt(securityLevel) >= 4}
           workStatus={workStatus}
@@ -437,6 +445,7 @@ const UserProfilePage = () => {
           managerId={managerId}
           showBreadcrumbs={user?.uid !== uid}
           breadcrumbPath={breadcrumbPath}
+          isAdminView={isAdminView}
         />
 
         <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
