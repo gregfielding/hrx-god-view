@@ -290,8 +290,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       posting.additionalScreenings.forEach((name: string) => {
         const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
         const userValue = (userProfile as any)[key];
+        console.log('Prefilling additional screening:', name, '→ key:', key, '→ userValue:', userValue);
         if (userValue && !requirementsPrefill.additionalScreenings[name]) {
           requirementsPrefill.additionalScreenings[name] = userValue;
+          console.log('✅ Set additionalScreenings[' + name + '] =', userValue);
         }
       });
     }
