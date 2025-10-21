@@ -27,6 +27,9 @@ import {
   Tab,
   IconButton,
   CardMedia,
+  Drawer,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   Search,
@@ -616,15 +619,16 @@ const PublicJobsBoard: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               {/* C1 Logo - Left side */}
               {isC1Route && (
-                <img 
+                <Box
+                  component="img"
                   src="/C1.png" 
                   alt="C1 Staffing" 
-                  style={{ 
-                    height: '64px', 
+                  sx={{ 
+                    height: { xs: '40px', sm: '50px', md: '64px' }, // Responsive height
                     width: 'auto',
                     objectFit: 'contain'
                   }}
-                  onError={(e) => {
+                  onError={(e: any) => {
                     // Fallback if logo doesn't exist yet
                     e.currentTarget.style.display = 'none';
                   }}
@@ -632,7 +636,13 @@ const PublicJobsBoard: React.FC = () => {
               )}
               
               {/* Main Page Title - Next to logo */}
-              <Typography variant="h3" sx={{ fontWeight: 700 }}>
+              <Typography 
+                variant="h3" 
+                sx={{ 
+                  fontWeight: 700,
+                  fontSize: { xs: '1.5rem', sm: '2rem', md: '3rem' } // Responsive font size
+                }}
+              >
                 {isC1Route ? 'Jobs Board' : 'Find Your Next Opportunity'}
               </Typography>
             </Box>
@@ -642,12 +652,12 @@ const PublicJobsBoard: React.FC = () => {
               variant="contained"
               onClick={() => setAuthDialogOpen(true)}
               sx={{
-                px: 3,
-                py: 1.5,
+                px: { xs: 2, sm: 3 }, // Smaller padding on mobile
+                py: { xs: 1, sm: 1.5 }, // Smaller padding on mobile
                 fontWeight: 600,
                 borderRadius: 2,
                 textTransform: 'none',
-                fontSize: '1rem'
+                fontSize: { xs: '0.875rem', sm: '1rem' } // Smaller font on mobile
               }}
             >
               Sign In or Create Account
@@ -791,15 +801,17 @@ const PublicJobsBoard: React.FC = () => {
                     <Typography variant="h6" component="h3" sx={{ fontWeight: 600, flex: 1 }}>
                       {job.postTitle}
                     </Typography>
-                    <FavoriteButton
-                      itemId={job.id}
-                      favoriteType="jobPosts"
-                    size="small"
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites'
-                      }}
-                    />
+                    {user && (
+                      <FavoriteButton
+                        itemId={job.id}
+                        favoriteType="jobPosts"
+                        size="small"
+                        tooltipText={{
+                          favorited: 'Remove from favorites',
+                          notFavorited: 'Add to favorites'
+                        }}
+                      />
+                    )}
                   </Box>
 
                   {job.payRate && job.showPayRate && (
@@ -936,15 +948,16 @@ const PublicJobsBoard: React.FC = () => {
                 </Typography>
                 
                 {/* Star Icon - Top Right */}
-                <Box sx={{ position: 'absolute', top: 0, right: 0 }}>
-                  <FavoriteButton
-                    itemId={selectedJob.id}
-                    favoriteType="jobPosts"
-                    size="small"
-                    sx={{
-                      backgroundColor: 'background.paper',
-                      border: 1,
-                      borderColor: 'divider',
+                {user && (
+                  <Box sx={{ position: 'absolute', top: 0, right: 0 }}>
+                    <FavoriteButton
+                      itemId={selectedJob.id}
+                      favoriteType="jobPosts"
+                      size="small"
+                      sx={{
+                        backgroundColor: 'background.paper',
+                        border: 1,
+                        borderColor: 'divider',
                       borderRadius: 1,
                       px: 2,
                       py: 1,
@@ -953,7 +966,8 @@ const PublicJobsBoard: React.FC = () => {
                       }
                     }}
                   />
-                </Box>
+                  </Box>
+                )}
                 
                 <Stack spacing={1}>
                   <Stack direction="row" spacing={1} alignItems="center">
