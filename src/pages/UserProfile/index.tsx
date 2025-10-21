@@ -12,6 +12,8 @@ import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
+import ResumeTab from './components/ResumeTab';
+import QualificationsTab from './components/QualificationsTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
@@ -114,6 +116,10 @@ const UserProfilePage = () => {
     const tabs = [
       { label: 'Overview', available: true },
       { label: 'Work Eligibility', available: true },
+      { 
+        label: 'Resumé', 
+        available: true // Everyone can see
+      },
       { 
         label: 'Qualifications', 
         available: true // Everyone can see
@@ -486,15 +492,10 @@ const UserProfilePage = () => {
                     onUpdate={handleSkillsUpdate}
                   />
                 );
+              case 'Resumé':
+                return <ResumeTab uid={uid} />;
               case 'Qualifications':
-                return skillsData && (
-                  <SkillsTab
-                    user={skillsData}
-                    onUpdate={handleSkillsUpdate}
-                    onetSkills={onetSkills}
-                    onetJobTitles={onetJobTitles}
-                  />
-                );
+                return <QualificationsTab uid={uid} />;
               case 'My Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':
