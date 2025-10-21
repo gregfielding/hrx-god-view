@@ -120,6 +120,11 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'Settings';
     }
     
+    // Applications routes
+    if (pathname.includes('/applications')) {
+      return 'My Applications';
+    }
+    
     // Default fallback
     return pathname.includes('/apply') ? 'Submit Application' : 'HRX Platform';
   };
