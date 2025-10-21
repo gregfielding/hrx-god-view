@@ -15,6 +15,7 @@ import WorkEligibilityTab from './components/WorkEligibilityTab';
 import ResumeTab from './components/ResumeTab';
 import QualificationsTab from './components/QualificationsTab';
 import PreferencesTab from './components/PreferencesTab';
+import LicensesAndCertsTab from './components/LicensesAndCertsTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
@@ -127,6 +128,10 @@ const UserProfilePage = () => {
       },
       { 
         label: 'Preferences', 
+        available: true // Everyone can see
+      },
+      { 
+        label: 'Licenses & Certs', 
         available: true // Everyone can see
       },
       { 
@@ -503,6 +508,8 @@ const UserProfilePage = () => {
                 return <QualificationsTab uid={uid} />;
               case 'Preferences':
                 return <PreferencesTab uid={uid} />;
+              case 'Licenses & Certs':
+                return <LicensesAndCertsTab uid={uid} />;
               case 'My Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':
