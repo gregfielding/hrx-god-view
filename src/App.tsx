@@ -41,6 +41,8 @@ import ApplyWizardPage from './pages/ApplyWizardPage';
 import UserApplications from './pages/UserApplications';
 import MyAssignments from './pages/MyAssignments';
 import Communications from './pages/Communications';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
@@ -228,6 +230,8 @@ function App() {
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       <Route path="/consent" element={<Communications />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
       
       {/* Public Jobs Board routes with conditional layout */}
       <Route element={<ConditionalJobsBoardLayout />}>
