@@ -38,6 +38,7 @@ import JobsBoard from './pages/TenantViews/JobsBoard';
 import EditJobPost from './pages/TenantViews/EditJobPost';
 import PublicJobsBoard from './pages/PublicJobsBoard';
 import ApplyWizardPage from './pages/ApplyWizardPage';
+import UserApplications from './pages/UserApplications';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
@@ -104,7 +105,6 @@ import RecruiterDashboard from './pages/RecruiterDashboard';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import NewJobOrder from './pages/NewJobOrder';
-import Applications from './pages/Applications';
 
 import InsightReports from './pages/InsightReports';
 
@@ -230,6 +230,8 @@ function App() {
       <Route element={<ConditionalJobsBoardLayout />}>
         <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
         <Route path="/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="/c1/applications" element={<UserApplications />} />
+        <Route path="/applications" element={<UserApplications />} />
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
       
@@ -806,11 +808,12 @@ function App() {
             </RecruiterAccessGuard>
           </ProtectedRoute>
         } />
-        <Route path="recruiter/applications" element={
+        {/* TODO: Create RecruiterApplications component */}
+        {/* <Route path="recruiter/applications" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <Applications />
+            <RecruiterApplications />
           </ProtectedRoute>
-        } />
+        } /> */}
 
         <Route path="recruiter-settings" element={
           <ProtectedRoute requiredSecurityLevel="4">

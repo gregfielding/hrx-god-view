@@ -34,9 +34,26 @@ export async function generateMenuItems(
   claimsRoles?: { [tenantId: string]: { role: ClaimsRole; securityLevel: string } },
   // User profile flags
   userJobsBoardEnabled?: boolean,
-  currentSecurityLevel?: string
+  currentSecurityLevel?: string,
+  tenantSlug?: string
 ): Promise<MenuItem[]> {
   const menuItems: MenuItem[] = [];
+  
+  // If no tenant slug provided but we have tenantId, fetch it from Firestore
+  let effectiveTenantSlug = tenantSlug;
+  if (!effectiveTenantSlug && tenantId) {
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      const { db } = await import('../firebase');
+      const tenantRef = doc(db, 'tenants', tenantId);
+      const tenantSnap = await getDoc(tenantRef);
+      if (tenantSnap.exists()) {
+        effectiveTenantSlug = tenantSnap.data()?.slug || null;
+      }
+    } catch (err) {
+      console.warn('Could not fetch tenant slug:', err);
+    }
+  }
 
   // Debug helper (toggled via ?debugMenu=1 or localStorage 'debugMenu' === '1')
   const isMenuDebugEnabled = (): boolean => {
@@ -153,9 +170,9 @@ export async function generateMenuItems(
         
         return [{
           text: 'Jobs Board',
-          // Security levels 1-4 go to /c1/jobs-board, others go to /jobs-dashboard
+          // Security levels 1-4 go to /{slug}/jobs-board, others go to /jobs-dashboard
           to: (effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) 
-            ? '/c1/jobs-board' 
+            ? (effectiveTenantSlug ? `/${effectiveTenantSlug}/jobs-board` : '/c1/jobs-board')
             : '/jobs-dashboard',
           icon: 'work',
           // Allow access for security levels 1-4 (Applicant, Flex, Hired Staff) and higher levels
@@ -173,7 +190,7 @@ export async function generateMenuItems(
       // Show Applications for security levels 2 and 3 (Applicant and Candidate)
       ...((effectiveSecurityLevel && ['2', '3'].includes(effectiveSecurityLevel)) ? [{
         text: 'Applications',
-        to: '/applications',
+        to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/applications',
         icon: 'description',
         requiredRoles: ['Applicant', 'Worker'] as ClaimsRole[],
       }] : []),

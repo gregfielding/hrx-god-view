@@ -677,7 +677,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       
       // Redirect to jobs board after successful submission
       setTimeout(() => {
-        navigate('/c1/jobs-board');
+        // Use tenant slug if available, fallback to c1
+        const redirectPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
+        navigate(redirectPath);
       }, 2000); // Wait 2 seconds to show the success message
     } finally {
       setSaving(false);
