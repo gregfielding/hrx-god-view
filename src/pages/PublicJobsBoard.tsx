@@ -128,6 +128,8 @@ const PublicJobsBoard: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, securityLevel } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
   const [jobs, setJobs] = useState<PublicJobPosting[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<PublicJobPosting[]>([]);
@@ -144,6 +146,7 @@ const PublicJobsBoard: React.FC = () => {
   const [locationPermission, setLocationPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [eligibilityModalOpen, setEligibilityModalOpen] = useState({
     open: false,
     needDOB: false,

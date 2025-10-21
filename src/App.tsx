@@ -40,6 +40,7 @@ import PublicJobsBoard from './pages/PublicJobsBoard';
 import ApplyWizardPage from './pages/ApplyWizardPage';
 import UserApplications from './pages/UserApplications';
 import MyAssignments from './pages/MyAssignments';
+import Communications from './pages/Communications';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
@@ -226,6 +227,7 @@ function App() {
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
+      <Route path="/consent" element={<Communications />} />
       
       {/* Public Jobs Board routes with conditional layout */}
       <Route element={<ConditionalJobsBoardLayout />}>
