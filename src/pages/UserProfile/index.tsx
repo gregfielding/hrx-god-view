@@ -14,6 +14,7 @@ import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/Ski
 import WorkEligibilityTab from './components/WorkEligibilityTab';
 import ResumeTab from './components/ResumeTab';
 import QualificationsTab from './components/QualificationsTab';
+import PreferencesTab from './components/PreferencesTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
@@ -122,6 +123,10 @@ const UserProfilePage = () => {
       },
       { 
         label: 'Qualifications', 
+        available: true // Everyone can see
+      },
+      { 
+        label: 'Preferences', 
         available: true // Everyone can see
       },
       { 
@@ -496,6 +501,8 @@ const UserProfilePage = () => {
                 return <ResumeTab uid={uid} />;
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
+              case 'Preferences':
+                return <PreferencesTab uid={uid} />;
               case 'My Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':
