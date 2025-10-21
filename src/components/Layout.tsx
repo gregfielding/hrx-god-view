@@ -125,6 +125,11 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'My Applications';
     }
     
+    // Assignments routes
+    if (pathname.includes('/assignments')) {
+      return 'My Assignments';
+    }
+    
     // Apply wizard route
     if (pathname.includes('/apply')) {
       return 'Submit Application';

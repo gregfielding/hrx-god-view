@@ -187,13 +187,21 @@ export async function generateMenuItems(
         console.log('NOT creating Jobs Board menu item');
         return [];
       })()),
-      // Show Applications for security levels 2 and 3 (Applicant and Candidate)
-      ...((effectiveSecurityLevel && ['2', '3'].includes(effectiveSecurityLevel)) ? [{
-        text: 'Applications',
-        to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/applications',
-        icon: 'description',
-        requiredRoles: ['Applicant', 'Worker'] as ClaimsRole[],
-      }] : []),
+      // Show My Applications and My Assignments for staff (security levels 1-4)
+      ...((effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'My Applications',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/applications',
+          icon: 'fact_check',
+          requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
+        },
+        {
+          text: 'My Assignments',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/assignments` : '/c1/assignments',
+          icon: 'assignment_turned_in',
+          requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
+        }
+      ] : []),
       // Recruiter (role-gated; no module gate)
       ...([{
         text: 'Recruiter',
