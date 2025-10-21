@@ -702,23 +702,6 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                           helperText="Used for EEO reporting or validation"
                         />
                       </Grid>
-                      <Grid item xs={12}>
-                        <FormControl fullWidth>
-                          <InputLabel>Gender</InputLabel>
-                          <Select
-                            name="gender"
-                            value={form.gender || ''}
-                            onChange={handleSelectChange}
-                            label="Gender"
-                          >
-                            <MenuItem value="Male">Male</MenuItem>
-                            <MenuItem value="Female">Female</MenuItem>
-                            <MenuItem value="Nonbinary">Nonbinary</MenuItem>
-                            <MenuItem value="Other">Other</MenuItem>
-                            <MenuItem value="Prefer not to say">Prefer not to say</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
                     </Grid>
                   </Grid>
                   
