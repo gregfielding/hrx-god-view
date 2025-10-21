@@ -15,6 +15,8 @@ import {
   IconButton,
   InputAdornment,
   Link,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -55,6 +57,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
   const [recaptchaLoading, setRecaptchaLoading] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -261,7 +265,25 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         profileComplete: false,
         onboarded: false,
         // Public jobs board specific
-        source: 'public_jobs_board'
+        source: 'public_jobs_board',
+        // Consent tracking
+        userAgreements: {
+          termsOfUse: {
+            agreed: true,
+            version: "2025-10-21",
+            timestamp: new Date().toISOString()
+          },
+          smsConsent: {
+            agreed: true,
+            version: "2025-10-21",
+            timestamp: new Date().toISOString()
+          },
+          privacyPolicy: {
+            acknowledged: true,
+            version: "2025-10-21",
+            timestamp: new Date().toISOString()
+          }
+        }
       };
 
       await setDoc(doc(db, 'users', user.uid), userProfile);
@@ -585,6 +607,28 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             />
           )}
 
+          {activeTab === 0 && (
+            <Box sx={{ mt: 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    required
+                  />
+                }
+                label={
+                  <Typography variant="body2">
+                    I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and the <Link href="/consent" target="_blank" rel="noopener">SMS & Mobile Communications Consent</Link>.
+                  </Typography>
+                }
+              />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1, ml: 4 }}>
+                By creating an account, you acknowledge that you have read our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+              </Typography>
+            </Box>
+          )}
+
           {activeTab === 1 && (
             <Box sx={{ textAlign: 'right' }}>
               <Link
@@ -618,7 +662,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           <Button
             onClick={activeTab === 0 ? handleSignUp : handleSignIn}
             variant="contained"
-            disabled={loading || recaptchaLoading}
+            disabled={
+              loading || 
+              recaptchaLoading || 
+              (activeTab === 0 && (!agreedToTerms || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || password !== confirmPassword))
+            }
             startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
             sx={{ minWidth: 140 }}
           >
