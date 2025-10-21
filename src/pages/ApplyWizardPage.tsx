@@ -18,9 +18,12 @@ const ApplyWizardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [tenantName, setTenantName] = useState<string | null>(null);
+  const [actualSlug, setActualSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveTenantSlug = useMemo(() => (tenantSlug || '').toLowerCase(), [tenantSlug]);
+  // Keep the raw slug for ID detection (Firestore IDs are case sensitive)
+  const rawTenantSlug = tenantSlug || '';
+  const effectiveTenantSlug = useMemo(() => rawTenantSlug.toLowerCase(), [rawTenantSlug]);
 
   useEffect(() => {
     const resolveTenant = async () => {
@@ -28,16 +31,26 @@ const ApplyWizardPage: React.FC = () => {
         setLoading(true);
         setError(null);
 
-        if (!effectiveTenantSlug) {
+        if (!rawTenantSlug) {
           setError('Missing tenant slug');
           return;
         }
 
-        // If the param looks like a Firestore ID (no dashes and length >= 20), trust it to avoid restricted reads
-        const looksLikeId = /^[A-Za-z0-9]{20,}$/.test(effectiveTenantSlug);
+        // If the param looks like a Firestore ID (no dashes and length >= 20),
+        // use it AS-IS (case sensitive). Do not lowercase IDs.
+        const looksLikeId = /^[A-Za-z0-9]{20,}$/.test(rawTenantSlug);
         if (looksLikeId) {
-          setTenantId(effectiveTenantSlug);
-          setTenantName(null); // optional fetch skipped for applicants
+          setTenantId(rawTenantSlug);
+          // Fetch the tenant document to get the actual slug
+          const tenantRef = doc(db, 'tenants', rawTenantSlug);
+          const tenantSnap = await getDoc(tenantRef);
+          if (tenantSnap.exists()) {
+            const data = tenantSnap.data() as any;
+            setTenantName(data?.name || null);
+            const slug = data?.slug || null;
+            console.log('Fetched tenant slug:', slug, 'from ID:', rawTenantSlug);
+            setActualSlug(slug);
+          }
           return;
         }
 
@@ -49,6 +62,7 @@ const ApplyWizardPage: React.FC = () => {
           setTenantId(docSnap.id);
           const data = docSnap.data() as any;
           setTenantName(data?.name || null);
+          setActualSlug(data?.slug || effectiveTenantSlug);
           return;
         }
 
@@ -60,7 +74,7 @@ const ApplyWizardPage: React.FC = () => {
       }
     };
     resolveTenant();
-  }, [effectiveTenantSlug]);
+  }, [effectiveTenantSlug, rawTenantSlug]);
 
   if (loading) {
     return (
@@ -83,6 +97,7 @@ const ApplyWizardPage: React.FC = () => {
     <Box sx={{ px: 0, py: 0 }}>
       <Wizard
         tenantId={tenantId}
+        tenantSlug={actualSlug || rawTenantSlug}
         tenantName={tenantName || undefined}
         jobId={jobId}
         uid={user?.uid || null}

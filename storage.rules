@@ -82,6 +82,14 @@ service firebase.storage {
       allow read: if true;
     }
 
+    // User certification uploads
+    match /users/{userId}/certifications/{certSlug}/{fileName} {
+      // Only the authenticated user can write/delete their own certifications
+      allow write, delete: if request.auth != null && request.auth.uid == userId;
+      // Allow read for viewing uploaded certs
+      allow read: if request.auth != null;
+    }
+
     // Block everything else by default
     match /{allPaths=**} {
       allow read, write, delete: if false;

@@ -452,7 +452,7 @@ const JobsBoard: React.FC = () => {
       
       const userGroupsData = querySnapshot.docs.map(doc => ({
         id: doc.id,
-        name: doc.data().name || 'Unnamed Group'
+        name: doc.data().title || doc.data().name || 'Unnamed Group'
       }));
       
       setUserGroups(userGroupsData);
@@ -2638,37 +2638,27 @@ const JobsBoard: React.FC = () => {
               </Grid>
             </Box>
 
-            <FormControl fullWidth>
-              <InputLabel>Auto-Add to User Group</InputLabel>
-              <Select
-                value={newPost.autoAddToUserGroup}
-                label="Auto-Add to User Group"
-                onChange={(e) => setNewPost({ ...newPost, autoAddToUserGroup: e.target.value })}
-                disabled={newPost.visibility === 'restricted' || loadingUserGroups}
-                displayEmpty
-              >
-                <MenuItem value="">
-                  <em>No automatic group assignment</em>
-                </MenuItem>
-                {loadingUserGroups ? (
-                  <MenuItem value="" disabled>Loading user groups...</MenuItem>
-                ) : userGroups.length === 0 ? (
-                  <MenuItem value="" disabled>No user groups available</MenuItem>
-                ) : (
-                  userGroups.map((group) => (
-                    <MenuItem key={group.id} value={group.id}>
-                      {group.name}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-              <FormHelperText>
-                {newPost.visibility === 'restricted' 
-                  ? 'Auto-add to group is not available when visibility is restricted'
-                  : 'Automatically add applicants to this user group'
-                }
-              </FormHelperText>
-            </FormControl>
+            <Autocomplete
+              options={userGroups}
+              getOptionLabel={(option) => option.name || 'Unnamed Group'}
+              value={userGroups.find(g => g.id === newPost.autoAddToUserGroup) || null}
+              onChange={(_, newValue) => setNewPost({ ...newPost, autoAddToUserGroup: newValue?.id || '' })}
+              disabled={newPost.visibility === 'restricted' || loadingUserGroups}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Auto-Add to User Group"
+                  placeholder="Search user groups..."
+                  helperText={
+                    newPost.visibility === 'restricted' 
+                      ? 'Auto-add to group is not available when visibility is restricted'
+                      : 'Automatically add applicants to this user group'
+                  }
+                />
+              )}
+              loading={loadingUserGroups}
+              noOptionsText={loadingUserGroups ? 'Loading...' : 'No user groups available'}
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

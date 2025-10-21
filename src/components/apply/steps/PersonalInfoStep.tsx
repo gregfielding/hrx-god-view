@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useEffect, useState } from 'react';
-import { Box, Grid, TextField, Typography } from '@mui/material';
+import { Box, Grid, TextField, Typography, Card, CardHeader, CardContent, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
 import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 
@@ -129,7 +129,9 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>Tell us a bit about you</Typography>
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardHeader title={<Typography variant="h6">Tell us a bit about you</Typography>} />
+        <CardContent>
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
           <ResumeSuggestionField 
@@ -258,7 +260,24 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange }) => {
             <TextField fullWidth required label="Zip Code" inputMode="numeric" value={value.zip || ''} onChange={(e) => handle('zip', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
+        <Grid item xs={12} md={6}>
+          <FormControl fullWidth required>
+            <InputLabel>Transportation Method</InputLabel>
+            <Select
+              value={value.transportMethod || ''}
+              onChange={(e) => handle('transportMethod', e.target.value)}
+              label="Transportation Method"
+            >
+              <MenuItem value="Car">Car</MenuItem>
+              <MenuItem value="Public Transit">Public Transit</MenuItem>
+              <MenuItem value="Bike">Bike</MenuItem>
+              <MenuItem value="Walk">Walk</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
       </Grid>
+        </CardContent>
+      </Card>
     </Box>
   );
 };

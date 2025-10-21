@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme } from '@mui/material';
-import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
 import { auth } from '../../firebase';
 import { updateEmail } from 'firebase/auth';
 import { db } from '../../firebase';
@@ -12,12 +13,12 @@ import ResumeStep from './steps/ResumeStep';
 import QualificationsStep from './steps/QualificationsStep';
 import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
-import ReviewSubmitStep from './steps/ReviewSubmitStep';
 import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
 
 type WizardProps = {
   tenantId: string;
+  tenantSlug?: string;
   tenantName?: string;
   jobId?: string;
   uid: string | null;
@@ -33,11 +34,14 @@ type DraftApplication = {
   data: any;
 };
 
-const steps = ['Personal Info', 'Work Eligibility', 'Profile Picture', 'Resume', 'Qualifications', 'Preferences', 'Requirements', 'Review'];
+const steps = ['Personal Info', 'Work Eligibility', 'Profile Picture', 'Resume', 'Qualifications', 'Preferences', 'Requirements'];
 
-const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => {
+const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const navigate = useNavigate();
+  
+  
   // Create a unique key for this application session
   const sessionKey = `app-wizard-${tenantId}-${jobId}-${uid}`;
   
@@ -60,6 +64,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
     screenings?: string[];
     ppe?: string[];
     physical?: string[];
+    education?: string[];
   }>({});
   const [posting, setPosting] = useState<any>(null);
   const prefilledRef = useRef(false);
@@ -105,9 +110,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         }
       } catch {}
       try {
-        // Save under user to avoid tenant write restrictions for applicants
-        const colRef = collection(db, 'users', uid, 'applicationDrafts');
-        const docRef = await addDoc(colRef, draft as any);
+        // Save under tenant so all applications are in one place for recruiters
+        const colRef = collection(db, 'tenants', tenantId, 'applicationDrafts');
+        const draftWithUser = { ...draft, userId: uid };
+        const docRef = await addDoc(colRef, draftWithUser as any);
         setAppId(docRef.id);
       } catch {
         const key = `appDraft:${uid}:${tenantId || 'na'}:${jobId || 'na'}`;
@@ -139,11 +145,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
   useEffect(() => {
     const loadPosting = async () => {
       try {
-        if (!tenantId || !jobId) return;
+        
+        if (!tenantId || !jobId) {
+          
+          return;
+        }
         const postRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
+        
         const snap = await getDoc(postRef);
-        if (!snap.exists()) return;
+        if (!snap.exists()) {
+          
+          return;
+        }
         const data = snap.data() as any;
+        
         const merged = {
           licenses: Array.isArray(data?.licensesCerts) ? data.licensesCerts.filter(Boolean) : [],
           certifications: Array.isArray(data?.licensesCerts) ? data.licensesCerts.filter(Boolean) : [],
@@ -158,6 +173,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         };
         setRequirements(merged);
         setPosting(data);
+        
+        
 
         // Prefill preferences from posting if empty
         setFormData((prev: any) => {
@@ -171,7 +188,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           }
           return next;
         });
-      } catch {
+      } catch (error) {
+        
         // ignore; requirements UI will just be empty
       }
     };
@@ -208,6 +226,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       city: userProfile.city || address.city || '',
       state: userProfile.state || address.state || '',
       zip: userProfile.zipCode || address.zipCode || '',
+      transportMethod: userProfile.transportMethod || '',
     };
 
     const eligibility = {
@@ -229,38 +248,95 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       workHistory: Array.isArray(userProfile.workHistory) ? userProfile.workHistory : [],
       salaryExpectations: userProfile.salaryExpectations || undefined,
       bio: userProfile.bio || '',
+      experienceSummary: userProfile.experienceSummary || '',
     };
 
-    const preferences = formData.preferences || {
+    // Preferences: prefer existing profile preferences if available; otherwise fall back to posting and defaults
+    const preferencesBase = (userProfile && userProfile.preferences) ? { ...(userProfile.preferences || {}) } : {};
+    const existingPrefs = formData.preferences || {};
+    const prefDefaults = {
       targetPay: '',
       shift: '',
       availabilityNotes: ''
     };
+    const preferences = {
+      ...prefDefaults,
+      ...preferencesBase,
+      ...existingPrefs,
+    };
+    // If posting has values and preference is empty, lightly prefill
+    if (typeof preferences.targetPay !== 'number' && typeof posting?.payRate === 'number') {
+      (preferences as any).targetPay = posting.payRate;
+    }
+    if (!preferences.shift && Array.isArray(posting?.shift) && posting.shift.length) {
+      (preferences as any).shift = posting.shift[0];
+    }
+
+    // Requirements prefill from user profile
+    const requirementsPrefill = {
+      ...(formData.requirements || {}),
+      drugScreeningComfort: userProfile.comfortablePassDrug || (formData.requirements || {}).drugScreeningComfort || '',
+      drugExplanation: userProfile.passDrugExplanation || (formData.requirements || {}).drugExplanation || '',
+      backgroundScreeningComfort: userProfile.comfortablePassBackground || (formData.requirements || {}).backgroundScreeningComfort || '',
+      backgroundExplanation: userProfile.passBackgroundExplanation || (formData.requirements || {}).backgroundExplanation || '',
+      additionalScreenings: {
+        ...(formData.requirements || {}).additionalScreenings,
+      },
+      eVerifyComfort: userProfile.comfortableEVerify || (formData.requirements || {}).eVerifyComfort || '',
+    };
+
+    // Prefill additional screenings from user profile with dynamic field names
+    if (Array.isArray(posting?.additionalScreenings)) {
+      posting.additionalScreenings.forEach((name: string) => {
+        const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
+        const userValue = (userProfile as any)[key];
+        if (userValue && !requirementsPrefill.additionalScreenings[name]) {
+          requirementsPrefill.additionalScreenings[name] = userValue;
+        }
+      });
+    }
 
     // Persist prefill to draft if possible
-    persist({ personal, eligibility, profilePicture, qualifications, preferences });
+    persist({ personal, eligibility, profilePicture, qualifications, preferences, requirements: requirementsPrefill });
   }, [userProfile]);
 
-  // Compute missing required items using profile + acknowledgements
+  // Compute missing required items for Requirements step based on new card UX
   const computeMissing = () => {
-    const acks = (formData.requirements && formData.requirements.acks) || {};
-    const uploaded = (formData.requirements && formData.requirements.uploaded) || {};
+    const req = (formData.requirements || {}) as any;
+    const uploaded = (req.uploaded || {}) as Record<string, boolean>;
     const profileCerts: string[] = Array.isArray(userProfile?.certifications)
       ? userProfile.certifications.map((c: any) => (typeof c === 'string' ? c : c?.name)).filter(Boolean)
       : [];
 
-    // Certifications require actual upload or existing cert on profile; acknowledgements do not satisfy
+    // 1) Certifications must be uploaded or already present on profile
     const missingCerts = (requirements.certifications || []).filter((name) => !profileCerts.includes(name) && !uploaded[name]);
-    const missingScreenings = (requirements.screenings || []).filter((name) => !acks[name]);
-    const missingPpe = (requirements.ppe || []).filter((name) => !acks[name]);
-    const missingPhysical = (requirements.physical || []).filter((name) => !acks[name]);
+
+    // 2) Drug screening
+    const needsDrug = !!posting?.showDrugScreening;
+    const drugAnswered = typeof req.drugScreeningComfort === 'string' && req.drugScreeningComfort.length > 0;
+    const drugNeedsExplanation = req.drugScreeningComfort === 'Maybe' && !(req.drugExplanation || '').trim();
+
+    // 3) Background screening
+    const needsBackground = !!posting?.showBackgroundChecks;
+    const backgroundAnswered = typeof req.backgroundScreeningComfort === 'string' && req.backgroundScreeningComfort.length > 0;
+    const backgroundNeedsExplanation = req.backgroundScreeningComfort === 'Maybe' && !(req.backgroundExplanation || '').trim();
+
+    // 4) E-Verify
+    const needsEVerify = !!posting?.eVerifyRequired;
+    const eVerifyAnswered = typeof req.eVerifyComfort === 'string' && req.eVerifyComfort.length > 0;
+
+    // 5) Additional screenings
+    const addList: string[] = Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
+    const addMap = (req.additionalScreenings || {}) as Record<string, string>;
+    const missingAdditional = addList.filter((name) => !(addMap[name] && String(addMap[name]).length > 0));
 
     return {
       certs: missingCerts,
-      screenings: missingScreenings,
-      ppe: missingPpe,
-      physical: missingPhysical,
-    };
+      drug: needsDrug && (!drugAnswered || drugNeedsExplanation),
+      background: needsBackground && (!backgroundAnswered || backgroundNeedsExplanation),
+      everify: needsEVerify && !eVerifyAnswered,
+      additional: missingAdditional,
+    } as const;
   };
 
   const missing = computeMissing();
@@ -278,7 +354,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         const parsed = existing ? JSON.parse(existing) : {};
         try { localStorage.setItem(appId, JSON.stringify({ ...parsed, data: { ...formData, ...partial }, updatedAt: Date.now() })); } catch {}
       } else {
-        const appRef = doc(db, 'users', uid!, 'applicationDrafts', appId);
+        const appRef = doc(db, 'tenants', tenantId, 'applicationDrafts', appId);
         await updateDoc(appRef, { data: { ...formData, ...partial }, updatedAt: serverTimestamp() });
       }
 
@@ -329,6 +405,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           }
           if (p.phone) update.phone = String(p.phone).trim();
           if (p.dob) update.dob = String(p.dob).trim();
+          if (p.transportMethod) update.transportMethod = String(p.transportMethod).trim();
           const addr: any = {};
           if (p.street) addr.street = String(p.street).trim();
           if (p.unit) addr.unit = String(p.unit).trim();
@@ -395,6 +472,51 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           if (Array.isArray(q.education)) update.education = q.education;
           if (Array.isArray(q.workHistory)) update.workHistory = q.workHistory;
           if (Object.keys(update).length > 1) await updateDoc(userRef, update);
+        } else if (activeStep === 5) {
+          // Preferences → persist to user profile under a nested preferences object
+          const p = formData.preferences || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          update.preferences = {
+            targetPay: typeof p.targetPay === 'number' ? p.targetPay : null,
+            shift: typeof p.shift === 'string' ? p.shift : '',
+            availabilityNotes: typeof p.availabilityNotes === 'string' ? p.availabilityNotes : '',
+            shiftPreferences: Array.isArray(p.shiftPreferences) ? p.shiftPreferences : [],
+            industryPreferences: Array.isArray(p.industryPreferences) ? p.industryPreferences : [],
+          };
+          if (typeof p.availableToStartDate === 'string') {
+            update.availableToStartDate = p.availableToStartDate;
+          }
+          // Also store flat fields for easy querying if needed
+          if (Array.isArray(update.preferences.shiftPreferences)) {
+            update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
+          }
+          if (Array.isArray(update.preferences.industryPreferences)) {
+            update['preferences.industryPreferences'] = update.preferences.industryPreferences;
+          }
+          await updateDoc(userRef, update);
+        } else if (activeStep === 6) {
+          // Requirements → save screening responses to user profile
+          const r = formData.requirements || {};
+          const update: any = { updatedAt: serverTimestamp() };
+          if (r.drugScreeningComfort) update.comfortablePassDrug = r.drugScreeningComfort;
+          if (r.drugExplanation) update.passDrugExplanation = r.drugExplanation;
+          if (r.backgroundScreeningComfort) update.comfortablePassBackground = r.backgroundScreeningComfort;
+          if (r.backgroundExplanation) update.passBackgroundExplanation = r.backgroundExplanation;
+          if (r.eVerifyComfort) update.comfortableEVerify = r.eVerifyComfort;
+          
+          // Save additional screenings with dynamic field names
+          if (r.additionalScreenings && Array.isArray(posting?.additionalScreenings)) {
+            posting.additionalScreenings.forEach((name: string) => {
+              const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
+              if (r.additionalScreenings[name]) {
+                update[key] = r.additionalScreenings[name];
+              }
+            });
+          }
+          
+          if (Object.keys(update).length > 1) {
+            await updateDoc(userRef, update);
+          }
         }
       }
     } finally {
@@ -427,10 +549,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       if (appId.startsWith('appDraft:')) {
         const existing = localStorage.getItem(appId);
         const parsed = existing ? JSON.parse(existing) : {};
-        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, status: 'submitted', submittedAt: Date.now(), submittedTenantId: tenantId, submittedJobId: jobId })); } catch {}
+        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, status: 'submitted', submittedAt: Date.now() })); } catch {}
       } else {
-        const appRef = doc(db, 'users', uid!, 'applicationDrafts', appId);
-        await updateDoc(appRef, { status: 'submitted', submittedAt: serverTimestamp(), submittedTenantId: tenantId, submittedJobId: jobId });
+        // Mark draft as submitted in tenants/{tenantId}/applicationDrafts
+        const draftRef = doc(db, 'tenants', tenantId, 'applicationDrafts', appId);
+        await updateDoc(draftRef, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
       }
 
       // Merge selected profile fields into users/{uid}
@@ -464,16 +587,90 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
       if (eligibility.veteranStatus) profileUpdate.veteranStatus = String(eligibility.veteranStatus);
       if (eligibility.disabilityStatus) profileUpdate.disabilityStatus = String(eligibility.disabilityStatus);
       if (profilePicture.profilePicture) profileUpdate.avatar = String(profilePicture.profilePicture);
+      
+      // Save requirements data (screenings)
+      const requirements = formData.requirements || {};
+      if (requirements.drugScreeningComfort) profileUpdate.comfortablePassDrug = requirements.drugScreeningComfort;
+      if (requirements.drugExplanation) profileUpdate.passDrugExplanation = requirements.drugExplanation;
+      if (requirements.backgroundScreeningComfort) profileUpdate.comfortablePassBackground = requirements.backgroundScreeningComfort;
+      if (requirements.backgroundExplanation) profileUpdate.passBackgroundExplanation = requirements.backgroundExplanation;
+      if (requirements.eVerifyComfort) profileUpdate.comfortableEVerify = requirements.eVerifyComfort;
+      
+      // Save additional screenings with dynamic field names
+      if (requirements.additionalScreenings && Array.isArray(posting?.additionalScreenings)) {
+        posting.additionalScreenings.forEach((name: string) => {
+          const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
+          if (requirements.additionalScreenings[name]) {
+            console.log('Submitting additional screening:', name, '→', key, '=', requirements.additionalScreenings[name]);
+            profileUpdate[key] = requirements.additionalScreenings[name];
+          }
+        });
+      }
+      
       await updateDoc(userRef, profileUpdate);
 
-      // Mark tenant application as submitted
+      // Create final submitted application in tenants/{tenantId}/applications
       try {
-        if (tenantId && (tenantAppId || (uid && jobId))) {
-          const tidAppId = tenantAppId || `${uid}_${jobId}`;
+        if (tenantId && uid && jobId) {
+          const tidAppId = `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
-          await updateDoc(tRef, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+          await setDoc(tRef, {
+            userId: uid,
+            tenantId,
+            jobId,
+            status: 'submitted',
+            submittedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            data: formData,
+            applicant: {
+              firstName: personal.firstName || null,
+              lastName: personal.lastName || null,
+              email: personal.email || null,
+              phone: personal.phone || null,
+            }
+          }, { merge: true });
+          
+          // Add application ID to user's applicationIds array for efficient lookups
+          const applicationId = `${tenantId}_${jobId}`;
+          await updateDoc(userRef, {
+            applicationIds: arrayUnion(applicationId),
+            updatedAt: serverTimestamp()
+          });
+          
+          // Auto-add to user group if specified in job posting
+          console.log('Auto-add check:', { 
+            hasPosting: !!posting, 
+            autoAddToUserGroup: posting?.autoAddToUserGroup,
+            tenantId,
+            uid 
+          });
+          
+          if (posting?.autoAddToUserGroup) {
+            try {
+              console.log('Adding user to group:', posting.autoAddToUserGroup);
+              const userGroupRef = doc(db, 'tenants', tenantId, 'userGroups', posting.autoAddToUserGroup);
+              // Add user ID to group's memberIds array
+              await updateDoc(userGroupRef, {
+                memberIds: arrayUnion(uid),
+                updatedAt: serverTimestamp()
+              });
+              console.log('✅ Added user to group memberIds');
+              
+              // Add group ID to user's userGroupIds array
+              await updateDoc(userRef, {
+                userGroupIds: arrayUnion(posting.autoAddToUserGroup)
+              });
+              console.log('✅ Added group to user userGroupIds');
+            } catch (groupErr) {
+              console.error('❌ Error adding user to group:', groupErr);
+            }
+          } else {
+            console.log('No auto-add group specified or posting not loaded');
+          }
         }
-      } catch {}
+      } catch (e) {
+        console.error('Error saving application:', e);
+      }
       
       // Clear saved step from localStorage after successful submission
       try {
@@ -482,6 +679,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
         console.warn('Failed to clear step from localStorage:', error);
       }
       setSubmitOpen(true);
+      
+      // Redirect to jobs board after successful submission
+      setTimeout(() => {
+        navigate('/c1/jobs-board');
+      }, 2000); // Wait 2 seconds to show the success message
     } finally {
       setSaving(false);
     }
@@ -509,7 +711,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           />
         );
       case 5:
-        return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} />;
+        return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} jobPosting={posting} />;
       case 6:
         return (
           <RequirementsAcknowledgementStep
@@ -518,10 +720,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
             uid={uid || ''}
             value={formData.requirements || { acks: {}, uploaded: {} }}
             onChange={(v) => persist({ requirements: v })}
+            jobPosting={posting}
           />
         );
-      case 7:
-        return <ReviewSubmitStep value={formData} onSubmit={handleSubmit} submitting={saving} tenantName={tenantName} onEditStep={(i) => setActiveStep(i)} />;
       default:
         return null;
     }
@@ -536,8 +737,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
     'Upload your resume (optional)',
     'Qualifications & skills',
     'Job preferences',
-    'Requirements',
-    'Review & submit'
+    'Requirements'
   ];
 
   const personalValid = !!(
@@ -549,7 +749,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
     formData?.personal?.street &&
     formData?.personal?.city &&
     formData?.personal?.state &&
-    formData?.personal?.zip
+    formData?.personal?.zip &&
+    formData?.personal?.transportMethod
   );
 
   // Require Twilio re-verification if phone differs from profile
@@ -564,6 +765,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
 
   return (
     <Box sx={{ px: 0, py: 0 }}>
+      {/* Job Details Header */}
+      {posting && (
+        <Box sx={{ px: 3, py: 2, backgroundColor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
+          <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
+            {posting.jobTitle || posting.postTitle || 'Job Application'}
+          </Typography>
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="body2" color="text.secondary">
+              {posting.city && posting.state ? `${posting.city}, ${posting.state}` : posting.worksiteName || ''}
+            </Typography>
+            {posting.payRate && (
+              <>
+                <Typography variant="body2" color="text.secondary">•</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  ${posting.payRate}/hr
+                </Typography>
+              </>
+            )}
+          </Stack>
+        </Box>
+      )}
+      
       {/* Full-bleed sticky progress under top bar (no side spacing) */}
       <MilestoneProgress
         total={steps.length}
@@ -618,18 +841,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
           <Button
             variant="contained"
-            onClick={handleNext}
+            onClick={activeStep === 6 ? handleSubmit : handleNext}
             disabled={
-              activeStep === steps.length - 1 ||
               (activeStep === 6 && (
-                missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
+                missing.certs.length > 0 || missing.drug || missing.background || missing.everify || missing.additional.length > 0
               )) ||
               (activeStep === 0 && (!personalValid || phoneNeedsVerification)) ||
               (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
-              (activeStep === 4 && posting?.showExperience === true && !(formData?.qualifications?.experienceSummary || '').trim())
+              (activeStep === 4 && posting?.showExperience === true && !formData?.qualifications?.experienceSummary) ||
+              saving
             }
           >
-            Next
+            {activeStep === 6 ? 'Submit Application' : 'Next'}
           </Button>
         </Stack>
       </Box>
@@ -659,16 +882,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantName, jobId, uid }) => 
           </Button>
           <Button
             variant="contained"
-            onClick={handleNext}
-            aria-label="Next"
+            onClick={activeStep === 6 ? handleSubmit : handleNext}
+            aria-label={activeStep === 6 ? 'Submit Application' : 'Next'}
             disabled={
-              activeStep === steps.length - 1 ||
               (activeStep === 6 && (
-                missing.certs.length > 0 || missing.screenings.length > 0 || missing.ppe.length > 0 || missing.physical.length > 0
-              ))
+                missing.certs.length > 0 || missing.drug || missing.background || missing.everify || missing.additional.length > 0
+              )) ||
+              saving
             }
           >
-            Next
+            {activeStep === 6 ? 'Submit Application' : 'Next'}
           </Button>
         </Stack>
       </Box>

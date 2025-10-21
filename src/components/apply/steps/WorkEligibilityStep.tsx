@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Checkbox, FormControlLabel, Grid, MenuItem, TextField, Typography } from '@mui/material';
+import { Box, Checkbox, FormControlLabel, Grid, MenuItem, TextField, Typography, Card, CardHeader, CardContent } from '@mui/material';
 
 type Props = {
   value: any;
@@ -11,7 +11,9 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>Work authorization and optional EEO</Typography>
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardHeader title={<Typography variant="h6">Work authorization and optional EEO</Typography>} />
+        <CardContent>
       <Grid container spacing={2}>
         <Grid item xs={12}>
           <FormControlLabel
@@ -91,6 +93,8 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
           </TextField>
         </Grid>
       </Grid>
+        </CardContent>
+      </Card>
     </Box>
   );
 };

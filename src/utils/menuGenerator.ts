@@ -170,6 +170,13 @@ export async function generateMenuItems(
         console.log('NOT creating Jobs Board menu item');
         return [];
       })()),
+      // Show Applications for security levels 2 and 3 (Applicant and Candidate)
+      ...((effectiveSecurityLevel && ['2', '3'].includes(effectiveSecurityLevel)) ? [{
+        text: 'Applications',
+        to: '/applications',
+        icon: 'description',
+        requiredRoles: ['Applicant', 'Worker'] as ClaimsRole[],
+      }] : []),
       // Recruiter (role-gated; no module gate)
       ...([{
         text: 'Recruiter',

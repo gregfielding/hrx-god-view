@@ -25,6 +25,17 @@ service cloud.firestore {
       match /applications/{doc} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter','Manager']));
+        // Allow applicants to create/update their own applications
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+        allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      }
+
+      match /applicationDrafts/{doc} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter','Manager']));
+        // Allow applicants to create/update/delete their own drafts
+        allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+        allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
       }
 
       match /userGroups/{doc} {

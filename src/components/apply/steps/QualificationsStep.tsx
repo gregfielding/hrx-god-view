@@ -22,7 +22,7 @@ type Props = {
 };
 
 const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
-  logger.debug('QualificationsStep - value:', value);
+  
   const job = jobPosting; // job-driven gating comes from parent (Wizard)
   const debounceRef = React.useRef<any>(null);
   const debouncedUpdate = (ref: any, data: any) => {
@@ -43,7 +43,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     salaryExpectations: value?.salaryExpectations || {}
   };
   
-  logger.debug('QualificationsStep - transformed userData:', userData);
+  
   
   const [tempBio, setTempBio] = React.useState<string>(value?.bio || '');
   React.useEffect(() => {
@@ -99,7 +99,6 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
   // Default to showing while posting loads (null/undefined), then respect flag
   const showExperience = context === 'profile' || (job == null ? true : !!job.showExperience);
   const showLanguages = context === 'profile' || (job == null ? true : !!job.showLanguages);
-  const showEducation = context === 'profile' || (job == null ? true : !!job.showEducation);
 
   const [expSummary, setExpSummary] = React.useState<string>(value?.experienceSummary || '');
   // Only adopt incoming prop value when it is defined to avoid clearing local edits
@@ -192,8 +191,9 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     return '';
   };
 
-  const languagesHelper = Array.isArray(job?.languages) && job.languages.length ? `Language Requirements: ${job.languages.join(', ')}` : undefined;
-  const educationHelper = Array.isArray(job?.educationLevels) && job.educationLevels.length ? `Education Requirements: ${job.educationLevels.join(', ')}` : undefined;
+  const languagesHelper = Array.isArray(job?.languages) && job.languages.length ? `Language Required: ${job.languages.join(', ')}` : undefined;
+
+  
 
   // One-time autofill of workHistory from latest parsed resume if empty
   React.useEffect(() => {
@@ -257,8 +257,27 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
           <CardContent>
             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Tell us about your most relevant work experience</Typography>
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
-              <TextField fullWidth multiline minRows={5} value={expSummary} onChange={(e) => setExpSummary(e.target.value)} placeholder="Describe your most relevant experience..." />
-              <Button sx={{ ml: 2, whiteSpace: 'nowrap', alignSelf: 'flex-start' }} variant="contained" size="small" onClick={saveExpSummary} disabled={(expSummary || '') === (value?.experienceSummary || '')}>Save</Button>
+              <TextField
+                fullWidth
+                multiline
+                minRows={5}
+                value={expSummary}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setExpSummary(v);
+                  // Keep wizard state in sync so Next button validation passes without forcing an explicit Save
+                  onChange({ ...value, experienceSummary: v });
+                }}
+                placeholder="Describe your most relevant experience..."
+              />
+              <Button
+                sx={{ ml: 2, whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
+                variant="contained"
+                size="small"
+                onClick={saveExpSummary}
+              >
+                Save
+              </Button>
             </Stack>
 
             <Divider sx={{ my: 2 }} />
@@ -315,7 +334,12 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
         <Card variant="outlined" sx={{ mt: 3 }}>
           <CardHeader title={<Typography variant="h6">Languages</Typography>} />
           <CardContent>
-            {languagesHelper && <Alert severity="info" sx={{ mb: 2 }}>{languagesHelper}</Alert>}
+            {languagesHelper && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {languagesHelper}
+              </Alert>
+            )}
+            
             
             <Grid container spacing={2}>
               {/* Selected Languages */}
@@ -381,16 +405,6 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
         </Card>
       )}
 
-      {/* Conditional Education */}
-      {showEducation && (
-        <Card variant="outlined" sx={{ mt: 3 }}>
-          <CardHeader title={<Typography variant="h6">Education</Typography>} />
-          <CardContent>
-            {educationHelper && <Alert severity="info" sx={{ mb: 2 }}>{educationHelper}</Alert>}
-            <Typography variant="body2" color="text.secondary">Add or update education in your profile. (Inline editor to be expanded if needed.)</Typography>
-          </CardContent>
-        </Card>
-      )}
     </Box>
   );
 };

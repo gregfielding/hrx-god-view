@@ -1632,17 +1632,6 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
         </Grid> */}
       </Grid>
 
-      <Box display="flex" justifyContent="flex-start" mt={4}>
-        <Button
-          variant="contained"
-          color="primary"
-          size="large"
-          onClick={handleSave}
-          startIcon={<UploadIcon />}
-        >
-          Save All Changes
-        </Button>
-      </Box>
 
       {/* Notification Snackbar */}
       <Snackbar
