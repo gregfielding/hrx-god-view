@@ -18,6 +18,7 @@ import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import PrivacySettingsTab from './components/PrivacySettingsTab';
 import UserGroupsTab from './components/UserGroupsTab';
+import SystemAccessTab from './components/SystemAccessTab';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -139,6 +140,10 @@ const UserProfilePage = () => {
       },
       { 
         label: 'User Groups', 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+      },
+      { 
+        label: 'System Access', 
         available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
@@ -502,6 +507,8 @@ const UserProfilePage = () => {
                 return <ActivityLogTab uid={uid} user={user} />;
               case 'User Groups':
                 return <UserGroupsTab uid={uid} />;
+              case 'System Access':
+                return <SystemAccessTab uid={uid} />;
               case 'Privacy & Notifications':
                 return <PrivacySettingsTab uid={uid} />;
               default:

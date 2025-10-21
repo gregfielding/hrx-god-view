@@ -20,19 +20,16 @@ import {
   DialogContentText,
   FormControlLabel,
   Switch,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Card,
   CardContent,
 } from '@mui/material';
 import {
-  ExpandMore as ExpandMoreIcon,
   Person as PersonIcon,
   Work as WorkIcon,
   Business as BusinessIcon,
   ContactEmergency as EmergencyIcon,
   Security as SecurityIcon,
+  LocationOnOutlined as LocationOnOutlinedIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
@@ -619,12 +616,12 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
         <Grid container spacing={3}>
           {/* 🧍 Basic Identity Section */}
           <Grid item xs={12}>
-            <Accordion defaultExpanded>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <PersonIcon sx={{ mr: 1 }} />
-                <Typography variant="h6">Basic Identity</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
+            <Card variant="outlined">
+              <CardContent sx={{ px: 3, py: 4 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                  <PersonIcon sx={{ mr: 1 }} color="primary" />
+                  <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
+                </Box>
                 <Grid container spacing={2}>
                   {/* Left Column */}
                   <Grid item xs={12} sm={6}>
@@ -780,19 +777,19 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                     </Grid>
                   </Grid>
                 </Grid>
-              </AccordionDetails>
-            </Accordion>
+              </CardContent>
+            </Card>
           </Grid>
 
           {/* 📍 Employment Classification Section */}
           {canSeeSensitiveSections() && (
             <Grid item xs={12}>
-              <Accordion defaultExpanded>
-                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                  <WorkIcon sx={{ mr: 1 }} />
-                  <Typography variant="h6">Employment Details</Typography>
-                </AccordionSummary>
-                <AccordionDetails>
+              <Card variant="outlined">
+                <CardContent sx={{ px: 3, py: 4 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                    <WorkIcon sx={{ mr: 1 }} color="primary" />
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Employment Details</Typography>
+                  </Box>
                 <Grid container spacing={2}>
                   <Grid item xs={12} sm={6}>
                     <TextField
@@ -1021,136 +1018,22 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                     />
                   </Grid> */}
                 </Grid>
-              </AccordionDetails>
-            </Accordion>
+              </CardContent>
+            </Card>
           </Grid>
           )}
 
 
           {/* AI Insights section removed */}
 
-
-          {/* 🔐 System Access Section */}
-          <Grid item xs={12}>
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <SecurityIcon sx={{ mr: 1 }} />
-                <Typography variant="h6">System Access</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" color="text.secondary">User ID</Typography>
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>{systemAccess.uid}</Typography>
-                </Box>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} sm={4}>
-                    <FormControl fullWidth required>
-                      <InputLabel>Security Level</InputLabel>
-                      <Select
-                        name="securityLevel"
-                        value={form.securityLevel}
-                        onChange={handleSelectChange}
-                        label="Security Level *"
-                      >
-                        <MenuItem value="7">Admin (7)</MenuItem>
-                        <MenuItem value="6">Manager (6)</MenuItem>
-                        <MenuItem value="5">Worker (5)</MenuItem>
-                        <MenuItem value="4">Hired Staff (4)</MenuItem>
-                        <MenuItem value="3">Flex (3)</MenuItem>
-                        <MenuItem value="2">Applicant (2)</MenuItem>
-                        <MenuItem value="1">Dismissed (1)</MenuItem>
-                        <MenuItem value="0">Suspended (0)</MenuItem>
-                      </Select>
-                    </FormControl>
-                  </Grid>
-                  
-                  <Grid item xs={12} sm={4}>
-                    <TextField
-                      fullWidth
-                      label="Last Active"
-                      value={systemAccess.lastLoginAt ? systemAccess.lastLoginAt.toLocaleString() : '—'}
-                      InputProps={{ readOnly: true }}
-                    />
-                  </Grid>
-
-                  {canResetPassword() && (
-                    <Grid item xs={12} sm={4}>
-                      <Button
-                        variant="outlined"
-                        color="primary"
-                        onClick={() => setResetPasswordDialogOpen(true)}
-                        disabled={!form.email}
-                        fullWidth
-                      >
-                        Reset Password
-                      </Button>
-                    </Grid>
-                  )}
-
-                  {(parseInt(form.securityLevel || '0') >= 5) && (
-                    <>
-                      <Grid item xs={12}> 
-                        <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>Per‑User Module Access</Typography>
-                      </Grid>
-                      <Grid item xs={12} sm={4}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={!!form.crm_sales}
-                              onChange={(e) => {
-                                const value = e.target.checked;
-                                setForm({ ...form, crm_sales: value });
-                                persistProfileField('crm_sales', value);
-                              }}
-                            />
-                          }
-                          label="CRM (Sales) Access"
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={4}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={!!form.recruiter}
-                              onChange={(e) => {
-                                const value = e.target.checked;
-                                setForm({ ...form, recruiter: value });
-                                persistProfileField('recruiter', value);
-                              }}
-                            />
-                          }
-                          label="Recruiter Module Access"
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={4}>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={!!form.jobsBoard}
-                              onChange={(e) => {
-                                const value = e.target.checked;
-                                setForm({ ...form, jobsBoard: value });
-                                persistProfileField('jobsBoard', value);
-                              }}
-                            />
-                          }
-                          label="Jobs Board Access"
-                        />
-                      </Grid>
-                    </>
-                  )}
-                </Grid>
-              </AccordionDetails>
-            </Accordion>
-          </Grid>
-
           {/* Address Section */}
           <Grid item xs={12}>
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="h6">Home Address</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
+            <Card variant="outlined">
+              <CardContent sx={{ px: 3, py: 4 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+                  <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
+                  <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>
+                </Box>
                 <AddressFormFields uid={uid} formData={addressInfo} onFormChange={handleAddressChange} />
                 <MapWithMarkers
                   homeLat={addressInfo.homeLat}
@@ -1160,8 +1043,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                   currentLat={addressInfo.currentLat}
                   currentLng={addressInfo.currentLng}
                 />
-              </AccordionDetails>
-            </Accordion>
+              </CardContent>
+            </Card>
           </Grid>
 
           {hasChanges && canEditProfile() && (
