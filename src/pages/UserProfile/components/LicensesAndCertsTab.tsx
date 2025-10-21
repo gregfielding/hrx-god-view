@@ -8,11 +8,14 @@ import {
   Stack,
   TextField,
   IconButton,
+  Grid,
+  Chip,
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon, Visibility as ViewIcon } from '@mui/icons-material';
 import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../../../firebase';
+import credentialsSeed from '../../../data/credentialsSeed.json';
 
 type Props = {
   uid: string;
@@ -31,6 +34,11 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingCertName, setPendingCertName] = useState('');
+  
+  // Get suggested credentials from seed data, filtered by active status
+  const suggestedCredentials = credentialsSeed
+    .filter(c => c.is_active)
+    .map(c => `${c.name} (${c.type})`);
 
   useEffect(() => {
     if (!uid) return;
@@ -57,12 +65,13 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
     return () => unsubscribe();
   }, [uid]);
 
-  const handleAddCertClick = () => {
-    if (!newCertName.trim()) {
+  const handleAddCertClick = (certName?: string) => {
+    const name = certName || newCertName.trim();
+    if (!name) {
       alert('Please enter a name for the certificate/license');
       return;
     }
-    setPendingCertName(newCertName.trim());
+    setPendingCertName(name);
     fileInputRef.current?.click();
   };
 
@@ -135,32 +144,55 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
           </Typography>
 
           {/* Add New Certification */}
-          <Box sx={{ mb: 4 }}>
-            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
-              Add New Certificate or License
-            </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <TextField
-                fullWidth
-                size="small"
-                label="Certificate/License Name"
-                value={newCertName}
-                onChange={(e) => setNewCertName(e.target.value)}
-                placeholder="e.g., Forklift Certification, CPR License"
-              />
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={handleAddCertClick}
-                disabled={!newCertName.trim() || uploading}
-              >
-                {uploading ? 'Uploading...' : 'Upload'}
-              </Button>
-            </Stack>
-          </Box>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={6}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
+                Add New Certificate or License
+              </Typography>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Certificate/License Name"
+                  value={newCertName}
+                  onChange={(e) => setNewCertName(e.target.value)}
+                  placeholder="Type or select from suggestions →"
+                />
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => handleAddCertClick()}
+                  disabled={!newCertName.trim() || uploading}
+                >
+                  {uploading ? 'Uploading...' : 'Upload'}
+                </Button>
+              </Stack>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
+                Suggested (tap to upload)
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {suggestedCredentials.slice(0, 20).map((cred) => (
+                  <Chip
+                    key={cred}
+                    label={cred}
+                    onClick={() => handleAddCertClick(cred)}
+                    sx={{
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: 'primary.light',
+                        color: 'white',
+                      },
+                    }}
+                  />
+                ))}
+              </Box>
+            </Grid>
+          </Grid>
 
           {/* List of Certifications */}
-          <Box>
+          <Box sx={{ mt: 4 }}>
             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
               Your Certificates & Licenses ({certifications.length})
             </Typography>

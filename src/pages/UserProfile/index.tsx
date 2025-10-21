@@ -140,7 +140,7 @@ const UserProfilePage = () => {
       },
       { 
         label: 'Background & Vaccination', 
-        available: true // Everyone can see
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'Reports & Insights', 
