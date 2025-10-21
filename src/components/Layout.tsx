@@ -96,8 +96,8 @@ const Layout: React.FC = React.memo(function Layout() {
     }
     
     // User Profile routes
-    if (pathname.includes('/user-profile')) {
-      return 'User Profile';
+    if (pathname.includes('/user-profile') || pathname.includes('/users/')) {
+      return 'My Profile';
     }
     
     // CRM routes
@@ -709,14 +709,23 @@ const Layout: React.FC = React.memo(function Layout() {
         {/* Removed avatar/welcome and divider here */}
         <List sx={{ flexGrow: 1, pb: '80px' }}>
           {/* My Profile menu item at the top */}
-          {user && (
+          {user && (() => {
+            // Workers (security levels 1-4) use tenant-specific URL: /c1/users/{uid}
+            // Admins/managers (security levels 5+) use global URL: /users/{uid}
+            const effectiveSecurityLevel = currentClaimsSecurityLevel || securityLevel;
+            const isWorker = effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel);
+            const tenantSlug = activeTenant?.slug || 'c1';
+            const profilePath = isWorker ? `/${tenantSlug}/users/${user.uid}` : `/users/${user.uid}`;
+            const isSelected = location.pathname === profilePath || location.pathname === `/users/${user.uid}` || location.pathname.includes(`/${tenantSlug}/users/${user.uid}`);
+            
+            return (
             <ListItem disablePadding sx={{ display: 'block' }}>
               <ListItemButton
                 component={Link}
-                to={`/users/${user.uid}`}
-                selected={location.pathname === `/users/${user.uid}`}
+                to={profilePath}
+                selected={isSelected}
                 sx={{
-                  backgroundColor: location.pathname === `/users/${user.uid}`
+                  backgroundColor: isSelected
                     ? 'rgba(255, 255, 255, 0.08)'
                     : 'inherit',
                   '&.Mui-selected': {
@@ -759,7 +768,8 @@ const Layout: React.FC = React.memo(function Layout() {
                 {open && <ListItemText primary="My Profile" />}
               </ListItemButton>
             </ListItem>
-          )}
+            );
+          })()}
           {/* All other menu items */}
           {menuLoading ? (
             <ListItem disablePadding sx={{ display: 'block' }}>

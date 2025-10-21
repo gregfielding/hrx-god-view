@@ -232,6 +232,7 @@ function App() {
         <Route path="/jobs-board" element={<PublicJobsBoard />} />
         <Route path="/c1/applications" element={<UserApplications />} />
         <Route path="/applications" element={<UserApplications />} />
+        <Route path="/c1/users/:uid" element={<UserProfile />} />
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
       

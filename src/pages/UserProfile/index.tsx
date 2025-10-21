@@ -90,15 +90,21 @@ const UserProfilePage = () => {
   // Define which tabs are available based on user role
   const getAvailableTabs = () => {
     const isOwnProfile = user?.uid === uid;
-    const isWorker = securityLevel === '5';
+    const viewerSecurityLevel = parseInt(securityLevel);
+    const isAdminViewer = viewerSecurityLevel >= 5;
     const isManager = securityLevel === '6';
     const isAdmin = securityLevel === '7';
+    
+    // Check if we're on the /c1/ route (worker view) or /users/ route (admin view)
+    const pathname = window.location.pathname;
+    const isWorkerRoute = pathname.includes('/c1/users/');
+    
     // Debug logging to understand what's happening
     console.log('Tab availability check:', {
       securityLevel,
-      isWorker,
-      isManager,
-      isAdmin,
+      viewerSecurityLevel,
+      isAdminViewer,
+      isWorkerRoute,
       isOwnProfile
     });
 
@@ -107,35 +113,35 @@ const UserProfilePage = () => {
       { label: 'Work Eligibility', available: true },
       { 
         label: 'Qualifications', 
-        available: parseInt(securityLevel) <= 4 
+        available: true // Everyone can see
       },
       { 
         label: 'Assignments', 
-        available: parseInt(securityLevel) <= 4 
+        available: true // Everyone can see
       },
       { 
         label: 'Background & Vaccination', 
-        available: parseInt(securityLevel) <= 4 
+        available: true // Everyone can see
       },
       { 
         label: 'Reports & Insights', 
-        available: parseInt(securityLevel) <= 4 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'Notes', 
-        available: parseInt(securityLevel) <= 4 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'Activity Log', 
-        available: parseInt(securityLevel) <= 4 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'User Groups', 
-        available: isAdmin || isManager 
+        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
       },
       { 
         label: 'Privacy & Notifications', 
-        available: isOwnProfile || isAdmin || isManager 
+        available: (isOwnProfile || isAdminViewer) && !isWorkerRoute // Own profile or admins, not in worker view
       },
     ];
 
