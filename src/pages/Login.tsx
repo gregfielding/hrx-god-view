@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
   console.log('Login component rendering');
-  const { user, role, loading } = useAuth();
+  const { user, role, loading, securityLevel, activeTenant } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -22,9 +22,17 @@ const Login = () => {
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
     if (!loading && user) {
-      navigate('/');
+      // Staff (security levels 0-4) go to their profile
+      const secLevel = parseInt(securityLevel || '5');
+      if (secLevel >= 0 && secLevel <= 4) {
+        const tenantSlug = activeTenant?.slug || 'c1';
+        navigate(`/${tenantSlug}/users/${user.uid}`);
+      } else {
+        // Admins go to dashboard
+        navigate('/');
+      }
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, securityLevel, activeTenant, navigate]);
 
   // Check for success message from password setup
   useEffect(() => {
