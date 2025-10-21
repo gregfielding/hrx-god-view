@@ -47,9 +47,7 @@ const ApplyWizardPage: React.FC = () => {
           if (tenantSnap.exists()) {
             const data = tenantSnap.data() as any;
             setTenantName(data?.name || null);
-            const slug = data?.slug || null;
-            console.log('Fetched tenant slug:', slug, 'from ID:', rawTenantSlug);
-            setActualSlug(slug);
+            setActualSlug(data?.slug || null);
           }
           return;
         }

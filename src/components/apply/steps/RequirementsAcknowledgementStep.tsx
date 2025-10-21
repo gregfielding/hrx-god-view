@@ -235,7 +235,6 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                         const next = { ...(value?.additionalScreenings || {}), [screenName]: e.target.value };
                         onChange({ ...value, additionalScreenings: next });
                         const dynamicKey = `comfortableWith${screenName.replace(/[^a-zA-Z0-9]+/g,'')}`;
-                        console.log('Saving additional screening:', screenName, '→', dynamicKey, '=', e.target.value);
                         debouncedWriteUser({ [dynamicKey]: e.target.value });
                       }}
                       sx={{ maxWidth: 360 }}

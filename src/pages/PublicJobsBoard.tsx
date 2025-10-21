@@ -149,6 +149,9 @@ const PublicJobsBoard: React.FC = () => {
   
   // Favorites system
   const { favorites } = useFavorites('jobPosts');
+  
+  // Track user's application IDs for showing "Application Submitted"
+  const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
 
   // Check if we're on the C1 route and should use specific tenantId
   const isC1Route = location.pathname.startsWith('/c1/');
@@ -158,6 +161,27 @@ const PublicJobsBoard: React.FC = () => {
     loadPublicJobs();
     requestLocationPermission();
   }, [specificTenantId]);
+  
+  // Load user's application IDs when logged in
+  useEffect(() => {
+    const loadUserApplications = async () => {
+      if (!user?.uid) {
+        setUserApplicationIds([]);
+        return;
+      }
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          setUserApplicationIds(Array.isArray(userData?.applicationIds) ? userData.applicationIds : []);
+        }
+      } catch (error) {
+        console.error('Error loading user applications:', error);
+      }
+    };
+    loadUserApplications();
+  }, [user?.uid]);
 
   // Request user's location permission and get coordinates
   const requestLocationPermission = () => {
@@ -807,17 +831,39 @@ const PublicJobsBoard: React.FC = () => {
                       />
                     )}
                     
-                    {/* Apply Now button (right side, half width) */}
-                    <Button 
-                      variant="contained" 
-                      sx={{ 
-                        width: '50%',
-                        ml: job.eVerifyRequired ? 'auto' : 0
-                      }} 
-                      onClick={() => handleApply(job)}
-                    >
-                      Apply Now
-                    </Button>
+                    {/* Apply Now or Application Submitted button (right side, half width) */}
+                    {(() => {
+                      const applicationId = `${job.tenantId}_${job.id}`;
+                      const hasApplied = userApplicationIds.includes(applicationId);
+                      
+                      if (hasApplied) {
+                        return (
+                          <Button 
+                            variant="outlined" 
+                            disabled
+                            sx={{ 
+                              width: '50%',
+                              ml: job.eVerifyRequired ? 'auto' : 0
+                            }}
+                          >
+                            Application Submitted
+                          </Button>
+                        );
+                      }
+                      
+                      return (
+                        <Button 
+                          variant="contained" 
+                          sx={{ 
+                            width: '50%',
+                            ml: job.eVerifyRequired ? 'auto' : 0
+                          }} 
+                          onClick={() => handleApply(job)}
+                        >
+                          Apply Now
+                        </Button>
+                      );
+                    })()}
                   </Box>
                 </CardContent>
               </Card>

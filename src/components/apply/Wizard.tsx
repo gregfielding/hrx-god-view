@@ -209,10 +209,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     loadUser();
   }, [uid]);
 
-  // Prefill wizard from user profile once
+  // Prefill wizard from user profile (runs when profile or posting loads)
   useEffect(() => {
-    if (!userProfile || prefilledRef.current) return;
-    prefilledRef.current = true;
+    if (!userProfile) return;
+    // Only mark as prefilled after both userProfile AND posting have been processed
+    if (!prefilledRef.current) {
+      prefilledRef.current = true;
+    }
 
     const address = userProfile.address || {};
     const personal = {
@@ -287,20 +290,23 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     // Prefill additional screenings from user profile with dynamic field names
     if (Array.isArray(posting?.additionalScreenings)) {
+      console.log('📋 Prefilling additional screenings from posting:', posting.additionalScreenings);
+      console.log('📋 User profile data:', userProfile);
       posting.additionalScreenings.forEach((name: string) => {
         const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
         const userValue = (userProfile as any)[key];
-        console.log('Prefilling additional screening:', name, '→ key:', key, '→ userValue:', userValue);
+        console.log(`  → ${name}: key=${key}, userValue=${userValue}, alreadyInForm=${requirementsPrefill.additionalScreenings[name]}`);
         if (userValue && !requirementsPrefill.additionalScreenings[name]) {
           requirementsPrefill.additionalScreenings[name] = userValue;
-          console.log('✅ Set additionalScreenings[' + name + '] =', userValue);
+          console.log(`  ✅ Set additionalScreenings["${name}"] = ${userValue}`);
         }
       });
+      console.log('📋 Final requirementsPrefill.additionalScreenings:', requirementsPrefill.additionalScreenings);
     }
 
     // Persist prefill to draft if possible
     persist({ personal, eligibility, profilePicture, qualifications, preferences, requirements: requirementsPrefill });
-  }, [userProfile]);
+  }, [userProfile, posting]);
 
   // Compute missing required items for Requirements step based on new card UX
   const computeMissing = () => {
@@ -603,7 +609,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         posting.additionalScreenings.forEach((name: string) => {
           const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g,'')}`;
           if (requirements.additionalScreenings[name]) {
-            console.log('Submitting additional screening:', name, '→', key, '=', requirements.additionalScreenings[name]);
             profileUpdate[key] = requirements.additionalScreenings[name];
           }
         });
@@ -640,34 +645,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           });
           
           // Auto-add to user group if specified in job posting
-          console.log('Auto-add check:', { 
-            hasPosting: !!posting, 
-            autoAddToUserGroup: posting?.autoAddToUserGroup,
-            tenantId,
-            uid 
-          });
-          
           if (posting?.autoAddToUserGroup) {
             try {
-              console.log('Adding user to group:', posting.autoAddToUserGroup);
               const userGroupRef = doc(db, 'tenants', tenantId, 'userGroups', posting.autoAddToUserGroup);
               // Add user ID to group's memberIds array
               await updateDoc(userGroupRef, {
                 memberIds: arrayUnion(uid),
                 updatedAt: serverTimestamp()
               });
-              console.log('✅ Added user to group memberIds');
               
               // Add group ID to user's userGroupIds array
               await updateDoc(userRef, {
                 userGroupIds: arrayUnion(posting.autoAddToUserGroup)
               });
-              console.log('✅ Added group to user userGroupIds');
             } catch (groupErr) {
-              console.error('❌ Error adding user to group:', groupErr);
+              console.error('Error adding user to group:', groupErr);
             }
-          } else {
-            console.log('No auto-add group specified or posting not loaded');
           }
         }
       } catch (e) {
