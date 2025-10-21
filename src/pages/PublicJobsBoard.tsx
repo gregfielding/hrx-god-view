@@ -681,7 +681,7 @@ const PublicJobsBoard: React.FC = () => {
                     <Search />
                   </InputAdornment>
                 ),
-                endAdornment: (
+                endAdornment: user ? (
                   <InputAdornment position="end">
                     <FavoritesFilter
                       favoriteType="jobPosts"
@@ -700,7 +700,7 @@ const PublicJobsBoard: React.FC = () => {
                       }}
                     />
                   </InputAdornment>
-                ),
+                ) : undefined,
               }}
             />
           </Grid>
@@ -943,33 +943,34 @@ const PublicJobsBoard: React.FC = () => {
             {/* Dialog Header */}
             <DialogTitle sx={{ pb: 1 }}>
               <Box sx={{ mb: 2, position: 'relative' }}>
-                <Typography variant="h4" component="h1" sx={{ fontWeight: 700, mb: 1 }}>
-                  {selectedJob.postTitle}
-                </Typography>
-                
-                {/* Star Icon - Top Right */}
-                {user && (
-                  <Box sx={{ position: 'absolute', top: 0, right: 0 }}>
-                    <FavoriteButton
-                      itemId={selectedJob.id}
-                      favoriteType="jobPosts"
-                      size="small"
-                      sx={{
-                        backgroundColor: 'background.paper',
-                        border: 1,
-                        borderColor: 'divider',
-                      borderRadius: 1,
-                      px: 2,
-                      py: 1,
-                      '&:hover': {
-                        backgroundColor: 'action.hover'
-                      }
-                    }}
-                  />
-                  </Box>
-                )}
-                
-                <Stack spacing={1}>
+                <>
+                  <Typography variant="h4" component="h1" sx={{ fontWeight: 700, mb: 1 }}>
+                    {selectedJob.postTitle}
+                  </Typography>
+                  
+                  {/* Star Icon - Top Right */}
+                  {user && (
+                    <Box sx={{ position: 'absolute', top: 0, right: 0 }}>
+                      <FavoriteButton
+                        itemId={selectedJob.id}
+                        favoriteType="jobPosts"
+                        size="small"
+                        sx={{
+                          backgroundColor: 'background.paper',
+                          border: 1,
+                          borderColor: 'divider',
+                        borderRadius: 1,
+                        px: 2,
+                        py: 1,
+                        '&:hover': {
+                          backgroundColor: 'action.hover'
+                        }
+                      }}
+                    />
+                    </Box>
+                  )}
+                  
+                  <Stack spacing={1}>
                   <Stack direction="row" spacing={1} alignItems="center">
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
                       {selectedJob.companyName}
@@ -1039,6 +1040,7 @@ const PublicJobsBoard: React.FC = () => {
                     </Stack>
                   )}
                 </Stack>
+                </>
               </Box>
             </DialogTitle>
 
