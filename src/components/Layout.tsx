@@ -125,8 +125,13 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'My Applications';
     }
     
-    // Default fallback
-    return pathname.includes('/apply') ? 'Submit Application' : 'HRX Platform';
+    // Apply wizard route
+    if (pathname.includes('/apply')) {
+      return 'Submit Application';
+    }
+    
+    // Default fallback - show active tenant name
+    return activeTenant?.name || 'HRX Platform';
   };
 
   const [open, setOpen] = useState(true);
