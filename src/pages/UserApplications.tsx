@@ -250,8 +250,13 @@ const UserApplications: React.FC = () => {
                   <TableCell>
                     <Chip 
                       label={app.status.charAt(0).toUpperCase() + app.status.slice(1)} 
-                      color={getStatusColor(app.status)}
+                      color={app.status.toLowerCase() === 'submitted' ? undefined : getStatusColor(app.status)}
                       size="small"
+                      sx={app.status.toLowerCase() === 'submitted' ? {
+                        backgroundColor: '#FFC700',
+                        color: '#000',
+                        fontWeight: 600
+                      } : undefined}
                     />
                   </TableCell>
                 </TableRow>
