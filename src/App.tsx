@@ -106,6 +106,7 @@ import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
+import RecruiterMain from './pages/RecruiterMain';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import NewJobOrder from './pages/NewJobOrder';
@@ -792,7 +793,7 @@ function App() {
         <Route path="recruiter" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <RecruiterAccessGuard>
-              <RecruiterDashboard />
+              <RecruiterMain />
             </RecruiterAccessGuard>
           </ProtectedRoute>
         } />
