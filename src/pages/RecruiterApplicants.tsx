@@ -36,6 +36,7 @@ import FavoriteButton from '../components/FavoriteButton';
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
 
 interface ApplicationData {
+  applicationId: string;
   jobId: string;
   jobTitle?: string;
   postTitle?: string;
@@ -114,8 +115,23 @@ const RecruiterApplicants: React.FC = () => {
         orderBy('updatedAt', 'desc')
       );
       
+      console.log('🔍 RecruiterApplicants: Querying users with tenantId:', tenantId);
+      console.log('🔍 RecruiterApplicants: Filtering for securityLevel in:', ['0', '1', '2', '3', '4']);
+      
       const querySnapshot = await getDocs(q);
       console.log('🔍 RecruiterApplicants: Found', querySnapshot.size, 'candidates');
+      
+      // Debug: log what we got
+      if (querySnapshot.size === 0) {
+        console.log('⚠️ No candidates found. Checking all users in tenant...');
+        const allUsersQuery = query(usersRef, where('tenantId', '==', tenantId));
+        const allUsersSnapshot = await getDocs(allUsersQuery);
+        console.log('🔍 Total users in tenant:', allUsersSnapshot.size);
+        allUsersSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          console.log(`   - ${data.firstName} ${data.lastName}: securityLevel=${data.securityLevel} (type: ${typeof data.securityLevel})`);
+        });
+      }
       
       const candidatesData = querySnapshot.docs.map((userDoc) => {
         const userData = userDoc.data();

@@ -640,6 +640,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // Prepare denormalized application data for quick lookups
           const applicationId = `${tenantId}_${jobId}`;
           const applicationQuickData: any = {
+            applicationId: applicationId, // Include the application ID for reference
             jobId: jobId,
             jobTitle: posting?.jobTitle || posting?.postTitle || null,
             postTitle: posting?.postTitle || null,

@@ -151,6 +151,7 @@ async function migrateApplicationData() {
             
             // Create denormalized application data
             applicationDataMap[applicationId] = {
+              applicationId: applicationId, // Include application ID for reference
               jobId: appData.jobId || null,
               jobTitle,
               postTitle,
