@@ -39,9 +39,7 @@ import {
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
-  Schedule as ScheduleIcon,
-  ArrowUpward as ArrowUpwardIcon,
-  ArrowDownward as ArrowDownwardIcon
+  Schedule as ScheduleIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -292,66 +290,90 @@ const RecruiterJobOrders: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Filters and Search */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                placeholder="Search job orders..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                InputProps={{
-                  startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                }}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  label="Status"
-                >
-                  <MenuItem value="">All Statuses</MenuItem>
-                  <MenuItem value="Open">Open</MenuItem>
-                  <MenuItem value="On-Hold">On-Hold</MenuItem>
-                  <MenuItem value="Cancelled">Cancelled</MenuItem>
-                  <MenuItem value="Filled">Filled</MenuItem>
-                  <MenuItem value="Completed">Completed</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={2}>
-              <Button
-                variant="contained"
-                onClick={handleSearch}
-                startIcon={<SearchIcon />}
-                fullWidth
-              >
-                Search
-              </Button>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <Button
-                variant="outlined"
-                startIcon={<AddIcon />}
-                fullWidth
-                onClick={() => navigate('/recruiter/job-orders/new')}
-              >
-                New Job Order
-              </Button>
-            </Grid>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, backgroundColor: '#F9FAFB', borderRadius: 2 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              placeholder="Search job orders..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              InputProps={{
+                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+              }}
+            />
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid item xs={12} md={2}>
+            <FormControl fullWidth>
+              <InputLabel>Status</InputLabel>
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                label="Status"
+              >
+                <MenuItem value="">All Statuses</MenuItem>
+                <MenuItem value="Open">Open</MenuItem>
+                <MenuItem value="On-Hold">On-Hold</MenuItem>
+                <MenuItem value="Cancelled">Cancelled</MenuItem>
+                <MenuItem value="Filled">Filled</MenuItem>
+                <MenuItem value="Completed">Completed</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={2}>
+            <FormControl fullWidth>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value)}
+                label="Sort By"
+              >
+                <MenuItem value="createdAt">Newest First</MenuItem>
+                <MenuItem value="jobOrderNumber">Order Number</MenuItem>
+                <MenuItem value="status">Status</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={2}>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              fullWidth
+              onClick={() => navigate('/recruiter/job-orders/new')}
+            >
+              New Post
+            </Button>
+          </Grid>
+        </Grid>
+      </Paper>
 
       {/* Job Orders Table */}
       {loading && jobOrders.length === 0 ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
+        </Box>
+      ) : jobOrders.length === 0 ? (
+        <Box sx={{ textAlign: 'center', py: 8 }}>
+          <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            No job orders found
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            {search || statusFilter
+              ? 'Try adjusting your search criteria'
+              : 'Create your first job order to get started'
+            }
+          </Typography>
+          {!search && !statusFilter && (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => navigate('/recruiter/job-orders/new')}
+            >
+              Create Job Order
+            </Button>
+          )}
         </Box>
       ) : (
         <>
@@ -359,108 +381,46 @@ const RecruiterJobOrders: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell 
-                    onClick={() => handleSort('jobOrderNumber')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Order #
-                      {sortField === 'jobOrderNumber' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Order #
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('jobOrderName')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Title
-                      {sortField === 'jobOrderName' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Title
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('jobTitle')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Job Title
-                      {sortField === 'jobTitle' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Job Title
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('companyName')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Account
-                      {sortField === 'companyName' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Account
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('locationName')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Location
-                      {sortField === 'locationName' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Location
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('status')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Status
-                      {sortField === 'status' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Status
                   </TableCell>
-                  <TableCell>Requested/Filled</TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('recruiterName')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Recruiter(s)
-                      {sortField === 'recruiterName' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Requested/Filled
                   </TableCell>
-                  <TableCell 
-                    onClick={() => handleSort('createdAt')}
-                    sx={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      Age
-                      {sortField === 'createdAt' && (
-                        sortDirection === 'asc' ? <ArrowUpwardIcon fontSize="small" /> : <ArrowDownwardIcon fontSize="small" />
-                      )}
-                    </Box>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Recruiter(s)
                   </TableCell>
-                  {/* <TableCell align="center">Actions</TableCell> */}
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                    Age
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {jobOrders.map((jobOrder) => (
+                {jobOrders.map((jobOrder, index) => (
                   <TableRow 
                     key={jobOrder.id} 
                     hover 
                     onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
                     sx={{ 
                       cursor: 'pointer',
+                      backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
                       '&:hover': {
-                        backgroundColor: 'action.hover'
+                        backgroundColor: 'action.selected'
                       }
                     }}
                   >
@@ -473,22 +433,14 @@ const RecruiterJobOrders: React.FC = () => {
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
                         {jobOrder.jobOrderName}
                       </Typography>
-                      {/* {(jobOrder.deal?.notes || jobOrder.jobOrderDescription) && (
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          {(jobOrder.deal?.notes || jobOrder.jobOrderDescription || '').substring(0, 100)}
-                          {(jobOrder.deal?.notes || jobOrder.jobOrderDescription || '').length > 100 && '...'}
-                        </Typography>
-                      )} */}
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="body2">
-                          {jobOrder.jobTitle || 'No Job Title'}
-                        </Typography>
-                      </Box>
+                      <Typography variant="body2">
+                        {jobOrder.jobTitle || 'No Job Title'}
+                      </Typography>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <BusinessIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                         <Typography variant="body2">
                           {(jobOrder as any).companyName || 
@@ -499,7 +451,7 @@ const RecruiterJobOrders: React.FC = () => {
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <LocationIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                         <Typography variant="body2">
                           {(jobOrder as any).worksiteName || 
@@ -518,7 +470,7 @@ const RecruiterJobOrders: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {jobOrder.workersNeeded || 0} / {(jobOrder.workersNeeded || 0) - (jobOrder.headcountFilled || 0)}
+                        {jobOrder.workersNeeded || 0} / {jobOrder.headcountFilled || 0}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {jobOrder.workersNeeded && jobOrder.headcountFilled
@@ -528,7 +480,7 @@ const RecruiterJobOrders: React.FC = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                         <Typography variant="body2">
                           {jobOrder.deal?.associations?.recruiter?.[0]?.snapshot?.displayName || 
@@ -542,14 +494,6 @@ const RecruiterJobOrders: React.FC = () => {
                         {getJobOrderAge(jobOrder.createdAt)} days
                       </Typography>
                     </TableCell>
-                    {/* <TableCell align="center">
-                      <IconButton
-                        onClick={(e) => handleMenuOpen(e, jobOrder)}
-                        size="small"
-                      >
-                        <MoreVertIcon />
-                      </IconButton>
-                    </TableCell> */}
                   </TableRow>
                 ))}
               </TableBody>
@@ -558,41 +502,17 @@ const RecruiterJobOrders: React.FC = () => {
 
           {/* Load More */}
           {!isEnd && (
-            <Box sx={{ mt: 2, textAlign: 'center' }}>
-              <Button onClick={handleLoadMore} disabled={loading}>
+            <Box sx={{ mt: 3, textAlign: 'center' }}>
+              <Button onClick={handleLoadMore} disabled={loading} variant="outlined">
                 {loading ? <CircularProgress size={20} /> : 'Load More'}
               </Button>
             </Box>
           )}
 
           {isEnd && jobOrders.length > 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 3, textAlign: 'center' }}>
               End of results
             </Typography>
-          )}
-
-          {jobOrders.length === 0 && !loading && (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-              <Typography variant="h6" color="text.secondary" gutterBottom>
-                No job orders found
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {search || statusFilter
-                  ? 'Try adjusting your search criteria'
-                  : 'Create your first job order to get started'
-                }
-              </Typography>
-              {!search && !statusFilter && (
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => navigate('/recruiter/job-orders/new')}
-                >
-                  Create Job Order
-                </Button>
-              )}
-            </Box>
           )}
         </>
       )}
