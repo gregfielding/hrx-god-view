@@ -945,7 +945,9 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
 
                 {/* Add Association Dropdown */}
                 {(() => {
-                  const options = availableEntities[type as keyof typeof availableEntities] || [];
+                  const options = Array.isArray(availableEntities[type as keyof typeof availableEntities]) 
+                    ? availableEntities[type as keyof typeof availableEntities] 
+                    : [];
                   return (
                     <Autocomplete
                       options={options}

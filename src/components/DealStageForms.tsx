@@ -869,7 +869,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={jobTitlesList as any}
+                options={Array.isArray(jobTitlesList) ? jobTitlesList : []}
                 value={data.jobTitles || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'jobTitles', newValue);
@@ -1468,7 +1468,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               multiple
               fullWidth
               size="small"
-              options={backgroundCheckOptions.map(option => option.label)}
+              options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
               value={data.compliance?.backgroundCheckPackages || []}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
@@ -1502,7 +1502,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               multiple
               fullWidth
               size="small"
-              options={drugScreeningOptions.map(option => option.label)}
+              options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
               value={data.compliance?.drugScreeningPanels || []}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
@@ -1553,7 +1553,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               multiple
               fullWidth
               size="small"
-              options={additionalScreeningOptions.map(option => option.label)}
+              options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
               value={data.compliance?.additionalScreenings || []}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
@@ -1587,7 +1587,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Autocomplete
           multiple
           size="small"
-          options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
+          options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
           value={(data.compliance?.licensesCerts || []).map(cred => ({ value: cred, label: cred }))}
           onChange={(_, newValue) => {
             const credValues = newValue.map(option => option.value);
@@ -1686,7 +1686,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {experienceOptions.map((opt, index) => (
+                {(Array.isArray(experienceOptions) ? experienceOptions : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1755,7 +1755,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {educationOptions.map((opt, index) => (
+                {(Array.isArray(educationOptions) ? educationOptions : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1904,7 +1904,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                   </Box>
                 )}
               >
-                {getOptionsForField('languages', companyDefaultsForOptions).map((opt, index) => (
+                {(Array.isArray(getOptionsForField('languages', companyDefaultsForOptions)) ? getOptionsForField('languages', companyDefaultsForOptions) : []).map((opt, index) => (
                   <MenuItem key={index} value={opt.value}>
                     {opt.label}
                   </MenuItem>
@@ -1917,7 +1917,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         <Autocomplete
           multiple
           size="small"
-          options={getOptionsForField('skills', companyDefaultsForOptions)}
+          options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
           value={(data.compliance?.skills || []).map(skill => ({ value: skill, label: skill }))}
           onChange={(_, newValue) => {
             const skillValues = newValue.map(option => option.value);
