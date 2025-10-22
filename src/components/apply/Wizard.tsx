@@ -639,13 +639,32 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           
           // Prepare denormalized application data for quick lookups
           const applicationId = `${tenantId}_${jobId}`;
+          
+          // Get company name - fallback to CRM if not on posting
+          let companyName = posting?.companyName || null;
+          const companyId = posting?.companyId || null;
+          
+          // If companyName is missing but we have companyId, fetch from CRM
+          if (!companyName && companyId && tenantId) {
+            try {
+              const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+              const companySnap = await getDoc(companyRef);
+              if (companySnap.exists()) {
+                const companyData = companySnap.data();
+                companyName = companyData.companyName || companyData.name || null;
+              }
+            } catch (err) {
+              console.warn('Failed to fetch company name from CRM:', err);
+            }
+          }
+          
           const applicationQuickData: any = {
             applicationId: applicationId, // Include the application ID for reference
             jobId: jobId,
             jobTitle: posting?.jobTitle || posting?.postTitle || null,
             postTitle: posting?.postTitle || null,
-            companyName: posting?.companyName || null,
-            companyId: posting?.companyId || null, // CRM company ID from tenant subcollection
+            companyName: companyName,
+            companyId: companyId,
             jobPostId: posting?.jobPostId || null,
             payRate: posting?.payRate || null,
             status: 'submitted',

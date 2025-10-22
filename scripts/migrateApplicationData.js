@@ -143,6 +143,21 @@ async function migrateApplicationData() {
                   payRate = jobData.payRate || null;
                   startDate = jobData.startDate || null;
                   location = jobData.worksiteName || jobData.city || null;
+                  
+                  // If companyName is missing but we have companyId, fetch from CRM
+                  if (!companyName && companyId) {
+                    try {
+                      const companyRef = db.collection('tenants').doc(tenantId).collection('crm_companies').doc(companyId);
+                      const companyDoc = await companyRef.get();
+                      if (companyDoc.exists) {
+                        const companyData = companyDoc.data();
+                        companyName = companyData.companyName || companyData.name || null;
+                        console.log(`      ℹ️  Fetched company name from CRM: ${companyName}`);
+                      }
+                    } catch (err) {
+                      console.log(`      ⚠️  Failed to fetch company from CRM: ${err.message}`);
+                    }
+                  }
                 }
               } catch (err) {
                 console.log(`      ⚠️  Failed to fetch job posting ${appData.jobId}: ${err.message}`);

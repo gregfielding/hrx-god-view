@@ -31,6 +31,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
 import FavoriteButton from '../components/FavoriteButton';
+import FavoritesFilter from '../components/FavoritesFilter';
+import { useFavorites } from '../hooks/useFavorites';
 
 // Security levels for filtering
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
@@ -81,6 +83,10 @@ const RecruiterApplicants: React.FC = () => {
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin'>('newest');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  // Get favorites
+  const { favorites } = useFavorites('users');
   
   // Get unique companies from all candidates for filtering
   const uniqueCompanies = Array.from(
@@ -244,6 +250,9 @@ const RecruiterApplicants: React.FC = () => {
   // Filter and sort candidates
   const filteredCandidates = candidates
     .filter(candidate => {
+      // Favorites filter
+      if (showFavoritesOnly && !favorites.includes(candidate.id)) return false;
+      
       // Security level filter
       if (securityLevelFilter !== 'all' && candidate.securityLevel !== securityLevelFilter) return false;
       
@@ -316,6 +325,26 @@ const RecruiterApplicants: React.FC = () => {
             startAdornment: (
               <InputAdornment position="start">
                 <SearchIcon />
+              </InputAdornment>
+            ),
+            endAdornment: (
+              <InputAdornment position="end">
+                <FavoritesFilter
+                  favoriteType="users"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={setShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                    }
+                  }}
+                />
               </InputAdornment>
             ),
           }}

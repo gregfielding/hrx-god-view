@@ -50,6 +50,8 @@ import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
 import FavoriteButton from '../components/FavoriteButton';
+import FavoritesFilter from '../components/FavoritesFilter';
+import { useFavorites } from '../hooks/useFavorites';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
