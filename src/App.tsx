@@ -796,29 +796,28 @@ function App() {
               <RecruiterMain />
             </RecruiterAccessGuard>
           </ProtectedRoute>
-        } />
-
-        <Route path="recruiter/job-orders" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <RecruiterAccessGuard>
-              <RecruiterJobOrders />
-            </RecruiterAccessGuard>
-          </ProtectedRoute>
-        } />
-        <Route path="recruiter/job-orders/new" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <RecruiterAccessGuard>
-              <NewJobOrder />
-            </RecruiterAccessGuard>
-          </ProtectedRoute>
-        } />
-        <Route path="recruiter/job-orders/:jobOrderId" element={
-          <ProtectedRoute requiredSecurityLevel="5">
-            <RecruiterAccessGuard>
-              <RecruiterJobOrderDetail />
-            </RecruiterAccessGuard>
-          </ProtectedRoute>
-        } />
+        }>
+          <Route index element={<RecruiterDashboard />} />
+          <Route path="job-orders" element={<RecruiterJobOrders />} />
+          <Route path="job-orders/new" element={<NewJobOrder />} />
+          <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
+          <Route path="applicants" element={
+            <Box>
+              <Typography variant="h6">Applicants</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Applicants content coming soon...
+              </Typography>
+            </Box>
+          } />
+          <Route path="reports" element={
+            <Box>
+              <Typography variant="h6">Reports</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Reports content coming soon...
+              </Typography>
+            </Box>
+          } />
+        </Route>
         {/* TODO: Create RecruiterApplications component */}
         {/* <Route path="recruiter/applications" element={
           <ProtectedRoute requiredSecurityLevel="4">

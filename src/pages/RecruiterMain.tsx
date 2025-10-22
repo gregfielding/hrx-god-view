@@ -1,34 +1,28 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Box,
   Typography,
 } from '@mui/material';
-import { useSearchParams } from 'react-router-dom';
-import RecruiterDashboard from './RecruiterDashboard';
-import RecruiterJobOrders from './RecruiterJobOrders';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 
 const RecruiterMain: React.FC = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   
-  // State for tabs - use URL params
-  const [tabValue, setTabValue] = useState(() => {
-    const tabParam = searchParams.get('tab');
-    if (tabParam) {
-      const tabMap: Record<string, number> = {
-        'dashboard': 0,
-        'job-orders': 1,
-        'applicants': 2,
-        'reports': 3,
-      };
-      return tabMap[tabParam] ?? 0;
-    }
+  // Determine active tab based on current path
+  const getActiveTab = () => {
+    if (location.pathname === '/recruiter' || location.pathname === '/recruiter/') return 0;
+    if (location.pathname.startsWith('/recruiter/job-orders')) return 1;
+    if (location.pathname.startsWith('/recruiter/applicants')) return 2;
+    if (location.pathname.startsWith('/recruiter/reports')) return 3;
     return 0;
-  });
+  };
 
-  const handleTabChange = (_event: any, newValue: number) => {
-    setTabValue(newValue);
-    const tabNames = ['dashboard', 'job-orders', 'applicants', 'reports'];
-    setSearchParams({ tab: tabNames[newValue] });
+  const tabValue = getActiveTab();
+
+  const handleTabChange = (newValue: number) => {
+    const paths = ['/recruiter', '/recruiter/job-orders', '/recruiter/applicants', '/recruiter/reports'];
+    navigate(paths[newValue]);
   };
 
   return (
@@ -68,7 +62,7 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange({} as any, 0)}
+            onClick={() => handleTabChange(0)}
           >
             <Typography 
               variant="body1" 
@@ -121,7 +115,7 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange({} as any, 1)}
+            onClick={() => handleTabChange(1)}
           >
             <Typography 
               variant="body1" 
@@ -174,7 +168,7 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange({} as any, 2)}
+            onClick={() => handleTabChange(2)}
           >
             <Typography 
               variant="body1" 
@@ -227,7 +221,7 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange({} as any, 3)}
+            onClick={() => handleTabChange(3)}
           >
             <Typography 
               variant="body1" 
@@ -260,32 +254,8 @@ const RecruiterMain: React.FC = () => {
         </Box>
       </Box>
 
-      {/* Tab Content */}
-      {tabValue === 0 && (
-        <RecruiterDashboard />
-      )}
-
-      {tabValue === 1 && (
-        <RecruiterJobOrders />
-      )}
-
-      {tabValue === 2 && (
-        <Box>
-          <Typography variant="h6">Applicants</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Applicants content coming soon...
-          </Typography>
-        </Box>
-      )}
-
-      {tabValue === 3 && (
-        <Box>
-          <Typography variant="h6">Reports</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Reports content coming soon...
-          </Typography>
-        </Box>
-      )}
+      {/* Tab Content - Use Outlet for nested routes */}
+      <Outlet />
     </Box>
   );
 };
