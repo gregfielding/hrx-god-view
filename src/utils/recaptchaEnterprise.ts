@@ -18,13 +18,6 @@ const RECAPTCHA_SITE_KEY = '6LfslOQrAAAAADtgTB4kB1N3_BY2DfSKXgKpk9Tu';
  */
 export async function executeRecaptcha(action = 'LOGIN'): Promise<string> {
   return new Promise((resolve, reject) => {
-    // Skip reCAPTCHA in production if domain restrictions are causing issues
-    if (process.env.NODE_ENV === 'production') {
-      console.warn('reCAPTCHA bypassed in production due to domain restrictions');
-      resolve('bypass-token-for-production');
-      return;
-    }
-
     if (!window.grecaptcha) {
       reject(new Error('reCAPTCHA not loaded'));
       return;
@@ -35,8 +28,7 @@ export async function executeRecaptcha(action = 'LOGIN'): Promise<string> {
         const token = await window.grecaptcha.enterprise.execute(RECAPTCHA_SITE_KEY, { action });
         resolve(token);
       } catch (error) {
-        console.warn('reCAPTCHA failed, using bypass token:', error);
-        resolve('bypass-token-on-error');
+        reject(error);
       }
     });
   });
