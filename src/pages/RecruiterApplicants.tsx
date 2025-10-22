@@ -32,47 +32,50 @@ import { db } from '../firebase';
 import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
 import FavoriteButton from '../components/FavoriteButton';
 
-type ApplicationStatus = 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected' | 'withdrawn' | 'submitted';
+// Security levels for filtering
+type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
 
-interface ApplicantWithDetails {
-  id: string;
+interface CandidateWithDetails {
+  id: string; // userId
   tenantId: string;
-  userId: string;
-  jobId?: string;
-  status: ApplicationStatus;
-  submittedAt: any;
-  createdAt: any;
-  updatedAt?: any;
-  firstName?: string;
-  lastName?: string;
-  email?: string;
+  firstName: string;
+  lastName: string;
+  email: string;
   phone?: string;
   avatar?: string;
   skills?: string[];
-  data?: any;
-  jobOrderNumber?: string;
-  jobTitle?: string;
-  companyName?: string;
-  rating?: number;
-  source?: string;
+  securityLevel: string;
+  role?: string;
+  department?: string;
+  lastLoginAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+  applicationCount?: number;
+  mostRecentApplication?: {
+    jobId?: string;
+    jobTitle?: string;
+    companyName?: string;
+    submittedAt?: any;
+    status?: string;
+  };
 }
 
 const RecruiterApplicants: React.FC = () => {
   const navigate = useNavigate();
   const { activeTenant } = useAuth();
-  const [applicants, setApplicants] = useState<ApplicantWithDetails[]>([]);
+  const [candidates, setCandidates] = useState<CandidateWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ApplicationStatus | 'all'>('all');
-  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name'>('newest');
+  const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin'>('newest');
 
   useEffect(() => {
     if (!activeTenant?.id) return;
-    loadApplicants();
+    loadCandidates();
   }, [activeTenant?.id]);
 
-  const loadApplicants = async () => {
+  const loadCandidates = async () => {
     if (!activeTenant?.id) return;
     
     setLoading(true);
@@ -80,123 +83,116 @@ const RecruiterApplicants: React.FC = () => {
     
     try {
       const tenantId = activeTenant.id;
-      console.log('🔍 RecruiterApplicants: Loading applications for tenant:', tenantId);
+      console.log('🔍 RecruiterApplicants: Loading candidates for tenant:', tenantId);
       
-      // Query applications from tenants/{tenantId}/applications
-      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-      const q = query(applicationsRef, orderBy('createdAt', 'desc'));
+      // Query users with security levels 0-4 (Suspended, Dismissed, Applicant, Candidate, Hired Staff)
+      const usersRef = collection(db, 'users');
+      const q = query(
+        usersRef,
+        where('tenantId', '==', tenantId),
+        where('securityLevel', 'in', ['0', '1', '2', '3', '4']),
+        orderBy('updatedAt', 'desc')
+      );
       
       const querySnapshot = await getDocs(q);
-      console.log('🔍 RecruiterApplicants: Found', querySnapshot.size, 'applications');
+      console.log('🔍 RecruiterApplicants: Found', querySnapshot.size, 'candidates');
       
-      const applicationsData = await Promise.all(
-        querySnapshot.docs.map(async (applicationDoc) => {
-          const appData = applicationDoc.data();
+      const candidatesData = await Promise.all(
+        querySnapshot.docs.map(async (userDoc) => {
+          const userData = userDoc.data();
           
-          // Fetch user document (source of truth)
-          let firstName = '';
-          let lastName = '';
-          let email = '';
-          let phone = '';
-          let avatar = '';
-          let skills: string[] = [];
+          // Get application count and most recent application
+          let applicationCount = 0;
+          let mostRecentApplication = undefined;
           
-          const userId = appData.userId || appData.uid;
-          if (userId) {
-            try {
-              const userRef = doc(db, 'users', userId);
-              const userSnap = await getDoc(userRef);
+          try {
+            const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+            const appQuery = query(
+              applicationsRef,
+              where('userId', '==', userDoc.id),
+              orderBy('createdAt', 'desc')
+            );
+            const appSnapshot = await getDocs(appQuery);
+            applicationCount = appSnapshot.size;
+            
+            // Get most recent application details
+            if (!appSnapshot.empty) {
+              const recentAppData = appSnapshot.docs[0].data();
               
-              if (userSnap.exists()) {
-                const userData = userSnap.data();
-                firstName = userData.firstName || '';
-                lastName = userData.lastName || '';
-                email = userData.email || '';
-                phone = userData.phone || '';
-                avatar = userData.avatar || '';
-                skills = userData.skills || [];
+              // Fetch job posting details if available
+              if (recentAppData.jobId) {
+                try {
+                  const jobPostRef = doc(db, 'tenants', tenantId, 'job_postings', recentAppData.jobId);
+                  const jobPostSnap = await getDoc(jobPostRef);
+                  
+                  if (jobPostSnap.exists()) {
+                    const jobPostData = jobPostSnap.data();
+                    mostRecentApplication = {
+                      jobId: recentAppData.jobId,
+                      jobTitle: jobPostData.jobTitle || jobPostData.postTitle,
+                      companyName: jobPostData.companyName,
+                      submittedAt: recentAppData.submittedAt || recentAppData.createdAt,
+                      status: recentAppData.status || 'submitted',
+                    };
+                  }
+                } catch (error) {
+                  console.warn('Failed to fetch job posting details:', error);
+                }
               }
-            } catch (error) {
-              console.warn('Failed to fetch user data:', error);
-              // Fallback to application data if user fetch fails
-              firstName = appData.firstName || appData.data?.personal?.firstName || '';
-              lastName = appData.lastName || appData.data?.personal?.lastName || '';
-              email = appData.email || appData.data?.personal?.email || '';
-              phone = appData.phone || appData.data?.personal?.phone || '';
             }
-          }
-          
-          // Fetch job posting details if linked
-          let jobOrderNumber = undefined;
-          let jobTitle = undefined;
-          let companyName = undefined;
-          
-          if (appData.jobId) {
-            try {
-              const jobPostRef = doc(db, 'tenants', tenantId, 'job_postings', appData.jobId);
-              const jobPostSnap = await getDoc(jobPostRef);
-              
-              if (jobPostSnap.exists()) {
-                const jobPostData = jobPostSnap.data();
-                jobOrderNumber = jobPostData.jobPostId || jobPostData.jobOrderId;
-                jobTitle = jobPostData.jobTitle || jobPostData.postTitle;
-                companyName = jobPostData.companyName;
-              }
-            } catch (error) {
-              console.warn('Failed to fetch job posting details:', error);
-            }
+          } catch (error) {
+            console.warn('Failed to fetch applications for user:', userDoc.id, error);
           }
           
           return {
-            id: applicationDoc.id,
-            tenantId: appData.tenantId,
-            userId,
-            jobId: appData.jobId,
-            status: appData.status || 'submitted',
-            submittedAt: appData.submittedAt,
-            createdAt: appData.createdAt,
-            updatedAt: appData.updatedAt,
-            firstName,
-            lastName,
-            email,
-            phone,
-            avatar,
-            skills,
-            data: appData.data,
-            jobOrderNumber,
-            jobTitle,
-            companyName,
-            rating: appData.rating,
-            source: appData.source || 'job_board',
+            id: userDoc.id,
+            tenantId: userData.tenantId,
+            firstName: userData.firstName || '',
+            lastName: userData.lastName || '',
+            email: userData.email || '',
+            phone: userData.phone || '',
+            avatar: userData.avatar || '',
+            skills: userData.skills || [],
+            securityLevel: userData.securityLevel || '0',
+            role: userData.role,
+            department: userData.department,
+            lastLoginAt: userData.lastLoginAt,
+            createdAt: userData.createdAt,
+            updatedAt: userData.updatedAt,
+            applicationCount,
+            mostRecentApplication,
           };
         })
       );
       
-      setApplicants(applicationsData);
+      setCandidates(candidatesData);
     } catch (error) {
-      console.error('Error loading applications:', error);
-      setError('Failed to load applicants. Please try again.');
+      console.error('Error loading candidates:', error);
+      setError('Failed to load candidates. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusColor = (status: ApplicationStatus): 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
-    switch (status) {
-      case 'hired':
-        return 'success';
-      case 'offer':
-        return 'info';
-      case 'interview':
-        return 'primary';
-      case 'screening':
-        return 'secondary';
-      case 'rejected':
-        return 'error';
-      case 'withdrawn':
-        return 'default';
-      default:
-        return 'default';
+  const getSecurityLevelLabel = (level: string): string => {
+    switch (level) {
+      case '0': return 'Suspended';
+      case '1': return 'Dismissed';
+      case '2': return 'Applicant';
+      case '3': return 'Candidate';
+      case '4': return 'Hired Staff';
+      default: return level;
+    }
+  };
+
+  const getSecurityLevelColor = (level: string): 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
+    switch (level) {
+      case '0': return 'error'; // Suspended
+      case '1': return 'default'; // Dismissed
+      case '2': return 'info'; // Applicant
+      case '3': return 'primary'; // Candidate
+      case '4': return 'success'; // Hired Staff
+      default: return 'default';
     }
   };
 
@@ -232,22 +228,22 @@ const RecruiterApplicants: React.FC = () => {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  // Filter and sort applicants
-  const filteredApplicants = applicants
-    .filter(app => {
-      // Status filter
-      if (statusFilter !== 'all' && app.status !== statusFilter) return false;
+  // Filter and sort candidates
+  const filteredCandidates = candidates
+    .filter(candidate => {
+      // Security level filter
+      if (securityLevelFilter !== 'all' && candidate.securityLevel !== securityLevelFilter) return false;
       
       // Search filter
       if (searchTerm) {
         const search = searchTerm.toLowerCase();
         return (
-          app.firstName?.toLowerCase().includes(search) ||
-          app.lastName?.toLowerCase().includes(search) ||
-          app.email?.toLowerCase().includes(search) ||
-          app.phone?.toLowerCase().includes(search) ||
-          app.jobTitle?.toLowerCase().includes(search) ||
-          app.companyName?.toLowerCase().includes(search)
+          candidate.firstName.toLowerCase().includes(search) ||
+          candidate.lastName.toLowerCase().includes(search) ||
+          candidate.email.toLowerCase().includes(search) ||
+          candidate.phone?.toLowerCase().includes(search) ||
+          candidate.mostRecentApplication?.jobTitle?.toLowerCase().includes(search) ||
+          candidate.mostRecentApplication?.companyName?.toLowerCase().includes(search)
         );
       }
       
@@ -256,14 +252,19 @@ const RecruiterApplicants: React.FC = () => {
     .sort((a, b) => {
       switch (sortBy) {
         case 'newest': {
-          const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (typeof a.createdAt === 'number' ? a.createdAt : 0);
-          const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (typeof b.createdAt === 'number' ? b.createdAt : 0);
+          const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : (typeof a.updatedAt === 'number' ? a.updatedAt : 0);
+          const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : (typeof b.updatedAt === 'number' ? b.updatedAt : 0);
           return bTime - aTime;
         }
         case 'oldest': {
-          const aTime = a.createdAt instanceof Date ? a.createdAt.getTime() : (typeof a.createdAt === 'number' ? a.createdAt : 0);
-          const bTime = b.createdAt instanceof Date ? b.createdAt.getTime() : (typeof b.createdAt === 'number' ? b.createdAt : 0);
+          const aTime = a.updatedAt instanceof Date ? a.updatedAt.getTime() : (typeof a.updatedAt === 'number' ? a.updatedAt : 0);
+          const bTime = b.updatedAt instanceof Date ? b.updatedAt.getTime() : (typeof b.updatedAt === 'number' ? b.updatedAt : 0);
           return aTime - bTime;
+        }
+        case 'lastLogin': {
+          const aTime = a.lastLoginAt instanceof Date ? a.lastLoginAt.getTime() : (typeof a.lastLoginAt === 'number' ? a.lastLoginAt : 0);
+          const bTime = b.lastLoginAt instanceof Date ? b.lastLoginAt.getTime() : (typeof b.lastLoginAt === 'number' ? b.lastLoginAt : 0);
+          return bTime - aTime;
         }
         case 'name':
           return `${a.lastName} ${a.firstName}`.localeCompare(
@@ -287,7 +288,7 @@ const RecruiterApplicants: React.FC = () => {
       {/* Search and Filters */}
       <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
         <TextField
-          placeholder="Search applicants..."
+          placeholder="Search candidates..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           variant="outlined"
@@ -302,22 +303,19 @@ const RecruiterApplicants: React.FC = () => {
           }}
         />
         
-        <FormControl size="small" sx={{ minWidth: 150 }}>
-          <InputLabel>Status</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <InputLabel>Security Level</InputLabel>
           <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as ApplicationStatus | 'all')}
-            label="Status"
+            value={securityLevelFilter}
+            onChange={(e) => setSecurityLevelFilter(e.target.value as SecurityLevel)}
+            label="Security Level"
           >
-            <MenuItem value="all">All Statuses</MenuItem>
-            <MenuItem value="submitted">Submitted</MenuItem>
-            <MenuItem value="applied">Applied</MenuItem>
-            <MenuItem value="screening">Screening</MenuItem>
-            <MenuItem value="interview">Interview</MenuItem>
-            <MenuItem value="offer">Offer</MenuItem>
-            <MenuItem value="hired">Hired</MenuItem>
-            <MenuItem value="rejected">Rejected</MenuItem>
-            <MenuItem value="withdrawn">Withdrawn</MenuItem>
+            <MenuItem value="all">All Levels</MenuItem>
+            <MenuItem value="0">🔴 Suspended</MenuItem>
+            <MenuItem value="1">⚫ Dismissed</MenuItem>
+            <MenuItem value="2">🔵 Applicant</MenuItem>
+            <MenuItem value="3">🟣 Candidate</MenuItem>
+            <MenuItem value="4">🟢 Hired Staff</MenuItem>
           </Select>
         </FormControl>
         
@@ -325,11 +323,12 @@ const RecruiterApplicants: React.FC = () => {
           <InputLabel>Sort By</InputLabel>
           <Select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'name')}
+            onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'name' | 'lastLogin')}
             label="Sort By"
           >
-            <MenuItem value="newest">Newest First</MenuItem>
+            <MenuItem value="newest">Recently Updated</MenuItem>
             <MenuItem value="oldest">Oldest First</MenuItem>
+            <MenuItem value="lastLogin">Last Login</MenuItem>
             <MenuItem value="name">Name (A-Z)</MenuItem>
           </Select>
         </FormControl>
@@ -341,16 +340,16 @@ const RecruiterApplicants: React.FC = () => {
         </Alert>
       )}
 
-      {/* Applicants Table */}
-      {filteredApplicants.length === 0 ? (
+      {/* Candidates Table */}
+      {filteredCandidates.length === 0 ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="h6" gutterBottom>
-            No applicants found
+            No candidates found
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchTerm || statusFilter !== 'all'
+            {searchTerm || securityLevelFilter !== 'all'
               ? 'Try adjusting your filters'
-              : 'Applicants will appear here as they apply to your job orders'}
+              : 'Candidates will appear here as users apply to job postings'}
           </Typography>
         </Paper>
       ) : (
@@ -368,30 +367,27 @@ const RecruiterApplicants: React.FC = () => {
                   Contact
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Job Order
+                  Security Level
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Status
+                  Applications
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Rating
+                  Recent Application
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Source
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Applied
+                  Last Login
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredApplicants.map((applicant, index) => (
+              {filteredCandidates.map((candidate, index) => (
                 <TableRow
-                  key={applicant.id}
+                  key={candidate.id}
                   hover
                   onClick={() => {
-                    // TODO: Navigate to applicant detail page
-                    console.log('View applicant:', applicant.id);
+                    // Navigate to user profile
+                    navigate(`/users/${candidate.id}`);
                   }}
                   sx={{
                     cursor: 'pointer',
@@ -403,8 +399,8 @@ const RecruiterApplicants: React.FC = () => {
                 >
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <FavoriteButton
-                      itemId={applicant.id}
-                      favoriteType="applications"
+                      itemId={candidate.id}
+                      favoriteType="users"
                       size="small"
                       tooltipText={{
                         favorited: 'Remove from favorites',
@@ -416,74 +412,69 @@ const RecruiterApplicants: React.FC = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                       <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {applicant.lastName}, {applicant.firstName}
+                        {candidate.lastName}, {candidate.firstName}
                       </Typography>
                     </Box>
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      {applicant.email && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                          <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
-                            {applicant.email}
-                          </Typography>
-                        </Box>
-                      )}
-                      {applicant.phone && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                        <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                          {candidate.email}
+                        </Typography>
+                      </Box>
+                      {candidate.phone && (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                           <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
-                            {applicant.phone}
+                            {candidate.phone}
                           </Typography>
                         </Box>
                       )}
                     </Box>
                   </TableCell>
                   <TableCell>
-                    {applicant.jobId ? (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <WorkIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {applicant.jobOrderNumber || applicant.jobId}
-                          </Typography>
-                        </Box>
-                        {applicant.jobTitle && (
-                          <Typography variant="body2" sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>
-                            {applicant.jobTitle}
-                          </Typography>
-                        )}
-                        {applicant.companyName && (
-                          <Typography variant="body2" sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>
-                            {applicant.companyName}
-                          </Typography>
-                        )}
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                        General Application
-                      </Typography>
-                    )}
-                  </TableCell>
-                  <TableCell>
                     <Chip
-                      label={applicant.status.charAt(0).toUpperCase() + applicant.status.slice(1)}
-                      color={getStatusColor(applicant.status)}
+                      label={getSecurityLevelLabel(candidate.securityLevel)}
+                      color={getSecurityLevelColor(candidate.securityLevel)}
                       size="small"
                     />
                   </TableCell>
                   <TableCell>
-                    {getRatingStars(applicant.rating)}
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ textTransform: 'capitalize' }}>
-                      {applicant.source?.replace('_', ' ') || 'N/A'}
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {candidate.applicationCount || 0}
                     </Typography>
                   </TableCell>
                   <TableCell>
+                    {candidate.mostRecentApplication ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <WorkIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                          <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.8rem' }}>
+                            {candidate.mostRecentApplication.jobTitle || 'Job'}
+                          </Typography>
+                        </Box>
+                        {candidate.mostRecentApplication.companyName && (
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                            {candidate.mostRecentApplication.companyName}
+                          </Typography>
+                        )}
+                        {candidate.mostRecentApplication.submittedAt && (
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                            {formatDate(candidate.mostRecentApplication.submittedAt)}
+                          </Typography>
+                        )}
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', fontSize: '0.8rem' }}>
+                        No applications
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     <Typography variant="body2">
-                      {formatDate(applicant.createdAt)}
+                      {formatDate(candidate.lastLoginAt)}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -495,7 +486,7 @@ const RecruiterApplicants: React.FC = () => {
       
       <Box sx={{ mt: 2, textAlign: 'center', color: 'text.secondary' }}>
         <Typography variant="body2">
-          Showing {filteredApplicants.length} of {applicants.length} applicant{applicants.length !== 1 ? 's' : ''}
+          Showing {filteredCandidates.length} of {candidates.length} candidate{candidates.length !== 1 ? 's' : ''}
         </Typography>
       </Box>
     </Box>
