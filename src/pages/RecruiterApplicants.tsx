@@ -82,6 +82,7 @@ const RecruiterApplicants: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [companyFilter, setCompanyFilter] = useState<string>('all');
+  const [jobFilter, setJobFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin'>('newest');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
@@ -94,6 +95,15 @@ const RecruiterApplicants: React.FC = () => {
       candidates
         .map(c => c.mostRecentApplication?.companyName)
         .filter((name): name is string => !!name)
+    )
+  ).sort();
+  
+  // Get unique job titles from all candidates for filtering
+  const uniqueJobTitles = Array.from(
+    new Set(
+      candidates
+        .map(c => c.mostRecentApplication?.jobTitle || c.mostRecentApplication?.postTitle)
+        .filter((title): title is string => !!title)
     )
   ).sort();
 
@@ -259,6 +269,12 @@ const RecruiterApplicants: React.FC = () => {
       // Company filter
       if (companyFilter !== 'all' && candidate.mostRecentApplication?.companyName !== companyFilter) return false;
       
+      // Job filter
+      if (jobFilter !== 'all') {
+        const jobTitle = candidate.mostRecentApplication?.jobTitle || candidate.mostRecentApplication?.postTitle;
+        if (jobTitle !== jobFilter) return false;
+      }
+      
       // Search filter
       if (searchTerm) {
         const search = searchTerm.toLowerCase();
@@ -382,6 +398,22 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <InputLabel>Job Title</InputLabel>
+          <Select
+            value={jobFilter}
+            onChange={(e) => setJobFilter(e.target.value)}
+            label="Job Title"
+          >
+            <MenuItem value="all">All Jobs</MenuItem>
+            {uniqueJobTitles.map((jobTitle) => (
+              <MenuItem key={jobTitle} value={jobTitle}>
+                {jobTitle}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        
         <FormControl size="small" sx={{ minWidth: 150 }}>
           <InputLabel>Sort By</InputLabel>
           <Select
@@ -410,7 +442,7 @@ const RecruiterApplicants: React.FC = () => {
             No candidates found
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchTerm || securityLevelFilter !== 'all' || companyFilter !== 'all'
+            {searchTerm || securityLevelFilter !== 'all' || companyFilter !== 'all' || jobFilter !== 'all' || showFavoritesOnly
               ? 'Try adjusting your filters'
               : 'Candidates will appear here as users apply to job postings'}
           </Typography>
