@@ -42,16 +42,6 @@ const RecruiterMain: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       <BreadcrumbNav items={breadcrumbItems} />
-      
-      {/* Page Title */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h3" gutterBottom>
-          Recruiter
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Manage your recruitment activities and candidate pipeline
-        </Typography>
-      </Box>
 
       {/* Navigation Menu */}
       <Box sx={{ mb: 3 }}>
