@@ -110,6 +110,8 @@ import RecruiterMain from './pages/RecruiterMain';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
+import RecruiterCompanies from './pages/RecruiterCompanies';
+import RecruiterContacts from './pages/RecruiterContacts';
 import NewJobOrder from './pages/NewJobOrder';
 
 import InsightReports from './pages/InsightReports';
@@ -803,6 +805,8 @@ function App() {
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
+          <Route path="companies" element={<RecruiterCompanies />} />
+          <Route path="contacts" element={<RecruiterContacts />} />
           <Route path="reports" element={
             <Box>
               <Typography variant="h6">Reports</Typography>
