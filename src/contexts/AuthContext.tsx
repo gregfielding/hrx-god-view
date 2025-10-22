@@ -716,6 +716,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setCrmSalesEnabled(false);
     setRecruiterEnabled(false);
     setJobsBoardEnabled(false);
+    // Redirect to jobs board
+    window.location.href = '/c1/jobs-board';
   };
 
   return (

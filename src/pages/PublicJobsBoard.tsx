@@ -898,10 +898,10 @@ const PublicJobsBoard: React.FC = () => {
                             sx={{ 
                               width: '50%',
                               ml: job.eVerifyRequired ? 'auto' : 0,
-                              backgroundColor: '#0057B8',
-                              color: 'white',
+                              backgroundColor: '#FFC700',
+                              color: '#000',
                               '&:hover': {
-                                backgroundColor: '#004494',
+                                backgroundColor: '#E6B300',
                               },
                               cursor: 'default',
                               pointerEvents: 'none',
@@ -1308,10 +1308,10 @@ const PublicJobsBoard: React.FC = () => {
                       variant="contained" 
                       sx={{ 
                         minWidth: 120,
-                        backgroundColor: '#0057B8',
-                        color: 'white',
+                        backgroundColor: '#FFC700',
+                        color: '#000',
                         '&:hover': {
-                          backgroundColor: '#004494',
+                          backgroundColor: '#E6B300',
                         },
                         cursor: 'default',
                         pointerEvents: 'none',
