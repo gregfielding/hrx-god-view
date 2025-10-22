@@ -1827,7 +1827,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Autocomplete
                 multiple
                 fullWidth
-                options={backgroundCheckOptions.map(option => option.label)}
+                options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
                 value={formData.backgroundCheckPackages}
                 onChange={(event, newValue) => {
                   handleInputChange('backgroundCheckPackages', newValue);
@@ -1855,7 +1855,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Autocomplete
                 multiple
                 fullWidth
-                options={drugScreeningOptions.map(option => option.label)}
+                options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
                 value={formData.drugScreeningPanels}
                 onChange={(event, newValue) => {
                   handleInputChange('drugScreeningPanels', newValue);
@@ -1883,7 +1883,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Autocomplete
                 multiple
                 fullWidth
-                options={additionalScreeningOptions.map(option => option.label)}
+                options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
                 value={formData.additionalScreenings}
                 onChange={(event, newValue) => {
                   handleInputChange('additionalScreenings', newValue);
@@ -1910,7 +1910,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid item xs={12} md={6}>
               <Autocomplete
                 multiple
-                options={getOptionsForField('licensesCerts', companyDefaultsForOptions)}
+                options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
                 value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
                 onChange={(_, newValue) => {
                   const credValues = newValue.map(option => option.value);
@@ -2001,7 +2001,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid item xs={12} md={6}>
               <Autocomplete
                 multiple
-                options={getOptionsForField('skills', companyDefaultsForOptions)}
+                options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
                 value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
                 onChange={(_, newValue) => {
                   const skillValues = newValue.map(option => option.value);
