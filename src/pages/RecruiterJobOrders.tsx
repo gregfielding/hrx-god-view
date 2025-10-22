@@ -49,6 +49,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
+import FavoriteButton from '../components/FavoriteButton';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -381,6 +382,9 @@ const RecruiterJobOrders: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
+                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', width: 60 }}>
+                    Favorites
+                  </TableCell>
                   <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                     Order #
                   </TableCell>
@@ -424,6 +428,17 @@ const RecruiterJobOrders: React.FC = () => {
                       }
                     }}
                   >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <FavoriteButton
+                        itemId={jobOrder.id}
+                        favoriteType="jobOrders"
+                        size="small"
+                        tooltipText={{
+                          favorited: 'Remove from favorites',
+                          notFavorited: 'Add to favorites'
+                        }}
+                      />
+                    </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         {formatJobOrderNumber(jobOrder.jobOrderNumber)}
