@@ -4,7 +4,6 @@ import {
   Typography,
 } from '@mui/material';
 import { useSearchParams } from 'react-router-dom';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 import RecruiterDashboard from './RecruiterDashboard';
 import RecruiterJobOrders from './RecruiterJobOrders';
 
@@ -32,17 +31,8 @@ const RecruiterMain: React.FC = () => {
     setSearchParams({ tab: tabNames[newValue] });
   };
 
-  const breadcrumbItems = [
-    {
-      label: 'Recruiter',
-      href: '/recruiter'
-    }
-  ];
-
   return (
     <Box sx={{ p: 0 }}>
-      <BreadcrumbNav items={breadcrumbItems} />
-
       {/* Navigation Menu */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ 
