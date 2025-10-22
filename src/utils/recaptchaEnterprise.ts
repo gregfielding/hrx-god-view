@@ -9,8 +9,7 @@ declare global {
   }
 }
 
-// Temporarily disabled for production - update with proper domain-restricted key
-const RECAPTCHA_SITE_KEY = process.env.NODE_ENV === 'development' ? '6LfslOQrAAAAADtgTB4kB1N3_BY2DfSKXgKpk9Tu' : null;
+const RECAPTCHA_SITE_KEY = '6LfslOQrAAAAADtgTB4kB1N3_BY2DfSKXgKpk9Tu';
 
 /**
  * Execute reCAPTCHA Enterprise and get a token
@@ -19,13 +18,6 @@ const RECAPTCHA_SITE_KEY = process.env.NODE_ENV === 'development' ? '6LfslOQrAAA
  */
 export async function executeRecaptcha(action = 'LOGIN'): Promise<string> {
   return new Promise((resolve, reject) => {
-    // Skip reCAPTCHA in production if no valid site key
-    if (!RECAPTCHA_SITE_KEY) {
-      console.warn('reCAPTCHA disabled in production - using dummy token');
-      resolve('dummy-token-for-production');
-      return;
-    }
-
     if (!window.grecaptcha) {
       reject(new Error('reCAPTCHA not loaded'));
       return;
