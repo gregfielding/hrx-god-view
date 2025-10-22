@@ -47,6 +47,8 @@ interface ApplicantWithDetails {
   lastName?: string;
   email?: string;
   phone?: string;
+  avatar?: string;
+  skills?: string[];
   data?: any;
   jobOrderNumber?: string;
   jobTitle?: string;
@@ -89,22 +91,49 @@ const RecruiterApplicants: React.FC = () => {
       
       const applicationsData = await Promise.all(
         querySnapshot.docs.map(async (applicationDoc) => {
-          const data = applicationDoc.data();
+          const appData = applicationDoc.data();
           
-          // Extract applicant info from the nested data structure
-          const firstName = data.firstName || data.data?.personal?.firstName || '';
-          const lastName = data.lastName || data.data?.personal?.lastName || '';
-          const email = data.email || data.data?.personal?.email || '';
-          const phone = data.phone || data.data?.personal?.phone || '';
+          // Fetch user document (source of truth)
+          let firstName = '';
+          let lastName = '';
+          let email = '';
+          let phone = '';
+          let avatar = '';
+          let skills: string[] = [];
+          
+          const userId = appData.userId || appData.uid;
+          if (userId) {
+            try {
+              const userRef = doc(db, 'users', userId);
+              const userSnap = await getDoc(userRef);
+              
+              if (userSnap.exists()) {
+                const userData = userSnap.data();
+                firstName = userData.firstName || '';
+                lastName = userData.lastName || '';
+                email = userData.email || '';
+                phone = userData.phone || '';
+                avatar = userData.avatar || '';
+                skills = userData.skills || [];
+              }
+            } catch (error) {
+              console.warn('Failed to fetch user data:', error);
+              // Fallback to application data if user fetch fails
+              firstName = appData.firstName || appData.data?.personal?.firstName || '';
+              lastName = appData.lastName || appData.data?.personal?.lastName || '';
+              email = appData.email || appData.data?.personal?.email || '';
+              phone = appData.phone || appData.data?.personal?.phone || '';
+            }
+          }
           
           // Fetch job posting details if linked
           let jobOrderNumber = undefined;
           let jobTitle = undefined;
           let companyName = undefined;
           
-          if (data.jobId) {
+          if (appData.jobId) {
             try {
-              const jobPostRef = doc(db, 'tenants', tenantId, 'job_postings', data.jobId);
+              const jobPostRef = doc(db, 'tenants', tenantId, 'job_postings', appData.jobId);
               const jobPostSnap = await getDoc(jobPostRef);
               
               if (jobPostSnap.exists()) {
@@ -120,23 +149,25 @@ const RecruiterApplicants: React.FC = () => {
           
           return {
             id: applicationDoc.id,
-            tenantId: data.tenantId,
-            userId: data.userId || data.uid,
-            jobId: data.jobId,
-            status: data.status || 'submitted',
-            submittedAt: data.submittedAt,
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
+            tenantId: appData.tenantId,
+            userId,
+            jobId: appData.jobId,
+            status: appData.status || 'submitted',
+            submittedAt: appData.submittedAt,
+            createdAt: appData.createdAt,
+            updatedAt: appData.updatedAt,
             firstName,
             lastName,
             email,
             phone,
-            data: data.data,
+            avatar,
+            skills,
+            data: appData.data,
             jobOrderNumber,
             jobTitle,
             companyName,
-            rating: data.rating,
-            source: data.source || 'job_board',
+            rating: appData.rating,
+            source: appData.source || 'job_board',
           };
         })
       );
