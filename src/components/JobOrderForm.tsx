@@ -1151,19 +1151,33 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('shiftType')?.label || 'Shift Type'}</InputLabel>
-                <Select
-                  value={(formData as any).shiftType}
-                  onChange={(e) => handleInputChange('shiftType', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('shiftType', e.target.value)}
-                  label={getFieldDef('shiftType')?.label || 'Shift Type'}
-                >
-                  {(getFieldDef('shiftType')?.options || []).map((opt) => (
-                    <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Autocomplete
+                multiple
+                fullWidth
+                options={['Full Time', 'Part Time', 'Temporary', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
+                value={Array.isArray((formData as any).shiftType) ? (formData as any).shiftType : ((formData as any).shiftType ? [(formData as any).shiftType] : [])}
+                onChange={(event, newValue) => {
+                  handleInputChange('shiftType', newValue);
+                  handleFieldBlur('shiftType', newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Shift Details"
+                    helperText="Select shift requirements for this position"
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      variant="outlined"
+                      label={option}
+                      {...getTagProps({ index })}
+                      key={option}
+                    />
+                  ))
+                }
+              />
             </Grid>
             
             <Grid item xs={12} md={4}>
