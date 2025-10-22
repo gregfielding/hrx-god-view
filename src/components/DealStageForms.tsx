@@ -1816,7 +1816,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 'Radiation',
                 'Other'
               ]}
-              value={data.compliance?.physicalRequirements || []}
+              value={Array.isArray(data.compliance?.physicalRequirements) ? data.compliance.physicalRequirements : (data.compliance?.physicalRequirements ? [data.compliance.physicalRequirements] : [])}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
@@ -2030,7 +2030,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 'Ground Fault Circuit Interrupters',
                 'Other'
               ]}
-              value={data.compliance?.ppe || []}
+              value={Array.isArray(data.compliance?.ppe) ? data.compliance.ppe : (data.compliance?.ppe ? [data.compliance.ppe] : [])}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,
@@ -2151,7 +2151,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             'Office',
             'Other'
           ]}
-          value={data.compliance?.uniformRequirement || []}
+          value={Array.isArray(data.compliance?.uniformRequirement) ? data.compliance.uniformRequirement : (data.compliance?.uniformRequirement ? [data.compliance.uniformRequirement] : [])}
           onChange={(event, newValue) => {
             handleStageDataChange('scoping', 'compliance', {
               ...data.compliance,
