@@ -106,35 +106,39 @@ const RecruiterApplicants: React.FC = () => {
       const tenantId = activeTenant.id;
       console.log('🔍 RecruiterApplicants: Loading candidates for tenant:', tenantId);
       
-      // Query users with security levels 0-4 (Suspended, Dismissed, Applicant, Candidate, Hired Staff)
+      // Query users with security levels 0-4 within the tenant
+      // Security level is stored in tenantIds.{tenantId}.securityLevel
+      // Note: We don't orderBy here to avoid needing a composite index - we'll sort in memory
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
-        where('tenantId', '==', tenantId),
-        where('securityLevel', 'in', ['0', '1', '2', '3', '4']),
-        orderBy('updatedAt', 'desc')
+        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
       );
       
-      console.log('🔍 RecruiterApplicants: Querying users with tenantId:', tenantId);
-      console.log('🔍 RecruiterApplicants: Filtering for securityLevel in:', ['0', '1', '2', '3', '4']);
+      console.log('🔍 RecruiterApplicants: Querying users with tenantIds.' + tenantId + '.securityLevel in:', ['0', '1', '2', '3', '4']);
       
       const querySnapshot = await getDocs(q);
       console.log('🔍 RecruiterApplicants: Found', querySnapshot.size, 'candidates');
       
       // Debug: log what we got
       if (querySnapshot.size === 0) {
-        console.log('⚠️ No candidates found. Checking all users in tenant...');
+        console.log('⚠️ No candidates found. Checking all users with this tenant...');
         const allUsersQuery = query(usersRef, where('tenantId', '==', tenantId));
         const allUsersSnapshot = await getDocs(allUsersQuery);
         console.log('🔍 Total users in tenant:', allUsersSnapshot.size);
         allUsersSnapshot.docs.forEach(doc => {
           const data = doc.data();
-          console.log(`   - ${data.firstName} ${data.lastName}: securityLevel=${data.securityLevel} (type: ${typeof data.securityLevel})`);
+          const tenantSecLevel = data.tenantIds?.[tenantId]?.securityLevel;
+          console.log(`   - ${data.firstName} ${data.lastName}: tenant securityLevel=${tenantSecLevel}, top-level=${data.securityLevel}`);
         });
       }
       
       const candidatesData = querySnapshot.docs.map((userDoc) => {
         const userData = userDoc.data();
+        
+        // Get security level from tenant-specific data
+        const tenantData = userData.tenantIds?.[tenantId] || {};
+        const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
         
         // Get application data from denormalized map (much faster!)
         const applicationData: Record<string, ApplicationData> = userData.applicationData || {};
@@ -162,9 +166,9 @@ const RecruiterApplicants: React.FC = () => {
           phone: userData.phone || '',
           avatar: userData.avatar || '',
           skills: userData.skills || [],
-          securityLevel: userData.securityLevel || '0',
-          role: userData.role,
-          department: userData.department,
+          securityLevel: String(securityLevel), // Ensure it's a string
+          role: tenantData.role || userData.role,
+          department: tenantData.department || userData.department,
           lastLoginAt: userData.lastLoginAt,
           createdAt: userData.createdAt,
           updatedAt: userData.updatedAt,
