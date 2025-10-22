@@ -292,7 +292,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       
       // Close dialog and refresh page state after a brief delay
       setTimeout(() => {
-        onAuthSuccess();
+        try {
+          onAuthSuccess();
+        } catch (err) {
+          console.error('Error in onAuthSuccess callback:', err);
+        }
         handleClose();
       }, 2000);
 
@@ -351,7 +355,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       
       // Close dialog and refresh page state after a brief delay
       setTimeout(() => {
-        onAuthSuccess();
+        try {
+          onAuthSuccess();
+        } catch (err) {
+          console.error('Error in onAuthSuccess callback:', err);
+        }
         handleClose();
       }, 1000);
 
