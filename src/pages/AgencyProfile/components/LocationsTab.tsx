@@ -103,6 +103,7 @@ const locationTypeOptions = [
   'Theater',
   'Stadium',
   'Arena',
+  'Fairgrounds',
   'Gym',
   'Fitness Center',
   'Spa',
