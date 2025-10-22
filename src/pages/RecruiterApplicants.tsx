@@ -337,11 +337,27 @@ const RecruiterApplicants: React.FC = () => {
           onChange={(e) => setSearchTerm(e.target.value)}
           variant="outlined"
           size="small"
-          sx={{ flexGrow: 1, minWidth: 300 }}
+          sx={{ 
+            flexGrow: 1, 
+            minWidth: 300,
+            height: 36,
+            '& .MuiOutlinedInput-root': {
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& fieldset': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover fieldset': {
+                borderColor: '#D1D5DB',
+              },
+            }
+          }}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
-                <SearchIcon />
+                <SearchIcon sx={{ color: '#9CA3AF', fontSize: '18px' }} />
               </InputAdornment>
             ),
             endAdornment: (
@@ -367,12 +383,24 @@ const RecruiterApplicants: React.FC = () => {
           }}
         />
         
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Security Level</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Security Level</InputLabel>
           <Select
             value={securityLevelFilter}
             onChange={(e) => setSecurityLevelFilter(e.target.value as SecurityLevel)}
             label="Security Level"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
           >
             <MenuItem value="all">All Levels</MenuItem>
             <MenuItem value="0">🔴 Suspended</MenuItem>
@@ -383,12 +411,24 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Company</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Company</InputLabel>
           <Select
             value={companyFilter}
             onChange={(e) => setCompanyFilter(e.target.value)}
             label="Company"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
           >
             <MenuItem value="all">All Companies</MenuItem>
             {uniqueCompanies.map((company) => (
@@ -399,12 +439,24 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>Job Order</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 200, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Job Order</InputLabel>
           <Select
             value={jobFilter}
             onChange={(e) => setJobFilter(e.target.value)}
             label="Job Order"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
           >
             <MenuItem value="all">All Job Orders</MenuItem>
             {uniqueJobOrders.map((jobOrder) => (
@@ -415,12 +467,24 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
-        <FormControl size="small" sx={{ minWidth: 150 }}>
-          <InputLabel>Sort By</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
           <Select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'name' | 'lastLogin')}
             label="Sort By"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
           >
             <MenuItem value="newest">Recently Updated</MenuItem>
             <MenuItem value="oldest">Oldest First</MenuItem>

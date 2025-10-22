@@ -26,7 +26,8 @@ import {
   Alert,
   Card,
   CardContent,
-  Grid
+  Grid,
+  InputAdornment
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
@@ -80,7 +81,10 @@ const RecruiterJobOrders: React.FC = () => {
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderWithDetails | null>(null);
   const [sortField, setSortField] = useState<string>('createdAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const firstLoadRef = useRef(true);
+
+  const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
 
   const fetchJobOrders = useCallback(async (searchQuery = '', startDoc: any = null) => {
     if (!tenantId) return;
@@ -293,63 +297,125 @@ const RecruiterJobOrders: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Filters and Search */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, backgroundColor: '#F9FAFB', borderRadius: 2 }}>
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              placeholder="Search job orders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              }}
-            />
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                label="Status"
-              >
-                <MenuItem value="">All Statuses</MenuItem>
-                <MenuItem value="Open">Open</MenuItem>
-                <MenuItem value="On-Hold">On-Hold</MenuItem>
-                <MenuItem value="Cancelled">Cancelled</MenuItem>
-                <MenuItem value="Filled">Filled</MenuItem>
-                <MenuItem value="Completed">Completed</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth>
-              <InputLabel>Sort By</InputLabel>
-              <Select
-                value={sortField}
-                onChange={(e) => setSortField(e.target.value)}
-                label="Sort By"
-              >
-                <MenuItem value="createdAt">Newest First</MenuItem>
-                <MenuItem value="jobOrderNumber">Order Number</MenuItem>
-                <MenuItem value="status">Status</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              fullWidth
-              onClick={() => navigate('/recruiter/job-orders/new')}
-            >
-              New Post
-            </Button>
-          </Grid>
-        </Grid>
-      </Paper>
+      <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+        <TextField
+          placeholder="Search job orders..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+          variant="outlined"
+          size="small"
+          sx={{ 
+            flexGrow: 1, 
+            minWidth: 300,
+            height: 36,
+            '& .MuiOutlinedInput-root': {
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& fieldset': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover fieldset': {
+                borderColor: '#D1D5DB',
+              },
+            }
+          }}
+          InputProps={{
+            startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
+            endAdornment: (
+              <InputAdornment position="end">
+                <FavoritesFilter
+                  favoriteType="jobOrders"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={setShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                    }
+                  }}
+                />
+              </InputAdornment>
+            ),
+          }}
+        />
+        
+        <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            label="Status"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
+          >
+            <MenuItem value="">All Statuses</MenuItem>
+            <MenuItem value="Open">Open</MenuItem>
+            <MenuItem value="On-Hold">On-Hold</MenuItem>
+            <MenuItem value="Cancelled">Cancelled</MenuItem>
+            <MenuItem value="Filled">Filled</MenuItem>
+            <MenuItem value="Completed">Completed</MenuItem>
+          </Select>
+        </FormControl>
+        
+        <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
+          <Select
+            value={sortField}
+            onChange={(e) => setSortField(e.target.value)}
+            label="Sort By"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
+          >
+            <MenuItem value="createdAt">Newest First</MenuItem>
+            <MenuItem value="jobOrderNumber">Order Number</MenuItem>
+            <MenuItem value="status">Status</MenuItem>
+          </Select>
+        </FormControl>
+        
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => navigate('/recruiter/job-orders/new')}
+          sx={{
+            height: 36,
+            px: 2,
+            fontSize: '0.875rem',
+            fontWeight: 500,
+            borderRadius: '6px',
+            textTransform: 'none',
+          }}
+        >
+          New Post
+        </Button>
+      </Box>
 
       {/* Job Orders Table */}
       {loading && jobOrders.length === 0 ? (
@@ -417,7 +483,12 @@ const RecruiterJobOrders: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {jobOrders.map((jobOrder, index) => (
+                {jobOrders
+                  .filter(jobOrder => {
+                    if (showFavoritesOnly && !isFavorite(jobOrder.id)) return false;
+                    return true;
+                  })
+                  .map((jobOrder, index) => (
                   <TableRow 
                     key={jobOrder.id} 
                     hover 
