@@ -35,6 +35,21 @@ import FavoriteButton from '../components/FavoriteButton';
 // Security levels for filtering
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
 
+interface ApplicationData {
+  jobId: string;
+  jobTitle?: string;
+  postTitle?: string;
+  companyName?: string;
+  companyId?: string;
+  jobPostId?: string;
+  payRate?: number;
+  status: string;
+  appliedAt: any;
+  startDate?: any;
+  location?: string;
+  updatedAt?: any;
+}
+
 interface CandidateWithDetails {
   id: string; // userId
   tenantId: string;
@@ -50,14 +65,9 @@ interface CandidateWithDetails {
   lastLoginAt?: any;
   createdAt?: any;
   updatedAt?: any;
+  applicationData?: Record<string, ApplicationData>;
   applicationCount?: number;
-  mostRecentApplication?: {
-    jobId?: string;
-    jobTitle?: string;
-    companyName?: string;
-    submittedAt?: any;
-    status?: string;
-  };
+  mostRecentApplication?: ApplicationData;
 }
 
 const RecruiterApplicants: React.FC = () => {
@@ -68,7 +78,17 @@ const RecruiterApplicants: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
+  const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin'>('newest');
+  
+  // Get unique companies from all candidates for filtering
+  const uniqueCompanies = Array.from(
+    new Set(
+      candidates
+        .map(c => c.mostRecentApplication?.companyName)
+        .filter((name): name is string => !!name)
+    )
+  ).sort();
 
   useEffect(() => {
     if (!activeTenant?.id) return;
@@ -97,73 +117,46 @@ const RecruiterApplicants: React.FC = () => {
       const querySnapshot = await getDocs(q);
       console.log('🔍 RecruiterApplicants: Found', querySnapshot.size, 'candidates');
       
-      const candidatesData = await Promise.all(
-        querySnapshot.docs.map(async (userDoc) => {
-          const userData = userDoc.data();
-          
-          // Get application count and most recent application
-          let applicationCount = 0;
-          let mostRecentApplication = undefined;
-          
-          try {
-            const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-            const appQuery = query(
-              applicationsRef,
-              where('userId', '==', userDoc.id),
-              orderBy('createdAt', 'desc')
-            );
-            const appSnapshot = await getDocs(appQuery);
-            applicationCount = appSnapshot.size;
-            
-            // Get most recent application details
-            if (!appSnapshot.empty) {
-              const recentAppData = appSnapshot.docs[0].data();
-              
-              // Fetch job posting details if available
-              if (recentAppData.jobId) {
-                try {
-                  const jobPostRef = doc(db, 'tenants', tenantId, 'job_postings', recentAppData.jobId);
-                  const jobPostSnap = await getDoc(jobPostRef);
-                  
-                  if (jobPostSnap.exists()) {
-                    const jobPostData = jobPostSnap.data();
-                    mostRecentApplication = {
-                      jobId: recentAppData.jobId,
-                      jobTitle: jobPostData.jobTitle || jobPostData.postTitle,
-                      companyName: jobPostData.companyName,
-                      submittedAt: recentAppData.submittedAt || recentAppData.createdAt,
-                      status: recentAppData.status || 'submitted',
-                    };
-                  }
-                } catch (error) {
-                  console.warn('Failed to fetch job posting details:', error);
-                }
-              }
-            }
-          } catch (error) {
-            console.warn('Failed to fetch applications for user:', userDoc.id, error);
-          }
-          
-          return {
-            id: userDoc.id,
-            tenantId: userData.tenantId,
-            firstName: userData.firstName || '',
-            lastName: userData.lastName || '',
-            email: userData.email || '',
-            phone: userData.phone || '',
-            avatar: userData.avatar || '',
-            skills: userData.skills || [],
-            securityLevel: userData.securityLevel || '0',
-            role: userData.role,
-            department: userData.department,
-            lastLoginAt: userData.lastLoginAt,
-            createdAt: userData.createdAt,
-            updatedAt: userData.updatedAt,
-            applicationCount,
-            mostRecentApplication,
-          };
-        })
-      );
+      const candidatesData = querySnapshot.docs.map((userDoc) => {
+        const userData = userDoc.data();
+        
+        // Get application data from denormalized map (much faster!)
+        const applicationData: Record<string, ApplicationData> = userData.applicationData || {};
+        const applicationCount = Object.keys(applicationData).length;
+        
+        // Find most recent application by sorting appliedAt
+        let mostRecentApplication: ApplicationData | undefined = undefined;
+        if (applicationCount > 0) {
+          const applications = Object.values(applicationData);
+          // Sort by appliedAt descending to get most recent
+          applications.sort((a, b) => {
+            const aTime = a.appliedAt?.toMillis?.() || a.appliedAt?.getTime?.() || 0;
+            const bTime = b.appliedAt?.toMillis?.() || b.appliedAt?.getTime?.() || 0;
+            return bTime - aTime;
+          });
+          mostRecentApplication = applications[0];
+        }
+        
+        return {
+          id: userDoc.id,
+          tenantId: userData.tenantId,
+          firstName: userData.firstName || '',
+          lastName: userData.lastName || '',
+          email: userData.email || '',
+          phone: userData.phone || '',
+          avatar: userData.avatar || '',
+          skills: userData.skills || [],
+          securityLevel: userData.securityLevel || '0',
+          role: userData.role,
+          department: userData.department,
+          lastLoginAt: userData.lastLoginAt,
+          createdAt: userData.createdAt,
+          updatedAt: userData.updatedAt,
+          applicationData,
+          applicationCount,
+          mostRecentApplication,
+        };
+      });
       
       setCandidates(candidatesData);
     } catch (error) {
@@ -234,6 +227,9 @@ const RecruiterApplicants: React.FC = () => {
       // Security level filter
       if (securityLevelFilter !== 'all' && candidate.securityLevel !== securityLevelFilter) return false;
       
+      // Company filter
+      if (companyFilter !== 'all' && candidate.mostRecentApplication?.companyName !== companyFilter) return false;
+      
       // Search filter
       if (searchTerm) {
         const search = searchTerm.toLowerCase();
@@ -243,7 +239,9 @@ const RecruiterApplicants: React.FC = () => {
           candidate.email.toLowerCase().includes(search) ||
           candidate.phone?.toLowerCase().includes(search) ||
           candidate.mostRecentApplication?.jobTitle?.toLowerCase().includes(search) ||
-          candidate.mostRecentApplication?.companyName?.toLowerCase().includes(search)
+          candidate.mostRecentApplication?.postTitle?.toLowerCase().includes(search) ||
+          candidate.mostRecentApplication?.companyName?.toLowerCase().includes(search) ||
+          candidate.mostRecentApplication?.location?.toLowerCase().includes(search)
         );
       }
       
@@ -319,6 +317,22 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <InputLabel>Company</InputLabel>
+          <Select
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            label="Company"
+          >
+            <MenuItem value="all">All Companies</MenuItem>
+            {uniqueCompanies.map((company) => (
+              <MenuItem key={company} value={company}>
+                {company}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        
         <FormControl size="small" sx={{ minWidth: 150 }}>
           <InputLabel>Sort By</InputLabel>
           <Select
@@ -347,7 +361,7 @@ const RecruiterApplicants: React.FC = () => {
             No candidates found
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchTerm || securityLevelFilter !== 'all'
+            {searchTerm || securityLevelFilter !== 'all' || companyFilter !== 'all'
               ? 'Try adjusting your filters'
               : 'Candidates will appear here as users apply to job postings'}
           </Typography>
@@ -452,7 +466,7 @@ const RecruiterApplicants: React.FC = () => {
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <WorkIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                           <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.8rem' }}>
-                            {candidate.mostRecentApplication.jobTitle || 'Job'}
+                            {candidate.mostRecentApplication.jobTitle || candidate.mostRecentApplication.postTitle || 'Job'}
                           </Typography>
                         </Box>
                         {candidate.mostRecentApplication.companyName && (
@@ -460,9 +474,19 @@ const RecruiterApplicants: React.FC = () => {
                             {candidate.mostRecentApplication.companyName}
                           </Typography>
                         )}
-                        {candidate.mostRecentApplication.submittedAt && (
+                        {candidate.mostRecentApplication.location && (
                           <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                            {formatDate(candidate.mostRecentApplication.submittedAt)}
+                            📍 {candidate.mostRecentApplication.location}
+                          </Typography>
+                        )}
+                        {candidate.mostRecentApplication.payRate && (
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                            💰 ${candidate.mostRecentApplication.payRate}/hr
+                          </Typography>
+                        )}
+                        {candidate.mostRecentApplication.appliedAt && (
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary', fontStyle: 'italic' }}>
+                            Applied: {formatDate(candidate.mostRecentApplication.appliedAt)}
                           </Typography>
                         )}
                       </Box>

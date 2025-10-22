@@ -637,10 +637,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }, { merge: true });
           
-          // Add application ID to user's applicationIds array for efficient lookups
+          // Prepare denormalized application data for quick lookups
           const applicationId = `${tenantId}_${jobId}`;
+          const applicationQuickData: any = {
+            jobId: jobId,
+            jobTitle: posting?.jobTitle || posting?.postTitle || null,
+            postTitle: posting?.postTitle || null,
+            companyName: posting?.companyName || null,
+            companyId: posting?.companyId || null, // CRM company ID from tenant subcollection
+            jobPostId: posting?.jobPostId || null,
+            payRate: posting?.payRate || null,
+            status: 'submitted',
+            appliedAt: serverTimestamp(),
+            startDate: posting?.startDate || null,
+            location: posting?.worksiteName || posting?.city || null,
+            updatedAt: serverTimestamp()
+          };
+          
+          // Add application ID to user's applicationIds array AND applicationData map
           await updateDoc(userRef, {
             applicationIds: arrayUnion(applicationId),
+            [`applicationData.${applicationId}`]: applicationQuickData,
             updatedAt: serverTimestamp()
           });
           
