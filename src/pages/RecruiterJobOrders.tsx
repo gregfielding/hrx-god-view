@@ -469,10 +469,7 @@ const RecruiterJobOrders: React.FC = () => {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <LocationIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                         <Typography variant="body2">
-                          {(jobOrder as any).worksiteName || 
-                           jobOrder.deal?.locationName || 
-                           jobOrder.deal?.associations?.locations?.[0]?.snapshot?.name || 
-                           'No Location'}
+                          {jobOrder.locationName || 'No Location'}
                         </Typography>
                       </Box>
                     </TableCell>
