@@ -41,6 +41,7 @@ interface ApplicationData {
   applicationId: string;
   jobId: string;
   jobTitle?: string;
+  jobOrderName?: string; // Full job order name like "Janitor - Parker Plastics Offer - New"
   postTitle?: string;
   companyName?: string;
   companyId?: string;
@@ -98,12 +99,12 @@ const RecruiterApplicants: React.FC = () => {
     )
   ).sort();
   
-  // Get unique job titles from all candidates for filtering
-  const uniqueJobTitles = Array.from(
+  // Get unique job order names from all candidates for filtering
+  const uniqueJobOrders = Array.from(
     new Set(
       candidates
-        .map(c => c.mostRecentApplication?.jobTitle || c.mostRecentApplication?.postTitle)
-        .filter((title): title is string => !!title)
+        .map(c => c.mostRecentApplication?.jobOrderName || c.mostRecentApplication?.postTitle || c.mostRecentApplication?.jobTitle)
+        .filter((name): name is string => !!name)
     )
   ).sort();
 
@@ -271,8 +272,8 @@ const RecruiterApplicants: React.FC = () => {
       
       // Job filter
       if (jobFilter !== 'all') {
-        const jobTitle = candidate.mostRecentApplication?.jobTitle || candidate.mostRecentApplication?.postTitle;
-        if (jobTitle !== jobFilter) return false;
+        const jobOrderName = candidate.mostRecentApplication?.jobOrderName || candidate.mostRecentApplication?.postTitle || candidate.mostRecentApplication?.jobTitle;
+        if (jobOrderName !== jobFilter) return false;
       }
       
       // Search filter
@@ -398,17 +399,17 @@ const RecruiterApplicants: React.FC = () => {
           </Select>
         </FormControl>
         
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Job Title</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Job Order</InputLabel>
           <Select
             value={jobFilter}
             onChange={(e) => setJobFilter(e.target.value)}
-            label="Job Title"
+            label="Job Order"
           >
-            <MenuItem value="all">All Jobs</MenuItem>
-            {uniqueJobTitles.map((jobTitle) => (
-              <MenuItem key={jobTitle} value={jobTitle}>
-                {jobTitle}
+            <MenuItem value="all">All Job Orders</MenuItem>
+            {uniqueJobOrders.map((jobOrder) => (
+              <MenuItem key={jobOrder} value={jobOrder}>
+                {jobOrder}
               </MenuItem>
             ))}
           </Select>

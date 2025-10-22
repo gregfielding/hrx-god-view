@@ -169,6 +169,7 @@ async function migrateApplicationData() {
               applicationId: applicationId, // Include application ID for reference
               jobId: appData.jobId || null,
               jobTitle,
+              jobOrderName: postTitle || jobTitle || null, // Full job order name
               postTitle,
               companyName,
               companyId,

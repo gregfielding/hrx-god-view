@@ -662,6 +662,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             applicationId: applicationId, // Include the application ID for reference
             jobId: jobId,
             jobTitle: posting?.jobTitle || posting?.postTitle || null,
+            jobOrderName: posting?.postTitle || posting?.jobTitle || null, // Full job order name like "Janitor - Parker Plastics Offer - New"
             postTitle: posting?.postTitle || null,
             companyName: companyName,
             companyId: companyId,
