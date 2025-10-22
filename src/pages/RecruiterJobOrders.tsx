@@ -51,7 +51,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -290,30 +289,8 @@ const RecruiterJobOrders: React.FC = () => {
   };
 
 
-  const breadcrumbItems = [
-    {
-      label: 'Recruiter',
-      href: '/recruiter'
-    },
-    {
-      label: 'Job Orders'
-    }
-  ];
-
   return (
     <Box sx={{ p: 0 }}>
-      <BreadcrumbNav items={breadcrumbItems} />
-      {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h4" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <WorkIcon />
-          Job Orders
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Manage and track job orders for your clients
-        </Typography>
-      </Box>
-
       {/* Filters and Search */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
