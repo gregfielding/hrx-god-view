@@ -639,21 +639,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     setFormData(updatedFormData);
     
     // Auto-save on change (skip auto-save for startDate and endDate to avoid conflicts)
-    if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
-      console.log('🔍 handleInputChange - Auto-saving field:', field, 'value:', value);
-      await saveFieldToFirestore(field, value, updatedFormData);
-    } else if (field === 'startDate' || field === 'endDate') {
-      console.log('🔍 Skipping auto-save for date field:', field, 'value:', value, '- will be saved on form submit');
-    }
+      if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
+        await saveFieldToFirestore(field, value, updatedFormData);
+      }
   };
 
   const handleFieldBlur = async (field: string, value: any) => {
     // Auto-save on blur for additional safety (skip auto-save for startDate and endDate)
     if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
-      console.log('🔍 handleFieldBlur - Auto-saving field:', field, 'value:', value);
       await saveFieldToFirestore(field, value, formData);
-    } else if (field === 'startDate' || field === 'endDate') {
-      console.log('🔍 Skipping auto-save on blur for date field:', field, 'value:', value);
     }
   };
 
@@ -778,14 +772,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const startDateParsed = dataToUse.startDate ? parseDateFromInput(dataToUse.startDate) : null;
       const endDateParsed = dataToUse.endDate ? parseDateFromInput(dataToUse.endDate) : null;
       
-      console.log('🔍 Date parsing:', {
-        startDateInput: dataToUse.startDate,
-        startDateParsed,
-        endDateInput: dataToUse.endDate,
-        endDateParsed,
-        fieldBeingSaved: field,
-        fieldValue: value
-      });
 
       // Compute calculated bill rate if markup/payRate present
       const numericPay = toNumberSafe((dataToUse as any).payRate) ?? 0;
@@ -826,21 +812,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       // Remove undefined values from the data before saving to Firestore
       const cleanJobOrderData = removeUndefinedValues(updates);
       
-      console.log('🔍 About to save to Firestore:', {
-        field,
-        rawStartDate: updates.startDate,
-        rawEndDate: updates.endDate,
-        cleanStartDate: cleanJobOrderData.startDate,
-        cleanEndDate: cleanJobOrderData.endDate
-      });
       
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
       await updateDoc(jobOrderRef, cleanJobOrderData);
       
-      console.log('✅ Auto-save successful for field:', field, 'saved data:', {
-        startDate: cleanJobOrderData.startDate,
-        endDate: cleanJobOrderData.endDate
-      });
       
     } catch (error) {
       console.error('Error auto-saving field:', error);
@@ -849,24 +824,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   };
 
   const handleSave = async () => {
-    console.log('🔍 handleSave called - checking conditions:', {
-      tenantId: !!tenantId,
-      user: !!user,
-      tenantIdValue: tenantId,
-      userId: user?.uid
-    });
-
-    if (!tenantId || !user) {
-      console.log('🔍 Early return from handleSave - missing tenantId or user');
-      return;
-    }
-
-    console.log('🔍 Main save function called - formData:', {
-      startDate: formData.startDate,
-      endDate: formData.endDate,
-      jobTitle: formData.jobTitle,
-      jobOrderName: formData.jobOrderName
-    });
+    if (!tenantId || !user) return;
 
     setSaving(true);
     setError(null);
@@ -1010,36 +968,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         markup: parseFloat(formData.markup) || 0,
         billRate: (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
         calculatedBillRate: computedBillForCreate,
-        startDate: formData.startDate ? (() => {
-          try {
-            // Use the same parsing logic as auto-save
-            const date = parseDateFromInput(formData.startDate);
-            if (!date) {
-              console.warn('Invalid start date in form data:', formData.startDate);
-              return null;
-            }
-            console.log('🔍 Main save - startDate parsed:', { input: formData.startDate, parsed: date });
-            return date;
-          } catch (error) {
-            console.warn('Error converting start date:', error, 'Value:', formData.startDate);
-            return null;
-          }
-        })() : null,
-        endDate: formData.endDate ? (() => {
-          try {
-            // Use the same parsing logic as auto-save
-            const date = parseDateFromInput(formData.endDate);
-            if (!date) {
-              console.warn('Invalid end date in form data:', formData.endDate);
-              return null;
-            }
-            console.log('🔍 Main save - endDate parsed:', { input: formData.endDate, parsed: date });
-            return date;
-          } catch (error) {
-            console.warn('Error converting end date:', error, 'Value:', formData.endDate);
-            return null;
-          }
-        })() : null,
+        startDate: formData.startDate ? parseDateFromInput(formData.startDate) : null,
+        endDate: formData.endDate ? parseDateFromInput(formData.endDate) : null,
         
         // Update the deal data
         deal: updatedDealData,
@@ -1115,6 +1045,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
         await updateDoc(jobOrderRef, jobOrderData);
         setSuccess('Job order updated successfully!');
+        console.log('✅ Job order updated successfully');
       } else {
         // Create new job order
         const jobOrdersRef = collection(db, p.jobOrders(tenantId));
@@ -2711,10 +2642,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Button
                   variant="contained"
                   startIcon={<SaveIcon />}
-                  onClick={() => {
-                    console.log('🔍 Update Job Order button clicked');
-                    handleSave();
-                  }}
+                  onClick={handleSave}
                   disabled={saving}
                   sx={{ minWidth: 120 }}
                 >
