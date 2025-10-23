@@ -111,6 +111,7 @@ import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
 import RecruiterCompanies from './pages/RecruiterCompanies';
+import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
 import NewJobOrder from './pages/NewJobOrder';
 
@@ -145,22 +146,13 @@ function CRMAccessGuard({ children }: { children: React.ReactNode }) {
 
 function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
   const { recruiterEnabled } = useAuth();
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 RecruiterAccessGuard: recruiterEnabled =', recruiterEnabled);
-  }
   if (!recruiterEnabled) {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔍 RecruiterAccessGuard: Access denied, showing error message');
-    }
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh" flexDirection="column" gap={2}>
         <Typography variant="h5" color="error">Access Denied</Typography>
         <Typography variant="body1" color="text.secondary">You don't have permission to access this page.</Typography>
       </Box>
     );
-  }
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 RecruiterAccessGuard: Access granted, rendering children');
   }
   return <>{children}</>;
 }
@@ -806,6 +798,7 @@ function App() {
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
           <Route path="companies" element={<RecruiterCompanies />} />
+          <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
           <Route path="contacts" element={<RecruiterContacts />} />
           <Route path="reports" element={
             <Box>

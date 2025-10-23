@@ -86,7 +86,7 @@ const JobsBoard: React.FC = () => {
   
   // Favorites state using universal system
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const { favorites } = useFavorites('jobPosts');
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
@@ -1251,6 +1251,8 @@ const JobsBoard: React.FC = () => {
                     <FavoriteButton
                       itemId={post.id}
                       favoriteType="jobPosts"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
                       size="small"
                       tooltipText={{
                         favorited: 'Remove from favorites',

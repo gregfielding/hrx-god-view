@@ -29,22 +29,30 @@ const FavoritesFilter: React.FC<FavoritesFilterProps> = ({
   return (
     <Button
       {...props}
-      variant={showFavoritesOnly ? "contained" : "text"}
+      variant="text"
       size={size}
       onClick={handleClick}
       startIcon={showFavoritesOnly ? <Star /> : <StarBorder />}
       sx={{ 
         minWidth: 'auto',
         p: 0.5,
+        backgroundColor: showFavoritesOnly ? 'transparent' : 'transparent',
         '& .MuiButton-startIcon': {
           margin: showText ? '0 4px 0 -4px' : 0,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center'
+          justifyContent: 'center',
+          color: showFavoritesOnly ? '#0B63C5' : '#6B7280'
         },
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        '&:hover': {
+          backgroundColor: 'rgba(11, 99, 197, 0.08)',
+          '& .MuiButton-startIcon': {
+            color: '#0B63C5'
+          }
+        },
         ...sx
       }}
     >

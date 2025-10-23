@@ -577,7 +577,7 @@ const Customers: React.FC = () => {
                         />
                       </Box>
                       <Typography variant="body2" color="text.secondary" sx={{ p: 0 }}>
-                        {customer.address.street}, {customer.address.city}, {customer.address.state}
+                        {(customer as any).addressInfo?.streetAddress || customer.address?.street}, {(customer as any).addressInfo?.city || customer.address?.city}, {(customer as any).addressInfo?.state || customer.address?.state}
                       </Typography>
                     </Box>
                   </Box>
@@ -593,7 +593,7 @@ const Customers: React.FC = () => {
                 </TableCell>
                 <TableCell>
                   <Typography variant="body2">
-                    {customer.address.city}, {customer.address.state}
+                    {(customer as any).addressInfo?.city || customer.address?.city}, {(customer as any).addressInfo?.state || customer.address?.state}
                   </Typography>
                 </TableCell>
                 <TableCell>

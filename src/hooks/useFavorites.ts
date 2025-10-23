@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import FavoritesService, { FavoriteType } from '../services/favoritesService';
 
@@ -18,11 +18,19 @@ export const useFavorites = (type: FavoriteType): UseFavoritesReturn => {
   const { tenantId } = useAuth();
   const [favorites, setFavorites] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const loadedRef = useRef(false);
+  
   // Load favorites from localStorage when component mounts or tenantId changes
   useEffect(() => {
     if (!tenantId) {
       setFavorites([]);
+      setLoading(false);
+      loadedRef.current = false;
+      return;
+    }
+
+    // Only load if we haven't already loaded for this tenant/type combination
+    if (loadedRef.current) {
       setLoading(false);
       return;
     }
@@ -31,9 +39,11 @@ export const useFavorites = (type: FavoriteType): UseFavoritesReturn => {
       const favoritesService = FavoritesService.getInstance();
       const savedFavorites = favoritesService.getFavorites(tenantId, type);
       setFavorites(savedFavorites);
+      loadedRef.current = true;
     } catch (error) {
       console.warn(`Failed to load favorites for ${type}:`, error);
       setFavorites([]);
+      loadedRef.current = true;
     } finally {
       setLoading(false);
     }

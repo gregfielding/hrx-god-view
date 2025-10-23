@@ -217,18 +217,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       prefilledRef.current = true;
     }
 
-    const address = userProfile.address || {};
+    const addressInfo = userProfile.addressInfo || {};
     const personal = {
       firstName: userProfile.firstName || '',
       lastName: userProfile.lastName || '',
       email: userProfile.email || '',
-      phone: userProfile.phone || '',
+      phone: userProfile.phone || userProfile.phoneE164 || '',
       dob: userProfile.dob || '',
-      street: address.street || '',
-      unit: address.unit || '',
-      city: userProfile.city || address.city || '',
-      state: userProfile.state || address.state || '',
-      zip: userProfile.zipCode || address.zipCode || '',
+      street: addressInfo.streetAddress || '',
+      unit: addressInfo.unitNumber || '',
+      city: userProfile.city || addressInfo.city || '',
+      state: userProfile.state || addressInfo.state || '',
+      zip: userProfile.zipCode || addressInfo.zip || '',
       transportMethod: userProfile.transportMethod || '',
     };
 
@@ -446,7 +446,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
           // If phone changed, enforce Twilio verification via modal
           const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
-          if (onlyDigits(p.phone || '') !== onlyDigits(userProfile?.phone || '')) {
+          const currentPhone = userProfile?.phone || userProfile?.phoneE164 || '';
+          if (onlyDigits(p.phone || '') !== onlyDigits(currentPhone)) {
             setVerifyOpen(true);
             return; // pause progression until verification completes
           }
@@ -676,11 +677,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           };
           
           // Add application ID to user's applicationIds array AND applicationData map
-          await updateDoc(userRef, {
-            applicationIds: arrayUnion(applicationId),
-            [`applicationData.${applicationId}`]: applicationQuickData,
-            updatedAt: serverTimestamp()
-          });
+          try {
+            console.log('Updating user document with application data:', {
+              userId: uid,
+              applicationId,
+              applicationQuickData
+            });
+            
+            await updateDoc(userRef, {
+              applicationIds: arrayUnion(applicationId),
+              [`applicationData.${applicationId}`]: applicationQuickData,
+              updatedAt: serverTimestamp()
+            });
+            
+            console.log('Successfully updated user document with application data');
+          } catch (userUpdateError) {
+            console.error('Failed to update user document with application data:', userUpdateError);
+            // Don't throw here - we still want the application to be created
+            // The user can be updated later via the migration script if needed
+          }
           
           // Auto-add to user group if specified in job posting
           if (posting?.autoAddToUserGroup) {
@@ -775,6 +790,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     'Requirements'
   ];
 
+  // Require Twilio re-verification if phone differs from profile
+  const phoneNeedsVerification = (() => {
+    const newPhone = formData?.personal?.phone || '';
+    const currentPhone = userProfile?.phone || userProfile?.phoneE164 || '';
+    if (!newPhone) return false;
+    // Simple compare on digits only
+    const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
+    const newDigits = onlyDigits(newPhone);
+    const currentDigits = onlyDigits(currentPhone);
+    
+    // If the new phone is the same as current phone (ignoring formatting), don't require verification
+    if (newDigits === currentDigits) return false;
+    
+    // If the new phone is empty or just formatting differences, don't require verification
+    if (newDigits.length < 10) return false;
+    
+    return true;
+  })();
+
   const personalValid = !!(
     formData?.personal?.firstName &&
     formData?.personal?.lastName &&
@@ -788,15 +822,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     formData?.personal?.transportMethod
   );
 
-  // Require Twilio re-verification if phone differs from profile
-  const phoneNeedsVerification = (() => {
-    const newPhone = formData?.personal?.phone || '';
-    const currentPhone = userProfile?.phone || '';
-    if (!newPhone) return false;
-    // Simple compare on digits only
-    const onlyDigits = (v: string) => (v || '').replace(/\D/g, '');
-    return onlyDigits(newPhone) !== onlyDigits(currentPhone);
-  })();
+  // Debug logging for form validation
+  if (activeStep === 0) {
+    console.log('🔍 Personal Info Validation Debug:', {
+      personalValid,
+      phoneNeedsVerification,
+      formData: formData?.personal,
+      missingFields: {
+        firstName: !formData?.personal?.firstName,
+        lastName: !formData?.personal?.lastName,
+        email: !formData?.personal?.email,
+        phone: !formData?.personal?.phone,
+        dob: !formData?.personal?.dob,
+        street: !formData?.personal?.street,
+        city: !formData?.personal?.city,
+        state: !formData?.personal?.state,
+        zip: !formData?.personal?.zip,
+        transportMethod: !formData?.personal?.transportMethod
+      }
+    });
+  }
 
   return (
     <Box sx={{ px: 0, py: 0 }}>
@@ -879,7 +924,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             onClick={activeStep === 6 ? handleSubmit : handleNext}
             disabled={
               (activeStep === 6 && (
-                missing.certs.length > 0 || missing.drug || missing.background || missing.everify || missing.additional.length > 0
+                missing.drug || missing.background || missing.everify || missing.additional.length > 0
               )) ||
               (activeStep === 0 && (!personalValid || phoneNeedsVerification)) ||
               (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
@@ -921,7 +966,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             aria-label={activeStep === 6 ? 'Submit Application' : 'Next'}
             disabled={
               (activeStep === 6 && (
-                missing.certs.length > 0 || missing.drug || missing.background || missing.everify || missing.additional.length > 0
+                missing.drug || missing.background || missing.everify || missing.additional.length > 0
               )) ||
               saving
             }

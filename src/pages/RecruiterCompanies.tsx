@@ -39,6 +39,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import FavoritesFilter from '../components/FavoritesFilter';
+import { useFavorites } from '../hooks/useFavorites';
+import FavoriteButton from '../components/FavoriteButton';
 
 const RecruiterCompanies: React.FC = () => {
   const navigate = useNavigate();
@@ -48,17 +51,20 @@ const RecruiterCompanies: React.FC = () => {
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>('all');
   const [locationStateFilter, setLocationStateFilter] = useState('all');
   const [sortField, setSortField] = useState<string>('companyName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
+
+  // Favorites
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('companies');
 
   // Load companies
   useEffect(() => {
     loadCompanies();
-  }, [tenantId, companyFilter]);
+  }, [tenantId]);
 
   const loadCompanies = async () => {
     if (!tenantId) return;
@@ -66,12 +72,7 @@ const RecruiterCompanies: React.FC = () => {
     try {
       setLoading(true);
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-      let q = query(companiesRef, orderBy('companyName', 'asc'));
-      
-      // Apply filter
-      if (companyFilter === 'my' && currentUser?.uid) {
-        q = query(companiesRef, where('accountOwnerId', '==', currentUser.uid), orderBy('companyName', 'asc'));
-      }
+      const q = query(companiesRef, orderBy('companyName', 'asc'));
       
       const snapshot = await getDocs(q);
       const companiesData = snapshot.docs.map(doc => ({
@@ -121,6 +122,11 @@ const RecruiterCompanies: React.FC = () => {
   const filteredCompanies = React.useMemo(() => {
     let filtered = companies;
     
+    // Apply favorites filter
+    if (showFavoritesOnly) {
+      filtered = filtered.filter(company => isFavorite(company.id));
+    }
+    
     // Apply search filter
     if (search.trim()) {
       const searchLower = search.toLowerCase().trim();
@@ -156,7 +162,7 @@ const RecruiterCompanies: React.FC = () => {
     });
     
     return filtered;
-  }, [companies, search, sortField, sortDirection, locationStateFilter]);
+  }, [companies, search, sortField, sortDirection, locationStateFilter, showFavoritesOnly, isFavorite]);
 
   // Helper function to get avatar background color
   const getAvatarColor = (name: string) => {
@@ -197,48 +203,6 @@ const RecruiterCompanies: React.FC = () => {
         borderBottom: '1px solid #D1D5DB'
       }}>
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Company Filter Toggle */}
-          <ToggleButtonGroup
-            value={companyFilter}
-            exclusive
-            onChange={(event, newFilter) => {
-              if (newFilter !== null) {
-                setCompanyFilter(newFilter);
-              }
-            }}
-            size="small"
-            sx={{ 
-              height: 36,
-              '& .MuiToggleButton-root': {
-                px: 2.5,
-                py: 0.75,
-                fontSize: '0.8125rem',
-                fontWeight: 500,
-                borderRadius: '18px',
-                border: '1px solid #E5E7EB',
-                color: '#6B7280',
-                backgroundColor: 'white',
-                '&.Mui-selected': {
-                  backgroundColor: '#0B63C5',
-                  color: 'white',
-                  '&:hover': {
-                    backgroundColor: '#0B63C5',
-                  }
-                },
-                '&:hover': {
-                  backgroundColor: '#F3F4F6',
-                }
-              }
-            }}
-          >
-            <ToggleButton value="all" sx={{ mr: 1 }}>
-              All Companies
-            </ToggleButton>
-            <ToggleButton value="my">
-              My Companies
-            </ToggleButton>
-          </ToggleButtonGroup>
-
           <TextField
             size="small"
             variant="outlined"
@@ -263,14 +227,34 @@ const RecruiterCompanies: React.FC = () => {
             }}
             InputProps={{
               startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: search && (
-                <IconButton
-                  size="small"
-                  onClick={() => setSearch('')}
-                  sx={{ mr: 0.5, p: 0.5 }}
-                >
-                  <ClearIcon fontSize="small" />
-                </IconButton>
+              endAdornment: (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <FavoritesFilter
+                    favoriteType="companies"
+                    showFavoritesOnly={showFavoritesOnly}
+                    onToggle={setShowFavoritesOnly}
+                    showText={false}
+                    size="small"
+                    sx={{
+                      minWidth: '32px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      '&:hover': {
+                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                      }
+                    }}
+                  />
+                  {search && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setSearch('')}
+                      sx={{ mr: 0.5, p: 0.5 }}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
               ),
             }}
           />
@@ -349,6 +333,9 @@ const RecruiterCompanies: React.FC = () => {
             <TableHead>
               <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
                 <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                  <Skeleton variant="text" width={80} height={20} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
                   <Skeleton variant="text" width={100} height={20} />
                 </TableCell>
                 <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
@@ -371,6 +358,9 @@ const RecruiterCompanies: React.FC = () => {
             <TableBody>
               {Array.from({ length: 8 }).map((_, index) => (
                 <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
+                  <TableCell sx={{ py: 1 }}>
+                    <Skeleton variant="circular" width={24} height={24} />
+                  </TableCell>
                   <TableCell sx={{ px: 2, py: 1 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                       <Skeleton variant="circular" width={32} height={32} />
@@ -400,6 +390,17 @@ const RecruiterCompanies: React.FC = () => {
           <Table sx={{ minWidth: 1200 }}>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                <TableCell sx={{ 
+                  fontSize: '0.75rem',
+                  fontWeight: 600, 
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Favorites
+                </TableCell>
                 <TableCell sx={{ 
                   fontSize: '0.75rem',
                   fontWeight: 600, 
@@ -497,6 +498,19 @@ const RecruiterCompanies: React.FC = () => {
                     }
                   }}
                 >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <FavoriteButton
+                      itemId={company.id}
+                      favoriteType="companies"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
+                      size="small"
+                      tooltipText={{
+                        favorited: 'Remove from favorites',
+                        notFavorited: 'Add to favorites'
+                      }}
+                    />
+                  </TableCell>
                   <TableCell sx={{ px: 2, py: 1 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                       <Avatar 

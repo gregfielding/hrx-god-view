@@ -88,7 +88,7 @@ const RecruiterApplicants: React.FC = () => {
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
   // Get favorites
-  const { favorites } = useFavorites('users');
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
   
   // Get unique companies from all candidates for filtering
   const uniqueCompanies = Array.from(
@@ -561,6 +561,8 @@ const RecruiterApplicants: React.FC = () => {
                     <FavoriteButton
                       itemId={candidate.id}
                       favoriteType="users"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
                       size="small"
                       tooltipText={{
                         favorited: 'Remove from favorites',

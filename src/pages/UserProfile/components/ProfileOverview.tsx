@@ -205,7 +205,7 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
               lastName: data.lastName || '',
               preferredName: data.preferredName || '',
               email: data.email || '',
-              phone: data.phone || '',
+              phone: data.phone || (data.phoneE164 ? formatPhoneNumber(data.phoneE164.replace('+1', '')) : ''),
               linkedinUrl: data.linkedinUrl || '',
               dateOfBirth,
               gender: data.gender || undefined,
@@ -363,7 +363,11 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
   const handleAddressChange = async (updatedAddressInfo: any) => {
     setAddressInfo(updatedAddressInfo);
     const userRef = doc(db, 'users', uid);
-    await updateDoc(userRef, { addressInfo: updatedAddressInfo });
+    
+    // Only update addressInfo - this is now the single source of truth for address data
+    await updateDoc(userRef, { 
+      addressInfo: updatedAddressInfo
+    });
   };
 
   const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
@@ -495,6 +499,42 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
 
   // Generic alias for non-employment fields
   const persistProfileField = async (field: string, value: any) => {
+    // Special handling for phone field changes
+    if (field === 'phone') {
+      try {
+        const userRef = doc(db, 'users', uid);
+        
+        // Get current user data to check if phone is changing
+        const userDoc = await getDoc(userRef);
+        const currentData = userDoc.data();
+        
+        if (currentData) {
+          const currentPhone = currentData.phone || '';
+          const newPhone = value || '';
+          
+          // If phone number is changing, reset verification status
+          if (currentPhone !== newPhone && newPhone !== '') {
+            // Convert to E.164 format for consistency
+            const cleaned = newPhone.replace(/\D/g, '');
+            const phoneE164 = cleaned.length === 10 ? `+1${cleaned}` : newPhone;
+            
+            await updateDoc(userRef, {
+              phone: newPhone, // Display format: (925) 448-0579
+              phoneE164: phoneE164, // E.164 format: +19254480579
+              phoneVerified: false, // Reset verification when phone changes
+              workEligibility: false, // Reset work eligibility when phone changes
+              updatedAt: new Date()
+            });
+            
+            console.log('Phone number changed, verification status reset');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error handling phone change:', error);
+      }
+    }
+    
     await persistEmploymentField(field, value);
   };
 

@@ -155,7 +155,7 @@ const PublicJobsBoard: React.FC = () => {
   });
   
   // Favorites system
-  const { favorites } = useFavorites('jobPosts');
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   
   // Track user's application IDs for showing "Application Submitted"
   const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
@@ -206,7 +206,10 @@ const PublicJobsBoard: React.FC = () => {
           setLocationPermission('granted');
         },
         (error) => {
-          console.warn('Location permission denied or error:', error);
+          // Only log non-permission-denied errors to reduce console noise
+          if (error.code !== error.PERMISSION_DENIED) {
+            console.warn('Location permission denied or error:', error);
+          }
           setLocationPermission('denied');
         }
       );
@@ -808,6 +811,8 @@ const PublicJobsBoard: React.FC = () => {
                       <FavoriteButton
                         itemId={job.id}
                         favoriteType="jobPosts"
+                        isFavorite={isFavorite}
+                        toggleFavorite={toggleFavorite}
                         size="small"
                         tooltipText={{
                           favorited: 'Remove from favorites',
@@ -957,6 +962,8 @@ const PublicJobsBoard: React.FC = () => {
                       <FavoriteButton
                         itemId={selectedJob.id}
                         favoriteType="jobPosts"
+                        isFavorite={isFavorite}
+                        toggleFavorite={toggleFavorite}
                         size="small"
                         sx={{
                           backgroundColor: 'background.paper',

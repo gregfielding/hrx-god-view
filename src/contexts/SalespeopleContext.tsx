@@ -96,7 +96,7 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
   useEffect(() => {
     if (!tenantId) return;
     
-    console.log('🔄 Setting up real-time listener for salespeople in tenant:', tenantId);
+    // Setting up real-time listener for salespeople
     
     // Clean up previous listener
     if (unsubscribe) {
@@ -137,7 +137,7 @@ export const SalespeopleProvider: React.FC<SalespeopleProviderProps> = ({ childr
           crm_sales: user.crm_sales || false
         }));
         
-        console.log(`🔄 Real-time update: ${result.length} salespeople for tenant ${tenantId}`);
+        // Real-time update: salespeople loaded
         setSalespeople(result);
         setLoading(false);
         setError(null);

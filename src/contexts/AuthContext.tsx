@@ -380,7 +380,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           userGroupIds: [],
           crm_sales: false,
           recruiter: false,
-          jobsBoard: false,
+          jobsBoard: false, // Module access flag for managers/admins only
           source: 'public_jobs_board',
         }
       : {

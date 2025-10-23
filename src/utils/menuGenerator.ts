@@ -165,26 +165,28 @@ export async function generateMenuItems(
       //   icon: 'assignment',
       //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       // }] : []),
-      // Show Jobs Board if HRX Jobs Board module is enabled OR user has jobsBoard flag
-      ...((jobsBoardModuleEnabled || userJobsBoardEnabled) ? (() => {
+      // Show Jobs Board: always for security levels 0-4, module access for 5-7
+      ...((() => {
+        // Always show for security levels 0-4 (Applicants, Flex, Workers)
+        if (effectiveSecurityLevel && ['0', '1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
+          return [{
+            text: 'Jobs Board',
+            to: effectiveTenantSlug ? `/${effectiveTenantSlug}/jobs-board` : '/c1/jobs-board',
+            icon: 'work',
+            requiredRoles: ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[],
+          }];
+        }
         
-        return [{
-          text: 'Jobs Board',
-          // Security levels 1-4 go to /{slug}/jobs-board, others go to /jobs-dashboard
-          to: (effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) 
-            ? (effectiveTenantSlug ? `/${effectiveTenantSlug}/jobs-board` : '/c1/jobs-board')
-            : '/jobs-dashboard',
-          icon: 'work',
-          // Allow access for security levels 1-4 (Applicant, Flex, Hired Staff) and higher levels
-          requiredRoles: (effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel))
-            ? ['Applicant', 'Worker', 'Staff', 'Manager', 'Admin'] as ClaimsRole[]
-            : ['Admin', 'Manager'] as ClaimsRole[],
-        }];
-      })() : (() => {
-        console.log('=== JOBS BOARD MENU DEBUG ===');
-        console.log('jobsBoardModuleEnabled:', jobsBoardModuleEnabled);
-        console.log('userJobsBoardEnabled:', userJobsBoardEnabled);
-        console.log('NOT creating Jobs Board menu item');
+        // For security levels 5-7 (Managers, Admins), only show if module is enabled or user has jobsBoard flag
+        if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel) && (jobsBoardModuleEnabled || userJobsBoardEnabled)) {
+          return [{
+            text: 'Jobs Board',
+            to: '/jobs-dashboard',
+            icon: 'work',
+            requiredRoles: ['Manager', 'Admin'] as ClaimsRole[],
+          }];
+        }
+        
         return [];
       })()),
       // Show My Applications and My Assignments for staff (security levels 1-4)
@@ -591,16 +593,7 @@ export async function generateMenuItems(
       ? effectiveRole  // Admin users: use security level derived role
       : (tenantRoleRaw ? (tenantRoleRaw as ClaimsRole) : effectiveRole); // Others: use Firestore role if available
     
-    // Temporary debug for admin users
-    if (tenantLevel >= 7 || tenantRoleRaw === 'Admin' || tenantRole === 'Admin') {
-      console.log('[ADMIN DEBUG]', {
-        tenantLevel,
-        tenantRoleRaw,
-        effectiveRole,
-        tenantRole,
-        activeTenantData
-      });
-    }
+    // Debug logging removed for cleaner console
 
     // Legacy accessRoles check using computed tenant access key
     if (item.accessRoles && item.accessRoles.length > 0) {
@@ -611,17 +604,7 @@ export async function generateMenuItems(
     if (item.requiredRoles && item.requiredRoles.length > 0) {
       const ok = item.requiredRoles.includes(tenantRole as ClaimsRole);
       
-      // Temporary debug for admin users
-      if (tenantLevel >= 7 && item.text === 'Dashboard') {
-        console.log('[ADMIN DEBUG] Dashboard access:', {
-          tenantLevel,
-          tenantRoleRaw,
-          effectiveRole,
-          tenantRole,
-          requiredRoles: item.requiredRoles,
-          hasAccess: ok
-        });
-      }
+      // Debug logging removed for cleaner console
       
       return ok;
     }

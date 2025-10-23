@@ -257,7 +257,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         // Module access flags - explicitly set to false for applicants
         crm_sales: false,
         recruiter: false,
-        jobsBoard: false,
+        jobsBoard: false, // Module access flag for managers/admins only
         // Job application related fields
         applications: [],
         favorites: [],
@@ -518,82 +518,55 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           </Alert>
         )}
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-          {activeTab === 0 && (
-            <>
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField
-                  ref={firstNameRef}
-                  fullWidth
-                  label="First Name"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  disabled={loading}
-                  required
-                  onKeyPress={handleKeyPress}
-                />
-                <TextField
-                  fullWidth
-                  label="Last Name"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  disabled={loading}
-                  required
-                  onKeyPress={handleKeyPress}
-                />
-              </Box>
-            </>
-          )}
-
-          <TextField
-            ref={emailRef}
-            fullWidth
-            label="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={loading}
-            required
-            onKeyPress={handleKeyPress}
-            InputProps={{
-              startAdornment: <EmailIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />
-            }}
-          />
-
-          <TextField
-            fullWidth
-            label="Password"
-            type={showPassword ? 'text' : 'password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={loading}
-            required
-            onKeyPress={handleKeyPress}
-            InputProps={{
-              startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton
-                    onClick={() => setShowPassword(!showPassword)}
-                    edge="end"
+        <form onSubmit={activeTab === 0 ? handleSignUp : handleSignIn}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            {activeTab === 0 && (
+              <>
+                <Box sx={{ display: 'flex', gap: 2 }}>
+                  <TextField
+                    ref={firstNameRef}
+                    fullWidth
+                    label="First Name"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
                     disabled={loading}
-                    aria-label="toggle password visibility"
-                  >
-                    {showPassword ? <VisibilityOff /> : <Visibility />}
-                  </IconButton>
-                </InputAdornment>
-              )
-            }}
-            helperText={activeTab === 0 ? "At least 8 characters, including uppercase, lowercase, and a number." : ""}
-          />
+                    required
+                    onKeyPress={handleKeyPress}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Last Name"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    disabled={loading}
+                    required
+                    onKeyPress={handleKeyPress}
+                  />
+                </Box>
+              </>
+            )}
 
-          {activeTab === 0 && (
+            <TextField
+              ref={emailRef}
+              fullWidth
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+              required
+              onKeyPress={handleKeyPress}
+              InputProps={{
+                startAdornment: <EmailIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />
+              }}
+            />
+
             <TextField
               fullWidth
-              label="Confirm Password"
-              type={showConfirmPassword ? 'text' : 'password'}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              label="Password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
               required
               onKeyPress={handleKeyPress}
@@ -602,18 +575,46 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 endAdornment: (
                   <InputAdornment position="end">
                     <IconButton
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      onClick={() => setShowPassword(!showPassword)}
                       edge="end"
                       disabled={loading}
-                      aria-label="toggle confirm password visibility"
+                      aria-label="toggle password visibility"
                     >
-                      {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
+                      {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
                   </InputAdornment>
                 )
               }}
+              helperText={activeTab === 0 ? "At least 8 characters, including uppercase, lowercase, and a number." : ""}
             />
-          )}
+
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label="Confirm Password"
+                type={showConfirmPassword ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={loading}
+                required
+                onKeyPress={handleKeyPress}
+                InputProps={{
+                  startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        edge="end"
+                        disabled={loading}
+                        aria-label="toggle confirm password visibility"
+                      >
+                        {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
+                      </IconButton>
+                    </InputAdornment>
+                  )
+                }}
+              />
+            )}
 
           {activeTab === 0 && (
             <Box sx={{ mt: 2 }}>
@@ -654,7 +655,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               </Link>
             </Box>
           )}
-        </Box>
+          </Box>
+        </form>
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 3, flexDirection: 'column', gap: 2 }}>

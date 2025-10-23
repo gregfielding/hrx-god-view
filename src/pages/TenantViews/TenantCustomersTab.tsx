@@ -564,10 +564,10 @@ const TenantCustomersTab: React.FC<TenantCustomersTabProps> = ({ tenantId }) => 
                         {customer.name}
                       </Typography>
                       <Typography variant="body2" sx={{ color: '#666', mb: 1 }}>
-                        {customer.address?.street && `${customer.address.street}, `}
-                        {customer.address?.city || customer.city}
-                        {customer.address?.state && `, ${customer.address.state}`}
-                        {customer.address?.zip && ` ${customer.address.zip}`}
+                        {(customer as any).addressInfo?.streetAddress && `${(customer as any).addressInfo.streetAddress}, `}
+                        {(customer as any).addressInfo?.city || customer.address?.city || customer.city}
+                        {(customer as any).addressInfo?.state && `, ${(customer as any).addressInfo.state}`}
+                        {(customer as any).addressInfo?.zip && ` ${(customer as any).addressInfo.zip}`}
                       </Typography>
                       <Chip
                         label={customer.status ? 'Active' : 'Inactive'}

@@ -1,11 +1,13 @@
 import React from 'react';
 import { IconButton, IconButtonProps, Tooltip } from '@mui/material';
 import { Star, StarBorder } from '@mui/icons-material';
-import { useFavorites, FavoriteType } from '../hooks/useFavorites';
+import { FavoriteType } from '../hooks/useFavorites';
 
 interface FavoriteButtonProps extends Omit<IconButtonProps, 'onClick' | 'color' | 'type'> {
   itemId: string;
   favoriteType: FavoriteType;
+  isFavorite: (itemId: string) => boolean;
+  toggleFavorite: (itemId: string) => string[];
   size?: 'small' | 'medium' | 'large';
   showTooltip?: boolean;
   tooltipText?: {
@@ -19,6 +21,8 @@ interface FavoriteButtonProps extends Omit<IconButtonProps, 'onClick' | 'color' 
 const FavoriteButton: React.FC<FavoriteButtonProps> = ({
   itemId,
   favoriteType,
+  isFavorite,
+  toggleFavorite,
   size = 'small',
   showTooltip = true,
   tooltipText = {
@@ -30,8 +34,6 @@ const FavoriteButton: React.FC<FavoriteButtonProps> = ({
   sx,
   ...props
 }) => {
-  const { isFavorite, toggleFavorite } = useFavorites(favoriteType);
-  
   const favorited = isFavorite(itemId);
 
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {

@@ -82,9 +82,25 @@ const RecruiterJobOrders: React.FC = () => {
   const [sortField, setSortField] = useState<string>('createdAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [companyFilter, setCompanyFilter] = useState<string>('all');
   const firstLoadRef = useRef(true);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
+
+  // Get unique companies from all job orders for filtering
+  const uniqueCompanies = Array.from(
+    new Set(
+      jobOrders
+        .map(jobOrder => jobOrder.companyName)
+        .filter((name): name is string => !!name)
+    )
+  ).sort();
+
+  // Force re-render when favorites change
+  useEffect(() => {
+    console.log('Favorites changed:', favorites);
+    console.log('showFavoritesOnly:', showFavoritesOnly);
+  }, [favorites, showFavoritesOnly]);
 
   const fetchJobOrders = useCallback(async (searchQuery = '', startDoc: any = null) => {
     if (!tenantId) return;
@@ -279,12 +295,20 @@ const RecruiterJobOrders: React.FC = () => {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Open': return 'success';
-      case 'On-Hold': return 'warning';
-      case 'Cancelled': return 'error';
-      case 'Filled': return 'info';
-      case 'Completed': return 'default';
+    const normalizedStatus = status?.toLowerCase();
+    switch (normalizedStatus) {
+      case 'open': return 'success';
+      case 'on-hold': 
+      case 'on hold': 
+      case 'onhold': return 'warning';
+      case 'cancelled': 
+      case 'canceled': return 'error';
+      case 'filled': 
+      case 'closed': return 'info';
+      case 'completed': 
+      case 'finished': return 'default';
+      case 'pending': 
+      case 'draft': return 'secondary';
       default: return 'default';
     }
   };
@@ -372,6 +396,34 @@ const RecruiterJobOrders: React.FC = () => {
             <MenuItem value="Cancelled">Cancelled</MenuItem>
             <MenuItem value="Filled">Filled</MenuItem>
             <MenuItem value="Completed">Completed</MenuItem>
+          </Select>
+        </FormControl>
+        
+        <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+          <InputLabel sx={{ fontSize: '0.875rem' }}>Company</InputLabel>
+          <Select
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            label="Company"
+            sx={{
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: '#D1D5DB',
+              },
+            }}
+          >
+            <MenuItem value="all">All Companies</MenuItem>
+            {uniqueCompanies.map((company) => (
+              <MenuItem key={company} value={company}>
+                {company}
+              </MenuItem>
+            ))}
           </Select>
         </FormControl>
         
@@ -485,7 +537,25 @@ const RecruiterJobOrders: React.FC = () => {
               <TableBody>
                 {jobOrders
                   .filter(jobOrder => {
-                    if (showFavoritesOnly && !isFavorite(jobOrder.id)) return false;
+                    // Favorites filter
+                    if (showFavoritesOnly) {
+                      const isFav = isFavorite(jobOrder.id);
+                      console.log(`Job Order ${jobOrder.id} isFavorite: ${isFav}, showFavoritesOnly: ${showFavoritesOnly}`);
+                      console.log('Current favorites array:', favorites);
+                      console.log('Job order ID type:', typeof jobOrder.id, 'Value:', jobOrder.id);
+                      if (!isFav) return false;
+                    }
+                    
+                    // Status filter
+                    if (statusFilter && jobOrder.status?.toLowerCase() !== statusFilter.toLowerCase()) {
+                      return false;
+                    }
+                    
+                    // Company filter
+                    if (companyFilter !== 'all' && jobOrder.companyName !== companyFilter) {
+                      return false;
+                    }
+                    
                     return true;
                   })
                   .map((jobOrder, index) => (
@@ -505,6 +575,8 @@ const RecruiterJobOrders: React.FC = () => {
                       <FavoriteButton
                         itemId={jobOrder.id}
                         favoriteType="jobOrders"
+                        isFavorite={isFavorite}
+                        toggleFavorite={toggleFavorite}
                         size="small"
                         tooltipText={{
                           favorited: 'Remove from favorites',

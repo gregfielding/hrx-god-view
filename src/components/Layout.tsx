@@ -553,12 +553,13 @@ const Layout: React.FC = React.memo(function Layout() {
     return () => unsubscribe();
   }, [activeTenant?.id, shouldListenToModules]);
 
+  // Generate base menu items only when structural changes occur
   useEffect(() => {
-    const generateMenu = async () => {
+    const generateBaseMenu = async () => {
       setMenuLoading(true);
       try {
         
-        let items = await generateMenuItems(
+        const items = await generateMenuItems(
           userAccessRole, 
           (activeTenant?.type === 'HRX' ? 'HRX' : 'Tenant'), 
           activeTenant?.id, 
@@ -576,27 +577,30 @@ const Layout: React.FC = React.memo(function Layout() {
           jobsBoardEnabled,
           currentClaimsSecurityLevel
         );
-        // Hide menu items by per-user flags
-        items = items.filter((mi) => {
-          if (mi.text === 'Sales CRM' && !crmSalesEnabled) return false;
-          if (mi.text === 'Recruiter' && !recruiterEnabled) return false;
-          if (mi.text === 'Jobs Board' && !jobsBoardEnabled) return false;
-          return true;
-        });
 
-        // Use items directly; internal generator already applies role/module checks
+        // Store base menu items
         setMenuItems(items);
       } catch (error) {
-        console.error('Error generating menu:', error);
+        console.error('Error generating base menu:', error);
         setMenuItems([]);
       } finally {
         setMenuLoading(false);
       }
     };
-    generateMenu();
-  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled, currentClaimsSecurityLevel]);
+    generateBaseMenu();
+  }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, jobsBoardEnabled, currentClaimsSecurityLevel]);
 
-  const menuItemsWithIcons = menuItems.map(item => {
+  // Filter menu items based on user flags without regenerating the entire menu
+  const filteredMenuItems = useMemo(() => {
+    return menuItems.filter((mi) => {
+      if (mi.text === 'Sales CRM' && !crmSalesEnabled) return false;
+      if (mi.text === 'Recruiter' && !recruiterEnabled) return false;
+      if (mi.text === 'Jobs Board' && !jobsBoardEnabled) return false;
+      return true;
+    });
+  }, [menuItems, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled]);
+
+  const menuItemsWithIcons = filteredMenuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
       'Dashboard': <RocketLaunchIcon />, 
       'Chat GPT': <RocketLaunchIcon />, 
@@ -654,9 +658,10 @@ const Layout: React.FC = React.memo(function Layout() {
   // Menu items are now properly generated in menuGenerator.ts
 
   // Use activeTenant for logo and menu logic
-  const initials = activeTenant?.name
-    ? activeTenant.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2)
-    : `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
+  const initials = `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase() || 
+    (activeTenant?.name
+      ? activeTenant.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2)
+      : '');
 
   // REMOVED: Excessive logging causing re-renders
 
