@@ -976,6 +976,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Job Order specific fields
         tenantId,
         jobOrderName: formData.jobOrderName,
+        jobTitle: formData.jobTitle,
         jobOrderDescription: formData.description,
         status: formData.status,
         workersNeeded: parseInt(formData.workersNeeded.toString()) || 1,
@@ -1014,6 +1015,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         billingContactId: formData.billingContactId || '',
         safetyContactId: formData.safetyContactId || '',
         invoiceContactId: formData.invoiceContactId || '',
+        
+        // Shift and Employment Details
+        shiftType: formData.shiftType || '',
+        shiftTimes: formData.shiftTimes || '',
         
         // Metadata
         updatedAt: new Date(),
