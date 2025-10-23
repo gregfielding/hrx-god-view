@@ -42,6 +42,16 @@ import jobTitlesList from '../data/onetJobTitles.json';
 // ---- Local helpers to centralize date/number handling in this form ----
 const formatDateForInput = (v: any): string => {
   if (!v) return '';
+  
+  // Handle Firebase Timestamp objects
+  if (v && typeof v === 'object' && v.toDate && typeof v.toDate === 'function') {
+    const d = v.toDate();
+    const result = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+    console.log('🔍 formatDateForInput (Timestamp):', { input: v, parsed: d, result });
+    return result;
+  }
+  
+  // Handle regular Date objects and strings
   const d = v instanceof Date ? v : new Date(v);
   const result = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
   console.log('🔍 formatDateForInput:', { input: v, parsed: d, result });
