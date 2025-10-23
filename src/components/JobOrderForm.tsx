@@ -48,7 +48,8 @@ const formatDateForInput = (v: any): string => {
 
 const parseDateFromInput = (v: string): Date | null => {
   if (!v) return null;
-  const d = new Date(v);
+  // Handle both YYYY-MM-DD format (from HTML date input) and other formats
+  const d = new Date(v + 'T00:00:00'); // Add time to avoid timezone issues
   return isNaN(d.getTime()) ? null : d;
 };
 
@@ -637,18 +638,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     
     setFormData(updatedFormData);
     
-    // Auto-save on change
-    if (isEditing && jobOrderId) {
+    // Auto-save on change (skip auto-save for startDate and endDate to avoid conflicts)
+    if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
       console.log('🔍 handleInputChange - Auto-saving field:', field, 'value:', value);
       await saveFieldToFirestore(field, value, updatedFormData);
+    } else if (field === 'startDate' || field === 'endDate') {
+      console.log('🔍 Skipping auto-save for date field:', field, 'value:', value, '- will be saved on form submit');
     }
   };
 
   const handleFieldBlur = async (field: string, value: any) => {
-    // Auto-save on blur for additional safety
-    if (isEditing && jobOrderId) {
+    // Auto-save on blur for additional safety (skip auto-save for startDate and endDate)
+    if (isEditing && jobOrderId && field !== 'startDate' && field !== 'endDate') {
       console.log('🔍 handleFieldBlur - Auto-saving field:', field, 'value:', value);
       await saveFieldToFirestore(field, value, formData);
+    } else if (field === 'startDate' || field === 'endDate') {
+      console.log('🔍 Skipping auto-save on blur for date field:', field, 'value:', value);
     }
   };
 
@@ -777,7 +782,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         startDateInput: dataToUse.startDate,
         startDateParsed,
         endDateInput: dataToUse.endDate,
-        endDateParsed
+        endDateParsed,
+        fieldBeingSaved: field,
+        fieldValue: value
       });
 
       // Compute calculated bill rate if markup/payRate present
@@ -843,6 +850,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const handleSave = async () => {
     if (!tenantId || !user) return;
+
+    console.log('🔍 Main save function called - formData:', {
+      startDate: formData.startDate,
+      endDate: formData.endDate,
+      jobTitle: formData.jobTitle,
+      jobOrderName: formData.jobOrderName
+    });
 
     setSaving(true);
     setError(null);
@@ -988,12 +1002,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         calculatedBillRate: computedBillForCreate,
         startDate: formData.startDate ? (() => {
           try {
-            const date = new Date(formData.startDate);
-            if (isNaN(date.getTime())) {
+            // Use the same parsing logic as auto-save
+            const date = parseDateFromInput(formData.startDate);
+            if (!date) {
               console.warn('Invalid start date in form data:', formData.startDate);
               return null;
             }
-            // Convert to Firestore Timestamp
+            console.log('🔍 Main save - startDate parsed:', { input: formData.startDate, parsed: date });
             return date;
           } catch (error) {
             console.warn('Error converting start date:', error, 'Value:', formData.startDate);
@@ -1002,12 +1017,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         })() : null,
         endDate: formData.endDate ? (() => {
           try {
-            const date = new Date(formData.endDate);
-            if (isNaN(date.getTime())) {
+            // Use the same parsing logic as auto-save
+            const date = parseDateFromInput(formData.endDate);
+            if (!date) {
               console.warn('Invalid end date in form data:', formData.endDate);
               return null;
             }
-            // Convert to Firestore Timestamp
+            console.log('🔍 Main save - endDate parsed:', { input: formData.endDate, parsed: date });
             return date;
           } catch (error) {
             console.warn('Error converting end date:', error, 'Value:', formData.endDate);
