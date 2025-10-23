@@ -2594,9 +2594,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Divider sx={{ my: 3 }} />
               <Stack direction="row" spacing={2}>
                 <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSave}
+                  disabled={saving}
+                  sx={{ minWidth: 120 }}
+                >
+                  {saving ? <CircularProgress size={20} /> : (isEditing ? 'Update Job Order' : 'Create Job Order')}
+                </Button>
+                <Button
                   variant="outlined"
                   startIcon={<CancelIcon />}
                   onClick={handleCancel}
+                  disabled={saving}
                 >
                   Cancel
                 </Button>
