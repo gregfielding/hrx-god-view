@@ -849,7 +849,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   };
 
   const handleSave = async () => {
-    if (!tenantId || !user) return;
+    console.log('🔍 handleSave called - checking conditions:', {
+      tenantId: !!tenantId,
+      user: !!user,
+      tenantIdValue: tenantId,
+      userId: user?.uid
+    });
+
+    if (!tenantId || !user) {
+      console.log('🔍 Early return from handleSave - missing tenantId or user');
+      return;
+    }
 
     console.log('🔍 Main save function called - formData:', {
       startDate: formData.startDate,
@@ -2701,7 +2711,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Button
                   variant="contained"
                   startIcon={<SaveIcon />}
-                  onClick={handleSave}
+                  onClick={() => {
+                    console.log('🔍 Update Job Order button clicked');
+                    handleSave();
+                  }}
                   disabled={saving}
                   sx={{ minWidth: 120 }}
                 >
