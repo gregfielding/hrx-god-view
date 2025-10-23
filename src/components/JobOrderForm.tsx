@@ -980,6 +980,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         jobOrderDescription: formData.description,
         status: formData.status,
         workersNeeded: parseInt(formData.workersNeeded.toString()) || 1,
+        companyId: formData.companyId || '',
+        worksiteId: formData.worksiteId || '',
         payRate: parseFloat(formData.payRate) || 0,
         markup: parseFloat(formData.markup) || 0,
         billRate: (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
@@ -987,18 +989,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         startDate: formData.startDate ? (() => {
           try {
             const date = new Date(formData.startDate);
-            return isNaN(date.getTime()) ? null : date;
+            if (isNaN(date.getTime())) {
+              console.warn('Invalid start date in form data:', formData.startDate);
+              return null;
+            }
+            // Convert to Firestore Timestamp
+            return date;
           } catch (error) {
-            console.warn('Invalid start date in form data:', formData.startDate);
+            console.warn('Error converting start date:', error, 'Value:', formData.startDate);
             return null;
           }
         })() : null,
         endDate: formData.endDate ? (() => {
           try {
             const date = new Date(formData.endDate);
-            return isNaN(date.getTime()) ? null : date;
+            if (isNaN(date.getTime())) {
+              console.warn('Invalid end date in form data:', formData.endDate);
+              return null;
+            }
+            // Convert to Firestore Timestamp
+            return date;
           } catch (error) {
-            console.warn('Invalid end date in form data:', formData.endDate);
+            console.warn('Error converting end date:', error, 'Value:', formData.endDate);
             return null;
           }
         })() : null,
@@ -1019,6 +1031,53 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Shift and Employment Details
         shiftType: formData.shiftType || '',
         shiftTimes: formData.shiftTimes || '',
+        
+        // Additional Form Fields
+        requirements: formData.requirements || '',
+        notes: formData.notes || '',
+        priority: formData.priority || '',
+        employmentType: formData.employmentType || '',
+        experienceLevel: formData.experienceLevel || '',
+        estimatedRevenue: parseFloat(formData.estimatedRevenue) || 0,
+        
+        // Compliance Fields
+        backgroundCheckRequired: formData.backgroundCheckRequired || false,
+        drugScreenRequired: formData.drugScreenRequired || false,
+        eVerifyRequired: formData.eVerifyRequired || false,
+        experienceRequired: formData.experienceRequired || '',
+        educationRequired: formData.educationRequired || '',
+        licensesCerts: formData.licensesCerts || [],
+        languagesRequired: formData.languagesRequired || [],
+        skillsRequired: formData.skillsRequired || [],
+        physicalRequirements: formData.physicalRequirements || [],
+        ppeRequirements: formData.ppeRequirements || [],
+        ppeProvidedBy: formData.ppeProvidedBy || 'company',
+        
+        // Background Check and Drug Screening
+        backgroundCheckPackages: formData.backgroundCheckPackages || [],
+        drugScreeningPanels: formData.drugScreeningPanels || [],
+        additionalScreenings: formData.additionalScreenings || [],
+        
+        // Customer Rules
+        attendancePolicy: formData.attendancePolicy || '',
+        noShowPolicy: formData.noShowPolicy || '',
+        overtimePolicy: formData.overtimePolicy || '',
+        callOffPolicy: formData.callOffPolicy || '',
+        injuryHandlingPolicy: formData.injuryHandlingPolicy || '',
+        
+        // Agreement Fields
+        verbalAgreementContact: formData.verbalAgreementContact || '',
+        verbalAgreementDate: formData.verbalAgreementDate || '',
+        verbalAgreementMethod: formData.verbalAgreementMethod || '',
+        conditionsToFulfill: formData.conditionsToFulfill || '',
+        approvalsNeeded: formData.approvalsNeeded || '',
+        insuranceSubmitted: formData.insuranceSubmitted || false,
+        
+        // Contract Fields
+        contractSignedDate: formData.contractSignedDate || '',
+        contractExpirationDate: formData.contractExpirationDate || '',
+        rateSheetOnFile: formData.rateSheetOnFile || false,
+        msaSigned: formData.msaSigned || false,
         
         // Metadata
         updatedAt: new Date(),
