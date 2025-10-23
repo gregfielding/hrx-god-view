@@ -37,6 +37,7 @@ import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
 import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/registryHelpers';
 import { getOptionsForField } from '../utils/fieldOptions';
+import jobTitlesList from '../data/onetJobTitles.json';
 
 // ---- Local helpers to centralize date/number handling in this form ----
 const formatDateForInput = (v: any): string => {
@@ -1107,11 +1108,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label={(getFieldDef('jobTitle')?.label || 'Job Title')}
-                  value={formData.jobTitle}
-                  onChange={(e) => handleInputChange('jobTitle', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
+                  label={getFieldDef('jobOrderName')?.label || 'Job Order Name'}
+                  value={formData.jobOrderName}
+                  onChange={(e) => handleInputChange('jobOrderName', e.target.value)}
+                  onBlur={(e) => handleFieldBlur('jobOrderName', e.target.value)}
+                  placeholder="e.g., Warehouse Staff - Q4 2025"
                   required
+                />
+              </Grid>
+              
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={jobTitlesList}
+                  value={formData.jobTitle}
+                  onChange={(event, newValue) => {
+                    handleInputChange('jobTitle', newValue || '');
+                  }}
+                  onInputChange={(event, newInputValue) => {
+                    handleInputChange('jobTitle', newInputValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={getFieldDef('jobTitle')?.label || 'Job Title'}
+                      required
+                      onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
+                    />
+                  )}
                 />
               </Grid>
               
