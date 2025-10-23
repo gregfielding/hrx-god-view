@@ -43,14 +43,18 @@ import jobTitlesList from '../data/onetJobTitles.json';
 const formatDateForInput = (v: any): string => {
   if (!v) return '';
   const d = v instanceof Date ? v : new Date(v);
-  return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+  const result = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+  console.log('🔍 formatDateForInput:', { input: v, parsed: d, result });
+  return result;
 };
 
 const parseDateFromInput = (v: string): Date | null => {
   if (!v) return null;
   // Handle both YYYY-MM-DD format (from HTML date input) and other formats
   const d = new Date(v + 'T00:00:00'); // Add time to avoid timezone issues
-  return isNaN(d.getTime()) ? null : d;
+  const result = isNaN(d.getTime()) ? null : d;
+  console.log('🔍 parseDateFromInput:', { input: v, result });
+  return result;
 };
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
@@ -479,6 +483,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Check for stageData in both top-level and embedded deal object
         const stageData = (data as any).stageData || (data as any).deal?.stageData || {};
         
+        console.log('🔍 loadJobOrder: Raw data from Firestore:', {
+          startDate: (data as any).startDate,
+          endDate: (data as any).endDate,
+          startDateType: typeof (data as any).startDate,
+          endDateType: typeof (data as any).endDate
+        });
+
         setFormData({
           // Basic Information
           jobOrderName: data.jobOrderName || '',
@@ -1043,6 +1054,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       if (isEditing && jobOrderId) {
         // Update existing job order
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+        
+        console.log('🔍 About to save to Firestore - jobOrderData:', {
+          startDate: jobOrderData.startDate,
+          endDate: jobOrderData.endDate,
+          formDataStartDate: formData.startDate,
+          formDataEndDate: formData.endDate
+        });
+        
         await updateDoc(jobOrderRef, jobOrderData);
         setSuccess('Job order updated successfully!');
         console.log('✅ Job order updated successfully');
