@@ -90,6 +90,14 @@ service firebase.storage {
       allow read: if request.auth != null;
     }
 
+    // Job Order staff instructions and attachments
+    match /job_orders/{jobOrderId}/staff_instructions/{category}/{fileName} {
+      // Allow authenticated users to upload/delete staff instruction files
+      allow write, delete: if request.auth != null;
+      // Allow read access for authenticated users (recruiters and staff)
+      allow read: if request.auth != null;
+    }
+
     // Block everything else by default
     match /{allPaths=**} {
       allow read, write, delete: if false;

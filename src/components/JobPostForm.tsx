@@ -400,6 +400,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             ...formData,
             jobOrderId,
             postTitle: formData.postTitle || jobOrderData.jobOrderName || '',
+            jobType: jobOrderData.jobType || 'career', // Copy job type from job order
             jobTitle: formData.jobTitle || jobOrderData.jobTitle || '',
             jobDescription: formData.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
             companyId: jobOrderData.companyId || '',
@@ -417,7 +418,47 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
             drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
-            additionalScreenings: jobOrderData.additionalScreenings || []
+            additionalScreenings: jobOrderData.additionalScreenings || [],
+            // Copy all requirements and qualifications
+            licensesCerts: jobOrderData.licensesCerts || [],
+            showLicensesCerts: (jobOrderData.licensesCerts || []).length > 0,
+            skills: jobOrderData.skillsRequired || [],
+            showSkills: (jobOrderData.skillsRequired || []).length > 0,
+            languages: jobOrderData.languagesRequired || [],
+            showLanguages: (jobOrderData.languagesRequired || []).length > 0,
+            experienceLevels: jobOrderData.experienceRequired ? (() => {
+              // Map experience value to full label
+              const expMap: Record<string, string> = {
+                'none': 'No Experience Required',
+                'entry': 'Entry-Level (0–1 year)',
+                '1-2': '1–2 Years',
+                '3-5': '3–5 Years (Mid-Level)',
+                '5-7': '5–7 Years (Advanced)',
+                '8-10': '8–10 Years (Senior-Level)',
+                '10+': '10+ Years (Expert / Executive)'
+              };
+              return [expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired];
+            })() : [],
+            showExperience: !!jobOrderData.experienceRequired,
+            educationLevels: jobOrderData.educationRequired ? (() => {
+              // Map education value to full label
+              const eduMap: Record<string, string> = {
+                'none': 'No Formal Education Required',
+                'highschool': 'High School Diploma or Equivalent',
+                'associate': 'Associate Degree',
+                'bachelor': 'Bachelor\'s Degree',
+                'master': 'Master\'s Degree',
+                'doctorate': 'Doctorate / PhD'
+              };
+              return [eduMap[jobOrderData.educationRequired] || jobOrderData.educationRequired];
+            })() : [],
+            showEducation: !!jobOrderData.educationRequired,
+            physicalRequirements: jobOrderData.physicalRequirements || [],
+            showPhysicalRequirements: (jobOrderData.physicalRequirements || []).length > 0,
+            uniformRequirements: jobOrderData.uniformRequirements ? [jobOrderData.uniformRequirements] : [],
+            showUniformRequirements: !!jobOrderData.uniformRequirements,
+            requiredPpe: jobOrderData.ppeRequirements ? [jobOrderData.ppeRequirements] : [],
+            showRequiredPpe: !!jobOrderData.ppeRequirements
           });
           
           if (jobOrderData.companyId) {

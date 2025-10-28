@@ -626,6 +626,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             userId: uid,
             tenantId,
             jobId,
+            jobOrderId: posting?.jobOrderId || null, // CRITICAL: Link to job order if posting is connected
             status: 'submitted',
             submittedAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -662,6 +663,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const applicationQuickData: any = {
             applicationId: applicationId, // Include the application ID for reference
             jobId: jobId,
+            jobOrderId: posting?.jobOrderId || null, // CRITICAL: Link to job order if posting is connected
             jobTitle: posting?.jobTitle || posting?.postTitle || null,
             jobOrderName: posting?.postTitle || posting?.jobTitle || null, // Full job order name like "Janitor - Parker Plastics Offer - New"
             postTitle: posting?.postTitle || null,

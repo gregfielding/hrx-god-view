@@ -45,7 +45,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder, JobOrderStatus } from '../../types/recruiter/jobOrder';
-import JobOrderForm from './JobOrderForm';
+import JobOrderForm from '../JobOrderForm';
 import PostToJobsBoardDialog from './PostToJobsBoardDialog';
 
 interface JobOrdersManagementProps {

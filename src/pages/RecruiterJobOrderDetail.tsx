@@ -21,7 +21,8 @@ import {
   Avatar,
   Link as MUILink,
   Button,
-  Skeleton
+  Skeleton,
+  TextField
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
@@ -40,19 +41,25 @@ import {
   CheckCircle as CheckCircleIcon,
   Warning as WarningIcon,
   Info as InfoIcon,
-  AttachMoney as DealIcon
+  AttachMoney as DealIcon,
+  Delete as DeleteIcon,
+  CloudUpload as UploadIcon,
+  Notes as NotesIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/recruiter/jobOrder';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 import JobOrderForm from '../components/JobOrderForm';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
+import ManageContactsDialog from '../components/ManageContactsDialog';
+import StaffInstructionCard from '../components/recruiter/StaffInstructionCard';
+import CRMNotesTab from '../components/CRMNotesTab';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -95,6 +102,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
+  const [manageContactsOpen, setManageContactsOpen] = useState(false);
 
   // Load job order
   useEffect(() => {
@@ -549,6 +557,103 @@ const RecruiterJobOrderDetail: React.FC = () => {
     return `#${number.toString().padStart(4, '0')}`;
   };
 
+  const handleContactsChange = async (updatedContacts: any[]) => {
+    if (!jobOrder || !tenantId || !jobOrderId) return;
+    
+    console.log('🔍 handleContactsChange called:', {
+      updatedContacts: updatedContacts.length,
+      hasDeal: !!jobOrder.deal,
+      dealId: jobOrder.dealId,
+      jobOrderId
+    });
+    
+    try {
+      // Update local state immediately for responsive UI
+      setAssociatedContacts(updatedContacts);
+      
+      // Prepare the updated associations structure
+      const updatedAssociations = {
+        ...(jobOrder.deal?.associations || {}),
+        contacts: updatedContacts.map(contact => ({
+          id: contact.id,
+          snapshot: {
+            fullName: contact.fullName,
+            firstName: contact.firstName,
+            lastName: contact.lastName,
+            email: contact.email,
+            phone: contact.phone,
+            title: contact.title
+          }
+        }))
+      };
+      
+      console.log('🔍 Prepared associations:', updatedAssociations);
+      
+      // If job order has a deal object (created from deal OR manually created)
+      if (jobOrder.deal) {
+        console.log('🔍 JobOrder has deal object - updating deal.associations');
+        // Update the existing deal object with new associations
+        await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+          'deal.associations': updatedAssociations,
+          updatedAt: new Date()
+        });
+        console.log('✅ Updated existing deal.associations');
+      } else {
+        console.log('🔍 JobOrder has NO deal object - creating minimal deal structure');
+        // Job order has no deal object - create minimal deal structure to store associations
+        const minimalDeal = {
+          id: null,
+          name: jobOrder.jobOrderName,
+          companyId: jobOrder.companyId,
+          companyName: jobOrder.companyName,
+          locationId: jobOrder.worksiteId,
+          locationName: jobOrder.worksiteName,
+          stage: null,
+          status: null,
+          estimatedRevenue: jobOrder.estimatedRevenue || 0,
+          closeDate: null,
+          owner: jobOrder.createdBy,
+          tags: [],
+          notes: '',
+          stageData: {},
+          associations: updatedAssociations,
+          createdAt: null,
+          updatedAt: new Date()
+        };
+        
+        console.log('🔍 Minimal deal to save:', minimalDeal);
+        
+        await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+          deal: minimalDeal,
+          updatedAt: new Date()
+        });
+        console.log('✅ Created and saved minimal deal structure');
+      }
+      
+      // If there's a source deal, also update it
+      if (jobOrder.dealId) {
+        console.log('🔍 JobOrder has dealId - also updating source deal:', jobOrder.dealId);
+        try {
+          await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', jobOrder.dealId), {
+            associations: updatedAssociations,
+            updatedAt: new Date()
+          });
+          console.log('✅ Updated source deal');
+        } catch (error) {
+          console.warn('Could not update source deal:', error);
+        }
+      }
+      
+      console.log('✅ Contacts updated successfully - total:', updatedContacts.length);
+      
+      // Reload job order to get fresh data
+      await fetchJobOrder();
+    } catch (error) {
+      console.error('❌ Error updating contacts:', error);
+      // Revert local state if update fails
+      setAssociatedContacts(jobOrder?.deal?.associations?.contacts || []);
+    }
+  };
 
   console.log('🔍 RecruiterJobOrderDetail: Rendering with state:', { loading, jobOrder: !!jobOrder, jobOrderId, tenantId });
 
@@ -571,24 +676,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
     );
   }
 
-  const breadcrumbItems = [
-    {
-      label: 'Recruiter',
-      href: '/recruiter'
-    },
-    {
-      label: 'Job Orders',
-      href: '/recruiter/job-orders'
-    },
-    {
-      label: formatJobOrderNumber(jobOrder.jobOrderNumber)
-    }
-  ];
-
   return (
     <Box sx={{ p: 0 }}>
-      <BreadcrumbNav items={breadcrumbItems} />
-      
       {/* Enhanced Header - Matching Deal Details Layout */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -623,8 +712,28 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 {formatJobOrderNumber(jobOrder.jobOrderNumber)}
               </Typography> */}
 
-              {/* Status Row */}
+              {/* Status Row with Job Order Number */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Job Order:</Typography>
+                  <Chip
+                    label={`#${jobOrder.jobOrderNumber || '0002'}`}
+                    size="small"
+                    sx={{ bgcolor: 'grey.200', color: 'text.primary', fontWeight: 600 }}
+                  />
+                </Box>
+                
+                {(jobOrder as any).jobType && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Job Type:</Typography>
+                    <Chip
+                      label={(jobOrder as any).jobType === 'gig' ? 'Gig' : 'Career'}
+                      size="small"
+                      color="default"
+                    />
+                  </Box>
+                )}
+                
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
           <Chip
@@ -634,14 +743,16 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   />
                 </Box>
                 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Age:</Typography>
-                  <Chip
-                    label={`${getJobOrderAge(jobOrder.createdAt)} days`}
-                    color="default"
-                    size="small"
-                  />
-                </Box>
+                {location && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Location:</Typography>
+                    <Chip
+                      label={`${location.city || ''}${location.city && location.state ? ', ' : ''}${location.state || ''}`}
+                      color="default"
+                      size="small"
+                    />
+                  </Box>
+                )}
                 
                 {jobOrder.startDate && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -669,8 +780,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         <MUILink
                           underline="hover"
                           color="primary"
-                          href={`/crm/companies/${companyId}`}
-                          onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${companyId}`); }}
+                          href={`/recruiter/companies/${companyId}`}
+                          onClick={(e) => { e.preventDefault(); navigate(`/recruiter/companies/${companyId}`); }}
                           sx={{ fontSize: '0.875rem', fontWeight: 500 }}
                         >
                           {companyName}
@@ -717,10 +828,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         <MUILink
                           underline="hover"
                           color="primary"
-                          href={`/crm/companies/${displayCompanyId}/locations/${displayLocationId}`}
+                          href={`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`}
                           onClick={(e) => {
                             e.preventDefault();
-                            navigate(`/crm/companies/${displayCompanyId}/locations/${displayLocationId}`);
+                            navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`);
                           }}
                           sx={{ fontSize: '0.875rem', fontWeight: 500 }}
                         >
@@ -739,10 +850,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     <MUILink
                       underline="hover"
                       color="primary"
-                      href={`/crm/deals/${jobOrder.dealId}`}
+                      href={`/recruiter/deals/${jobOrder.dealId}`}
                       onClick={(e) => { 
                         e.preventDefault(); 
-                        navigate(`/crm/deals/${jobOrder.dealId}`); 
+                        navigate(`/recruiter/deals/${jobOrder.dealId}`); 
                       }}
                       sx={{ fontSize: '0.875rem', fontWeight: 500 }}
                     >
@@ -787,8 +898,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         <MUILink
                           underline="hover"
                           color="primary"
-                          href={`/crm/contacts/${contact.id}`}
-                          onClick={(e) => { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); }}
+                          href={`/recruiter/contacts/${contact.id}`}
+                          onClick={(e) => { e.preventDefault(); navigate(`/recruiter/contacts/${contact.id}`); }}
                         >
                           <Typography variant="body2" color="primary">
                             {(contact.fullName || contact.name || 'Contact')}
@@ -828,89 +939,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Box>
       </Box>
 
-      {/* Quick Stats */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Avatar sx={{ bgcolor: 'primary.main' }}>
-                  <GroupIcon />
-                </Avatar>
-                <Box>
-                  <Typography variant="h6">
-                    {jobOrder.workersNeeded || 0}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Openings
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Avatar sx={{ bgcolor: 'success.main' }}>
-                  <CheckCircleIcon />
-                </Avatar>
-                <Box>
-                  <Typography variant="h6">
-                    {jobOrder.headcountFilled || 0}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Filled
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Avatar sx={{ bgcolor: 'warning.main' }}>
-                  <WarningIcon />
-                </Avatar>
-                <Box>
-                  <Typography variant="h6">
-                    {(jobOrder.workersNeeded || 0) - (jobOrder.headcountFilled || 0)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Remaining
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        
-        <Grid item xs={12} md={3}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <Avatar sx={{ bgcolor: 'info.main' }}>
-                  <MoneyIcon />
-                </Avatar>
-                <Box>
-                  <Typography variant="h6">
-                    ${jobOrder.payRate || 0}/hr
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Pay Rate
-                  </Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
       {/* Tabs */}
       <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
         <Tabs
@@ -933,6 +961,14 @@ const RecruiterJobOrderDetail: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <DescriptionIcon fontSize="small" />
+                Staff Instructions
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AssignmentIcon fontSize="small" />
                 Applications
               </Box>
@@ -942,7 +978,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <GroupIcon fontSize="small" />
-                Assignments
+                Placements
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <NotesIcon fontSize="small" />
+                Notes
               </Box>
             } 
           />
@@ -986,7 +1030,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   size="small"
                   onClick={() => {
                     if (company) {
-                      navigate(`/crm/companies/${company.id}`);
+                      navigate(`/recruiter/companies/${company.id}`);
                     }
                   }}
                   sx={{ 
@@ -1004,13 +1048,13 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Box
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/crm/companies/${company.id}`)}
+                      onClick={() => navigate(`/recruiter/companies/${company.id}`)}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => { 
                         if (e.key === 'Enter' || e.key === ' ') { 
                           e.preventDefault(); 
-                          navigate(`/crm/companies/${company.id}`);
+                          navigate(`/recruiter/companies/${company.id}`);
                         } 
                       }}
                     >
@@ -1094,10 +1138,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    // TODO: Open manage contacts dialog
-                    console.log('Manage contacts for job order');
-                  }}
+                  onClick={() => setManageContactsOpen(true)}
                   sx={{ 
                     minWidth: 'auto',
                     px: 1,
@@ -1115,10 +1156,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       <Box
                         key={contact.id}
                         sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                        onClick={() => navigate(`/recruiter/contacts/${contact.id}`)}
                         role="button"
                         tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/contacts/${contact.id}`); } }}
                       >
                         <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                           {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
@@ -1187,7 +1228,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                           onClick={() => {
                             const companyId = company?.id || jobOrder?.companyId;
                             if (companyId && displayLocationId) {
-                              navigate(`/crm/companies/${companyId}/locations/${displayLocationId}`);
+                              navigate(`/recruiter/companies/${companyId}/locations/${displayLocationId}`);
                             }
                           }}
                           role="button"
@@ -1197,7 +1238,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                               e.preventDefault(); 
                               const companyId = company?.id || jobOrder?.companyId;
                               if (companyId && displayLocationId) {
-                                navigate(`/crm/companies/${companyId}/locations/${displayLocationId}`);
+                                navigate(`/recruiter/companies/${companyId}/locations/${displayLocationId}`);
                               }
                             } 
                           }}
@@ -1233,6 +1274,116 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={activeTab} index={1}>
+        {/* Staff Instructions Tab */}
+        <Grid container spacing={3}>
+          {/* First Day Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="First Day Instructions"
+              fieldKey="firstDay"
+              placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
+              uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Parking Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Parking Instructions"
+              fieldKey="parking"
+              placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
+              uploadPlaceholder="Upload parking maps, diagrams, or related documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Check-In Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Check-In Instructions"
+              fieldKey="checkIn"
+              placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
+              uploadPlaceholder="Upload check-in forms, maps, or related documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Uniform Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Uniform Instructions"
+              fieldKey="uniform"
+              placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
+              uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Credential Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Credential Instructions"
+              fieldKey="credentials"
+              placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
+              uploadPlaceholder="Upload credential forms, badge photos, or related documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Other Instructions */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Other Instructions"
+              fieldKey="other"
+              placeholder="Enter any additional instructions or important information for staff..."
+              uploadPlaceholder="Upload any other relevant documents"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+
+          {/* Other Attachments (attachments only, no text field) */}
+          <Grid item xs={12}>
+            <StaffInstructionCard
+              title="Other Attachments"
+              fieldKey="attachments"
+              placeholder="" 
+              uploadPlaceholder="Upload any other relevant documents for this job order"
+              jobOrder={jobOrder}
+              jobOrderId={jobOrderId || ''}
+              tenantId={tenantId || ''}
+              userId={user?.uid || ''}
+              onRefresh={fetchJobOrder}
+            />
+          </Grid>
+        </Grid>
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={2}>
         {/* Applications Tab */}
         <Card>
           <CardContent>
@@ -1246,21 +1397,31 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Card>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={2}>
-        {/* Assignments Tab */}
+      <TabPanel value={activeTab} index={3}>
+        {/* Placements Tab */}
         <Card>
           <CardContent>
             <Typography variant="h6" gutterBottom>
-              Assignments for this Job Order
+              Placements for this Job Order
             </Typography>
             <Alert severity="info">
-              Assignments functionality will be implemented in the next phase.
+              Placements functionality will be implemented in the next phase.
             </Alert>
           </CardContent>
         </Card>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={3}>
+      <TabPanel value={activeTab} index={4}>
+        {/* Notes Tab */}
+        <CRMNotesTab
+          entityId={jobOrderId || ''}
+          entityType={"jobOrder" as any}
+          entityName={jobOrder?.jobOrderName || 'Job Order'}
+          tenantId={tenantId || ''}
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={5}>
         {/* Activity Tab */}
         <Card>
           <CardContent>
@@ -1275,6 +1436,16 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </TabPanel>
 
       {/* Action Menu */}
+
+      {/* Manage Contacts Dialog */}
+      <ManageContactsDialog
+        open={manageContactsOpen}
+        onClose={() => setManageContactsOpen(false)}
+        tenantId={tenantId || ''}
+        currentContacts={associatedContacts}
+        onContactsChange={handleContactsChange}
+        dealCompanyId={jobOrder?.companyId || company?.id}
+      />
      
     </Box>
   );

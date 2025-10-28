@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Box, Typography, Alert, Paper, Divider, Button } from '@mui/material';
 import { Logout as LogoutIcon } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../contexts/AuthContext';
 import { canAccessModule } from '../utils/canAccessModule';
@@ -8,7 +9,26 @@ import SalesNewsFeed from '../components/SalesNewsFeed';
 
 const Dashboard: React.FC = () => {
   console.log('Dashboard component rendering');
-  const { modules, role, securityLevel, accessRole, orgType, activeTenant, loading, logout } = useAuth();
+  const { modules, role, securityLevel, accessRole, orgType, activeTenant, loading, logout, user } = useAuth();
+  const navigate = useNavigate();
+
+  // Redirect users with security levels 0-4 to their profile
+  useEffect(() => {
+    const numericSecurityLevel = typeof securityLevel === 'string' ? parseInt(securityLevel, 10) : securityLevel;
+    if (!loading && user && activeTenant && !isNaN(numericSecurityLevel) && (numericSecurityLevel >= 0 && numericSecurityLevel <= 4)) {
+      console.log(`Redirecting user with security level ${securityLevel} to profile`);
+      const profileUrl = `/${activeTenant.slug}/users/${user.uid}`;
+      navigate(profileUrl, { replace: true });
+    }
+  }, [loading, user, activeTenant, securityLevel, navigate]);
+
+  // Don't render dashboard content if user should be redirected
+  if (!loading && user && activeTenant) {
+    const numericSecurityLevel = typeof securityLevel === 'string' ? parseInt(securityLevel, 10) : securityLevel;
+    if (!isNaN(numericSecurityLevel) && (numericSecurityLevel >= 0 && numericSecurityLevel <= 4)) {
+      return null; // Component will redirect, don't show content
+    }
+  }
 
   return (
     <Box>

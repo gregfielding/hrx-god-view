@@ -20,52 +20,27 @@ import {
   OutlinedInput,
   Divider,
   Autocomplete,
+  IconButton,
 } from '@mui/material';
 import {
   Save as SaveIcon,
   Cancel as CancelIcon,
+  Add as AddIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
-import { JobOrder } from '../types/recruiter/jobOrder';
+import { JobOrder, JobOrderContact } from '../types/recruiter/jobOrder';
 import { getFieldDef } from '../fields/useFieldDef';
 import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
 import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/registryHelpers';
 import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
-
-// ---- Local helpers to centralize date/number handling in this form ----
-const formatDateForInput = (v: any): string => {
-  if (!v) return '';
-  
-  // Handle Firebase Timestamp objects
-  if (v && typeof v === 'object' && v.toDate && typeof v.toDate === 'function') {
-    const d = v.toDate();
-    const result = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
-    console.log('🔍 formatDateForInput (Timestamp):', { input: v, parsed: d, result });
-    return result;
-  }
-  
-  // Handle regular Date objects and strings
-  const d = v instanceof Date ? v : new Date(v);
-  const result = isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
-  console.log('🔍 formatDateForInput:', { input: v, parsed: d, result });
-  return result;
-};
-
-const parseDateFromInput = (v: string): Date | null => {
-  if (!v) return null;
-  // Handle both YYYY-MM-DD format (from HTML date input) and other formats
-  const d = new Date(v + 'T00:00:00'); // Add time to avoid timezone issues
-  const result = isNaN(d.getTime()) ? null : d;
-  console.log('🔍 parseDateFromInput:', { input: v, result });
-  return result;
-};
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -116,23 +91,55 @@ interface JobOrderFormProps {
   dealId?: string; // If provided, we can load associated contacts from the deal
   onSave?: () => void; // Optional callback after successful save
   onCancel?: () => void; // Optional callback for cancel
+  // Additional props for compatibility with recruiter components
+  tenantId?: string; // Optional tenant ID (will use from auth context if not provided)
+  createdBy?: string; // Optional created by user ID (will use from auth context if not provided)
+  jobOrder?: any; // Optional job order data for editing
+  initialData?: any; // Optional initial form data
+  loading?: boolean; // Optional loading state
+  companies?: any[]; // Optional companies list
+  locations?: any[]; // Optional locations list
+  recruiters?: any[]; // Optional recruiters list
+  jobTitles?: string[]; // Optional job titles list
+  groups?: any[]; // Optional groups list
 }
 
 const JobOrderForm: React.FC<JobOrderFormProps> = ({ 
   jobOrderId, 
   dealId,
   onSave, 
-  onCancel 
+  onCancel,
+  tenantId: propTenantId,
+  createdBy: propCreatedBy,
+  jobOrder,
+  initialData,
+  loading: propLoading,
+  companies: propCompanies,
+  locations: propLocations,
+  recruiters: propRecruiters,
+  jobTitles: propJobTitles,
+  groups: propGroups
 }) => {
-  const { tenantId, user } = useAuth();
+  const { tenantId: authTenantId, user: authUser } = useAuth();
   const navigate = useNavigate();
   
-  const [loading, setLoading] = useState(!!jobOrderId); // Loading if editing
+  // Use props if provided, otherwise fall back to auth context
+  const tenantId = propTenantId || authTenantId;
+  const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
+  
+  const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [loadedJobOrderData, setLoadedJobOrderData] = useState<any>(null); // Store loaded job order for preserving associations
+  const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string}>>([
+    { jobTitle: '', workersNeeded: 1, payRate: '' }
+  ]); // For gig-type jobs with multiple positions
+  const [companies, setCompanies] = useState<Company[]>(propCompanies || []);
+  const [locations, setLocations] = useState<Location[]>(propLocations || []);
   const [filteredLocations, setFilteredLocations] = useState<Location[]>([]);
   const [associatedContacts, setAssociatedContacts] = useState<Contact[]>([]);
+  const [companyContacts, setCompanyContacts] = useState<JobOrderContact[]>([]);
+  const [loadedContacts, setLoadedContacts] = useState<any[]>([]);
+  const [contactDropdownValue, setContactDropdownValue] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
@@ -162,12 +169,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const [formData, setFormData] = useState({
     // Basic Information
+    jobOrderNumber: '',
     jobOrderName: '',
     jobTitle: '',
     description: '',
     companyId: '',
     worksiteId: '',
     status: 'draft',
+    jobType: 'career' as 'gig' | 'career',
     workersNeeded: 1,
     payRate: '',
     markup: '',
@@ -255,9 +264,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     rateSheetOnFile: false,
     msaSigned: false,
     
-    // Financial
-    estimatedRevenue: '',
-    
     // HR Contact
     hrContactId: '',
     
@@ -300,11 +306,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   // Set filtered locations (now they're already company-specific)
   useEffect(() => {
-    console.log('🔍 Setting filtered locations:', {
-      locations: locations,
-      currentWorksiteId: formData.worksiteId,
-      companyId: formData.companyId
-    });
     
     // If we have a worksiteId but it's not in the current locations, we need to include it
     const finalLocations = formData.worksiteId && !locations.find(loc => loc.id === formData.worksiteId)
@@ -320,11 +321,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       : [...locations];
     
     if (formData.worksiteId && !locations.find(loc => loc.id === formData.worksiteId)) {
-      console.log('🔍 Current worksiteId not found in locations, adding placeholder');
     }
     
     setFilteredLocations(finalLocations);
   }, [locations, formData.worksiteId, formData.companyId]);
+
+  // Load company contacts when companyId is present in formData
+  useEffect(() => {
+    if (formData.companyId && tenantId) {
+      loadCompanyContacts(formData.companyId);
+    }
+  }, [formData.companyId, tenantId]);
 
   const loadCompanies = async () => {
     try {
@@ -380,6 +387,80 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
     } catch (error) {
       console.error('Error loading company defaults:', error);
+    }
+  };
+
+  const loadCompanyContacts = async (companyId: string) => {
+    if (!companyId || !tenantId) return;
+    
+    console.log('🔍 Loading company contacts for company:', companyId);
+    
+    try {
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const contactsQuery = query(contactsRef, where('companyId', '==', companyId));
+      const contactsSnapshot = await getDocs(contactsQuery);
+      const contactsData = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      console.log('🔍 Loaded contacts for company', companyId, ':', contactsData.length, 'contacts');
+      console.log('🔍 Contact details:', contactsData.map((c: any) => ({ 
+        id: c.id, 
+        name: c.contactName || c.fullName || c.firstName + ' ' + c.lastName,
+        companyName: c.companyName,
+        dealRole: c.dealRole
+      })));
+      
+      // Load worksite information for each contact
+      const contactsWithWorksites = await Promise.all(
+        contactsData.map(async (contact: any) => {
+          const worksites = [];
+          
+          // Check if contact has locationId
+          if (contact.locationId) {
+            try {
+              const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', contact.locationId);
+              const locationDoc = await getDoc(locationRef);
+              if (locationDoc.exists()) {
+                worksites.push({
+                  id: contact.locationId,
+                  name: locationDoc.data().nickname || locationDoc.data().name || contact.locationName || 'Unknown Location'
+                });
+              }
+            } catch (error) {
+              console.warn('Error loading location for contact:', contact.id, error);
+            }
+          }
+          
+          // Check if contact has associations.locations
+          if (contact.associations?.locations) {
+            for (const locationId of contact.associations.locations) {
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+                const locationDoc = await getDoc(locationRef);
+                if (locationDoc.exists()) {
+                  worksites.push({
+                    id: locationId,
+                    name: locationDoc.data().nickname || locationDoc.data().name || 'Unknown Location'
+                  });
+                }
+              } catch (error) {
+                console.warn('Error loading associated location for contact:', contact.id, locationId, error);
+              }
+            }
+          }
+          
+          return {
+            ...contact,
+            worksites
+          };
+        })
+      );
+      
+      setLoadedContacts(contactsWithWorksites);
+      console.log('🔍 Set loaded contacts with worksites:', contactsWithWorksites);
+      
+    } catch (error) {
+      console.error('Error loading company contacts:', error);
+      setLoadedContacts([]);
     }
   };
 
@@ -490,24 +571,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       
       if (jobOrderSnap.exists()) {
         const data = jobOrderSnap.data() as JobOrder;
+        // Store the loaded job order data for preserving associations
+        setLoadedJobOrderData(data);
+        
         // Check for stageData in both top-level and embedded deal object
         const stageData = (data as any).stageData || (data as any).deal?.stageData || {};
         
-        console.log('🔍 loadJobOrder: Raw data from Firestore:', {
-          startDate: (data as any).startDate,
-          endDate: (data as any).endDate,
-          startDateType: typeof (data as any).startDate,
-          endDateType: typeof (data as any).endDate
-        });
 
         setFormData({
           // Basic Information
+          jobOrderNumber: data.jobOrderNumber || '',
           jobOrderName: data.jobOrderName || '',
           jobTitle: (data as any).jobTitle || (stageData.discovery?.jobTitles?.[0] || ''),
           description: data.jobOrderDescription || '',
           companyId: (data as any).companyId || '',
           worksiteId: (data as any).worksiteId || '',
           status: data.status || 'draft',
+          jobType: (data as any).jobType || 'career',
           workersNeeded: data.workersNeeded || 1,
           payRate: (data as any).payRate || '',
           markup: (data as any).markup || '',
@@ -522,8 +602,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           })(),
           priority: (data as any).priority || '',
           shiftType: (data as any).shiftType || '',
-          startDate: formatDateForInput((data as any).startDate),
-          endDate: formatDateForInput((data as any).endDate),
+          startDate: (data as any).startDate || '',
+          endDate: (data as any).endDate || '',
           requirements: (data as any).requirements || '',
           notes: (data as any).notes || '',
           
@@ -602,9 +682,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           rateSheetOnFile: stageData.closedWon?.rateSheetOnFile || false,
           msaSigned: stageData.closedWon?.msaSigned || false,
           
-          // Financial
-          estimatedRevenue: (data as any).estimatedRevenue?.toString() || '',
-          
           // HR Contact
           hrContactId: (data as any).hrContactId || (data as any).deal?.hrContactId || '',
           
@@ -618,6 +695,20 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           safetyContactId: (data as any).safetyContactId || (data as any).deal?.safetyContactId || '',
           invoiceContactId: (data as any).invoiceContactId || (data as any).deal?.invoiceContactId || '',
         });
+        
+        // Load gig positions if job type is gig
+        if ((data as any).jobType === 'gig' && (data as any).gigPositions) {
+          setGigPositions((data as any).gigPositions);
+        } else if ((data as any).jobType === 'gig') {
+          // If gig type but no positions saved, initialize with data from main fields
+          setGigPositions([{
+            jobTitle: (data as any).jobTitle || '',
+            workersNeeded: data.workersNeeded || 1,
+            payRate: String((data as any).payRate || ''),
+            markup: String((data as any).markup || ''),
+            billRate: String((data as any).billRate || '')
+          } as any]);
+        }
         
         // Load locations for the company if companyId is set
         const companyForLocations = (data as any).companyId;
@@ -656,6 +747,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         ...(numericMarkup > 0 ? { billRate: computed ? String(Number(computed.toFixed(2))) : '' } : {})
       };
     }
+
+    // Load company contacts when company is selected
+    if (field === 'companyId' && value) {
+      await loadCompanyContacts(value);
+    }
     
     setFormData(updatedFormData);
     
@@ -678,7 +774,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     // Use the passed form data or fall back to current state
     const dataToUse = currentFormData || formData;
 
-    console.log('🔍 Auto-saving field:', field, 'value:', value, 'startDate in dataToUse:', dataToUse.startDate);
 
     try {
       // Get company and location names if needed
@@ -789,9 +884,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         setDeep(stageDataUpdate as any, path, value);
       }
 
-      // Parse dates properly - convert string to Date object
-      const startDateParsed = dataToUse.startDate ? parseDateFromInput(dataToUse.startDate) : null;
-      const endDateParsed = dataToUse.endDate ? parseDateFromInput(dataToUse.endDate) : null;
+      // Use dates as simple strings - no parsing needed
+      const startDateParsed = dataToUse.startDate || null;
+      const endDateParsed = dataToUse.endDate || null;
       
 
       // Compute calculated bill rate if markup/payRate present
@@ -804,6 +899,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         jobOrderName: dataToUse.jobOrderName,
         jobOrderDescription: dataToUse.description,
         status: dataToUse.status,
+        jobType: dataToUse.jobType || 'career',
         workersNeeded: toNumberSafe(dataToUse.workersNeeded) ?? 1,
         payRate: toNumberSafe(dataToUse.payRate) ?? 0,
         markup: toNumberSafe(dataToUse.markup) ?? 0,
@@ -816,7 +912,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         companyName,
         worksiteId: dataToUse.worksiteId || '',
         worksiteName,
-        estimatedRevenue: toNumberSafe(dataToUse.estimatedRevenue) ?? 0,
+        estimatedRevenue: (() => {
+          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          const billRate = toNumberSafe(dataToUse.billRate) || toNumberSafe(dataToUse.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(dataToUse.workersNeeded?.toString() || '1') || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
         notes: dataToUse.notes,
         hrContactId: dataToUse.hrContactId || '',
         decisionMaker: dataToUse.decisionMaker || '',
@@ -881,7 +982,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         companyName,
         locationId: formData.worksiteId,
         locationName: worksiteName,
-        estimatedRevenue: parseFloat(formData.estimatedRevenue) || 0,
+        estimatedRevenue: (() => {
+          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
         notes: formData.notes,
         
         // Stage data structure
@@ -964,6 +1070,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           },
         },
         
+        // CRITICAL: Preserve existing associations (contacts, salespeople, locations, etc.)
+        // Do NOT overwrite associations that were added via Deal Contacts dialog
+        associations: loadedJobOrderData?.deal?.associations || jobOrder?.deal?.associations || {},
+        
         // Update timestamp
         updatedAt: new Date(),
       };
@@ -979,18 +1089,40 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Job Order specific fields
         tenantId,
         jobOrderName: formData.jobOrderName,
-        jobTitle: formData.jobTitle,
+        jobTitle: formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle || '') : formData.jobTitle,
         jobOrderDescription: formData.description,
         status: formData.status,
-        workersNeeded: parseInt(formData.workersNeeded.toString()) || 1,
+        jobType: formData.jobType || 'career',
+        workersNeeded: formData.jobType === 'gig' 
+          ? gigPositions.reduce((sum, pos) => sum + (pos.workersNeeded || 0), 0) 
+          : (parseInt(formData.workersNeeded.toString()) || 1),
         companyId: formData.companyId || '',
         worksiteId: formData.worksiteId || '',
-        payRate: parseFloat(formData.payRate) || 0,
-        markup: parseFloat(formData.markup) || 0,
-        billRate: (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
-        calculatedBillRate: computedBillForCreate,
-        startDate: formData.startDate ? parseDateFromInput(formData.startDate) : null,
-        endDate: formData.endDate ? parseDateFromInput(formData.endDate) : null,
+        payRate: formData.jobType === 'gig' 
+          ? (parseFloat(gigPositions[0]?.payRate || '0') || 0)
+          : (parseFloat(formData.payRate) || 0),
+        markup: formData.jobType === 'gig'
+          ? (parseFloat((gigPositions[0] as any)?.markup || '0') || 0)
+          : (parseFloat(formData.markup) || 0),
+        billRate: formData.jobType === 'gig'
+          ? (() => {
+              const payRate = parseFloat(gigPositions[0]?.payRate || '0') || 0;
+              const markup = parseFloat((gigPositions[0] as any)?.markup || '0') || 0;
+              return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : (parseFloat((gigPositions[0] as any)?.billRate || '0') || 0);
+            })()
+          : (numericMarkupForCreate > 0 ? computedBillForCreate : (parseFloat(formData.billRate) || 0)),
+        calculatedBillRate: formData.jobType === 'gig'
+          ? (() => {
+              const payRate = parseFloat(gigPositions[0]?.payRate || '0') || 0;
+              const markup = parseFloat((gigPositions[0] as any)?.markup || '0') || 0;
+              return markup > 0 && payRate > 0 ? Number((payRate * (1 + markup / 100)).toFixed(2)) : 0;
+            })()
+          : computedBillForCreate,
+        startDate: formData.startDate || null,
+        endDate: formData.endDate || null,
+        
+        // Gig positions array (only for gig type)
+        gigPositions: formData.jobType === 'gig' ? gigPositions : undefined,
         
         // Update the deal data
         deal: updatedDealData,
@@ -1015,7 +1147,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         priority: formData.priority || '',
         employmentType: formData.employmentType || '',
         experienceLevel: formData.experienceLevel || '',
-        estimatedRevenue: parseFloat(formData.estimatedRevenue) || 0,
+        estimatedRevenue: (() => {
+          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
+          const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
+          return billRate * 2080 * workersNeeded;
+        })(),
         
         // Compliance Fields
         backgroundCheckRequired: formData.backgroundCheckRequired || false,
@@ -1065,14 +1202,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Update existing job order
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
         
-        console.log('🔍 About to save to Firestore - jobOrderData:', {
-          startDate: jobOrderData.startDate,
-          endDate: jobOrderData.endDate,
-          formDataStartDate: formData.startDate,
-          formDataEndDate: formData.endDate
-        });
+        // Remove undefined values before saving
+        const cleanJobOrderData = removeUndefinedValues(jobOrderData);
         
-        await updateDoc(jobOrderRef, jobOrderData);
+        await updateDoc(jobOrderRef, cleanJobOrderData);
         setSuccess('Job order updated successfully!');
         console.log('✅ Job order updated successfully');
       } else {
@@ -1167,30 +1300,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 />
               </Grid>
               
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  freeSolo
-                  options={jobTitlesList}
-                  value={formData.jobTitle}
-                  onChange={(event, newValue) => {
-                    handleInputChange('jobTitle', newValue || '');
-                  }}
-                  onInputChange={(event, newInputValue) => {
-                    handleInputChange('jobTitle', newInputValue);
-                  }}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label={getFieldDef('jobTitle')?.label || 'Job Title'}
-                      required
-                      onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
-                    />
-                  )}
-                />
-              </Grid>
-              
-              <Grid item xs={12} md={6}>
+              <Grid item xs={6} md={3}>
                 <FormControl fullWidth>
                   <InputLabel>Status</InputLabel>
                   <Select
@@ -1208,126 +1318,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   </Select>
                 </FormControl>
               </Grid>
-            </Grid>
 
-            <Grid container spacing={2} sx={{ mb: 3 }}>
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={(getFieldDef('workersNeeded')?.label || 'Workers Needed')}
-                type="number"
-                value={formData.workersNeeded}
-                onChange={(e) => handleInputChange('workersNeeded', parseInt(e.target.value) || 1)}
-                onBlur={(e) => handleFieldBlur('workersNeeded', parseInt(e.target.value) || 1)}
-                required
-                inputProps={{ min: 1 }}
-              />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={['Full Time', 'Part Time', 'Temporary', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
-                value={Array.isArray((formData as any).shiftType) ? (formData as any).shiftType : ((formData as any).shiftType ? [(formData as any).shiftType] : [])}
-                onChange={(event, newValue) => {
-                  handleInputChange('shiftType', newValue);
-                  handleFieldBlur('shiftType', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Shift Details"
-                    helperText="Select shift requirements for this position"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                label={getFieldDef('payRate')?.label || 'Pay Rate'}
-                value={formData.payRate}
-                onChange={(e) => handleInputChange('payRate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('payRate', e.target.value)}
-                placeholder="e.g., $15/hour, $500/week"
-              />
-            </Grid>
-
-            <Grid item xs={12} md={4}>
-              <TextField
-                fullWidth
-                label={getFieldDef('markup')?.label || 'Markup (%)'}
-                value={formData.markup}
-                onChange={(e) => handleInputChange('markup', e.target.value)}
-                placeholder="e.g., 25"
-              />
-            </Grid>
-
-            {(!formData.markup || String(formData.markup).trim() === '' || Number(formData.markup) === 0) ? (
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label={getFieldDef('billRate')?.label || 'Bill Rate'}
-                  value={formData.billRate}
-                  onChange={(e) => handleInputChange('billRate', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('billRate', e.target.value)}
-                  placeholder="e.g., $22.50"
-                />
+              <Grid item xs={6} md={3}>
+                <FormControl fullWidth required>
+                  <InputLabel>Job Type</InputLabel>
+                  <Select
+                    value={formData.jobType}
+                    onChange={(e) => handleInputChange('jobType', e.target.value)}
+                    onBlur={(e) => handleFieldBlur('jobType', e.target.value)}
+                    label="Job Type"
+                  >
+                    <MenuItem value="gig">Gig</MenuItem>
+                    <MenuItem value="career">Career</MenuItem>
+                  </Select>
+                </FormControl>
               </Grid>
-            ) : (
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label={getFieldDef('calculatedBillRate')?.label || 'Calculated Bill Rate'}
-                  value={formData.calculatedBillRate}
-                  InputProps={{ readOnly: true }}
-                />
-              </Grid>
-            )}
 
-            
-
-            
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('startDate')?.label || 'Start Date'}
-                type="date"
-                value={formData.startDate}
-                onChange={(e) => handleInputChange('startDate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('endDate')?.label || 'End Date'}
-                type="date"
-                value={formData.endDate}
-                onChange={(e) => handleInputChange('endDate', e.target.value)}
-                onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            </Grid>
-
-
-            <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
                   <InputLabel>{(getFieldDef('companyId')?.label || 'Company') + ' *'}</InputLabel>
@@ -1349,12 +1355,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
-                  <InputLabel>{getFieldDef('worksiteId')?.label || 'Location'}</InputLabel>
+                  <InputLabel>{getFieldDef('worksiteId')?.label || 'Worksite Id'}</InputLabel>
                   <Select
                     value={formData.worksiteId}
                     onChange={(e) => handleInputChange('worksiteId', e.target.value)}
                     onBlur={(e) => handleFieldBlur('worksiteId', e.target.value)}
-                    label={getFieldDef('worksiteId')?.label || 'Location'}
+                    label={getFieldDef('worksiteId')?.label || 'Worksite Id'}
                     disabled={!formData.companyId}
                   >
                     {filteredLocations.map((location) => (
@@ -1365,6 +1371,295 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   </Select>
                 </FormControl>
               </Grid>
+
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label={getFieldDef('startDate')?.label || 'Start Date'}
+                  type="date"
+                  value={formData.startDate}
+                  onChange={(e) => handleInputChange('startDate', e.target.value)}
+                  onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label={getFieldDef('endDate')?.label || 'End Date'}
+                  type="date"
+                  value={formData.endDate}
+                  onChange={(e) => handleInputChange('endDate', e.target.value)}
+                  onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+
+              {/* Career Type: Single Job Title and Workers Needed */}
+              {formData.jobType === 'career' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <Autocomplete
+                      fullWidth
+                      freeSolo
+                      options={jobTitlesList}
+                      value={formData.jobTitle}
+                      onChange={(event, newValue) => {
+                        handleInputChange('jobTitle', newValue || '');
+                      }}
+                      onInputChange={(event, newInputValue) => {
+                        handleInputChange('jobTitle', newInputValue);
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label={getFieldDef('jobTitle')?.label || 'Job Title'}
+                          required
+                          onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
+                        />
+                      )}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={(getFieldDef('workersNeeded')?.label || 'Workers Needed')}
+                      type="number"
+                      value={formData.workersNeeded}
+                      onChange={(e) => handleInputChange('workersNeeded', parseInt(e.target.value) || 1)}
+                      onBlur={(e) => handleFieldBlur('workersNeeded', parseInt(e.target.value) || 1)}
+                      required
+                      inputProps={{ min: 1 }}
+                    />
+                  </Grid>
+                </>
+              )}
+
+              {/* Gig Type: Multiple Positions */}
+              {formData.jobType === 'gig' && (
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Positions
+                      </Typography>
+                      <Button
+                        size="small"
+                        startIcon={<AddIcon />}
+                        onClick={() => {
+                          setGigPositions([...gigPositions, { jobTitle: '', workersNeeded: 1, payRate: '' }]);
+                        }}
+                      >
+                        Add Position
+                      </Button>
+                    </Box>
+
+                    {gigPositions.map((position, index) => (
+                      <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          {/* Row 1: Job Title and Workers Needed */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: '1 1 400px' }}>
+                              <Autocomplete
+                                fullWidth
+                                freeSolo
+                                options={jobTitlesList}
+                                value={position.jobTitle}
+                                onChange={(event, newValue) => {
+                                  const updated = [...gigPositions];
+                                  updated[index].jobTitle = newValue || '';
+                                  setGigPositions(updated);
+                                }}
+                                onInputChange={(event, newInputValue) => {
+                                  const updated = [...gigPositions];
+                                  updated[index].jobTitle = newInputValue;
+                                  setGigPositions(updated);
+                                }}
+                                renderInput={(params) => (
+                                  <TextField
+                                    {...params}
+                                    label="Job Title"
+                                    size="small"
+                                    required
+                                  />
+                                )}
+                              />
+                            </Box>
+                            <Box sx={{ flex: '0 1 150px' }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Workers Needed"
+                                type="number"
+                                value={position.workersNeeded}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index].workersNeeded = parseInt(e.target.value) || 1;
+                                  setGigPositions(updated);
+                                }}
+                                required
+                                inputProps={{ min: 1 }}
+                              />
+                            </Box>
+                          </Box>
+
+                          {/* Row 2: Pay Rate, Markup, Bill Rate */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Pay Rate"
+                                value={position.payRate}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index].payRate = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 15"
+                                required
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Markup (%)"
+                                value={(position as any).markup || ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  (updated[index] as any).markup = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 25"
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Bill Rate"
+                                value={(() => {
+                                  const payRate = parseFloat(position.payRate) || 0;
+                                  const markup = parseFloat((position as any).markup || '0') || 0;
+                                  if (markup > 0 && payRate > 0) {
+                                    return (payRate * (1 + markup / 100)).toFixed(2);
+                                  }
+                                  return (position as any).billRate || '';
+                                })()}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  (updated[index] as any).billRate = e.target.value;
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g., 26.25"
+                                InputProps={{ 
+                                  readOnly: !!((position as any).markup && parseFloat((position as any).markup) > 0)
+                                }}
+                              />
+                            </Box>
+                          </Box>
+                        </Box>
+                        {gigPositions.length > 1 && (
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => {
+                              setGigPositions(gigPositions.filter((_, i) => i !== index));
+                            }}
+                            sx={{ mt: 0.5 }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Box>
+                    ))}
+                  </Box>
+                </Grid>
+              )}
+
+              {/* Pay Rate/Markup/Bill Rate - Only for Career type */}
+              {formData.jobType === 'career' && (
+                <>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('payRate')?.label || 'Pay Rate'}
+                      value={formData.payRate}
+                      onChange={(e) => handleInputChange('payRate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('payRate', e.target.value)}
+                      placeholder="e.g., $15/hour, $500/week"
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('markup')?.label || 'Markup (%)'}
+                      value={formData.markup}
+                      onChange={(e) => handleInputChange('markup', e.target.value)}
+                      placeholder="e.g., 25"
+                    />
+                  </Grid>
+
+                  {(!formData.markup || String(formData.markup).trim() === '' || Number(formData.markup) === 0) ? (
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        label={getFieldDef('billRate')?.label || 'Bill Rate'}
+                        value={formData.billRate}
+                        onChange={(e) => handleInputChange('billRate', e.target.value)}
+                        onBlur={(e) => handleFieldBlur('billRate', e.target.value)}
+                        placeholder="e.g., $22.50"
+                      />
+                    </Grid>
+                  ) : (
+                    <Grid item xs={12} md={4}>
+                      <TextField
+                        fullWidth
+                        label={getFieldDef('calculatedBillRate')?.label || 'Calculated Bill Rate'}
+                        value={formData.calculatedBillRate}
+                        InputProps={{ readOnly: true }}
+                      />
+                    </Grid>
+                  )}
+                </>
+              )}
+
+            {formData.jobType === 'career' && (
+              <Grid item xs={12} md={12}>
+                <Autocomplete
+                  multiple
+                  fullWidth
+                  options={['Full Time', 'Part Time', 'Temporary', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
+                  value={Array.isArray((formData as any).shiftType) ? (formData as any).shiftType : ((formData as any).shiftType ? [(formData as any).shiftType] : [])}
+                  onChange={(event, newValue) => {
+                    handleInputChange('shiftType', newValue);
+                    handleFieldBlur('shiftType', newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Shift Details"
+                      helperText="Select shift requirements for this position"
+                    />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option}
+                        {...getTagProps({ index })}
+                        key={option}
+                      />
+                    ))
+                  }
+                />
+              </Grid>
+            )}
+
             </Grid>
 
 
@@ -1377,268 +1672,240 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid container spacing={2} sx={{ mb: 3 }}>
 
             <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('decisionMaker')?.label || 'HR Contact'}</InputLabel>
-                  <Select
-                    value={formData.decisionMaker || ''}
-                    onChange={(e) => handleInputChange('decisionMaker', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('decisionMaker', e.target.value)}
-                    label="Decision Maker"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select Decision Maker'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.decisionMaker) || null}
+                  onChange={(event, newValue) => handleInputChange('decisionMaker', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Decision Maker"
+                      placeholder="Select Decision Maker"
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      HR Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
             </Grid>
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('hrContactId')?.label || 'HR Contact'}</InputLabel>
-                  <Select
-                    value={formData.hrContactId || ''}
-                    onChange={(e) => handleInputChange('hrContactId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('hrContactId', e.target.value)}
-                    label="HR Contact"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select HR Contact'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.hrContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('hrContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="HR Contact"
+                      placeholder="Select HR Contact"
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      HR Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
 
               {/* Additional Contact Roles */}
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                <InputLabel>{getFieldDef('operationsContactId')?.label || 'Operations Contact'}</InputLabel>
-                  <Select
-                    value={formData.operationsContactId || ''}
-                    onChange={(e) => handleInputChange('operationsContactId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('operationsContactId', e.target.value)}
-                    label="Operations Contact"
-                    disabled={associatedContacts.length === 0}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {associatedContacts.length === 0 
-                          ? 'No contacts available' 
-                          : 'Select Operations Contact'
-                        }
-                      </em>
-                    </MenuItem>
-                    {associatedContacts.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        {contact.fullName} {contact.title && `(${contact.title})`}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {associatedContacts.length === 0 && dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      No contacts are associated with this deal. Add contacts to the deal first.
-                    </Typography>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.operationsContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('operationsContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Operations Contact"
+                      placeholder="Select Operations Contact"
+                    />
                   )}
-                  {!dealId && (
-                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                      Operations Contact selection requires a deal to be associated with this job order.
-                    </Typography>
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
                   )}
-                </FormControl>
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
               </Grid>
             </Grid>
 
           <Grid container spacing={2} sx={{ mb: 3 }}>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('procurementContactId')?.label || 'Procurement Contact'}</InputLabel>
-                <Select
-                  value={formData.procurementContactId || ''}
-                  onChange={(e) => handleInputChange('procurementContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('procurementContactId', e.target.value)}
-                  label="Procurement Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Procurement Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
+              <Autocomplete
+                fullWidth
+                options={loadedContacts}
+                getOptionLabel={(option) => option.fullName || option.name || ''}
+                value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
+                onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Procurement Contact"
+                    placeholder="Select Procurement Contact"
+                  />
                 )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Procurement Contact selection requires a deal to be associated with this job order.
-                  </Typography>
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.fullName || option.name} {option.title && `(${option.title})`}
+                  </li>
                 )}
-              </FormControl>
+                disabled={loadedContacts.length === 0}
+              />
+              {loadedContacts.length === 0 && formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  No contacts found for this company. Add contacts to the company first.
+                </Typography>
+              )}
+              {!formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  Select a company to load contacts.
+                </Typography>
+              )}
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('billingContactId')?.label || 'Billing Contact'}</InputLabel>
-                <Select
-                  value={formData.billingContactId || ''}
-                  onChange={(e) => handleInputChange('billingContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('billingContactId', e.target.value)}
-                  label="Billing Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Billing Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
+              <Autocomplete
+                fullWidth
+                options={loadedContacts}
+                getOptionLabel={(option) => option.fullName || option.name || ''}
+                value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
+                onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Billing Contact"
+                    placeholder="Select Billing Contact"
+                  />
                 )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Billing Contact selection requires a deal to be associated with this job order.
-                  </Typography>
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.fullName || option.name} {option.title && `(${option.title})`}
+                  </li>
                 )}
-              </FormControl>
+                disabled={loadedContacts.length === 0}
+              />
+              {loadedContacts.length === 0 && formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  No contacts found for this company. Add contacts to the company first.
+                </Typography>
+              )}
+              {!formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  Select a company to load contacts.
+                </Typography>
+              )}
             </Grid>
           </Grid>
 
           <Grid container spacing={2} sx={{ mb: 3 }}>
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-              <InputLabel>{getFieldDef('safetyContactId')?.label || 'Safety Contact'}</InputLabel>
-                <Select
-                  value={formData.safetyContactId || ''}
-                  onChange={(e) => handleInputChange('safetyContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('safetyContactId', e.target.value)}
-                  label="Safety Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Safety Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
+              <Autocomplete
+                fullWidth
+                options={loadedContacts}
+                getOptionLabel={(option) => option.fullName || option.name || ''}
+                value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
+                onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Safety Contact"
+                    placeholder="Select Safety Contact"
+                  />
                 )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Safety Contact selection requires a deal to be associated with this job order.
-                  </Typography>
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.fullName || option.name} {option.title && `(${option.title})`}
+                  </li>
                 )}
-              </FormControl>
+                disabled={loadedContacts.length === 0}
+              />
+              {loadedContacts.length === 0 && formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  No contacts found for this company. Add contacts to the company first.
+                </Typography>
+              )}
+              {!formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  Select a company to load contacts.
+                </Typography>
+              )}
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('invoiceContactId')?.label || 'Invoice Contact'}</InputLabel>
-                <Select
-                  value={formData.invoiceContactId || ''}
-                  onChange={(e) => handleInputChange('invoiceContactId', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('invoiceContactId', e.target.value)}
-                  label="Invoice Contact"
-                  disabled={associatedContacts.length === 0}
-                >
-                  <MenuItem value="">
-                    <em>
-                      {associatedContacts.length === 0 
-                        ? 'No contacts available' 
-                        : 'Select Invoice Contact'
-                      }
-                    </em>
-                  </MenuItem>
-                  {associatedContacts.map((contact) => (
-                    <MenuItem key={contact.id} value={contact.id}>
-                      {contact.fullName} {contact.title && `(${contact.title})`}
-                    </MenuItem>
-                  ))}
-                </Select>
-                {associatedContacts.length === 0 && dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    No contacts are associated with this deal. Add contacts to the deal first.
-                  </Typography>
+              <Autocomplete
+                fullWidth
+                options={loadedContacts}
+                getOptionLabel={(option) => option.fullName || option.name || ''}
+                value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
+                onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Invoice Contact"
+                    placeholder="Select Invoice Contact"
+                  />
                 )}
-                {!dealId && (
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                    Invoice Contact selection requires a deal to be associated with this job order.
-                  </Typography>
+                renderOption={(props, option) => (
+                  <li {...props}>
+                    {option.fullName || option.name} {option.title && `(${option.title})`}
+                  </li>
                 )}
-              </FormControl>
+                disabled={loadedContacts.length === 0}
+              />
+              {loadedContacts.length === 0 && formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  No contacts found for this company. Add contacts to the company first.
+                </Typography>
+              )}
+              {!formData.companyId && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                  Select a company to load contacts.
+                </Typography>
+              )}
             </Grid>
           </Grid>
 
@@ -1755,10 +2022,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
-                label={getFieldDef('estimatedRevenue')?.label || 'Estimated Revenue'}
-                value={formData.estimatedRevenue}
-                onChange={(e) => handleInputChange('estimatedRevenue', e.target.value)}
-                placeholder="e.g., 50000"
+                label={getFieldDef('estimatedRevenue')?.label || 'Estimated Annual Revenue'}
+                value={(() => {
+                  // Calculate: Bill Rate × 2080 hours × Workers Needed
+                  const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
+                  const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
+                  const annualHours = 2080; // Standard full-time annual hours
+                  const calculatedRevenue = billRate * annualHours * workersNeeded;
+                  return calculatedRevenue > 0 ? `$${calculatedRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00';
+                })()}
+                InputProps={{
+                  readOnly: true,
+                }}
+                helperText="Calculated: Bill Rate × 2,080 hours × Workers Needed"
               />
             </Grid>
 

@@ -37,6 +37,7 @@ import TenantFlex from './pages/TenantViews/TenantFlex';
 import JobsBoard from './pages/TenantViews/JobsBoard';
 import EditJobPost from './pages/TenantViews/EditJobPost';
 import PublicJobsBoard from './pages/PublicJobsBoard';
+import JobPostingDetail from './pages/JobPostingDetail';
 import ApplyWizardPage from './pages/ApplyWizardPage';
 import UserApplications from './pages/UserApplications';
 import MyAssignments from './pages/MyAssignments';
@@ -233,6 +234,8 @@ function App() {
       <Route element={<ConditionalJobsBoardLayout />}>
         <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
         <Route path="/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="/c1/jobs/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
         <Route path="/c1/applications" element={<UserApplications />} />
         <Route path="/applications" element={<UserApplications />} />
         <Route path="/c1/assignments" element={<MyAssignments />} />

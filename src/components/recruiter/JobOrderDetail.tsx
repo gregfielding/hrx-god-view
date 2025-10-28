@@ -53,7 +53,7 @@ import {
 import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder, JobOrderFormData, JobApplication, Candidate, Employee } from '../../types/recruiter/jobOrder';
 import { useAuth } from '../../contexts/AuthContext';
-import JobOrderForm from './JobOrderForm';
+import JobOrderForm from '../JobOrderForm';
 import PostToJobsBoardDialog from './PostToJobsBoardDialog';
 
 interface JobOrderDetailProps {

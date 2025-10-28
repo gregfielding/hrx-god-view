@@ -22,6 +22,7 @@ import {
   Switch,
   Card,
   CardContent,
+  InputAdornment,
 } from '@mui/material';
 import {
   Person as PersonIcon,
@@ -30,6 +31,7 @@ import {
   ContactEmergency as EmergencyIcon,
   Security as SecurityIcon,
   LocationOnOutlined as LocationOnOutlinedIcon,
+  CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
@@ -129,6 +131,9 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     uid: string;
   }>({ loginCount: null, lastLoginAt: null, uid });
 
+  // Phone verification status
+  const [phoneVerified, setPhoneVerified] = useState(false);
+
   // Removed AI insights section
 
   // Location settings data (read-only)
@@ -191,10 +196,12 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
             const data = snapshot.data();
             
             // Convert dates to ISO strings for form inputs
-            const dateOfBirth = data.dateOfBirth ? 
-              (data.dateOfBirth.toDate ? new Date(data.dateOfBirth.toDate()).toISOString().split('T')[0] : 
-               typeof data.dateOfBirth === 'string' ? data.dateOfBirth : 
-               new Date(data.dateOfBirth).toISOString().split('T')[0]) : '';
+            // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
+            const dobValue = data.dob || data.dateOfBirth;
+            const dateOfBirth = dobValue ? 
+              (dobValue.toDate ? new Date(dobValue.toDate()).toISOString().split('T')[0] : 
+               typeof dobValue === 'string' ? dobValue : 
+               new Date(dobValue).toISOString().split('T')[0]) : '';
             const startDate = data.startDate ? 
               (data.startDate.toDate ? new Date(data.startDate.toDate()).toISOString().split('T')[0] : 
                typeof data.startDate === 'string' ? data.startDate : 
@@ -234,6 +241,9 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
             
             setForm(newForm);
             setOriginalForm(newForm);
+
+            // Set phone verification status
+            setPhoneVerified(data.phoneVerified === true);
 
             // AI insights removed
             
@@ -551,7 +561,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
       
       const updateData = {
         ...cleanForm,
-        dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth) : null,
+        dob: form.dateOfBirth || null, // Save to 'dob' field (standard field name)
+        dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth) : null, // Keep for backward compatibility
         startDate: form.startDate ? new Date(form.startDate) : null,
         updatedAt: new Date()
       };
@@ -709,6 +720,14 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                           value={form.phone}
                           onChange={handleChange}
                           onBlur={handleBlur}
+                          InputProps={{
+                            endAdornment: phoneVerified ? (
+                              <InputAdornment position="end">
+                                <CheckCircleIcon color="success" fontSize="small" titleAccess="Phone Verified" />
+                              </InputAdornment>
+                            ) : null
+                          }}
+                          helperText={phoneVerified ? "Verified" : ""}
                         />
                       </Grid>
                       <Grid item xs={12}>

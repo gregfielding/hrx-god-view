@@ -560,8 +560,8 @@ const PublicJobsBoard: React.FC = () => {
   };
 
   const handleCardClick = (job: PublicJobPosting) => {
-    setSelectedJob(job);
-    setDialogOpen(true);
+    // Navigate to dedicated job posting detail page
+    navigate(`/c1/jobs/${job.id}`);
   };
 
   const handleCloseDialog = () => {
