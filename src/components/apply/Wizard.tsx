@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme } from '@mui/material';
 import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth } from '../../firebase';
 import { updateEmail } from 'firebase/auth';
 import { db } from '../../firebase';
@@ -15,6 +15,7 @@ import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
 import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
+import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from '../../utils/gigShiftApplicationLimits';
 
 type WizardProps = {
   tenantId: string;
@@ -40,6 +41,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
+  // Extract selected shifts from query params (for Gig jobs)
+  // Support both 'shifts' (comma-separated) and 'shiftId' (single shift)
+  const selectedShifts = useMemo(() => {
+    const shiftsParam = searchParams.get('shifts');
+    const shiftIdParam = searchParams.get('shiftId');
+    
+    if (shiftsParam) {
+      return shiftsParam.split(',').filter(Boolean);
+    } else if (shiftIdParam) {
+      return [shiftIdParam];
+    }
+    return [];
+  }, [searchParams]);
   
   
   // Create a unique key for this application session
@@ -555,6 +571,56 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (!uid || !appId) return;
     setSaving(true);
     try {
+      // Check for shift date conflicts if this is a gig job with shifts
+      if (selectedShifts.length > 0 && posting?.jobOrderId) {
+        let conflict: any = null;
+        
+        if (selectedShifts.length === 1) {
+          // Single shift - get the shift date and check
+          try {
+            const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', posting.jobOrderId, 'shifts', selectedShifts[0]);
+            const shiftSnap = await getDoc(shiftRef);
+            
+            if (shiftSnap.exists()) {
+              const shiftData = shiftSnap.data();
+              if (shiftData.shiftDate) {
+                conflict = await checkShiftDateConflict(uid, tenantId, shiftData.shiftDate);
+              }
+            }
+          } catch (error) {
+            console.error('Error checking shift date conflict:', error);
+          }
+        } else {
+          // Multiple shifts - check all of them
+          conflict = await checkMultipleShiftDateConflicts(
+            uid,
+            tenantId,
+            selectedShifts,
+            posting.jobOrderId
+          );
+        }
+        
+        if (conflict?.hasConflict) {
+          setSaving(false);
+          // Show error message using Snackbar
+          const conflictDate = conflict.conflictingApplication?.shiftDate 
+            ? new Date(conflict.conflictingApplication.shiftDate).toLocaleDateString()
+            : 'this date';
+          
+          setSubmitOpen(true);
+          // Store error message in state for display
+          const errorMsg = `You already have an active application for a shift on ${conflictDate}. ` +
+            `You can only apply to one shift per day. ` +
+            `Please withdraw your existing application or wait for it to be processed.`;
+          
+          // Use setTimeout to show error after state updates
+          setTimeout(() => {
+            alert(errorMsg); // Fallback to alert for now, can be improved with proper error state
+          }, 100);
+          return;
+        }
+      }
+      
       if (appId.startsWith('appDraft:')) {
         const existing = localStorage.getItem(appId);
         const parsed = existing ? JSON.parse(existing) : {};
@@ -622,6 +688,34 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         if (tenantId && uid && jobId) {
           const tidAppId = `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
+          
+          // Get shift dates for gig jobs (for one-shift-per-day validation)
+          let shiftDate: string | null = null;
+          const shiftDates: string[] = [];
+          
+          if (selectedShifts.length > 0 && posting?.jobOrderId) {
+            for (const shiftId of selectedShifts) {
+              try {
+                const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', posting.jobOrderId, 'shifts', shiftId);
+                const shiftSnap = await getDoc(shiftRef);
+                
+                if (shiftSnap.exists()) {
+                  const shiftData = shiftSnap.data();
+                  if (shiftData.shiftDate) {
+                    const dateStr = extractDateFromShiftDate(shiftData.shiftDate);
+                    if (selectedShifts.length === 1) {
+                      shiftDate = dateStr;
+                    } else {
+                      shiftDates.push(dateStr);
+                    }
+                  }
+                }
+              } catch (error) {
+                console.error(`Error getting shift date for ${shiftId}:`, error);
+              }
+            }
+          }
+          
           await setDoc(tRef, {
             userId: uid,
             tenantId,
@@ -636,7 +730,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               lastName: personal.lastName || null,
               email: personal.email || null,
               phone: personal.phone || null,
-            }
+            },
+            // Store shift information for gig jobs
+            ...(selectedShifts.length === 1 ? { shiftId: selectedShifts[0] } : {}),
+            ...(selectedShifts.length > 1 ? { shiftIds: selectedShifts } : {}),
+            // Store shift date(s) for one-shift-per-day validation
+            ...(shiftDate ? { shiftDate } : {}),
+            ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
           }, { merge: true });
           
           // Prepare denormalized application data for quick lookups
@@ -660,6 +760,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           
+          // Build shift assignments map for Gig jobs
+          const shiftAssignments: Record<string, string> = {};
+          if (selectedShifts.length > 0) {
+            selectedShifts.forEach(shiftId => {
+              shiftAssignments[shiftId] = 'pending'; // All start as pending
+            });
+          }
+
           const applicationQuickData: any = {
             applicationId: applicationId, // Include the application ID for reference
             jobId: jobId,
@@ -675,7 +783,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             appliedAt: serverTimestamp(),
             startDate: posting?.startDate || null,
             location: posting?.worksiteName || posting?.city || null,
-            updatedAt: serverTimestamp()
+            updatedAt: serverTimestamp(),
+            // Shift selection (for Gig jobs only)
+            ...(selectedShifts.length > 0 ? {
+              selectedShifts: selectedShifts,
+              shiftAssignments: shiftAssignments
+            } : {})
           };
           
           // Add application ID to user's applicationIds array AND applicationData map

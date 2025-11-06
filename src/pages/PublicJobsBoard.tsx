@@ -48,6 +48,7 @@ import {
   Checkroom,
   Build,
   Close,
+  Event,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -122,6 +123,7 @@ interface PublicJobPosting {
   restrictedGroups?: string[];
   createdAt: Date;
   benefits?: string;
+  jobOrderId?: string; // For Gig jobs loaded directly from job_orders
 }
 
 const PublicJobsBoard: React.FC = () => {
@@ -159,7 +161,12 @@ const PublicJobsBoard: React.FC = () => {
   
   // Track user's application IDs for showing "Application Submitted"
   const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
+  const [userApplicationStatuses, setUserApplicationStatuses] = useState<Record<string, string>>({}); // Map of applicationId -> status
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
+  
+  // Track shifts for selected job in dialog
+  const [selectedJobShifts, setSelectedJobShifts] = useState<any[]>([]);
+  const [loadingSelectedJobShifts, setLoadingSelectedJobShifts] = useState(false);
 
   // Check if we're on the C1 route and should use specific tenantId
   // Also treat /jobs-board (without /c1/) as C1 route for backwards compatibility
@@ -168,7 +175,7 @@ const PublicJobsBoard: React.FC = () => {
 
   useEffect(() => {
     loadPublicJobs();
-    requestLocationPermission();
+    // Don't request location permission automatically - only on user gesture
   }, [specificTenantId]);
   
   // Load user's application IDs and group memberships when logged in
@@ -176,6 +183,7 @@ const PublicJobsBoard: React.FC = () => {
     const loadUserData = async () => {
       if (!user?.uid) {
         setUserApplicationIds([]);
+        setUserApplicationStatuses({});
         setUserGroupIds([]);
         return;
       }
@@ -184,8 +192,66 @@ const PublicJobsBoard: React.FC = () => {
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const userData = userSnap.data();
-          setUserApplicationIds(Array.isArray(userData?.applicationIds) ? userData.applicationIds : []);
+          const applicationIds = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
+          setUserApplicationIds(applicationIds);
           setUserGroupIds(Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : []);
+          
+          // Load application statuses
+          // applicationId format is: ${tenantId}_${jobId}
+          // Application document ID format is: ${user.uid}_${jobId}
+          // Use query-based approach to respect Firestore security rules
+          const statusMap: Record<string, string> = {};
+          
+          // Group applications by tenant to batch queries
+          const appsByTenant: Record<string, string[]> = {};
+          for (const appId of applicationIds) {
+            const firstUnderscoreIndex = appId.indexOf('_');
+            if (firstUnderscoreIndex === -1) continue;
+            
+            const tenantIdFromApp = appId.substring(0, firstUnderscoreIndex);
+            const jobId = appId.substring(firstUnderscoreIndex + 1);
+            
+            if (!tenantIdFromApp || !jobId) continue;
+            
+            if (!appsByTenant[tenantIdFromApp]) {
+              appsByTenant[tenantIdFromApp] = [];
+            }
+            appsByTenant[tenantIdFromApp].push(jobId);
+          }
+          
+          // Query each tenant's applications
+          for (const [tenantIdFromApp, jobIds] of Object.entries(appsByTenant)) {
+            try {
+              const applicationsRef = collection(db, 'tenants', tenantIdFromApp, 'applications');
+              // Query all applications for this user in this tenant
+              const q = query(
+                applicationsRef,
+                where('userId', '==', user.uid)
+              );
+              const snapshot = await getDocs(q);
+              
+              snapshot.forEach((docSnap) => {
+                const appData = docSnap.data();
+                // Extract jobId from document ID (format: ${user.uid}_${jobId})
+                const docId = docSnap.id;
+                const jobIdFromDoc = docId.replace(`${user.uid}_`, '');
+                
+                // Check if this jobId is in our list
+                if (jobIds.includes(jobIdFromDoc)) {
+                  const appId = `${tenantIdFromApp}_${jobIdFromDoc}`;
+                  statusMap[appId] = appData.status || 'submitted';
+                }
+              });
+            } catch (err: any) {
+              // Silently handle permission errors - this is non-critical
+              // Users can still see their applications via other means
+              if (err.code !== 'permission-denied') {
+                console.error(`Error loading applications for tenant ${tenantIdFromApp}:`, err);
+              }
+            }
+          }
+          
+          setUserApplicationStatuses(statusMap);
         }
       } catch (error) {
         console.error('Error loading user data:', error);
@@ -195,6 +261,7 @@ const PublicJobsBoard: React.FC = () => {
   }, [user?.uid]);
 
   // Request user's location permission and get coordinates
+  // Only call this in response to a user gesture (e.g., selecting "Closest to Me")
   const requestLocationPermission = () => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -211,13 +278,20 @@ const PublicJobsBoard: React.FC = () => {
             console.warn('Location permission denied or error:', error);
           }
           setLocationPermission('denied');
+          // If permission denied, reset sort to newest
+          setSortBy('newest');
         }
       );
-    } else {
-      console.warn('Geolocation not supported');
-      setLocationPermission('denied');
     }
   };
+
+  // Request location permission when user selects "closest" sort option
+  useEffect(() => {
+    if (sortBy === 'closest' && locationPermission === 'prompt' && !userLocation) {
+      // This is triggered by user selecting "closest" from dropdown, so it's a user gesture
+      requestLocationPermission();
+    }
+  }, [sortBy]);
 
   // Calculate distance between two points using Haversine formula (in miles)
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -234,7 +308,134 @@ const PublicJobsBoard: React.FC = () => {
   };
 
 
+  // Helper function to convert JobOrder to PublicJobPosting format
+  const convertJobOrderToPosting = (jobOrder: any, tenantId: string): PublicJobPosting => {
+    // Use first gig position's pay rate if available, otherwise use job order pay rate
+    const payRate = (jobOrder.gigPositions?.[0]?.payRate 
+      ? parseFloat(String(jobOrder.gigPositions[0].payRate)) 
+      : jobOrder.payRate) || undefined;
+    
+    // Use first gig position's job title if available
+    const jobTitle = jobOrder.gigPositions?.[0]?.jobTitle || jobOrder.jobTitle || '';
+    
+    // Convert shiftType array to shift array
+    const shift = Array.isArray(jobOrder.shiftType) 
+      ? jobOrder.shiftType 
+      : (jobOrder.shiftType ? [jobOrder.shiftType] : []);
+    
+    // Build requirements array
+    const requirements = [
+      ...(jobOrder.requiredLicenses || []),
+      ...(jobOrder.requiredCertifications || []),
+      ...(jobOrder.drugScreenRequired ? ['Drug Screen Required'] : []),
+      ...(jobOrder.backgroundCheckRequired ? ['Background Check Required'] : []),
+      ...(jobOrder.experienceRequired ? [jobOrder.experienceRequired] : []),
+      ...(jobOrder.educationRequired ? [jobOrder.educationRequired] : []),
+      ...(jobOrder.languagesRequired || []),
+      ...(jobOrder.skillsRequired || [])
+    ].filter(Boolean);
+    
+    // Convert dates
+    const startDate = jobOrder.startDate?.toDate ? jobOrder.startDate.toDate() : (jobOrder.startDate ? new Date(jobOrder.startDate) : undefined);
+    const endDate = jobOrder.endDate?.toDate ? jobOrder.endDate.toDate() : (jobOrder.endDate ? new Date(jobOrder.endDate) : undefined);
+    const createdAt = jobOrder.createdAt?.toDate ? jobOrder.createdAt.toDate() : (jobOrder.createdAt ? new Date(jobOrder.createdAt) : new Date());
+    
+    // Handle worksiteAddress - use directly from job order
+    // Check multiple possible field names for address
+    let worksiteAddress = jobOrder.worksiteAddress || jobOrder.address || jobOrder.worksite?.address;
+    
+    // Debug logging - show the full job order structure
+    console.log('Converting job order to posting:', {
+      jobOrderId: jobOrder.id,
+      jobOrderName: jobOrder.jobOrderName,
+      worksiteAddress: jobOrder.worksiteAddress,
+      address: jobOrder.address,
+      worksite: jobOrder.worksite,
+      allKeys: Object.keys(jobOrder)
+    });
+    
+    // Ensure worksiteAddress is an object with proper structure
+    if (!worksiteAddress) {
+      worksiteAddress = {
+        street: '',
+        city: '',
+        state: '',
+        zipCode: '',
+        country: 'US'
+      };
+    } else {
+      // Preserve existing values - don't overwrite with empty strings if values exist
+      worksiteAddress = {
+        street: worksiteAddress.street ?? '',
+        city: worksiteAddress.city ?? '',
+        state: worksiteAddress.state ?? '',
+        zipCode: worksiteAddress.zipCode ?? '',
+        country: worksiteAddress.country ?? 'US',
+        coordinates: worksiteAddress.coordinates
+      };
+    }
+    
+    console.log('Final worksiteAddress:', worksiteAddress);
+    
+    return {
+      id: `job-order-${jobOrder.id}`, // Prefix to distinguish from posting IDs
+      tenantId: tenantId,
+      postTitle: jobOrder.jobOrderName || jobTitle,
+      jobTitle: jobTitle,
+      jobType: 'gig' as const,
+      jobDescription: jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
+      companyName: jobOrder.companyName || '',
+      worksiteName: jobOrder.worksiteName || '',
+      worksiteAddress: worksiteAddress,
+      startDate: startDate,
+      endDate: endDate,
+      expDate: undefined,
+      showStart: jobOrder.showStartDate || false,
+      showEnd: false,
+      payRate: payRate,
+      showPayRate: jobOrder.showPayRate || false,
+      workersNeeded: jobOrder.workersNeeded,
+      eVerifyRequired: jobOrder.eVerifyRequired || false,
+      backgroundCheckPackages: jobOrder.backgroundCheckPackages || [],
+      showBackgroundChecks: false,
+      drugScreeningPanels: jobOrder.drugScreeningPanels || [],
+      showDrugScreening: false,
+      additionalScreenings: jobOrder.additionalScreenings || [],
+      showAdditionalScreenings: false,
+      skills: jobOrder.skillsRequired || [],
+      showSkills: false,
+      licensesCerts: [...(jobOrder.requiredLicenses || []), ...(jobOrder.requiredCertifications || [])],
+      showLicensesCerts: false,
+      experienceLevels: jobOrder.experienceRequired ? [jobOrder.experienceRequired] : [],
+      showExperience: false,
+      educationLevels: jobOrder.educationRequired ? [jobOrder.educationRequired] : [],
+      showEducation: false,
+      languages: jobOrder.languagesRequired || [],
+      showLanguages: false,
+      physicalRequirements: jobOrder.physicalRequirements ? [jobOrder.physicalRequirements] : [],
+      showPhysicalRequirements: false,
+      uniformRequirements: jobOrder.uniformRequirements ? [jobOrder.uniformRequirements] : [],
+      showUniformRequirements: false,
+      requiredPpe: jobOrder.ppeRequirements ? [jobOrder.ppeRequirements] : [],
+      showRequiredPpe: false,
+      shift: shift,
+      showShift: shift.length > 0,
+      startTime: '',
+      endTime: '',
+      showStartTime: false,
+      showEndTime: false,
+      status: 'active', // Gig job orders are considered active if status is 'open'
+      visibility: (jobOrder.jobsBoardVisibility || jobOrder.visibility || 'public') as 'public' | 'private' | 'restricted',
+      restrictedGroups: jobOrder.restrictedGroups || [],
+      createdAt: createdAt,
+      benefits: '',
+      // Add jobOrderId for reference
+      jobOrderId: jobOrder.id
+    };
+  };
+
   const loadPublicJobs = async () => {
+    console.log('🚀 loadPublicJobs called, specificTenantId:', specificTenantId);
     try {
       setLoading(true);
       const jobsBoardService = JobsBoardService.getInstance();
@@ -242,30 +443,222 @@ const PublicJobsBoard: React.FC = () => {
       const allJobs: PublicJobPosting[] = [];
 
       if (specificTenantId) {
+        console.log('🔍 Loading jobs for specific tenant:', specificTenantId);
         // If we're on the C1 route, load all jobs from the specific tenant (will filter by visibility client-side)
         try {
           // Load public, restricted, and private jobs (client-side filtering will handle visibility)
+          console.log('🔍 Loading job_postings for tenant:', specificTenantId);
           const [publicPosts, restrictedPosts] = await Promise.all([
             jobsBoardService.getPostsByVisibility(specificTenantId, 'public'),
             jobsBoardService.getPostsByVisibility(specificTenantId, 'restricted')
           ]);
           
+          console.log('🔍 Loaded', publicPosts.length, 'public posts and', restrictedPosts.length, 'restricted posts');
           const allPosts = [...publicPosts, ...restrictedPosts];
           
           // Filter for active posts only
           const activePosts = allPosts.filter(post => post.status === 'active');
+          console.log('🔍 Active posts after filtering:', activePosts.length);
           
-          // Convert to PublicJobPosting format
-          const convertedPosts: PublicJobPosting[] = activePosts.map(post => ({
-            id: post.id,
-            tenantId: post.tenantId,
-            postTitle: post.postTitle,
-            jobTitle: post.jobTitle,
-            jobType: post.jobType,
-            jobDescription: post.jobDescription,
-            companyName: post.companyName,
-            worksiteName: post.worksiteName,
-            worksiteAddress: post.worksiteAddress,
+          // Get job order IDs that already have postings (to avoid duplicates)
+          const jobOrderIdsWithPostings = new Set(
+            activePosts
+              .filter(post => post.jobOrderId)
+              .map(post => post.jobOrderId!)
+          );
+          
+          // Load Gig job orders that don't have postings
+          console.log('🔍 Loading gig job orders for tenant:', specificTenantId);
+          const gigJobOrdersRef = collection(db, 'tenants', specificTenantId, 'job_orders');
+          const gigJobOrdersQuery = query(
+            gigJobOrdersRef,
+            where('jobType', '==', 'gig'),
+            where('status', '==', 'open')
+          );
+          const gigJobOrdersSnapshot = await getDocs(gigJobOrdersQuery);
+          console.log('🔍 Found', gigJobOrdersSnapshot.docs.length, 'gig job orders');
+          
+          const gigJobOrders: PublicJobPosting[] = [];
+          // Fetch location data for job orders that need it
+          const locationPromises = gigJobOrdersSnapshot.docs.map(async (jobOrderDoc) => {
+            const jobOrderData = jobOrderDoc.data();
+            const jobOrderId = jobOrderDoc.id;
+            console.log('🔍 Processing job order:', jobOrderId, 'Name:', jobOrderData.jobOrderName, 'worksiteId:', jobOrderData.worksiteId);
+            
+            // Skip if this job order already has a posting
+            if (jobOrderIdsWithPostings.has(jobOrderId)) {
+              console.log('⏭️ Skipping job order', jobOrderId, 'because it already has a posting');
+              return null;
+            }
+            console.log('✅ Job order', jobOrderId, 'does not have existing posting, continuing...');
+            
+            // Check visibility - only include public or restricted
+            const visibility = jobOrderData.jobsBoardVisibility || jobOrderData.visibility || 'public';
+            console.log('🔍 Job order', jobOrderId, 'visibility:', visibility);
+            if (visibility !== 'public' && visibility !== 'restricted') {
+              console.log('⏭️ Skipping job order', jobOrderId, 'because visibility is', visibility);
+              return null;
+            }
+            console.log('✅ Job order', jobOrderId, 'has valid visibility');
+            
+            // Log the job order data to debug
+            console.log('🔍 Job order data:', {
+              id: jobOrderId,
+              worksiteAddress: jobOrderData.worksiteAddress,
+              worksiteName: jobOrderData.worksiteName,
+              worksiteId: jobOrderData.worksiteId,
+              companyId: jobOrderData.companyId
+            });
+            
+            // Always try to fetch location data from worksite document if worksiteId exists
+            // Path: tenants/{tenantId}/locations/{worksiteId}
+            console.log('🔍 Checking if worksiteId exists. Type:', typeof jobOrderData.worksiteId, 'Value:', jobOrderData.worksiteId);
+            if (jobOrderData.worksiteId) {
+              console.log('✅ WorksiteId exists, fetching location for:', jobOrderData.worksiteId);
+              try {
+                const locationRef = doc(db, 'tenants', specificTenantId, 'locations', jobOrderData.worksiteId);
+                console.log('🔍 Attempting to fetch location at path:', locationRef.path);
+                const locationSnap = await getDoc(locationRef);
+                console.log('🔍 Location document exists?', locationSnap.exists());
+                
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data() as any;
+                  console.log('✅ Fetched location document:', locationData);
+                  console.log('✅ Location address field:', locationData.address);
+                  
+                  // Initialize worksiteAddress if it doesn't exist
+                  if (!jobOrderData.worksiteAddress) {
+                    jobOrderData.worksiteAddress = {};
+                  }
+                  
+                  // The location document has an 'address' field with city, state, street, zipCode, and coordinates
+                  const locAddress = locationData.address || {};
+                  
+                  // Merge location address data into job order, preferring existing values
+                  if (!jobOrderData.worksiteAddress.city && locAddress.city) {
+                    jobOrderData.worksiteAddress.city = locAddress.city;
+                  }
+                  if (!jobOrderData.worksiteAddress.state && locAddress.state) {
+                    jobOrderData.worksiteAddress.state = locAddress.state;
+                  }
+                  if (!jobOrderData.worksiteAddress.street && locAddress.street) {
+                    jobOrderData.worksiteAddress.street = locAddress.street;
+                  }
+                  if (!jobOrderData.worksiteAddress.zipCode && locAddress.zipCode) {
+                    jobOrderData.worksiteAddress.zipCode = locAddress.zipCode;
+                  }
+                  // Get coordinates from address.coordinates
+                  if (!jobOrderData.worksiteAddress.coordinates && locAddress.coordinates) {
+                    jobOrderData.worksiteAddress.coordinates = {
+                      lat: locAddress.coordinates.latitude || locAddress.coordinates.lat,
+                      lng: locAddress.coordinates.longitude || locAddress.coordinates.lng
+                    };
+                  }
+                  // Also update worksiteName if it's empty and location has a name
+                  if (!jobOrderData.worksiteName && locationData.name) {
+                    jobOrderData.worksiteName = locationData.name;
+                  }
+                  
+                  console.log('✅ Updated worksiteAddress:', jobOrderData.worksiteAddress);
+                } else {
+                  console.warn(`❌ Location document not found for worksiteId: ${jobOrderData.worksiteId} at path: tenants/${specificTenantId}/locations/${jobOrderData.worksiteId}`);
+                }
+              } catch (locationErr) {
+                console.error(`❌ Error fetching location for job order ${jobOrderId} (worksiteId: ${jobOrderData.worksiteId}):`, locationErr);
+              }
+            } else {
+              console.warn(`❌ Job order ${jobOrderId} (${jobOrderData.jobOrderName}) missing worksiteId`);
+            }
+            
+            console.log('🔍 Converting job order to posting, final worksiteAddress:', jobOrderData.worksiteAddress);
+            const converted = convertJobOrderToPosting({ ...jobOrderData, id: jobOrderId }, specificTenantId);
+            console.log('🔍 Converted posting worksiteAddress:', converted.worksiteAddress);
+            return converted;
+          });
+          
+          const resolvedGigJobOrders = await Promise.all(locationPromises);
+          gigJobOrders.push(...resolvedGigJobOrders.filter((job): job is PublicJobPosting => job !== null));
+          
+                    // Convert postings to PublicJobPosting format
+          // Also fetch location data for postings that need it
+          const convertedPostsPromises = activePosts.map(async (post) => {
+            // If worksiteAddress is missing city/state, try to fetch location
+            let worksiteAddress: any = post.worksiteAddress;
+            let worksiteId = (post as any).worksiteId;
+            
+            // If posting doesn't have worksiteId but has jobOrderId, fetch it from the job order
+            if (!worksiteId && (post as any).jobOrderId) {
+              try {
+                console.log('🔍 Posting', post.id, 'missing worksiteId, fetching from jobOrderId:', (post as any).jobOrderId);
+                const jobOrderRef = doc(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId);
+                const jobOrderSnap = await getDoc(jobOrderRef);
+                if (jobOrderSnap.exists()) {
+                  const jobOrderData = jobOrderSnap.data();
+                  worksiteId = jobOrderData.worksiteId;
+                  console.log('✅ Got worksiteId from job order:', worksiteId);
+                }
+              } catch (err) {
+                console.warn('❌ Failed to fetch job order for posting', post.id, ':', err);
+              }
+            }
+            
+            // Now fetch location if we have worksiteId and location data is missing
+            if ((!worksiteAddress || !worksiteAddress.city || !worksiteAddress.state) && worksiteId) {
+              try {
+                console.log('🔍 Posting', post.id, 'missing location data, fetching from worksiteId:', worksiteId);
+                const locationRef = doc(db, 'tenants', specificTenantId, 'locations', worksiteId);
+                console.log('🔍 Fetching location from path:', locationRef.path);
+                const locationSnap = await getDoc(locationRef);
+                console.log('🔍 Location document exists?', locationSnap.exists());
+                
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data() as any;
+                  console.log('✅ Fetched location document:', locationData);
+                  console.log('✅ Location address field:', locationData.address);
+                  
+                  const locAddress = locationData.address || {};
+                  if (!worksiteAddress) {
+                    worksiteAddress = {};
+                  }
+                  if (!worksiteAddress.city && locAddress.city) {
+                    worksiteAddress.city = locAddress.city;
+                  }
+                  if (!worksiteAddress.state && locAddress.state) {
+                    worksiteAddress.state = locAddress.state;
+                  }
+                  if (!worksiteAddress.street && locAddress.street) {
+                    worksiteAddress.street = locAddress.street;
+                  }
+                  if (!worksiteAddress.zipCode && locAddress.zipCode) {
+                    worksiteAddress.zipCode = locAddress.zipCode;
+                  }
+                  if (!worksiteAddress.coordinates && locAddress.coordinates) {
+                    worksiteAddress.coordinates = {
+                      lat: locAddress.coordinates.latitude || locAddress.coordinates.lat,
+                      lng: locAddress.coordinates.longitude || locAddress.coordinates.lng
+                    };
+                  }
+                  console.log('✅ Updated posting', post.id, 'worksiteAddress:', worksiteAddress);
+                } else {
+                  console.warn('❌ Location document not found for worksiteId:', worksiteId, 'at path:', locationRef.path);
+                }
+              } catch (err) {
+                console.error('❌ Error fetching location for posting', post.id, ':', err);
+              }
+            } else if (!worksiteId) {
+              console.warn('⚠️ Posting', post.id, 'has no worksiteId and no jobOrderId to fetch it from');
+            }
+            
+            return {
+              id: post.id,
+              tenantId: post.tenantId,
+              postTitle: post.postTitle,
+              jobTitle: post.jobTitle,
+              jobType: post.jobType,
+              jobDescription: post.jobDescription,
+              companyName: post.companyName,
+              worksiteName: post.worksiteName,
+              worksiteAddress: worksiteAddress || post.worksiteAddress,
             startDate: post.startDate,
             endDate: post.endDate,
             expDate: post.expDate,
@@ -308,9 +701,14 @@ const PublicJobsBoard: React.FC = () => {
             restrictedGroups: (post as any).restrictedGroups,
             createdAt: post.createdAt,
             benefits: post.benefits,
-          }));
+            jobOrderId: post.jobOrderId
+          };
+        });
+        
+        const convertedPosts = await Promise.all(convertedPostsPromises);
           
-          allJobs.push(...convertedPosts);
+        // Combine postings and gig job orders (postings take precedence for duplicates)
+        allJobs.push(...convertedPosts, ...gigJobOrders);
         } catch (err) {
           console.error(`Failed to load jobs for specific tenant ${specificTenantId}:`, err);
         }
@@ -327,6 +725,109 @@ const PublicJobsBoard: React.FC = () => {
             
             // Filter for active posts only
             const activePosts = publicPosts.filter(post => post.status === 'active');
+            
+            // Get job order IDs that already have postings (to avoid duplicates)
+            const jobOrderIdsWithPostings = new Set(
+              activePosts
+                .filter(post => post.jobOrderId)
+                .map(post => post.jobOrderId!)
+            );
+            
+            // Load Gig job orders that don't have postings
+            const gigJobOrders: PublicJobPosting[] = [];
+            try {
+              const gigJobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+              const gigJobOrdersQuery = query(
+                gigJobOrdersRef,
+                where('jobType', '==', 'gig'),
+                where('status', '==', 'open')
+              );
+              const gigJobOrdersSnapshot = await getDocs(gigJobOrdersQuery);
+              
+              // Fetch location data for job orders that need it
+              const locationPromises = gigJobOrdersSnapshot.docs.map(async (jobOrderDoc) => {
+                const jobOrderData = jobOrderDoc.data();
+                const jobOrderId = jobOrderDoc.id;
+                
+                // Skip if this job order already has a posting
+                if (jobOrderIdsWithPostings.has(jobOrderId)) {
+                  return null;
+                }
+                
+                // Check visibility - only include public or restricted
+                const visibility = jobOrderData.jobsBoardVisibility || jobOrderData.visibility || 'public';
+                if (visibility !== 'public' && visibility !== 'restricted') {
+                  return null;
+                }
+                
+                // Always try to fetch location data from worksite document if worksiteId exists
+                // Path: tenants/{tenantId}/locations/{worksiteId}
+                if (jobOrderData.worksiteId) {
+                  try {
+                    console.log('🔍 Job Order worksiteId:', jobOrderData.worksiteId);
+                    const locationRef = doc(db, 'tenants', tenantId, 'locations', jobOrderData.worksiteId);
+                    console.log('🔍 Location path:', locationRef.path);
+                    const locationSnap = await getDoc(locationRef);
+                    
+                    if (locationSnap.exists()) {
+                      const locationData = locationSnap.data() as any;
+                      console.log('✅ Fetched location document:', locationData);
+                      console.log('✅ Location address field:', locationData.address);
+                      
+                      // Initialize worksiteAddress if it doesn't exist
+                      if (!jobOrderData.worksiteAddress) {
+                        jobOrderData.worksiteAddress = {};
+                      }
+                      
+                      // The location document has an 'address' field with city, state, street, zipCode, and coordinates
+                      const locAddress = locationData.address || {};
+                      
+                      // Merge location address data into job order, preferring existing values
+                      if (!jobOrderData.worksiteAddress.city && locAddress.city) {
+                        jobOrderData.worksiteAddress.city = locAddress.city;
+                      }
+                      if (!jobOrderData.worksiteAddress.state && locAddress.state) {
+                        jobOrderData.worksiteAddress.state = locAddress.state;
+                      }
+                      if (!jobOrderData.worksiteAddress.street && locAddress.street) {
+                        jobOrderData.worksiteAddress.street = locAddress.street;
+                      }
+                      if (!jobOrderData.worksiteAddress.zipCode && locAddress.zipCode) {
+                        jobOrderData.worksiteAddress.zipCode = locAddress.zipCode;
+                      }
+                      // Get coordinates from address.coordinates
+                      if (!jobOrderData.worksiteAddress.coordinates && locAddress.coordinates) {
+                        jobOrderData.worksiteAddress.coordinates = {
+                          lat: locAddress.coordinates.latitude || locAddress.coordinates.lat,
+                          lng: locAddress.coordinates.longitude || locAddress.coordinates.lng
+                        };
+                      }
+                      // Also update worksiteName if it's empty and location has a name
+                      if (!jobOrderData.worksiteName && locationData.name) {
+                        jobOrderData.worksiteName = locationData.name;
+                      }
+                      
+                      console.log('Updated worksiteAddress:', jobOrderData.worksiteAddress);
+                    } else {
+                      console.warn(`❌ Location document not found for worksiteId: ${jobOrderData.worksiteId}`);
+                    }
+                  } catch (locationErr) {
+                    console.warn(`❌ Failed to fetch location for job order ${jobOrderId} (worksiteId: ${jobOrderData.worksiteId}):`, locationErr);
+                  }
+                } else {
+                  console.warn(`❌ Job order ${jobOrderId} missing worksiteId`);
+                }
+                
+                const converted = convertJobOrderToPosting({ ...jobOrderData, id: jobOrderId }, tenantId);
+                return converted;
+              });
+              
+              const resolvedGigJobOrders = await Promise.all(locationPromises);
+              gigJobOrders.push(...resolvedGigJobOrders.filter((job): job is PublicJobPosting => job !== null));
+            } catch (gigErr) {
+              // If gig job orders query fails (e.g., permissions), just continue with postings
+              console.warn(`Failed to load gig job orders for tenant ${tenantId}:`, gigErr);
+            }
             
             // Convert to PublicJobPosting format
             const convertedPosts: PublicJobPosting[] = activePosts.map(post => ({
@@ -383,7 +884,8 @@ const PublicJobsBoard: React.FC = () => {
               benefits: post.benefits,
             }));
             
-            allJobs.push(...convertedPosts);
+            // Combine postings and gig job orders
+            allJobs.push(...convertedPosts, ...gigJobOrders);
           } catch (err) {
             console.warn(`Failed to load jobs for tenant ${tenantId}:`, err);
             // Continue with other tenants
@@ -420,12 +922,14 @@ const PublicJobsBoard: React.FC = () => {
     }
 
     if (locationFilter !== 'all') {
-      filtered = filtered.filter((job) => 
-        job.worksiteAddress && 
-        job.worksiteAddress.city && 
-        job.worksiteAddress.state &&
-        `${job.worksiteAddress.city}, ${job.worksiteAddress.state}` === locationFilter
-      );
+      filtered = filtered.filter((job) => {
+        // Match against city, state format
+        if (job.worksiteAddress && job.worksiteAddress.city && job.worksiteAddress.state) {
+          return `${job.worksiteAddress.city}, ${job.worksiteAddress.state}` === locationFilter;
+        }
+        // Or match against worksiteName
+        return job.worksiteName === locationFilter;
+      });
     }
 
     if (jobTypeFilter !== 'all') {
@@ -515,9 +1019,11 @@ const PublicJobsBoard: React.FC = () => {
   const getUniqueLocations = () => {
     const locations = new Set<string>();
     jobs.forEach(job => {
-      if (job.worksiteAddress && job.worksiteAddress.city && job.worksiteAddress.state) {
+      // Always prefer city, state format for dropdown
+      if (job.worksiteAddress?.city && job.worksiteAddress?.state) {
         locations.add(`${job.worksiteAddress.city}, ${job.worksiteAddress.state}`);
       }
+      // Skip jobs without proper city/state (they won't be filterable by location)
     });
     return Array.from(locations).sort();
   };
@@ -561,14 +1067,43 @@ const PublicJobsBoard: React.FC = () => {
 
   const handleCardClick = (job: PublicJobPosting) => {
     // Navigate to dedicated job posting detail page
-    navigate(`/c1/jobs/${job.id}`);
+    navigate(`/c1/jobs-board/${job.id}`);
   };
 
   const handleCloseDialog = () => {
     setDialogOpen(false);
     setSelectedJob(null);
+    setSelectedJobShifts([]);
     setActiveTab(0); // Reset to first tab
   };
+
+  // Load shifts when a job is selected for dialog
+  useEffect(() => {
+    const loadShiftsForDialog = async () => {
+      if (!selectedJob || selectedJob.jobType !== 'gig' || !(selectedJob as any).jobOrderId) {
+        setSelectedJobShifts([]);
+        return;
+      }
+
+      try {
+        setLoadingSelectedJobShifts(true);
+        const jobsBoardService = JobsBoardService.getInstance();
+        const shifts = await jobsBoardService.fetchActiveShiftsForJobOrder(
+          selectedJob.tenantId,
+          (selectedJob as any).jobOrderId,
+          30
+        );
+        setSelectedJobShifts(shifts);
+      } catch (err) {
+        console.error('Error loading shifts for dialog:', err);
+        setSelectedJobShifts([]);
+      } finally {
+        setLoadingSelectedJobShifts(false);
+      }
+    };
+
+    loadShiftsForDialog();
+  }, [selectedJob]);
 
   // Helper function to safely format dates for display
   const formatDateForDisplay = (dateValue: any): string => {
@@ -593,6 +1128,60 @@ const PublicJobsBoard: React.FC = () => {
     } catch (error) {
       console.warn('Error formatting date for display:', dateValue, error);
       return '';
+    }
+  };
+
+  // Helper function to get application status button label and styling
+  const getApplicationStatusButton = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'hired':
+        return {
+          label: 'Hired',
+          backgroundColor: '#4CAF50', // Green
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
+      case 'rejected':
+      case 'not accepted':
+        return {
+          label: 'Not Accepted',
+          backgroundColor: '#F44336', // Red
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
+      case 'withdrawn':
+      case 'cancelled':
+        return {
+          label: 'Cancelled',
+          backgroundColor: '#9E9E9E', // Grey
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
+      case 'advanced':
+      case 'screened':
+      case 'offer_pending':
+      case 'offer':
+      case 'accepted':
+        return {
+          label: 'Accepted',
+          backgroundColor: '#2196F3', // Blue
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
+      case 'submitted':
+      case 'new':
+      default:
+        return {
+          label: 'Application Submitted',
+          backgroundColor: '#FFC700', // Yellow (existing color)
+          color: '#000',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
     }
   };
 
@@ -747,12 +1336,18 @@ const PublicJobsBoard: React.FC = () => {
               <Select
                 value={sortBy}
                 label="Sort By"
-                onChange={(e) => setSortBy(e.target.value)}
+                onChange={(e) => {
+                  const newSortBy = e.target.value;
+                  setSortBy(newSortBy);
+                  // If user selects "closest" and we don't have location yet, request it
+                  if (newSortBy === 'closest' && !userLocation && locationPermission === 'prompt') {
+                    // This onChange is a user gesture, so we can request location here
+                    requestLocationPermission();
+                  }
+                }}
               >
                 <MenuItem value="newest">Newest First</MenuItem>
-                {userLocation && locationPermission === 'granted' && (
-                  <MenuItem value="closest">Closest to Me</MenuItem>
-                )}
+                <MenuItem value="closest">Closest to Me</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -804,9 +1399,24 @@ const PublicJobsBoard: React.FC = () => {
                 <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                   {/* Job Title and Bookmark on same line */}
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                    <Typography variant="h6" component="h3" sx={{ fontWeight: 600, flex: 1 }}>
-                      {job.postTitle}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, gap: 1 }}>
+                      <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
+                        {job.postTitle}
+                      </Typography>
+                      {job.jobType === 'gig' && (
+                        <Chip
+                          icon={<Event sx={{ fontSize: 16 }} />}
+                          label="Gig"
+                          size="small"
+                          color="primary"
+                          sx={{ 
+                            height: 24,
+                            fontSize: '0.75rem',
+                            fontWeight: 500
+                          }}
+                        />
+                      )}
+                    </Box>
                     {user && (
                       <FavoriteButton
                         itemId={job.id}
@@ -822,7 +1432,8 @@ const PublicJobsBoard: React.FC = () => {
                     )}
                   </Box>
 
-                  {job.payRate && job.showPayRate && (
+                  {/* Hide pay rate for gig jobs - it's shown on individual shift cards instead */}
+                  {job.payRate && job.showPayRate && job.jobType !== 'gig' && (
                     <Box sx={{ mb: 2 }}>
                       <Typography variant="h6" color="primary" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
                         ${job.payRate}/hr
@@ -850,19 +1461,31 @@ const PublicJobsBoard: React.FC = () => {
                     <Typography variant="body2" color="text.secondary">
                       {job.worksiteAddress?.city && job.worksiteAddress?.state ? (
                         `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
-                      ) : (
+                      ) : job.worksiteName ? (
                         job.worksiteName
+                      ) : (
+                        'Location TBD'
                       )}
                     </Typography>
                   </Box>
 
-                  {job.startDate && job.showStart && (
+                  {/* For Gig jobs with shifts, show Next Shift; otherwise show Start Date */}
+                  {job.jobType === 'gig' && (job as any).nextShiftDate ? (
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                       <Schedule sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
                       <Typography variant="body2" color="text.secondary">
-                        Starts: {formatDateForDisplay(job.startDate)}
+                        Next Shift: {formatDateForDisplay((job as any).nextShiftDate)}
                       </Typography>
                     </Box>
+                  ) : (
+                    job.startDate && job.showStart && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                        <Schedule sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
+                        <Typography variant="body2" color="text.secondary">
+                          Starts: {formatDateForDisplay(job.startDate)}
+                        </Typography>
+                      </Box>
+                    )
                   )}
 
                   {job.shift && job.shift.length > 0 && job.showShift && (
@@ -891,28 +1514,50 @@ const PublicJobsBoard: React.FC = () => {
                       />
                     )}
                     
-                    {/* Apply Now or Application Submitted button (right side, half width) */}
+                    {/* Apply Now or Application Status button (right side, half width) */}
                     {(() => {
-                      const applicationId = `${job.tenantId}_${job.id}`;
-                      const hasApplied = userApplicationIds.includes(applicationId);
-                      
-                      if (hasApplied) {
+                      // For gig jobs, always show "Apply Now" - status is handled per shift in detail view
+                      if (job.jobType === 'gig') {
                         return (
                           <Button 
                             variant="contained" 
                             sx={{ 
                               width: '50%',
-                              ml: job.eVerifyRequired ? 'auto' : 0,
-                              backgroundColor: '#FFC700',
-                              color: '#000',
-                              '&:hover': {
-                                backgroundColor: '#E6B300',
-                              },
-                              cursor: 'default',
-                              pointerEvents: 'none',
+                              ml: 'auto'
+                            }} 
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevent card click
+                              handleCardClick(job);
                             }}
                           >
-                            Application Submitted
+                            Apply Now
+                          </Button>
+                        );
+                      }
+                      
+                      // For non-gig jobs, show status if user has applied
+                      const applicationId = `${job.tenantId}_${job.id}`;
+                      const hasApplied = userApplicationIds.includes(applicationId);
+                      
+                      if (hasApplied) {
+                        const status = userApplicationStatuses[applicationId] || 'submitted';
+                        const buttonProps = getApplicationStatusButton(status);
+                        return (
+                          <Button 
+                            variant="contained" 
+                            sx={{ 
+                              width: '50%',
+                              ml: 'auto',
+                              backgroundColor: buttonProps.backgroundColor,
+                              color: buttonProps.color,
+                              '&:hover': {
+                                backgroundColor: buttonProps.backgroundColor,
+                              },
+                              cursor: buttonProps.cursor,
+                              pointerEvents: buttonProps.pointerEvents,
+                            }}
+                          >
+                            {buttonProps.label}
                           </Button>
                         );
                       }
@@ -922,9 +1567,12 @@ const PublicJobsBoard: React.FC = () => {
                           variant="contained" 
                           sx={{ 
                             width: '50%',
-                            ml: job.eVerifyRequired ? 'auto' : 0
+                            ml: 'auto'
                           }} 
-                          onClick={() => handleApply(job)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // Prevent card click
+                            handleApply(job);
+                          }}
                         >
                           Apply Now
                         </Button>
@@ -985,7 +1633,8 @@ const PublicJobsBoard: React.FC = () => {
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
                       {selectedJob.companyName}
                     </Typography>
-                    {selectedJob.payRate && selectedJob.showPayRate && (
+                    {/* Hide pay rate for gig jobs with shifts - it's shown on individual shift cards instead */}
+                    {selectedJob.payRate && selectedJob.showPayRate && !(selectedJob.jobType === 'gig' && selectedJobShifts.length > 0) && (
                       <Typography variant="h6" color="primary" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
                         ${selectedJob.payRate}/hr
                       </Typography>
@@ -1013,16 +1662,49 @@ const PublicJobsBoard: React.FC = () => {
                   </Stack>
                   
                   {/* Schedule in Header */}
-                  {(selectedJob.startDate || selectedJob.endDate || selectedJob.startTime || selectedJob.endTime) && (
+                  {(selectedJob.startDate || selectedJob.endDate || selectedJob.startTime || selectedJob.endTime || (selectedJob.jobType === 'gig' && selectedJobShifts.length > 0)) && (
                     <Stack spacing={1}>
-                      {selectedJob.startDate && selectedJob.showStart && (
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <Schedule sx={{ fontSize: 18, color: 'text.secondary' }} />
-                          <Typography variant="body2" color="text.secondary">
-                            Start Date: {formatDateForDisplay(selectedJob.startDate)}
-                          </Typography>
-                        </Stack>
-                      )}
+                      {(() => {
+                        // For gig jobs with shifts, show next shift date
+                        if (selectedJob.jobType === 'gig' && selectedJobShifts.length > 0) {
+                          const sortedShifts = [...selectedJobShifts].sort((a, b) => 
+                            new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime()
+                          );
+                          const nextShift = sortedShifts[0];
+                          if (nextShift?.shiftDate) {
+                            // Parse date in local time to avoid timezone issues
+                            const dateStr = nextShift.shiftDate;
+                            let displayDate = dateStr;
+                            if (dateStr && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                              const [year, month, day] = dateStr.split('-').map(Number);
+                              const date = new Date(year, month - 1, day);
+                              displayDate = formatDateForDisplay(date);
+                            } else {
+                              displayDate = formatDateForDisplay(dateStr);
+                            }
+                            return (
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Schedule sx={{ fontSize: 18, color: 'text.secondary' }} />
+                                <Typography variant="body2" color="text.secondary">
+                                  Next Shift: {displayDate}
+                                </Typography>
+                              </Stack>
+                            );
+                          }
+                        }
+                        // For non-gig jobs or gigs without shifts, show start date if available
+                        if (selectedJob.startDate && selectedJob.showStart) {
+                          return (
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Schedule sx={{ fontSize: 18, color: 'text.secondary' }} />
+                              <Typography variant="body2" color="text.secondary">
+                                Start Date: {formatDateForDisplay(selectedJob.startDate)}
+                              </Typography>
+                            </Stack>
+                          );
+                        }
+                        return null;
+                      })()}
                       {selectedJob.endDate && selectedJob.showEnd && (
                         <Stack direction="row" spacing={1} alignItems="center">
                           <Schedule sx={{ fontSize: 18, color: 'text.secondary' }} />
@@ -1310,21 +1992,23 @@ const PublicJobsBoard: React.FC = () => {
                 const hasApplied = userApplicationIds.includes(applicationId);
                 
                 if (hasApplied) {
+                  const status = userApplicationStatuses[applicationId] || 'submitted';
+                  const buttonProps = getApplicationStatusButton(status);
                   return (
                     <Button 
                       variant="contained" 
                       sx={{ 
                         minWidth: 120,
-                        backgroundColor: '#FFC700',
-                        color: '#000',
+                        backgroundColor: buttonProps.backgroundColor,
+                        color: buttonProps.color,
                         '&:hover': {
-                          backgroundColor: '#E6B300',
+                          backgroundColor: buttonProps.backgroundColor,
                         },
-                        cursor: 'default',
-                        pointerEvents: 'none',
+                        cursor: buttonProps.cursor,
+                        pointerEvents: buttonProps.pointerEvents,
                       }}
                     >
-                      Application Submitted
+                      {buttonProps.label}
                     </Button>
                   );
                 }

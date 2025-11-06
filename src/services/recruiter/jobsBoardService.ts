@@ -28,6 +28,23 @@ const removeUndefinedValues = (obj: any): any => {
   return cleaned;
 };
 
+// Shift representation for job board (for Gig jobs)
+export interface JobBoardShift {
+  shiftId: string; // Reference to shifts/{shiftId} in Firestore
+  shiftTitle: string; // "Wednesday Cleaners"
+  shiftDate: string; // ISO date string "2025-10-28"
+  startTime: string; // "08:00" (HH:mm format)
+  endTime: string; // "17:30" (HH:mm format)
+  staffNeeded: number; // Total positions for this shift
+  staffFilled: number; // Currently filled positions (calculated)
+  spotsRemaining: number; // staffNeeded - staffFilled (calculated)
+  showStaffNeeded?: boolean; // Whether to display staff count on jobs board
+  poNumber?: string; // Optional PO number for this shift
+  shiftDescription?: string; // Optional shift-specific details
+  defaultJobTitle?: string; // Job title for this shift
+  payRate?: number; // Pay rate for this shift's job title (from gigPositions)
+}
+
 export interface JobsBoardPost {
   id: string;
   jobPostId: string; // Sequential counter like 2002, 2003, 2004
@@ -59,11 +76,12 @@ export interface JobsBoardPost {
   startDate?: Date;
   endDate?: Date;
   expDate?: Date;
+  nextShiftDate?: Date; // For Gig jobs: next upcoming shift date
   showStart?: boolean;
   showEnd?: boolean;
   payRate?: number;
   showPayRate: boolean;
-  workersNeeded: number;
+  workersNeeded?: number; // Optional for Gig jobs
   eVerifyRequired: boolean;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
@@ -106,6 +124,14 @@ export interface JobsBoardPost {
   requiredPpe?: string[]; // Required PPE
   showRequiredPpe?: boolean; // Whether to show PPE requirements on public posting
   autoAddToUserGroup?: string; // Optional: auto-add applicants to this user group
+  
+  // Shift Selection Model (for Gig jobs only)
+  availableShifts?: JobBoardShift[]; // DEPRECATED - Use dynamic shift loading instead
+  includeShiftsInPosting?: boolean; // Whether to show shift selection UI (auto-true for Gig with shifts)
+  
+  // Dynamic Shift Loading (NEW - for evergreen Gig postings)
+  usesDynamicShifts?: boolean; // If true, shifts are loaded dynamically from shifts collection
+  shiftFilterDays?: number; // Number of days in future to show shifts (default: 30)
   
   // Requirements & Additional Info
   requirements?: string[];
@@ -154,7 +180,7 @@ export interface CreatePostData {
   showEnd?: boolean;
   payRate?: number | null;
   showPayRate: boolean;
-  workersNeeded: number;
+  workersNeeded?: number; // Optional for Gig jobs
   eVerifyRequired: boolean;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
@@ -228,6 +254,154 @@ export class JobsBoardService {
     }
   }
 
+  // Fetch shifts for a job order and format for job board
+  private async fetchShiftsForJobOrder(tenantId: string, jobOrderId: string): Promise<JobBoardShift[]> {
+    try {
+      // Fetch job order to get gigPositions for pay rate lookup
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      const jobOrderData = jobOrderSnap.exists() ? jobOrderSnap.data() : null;
+      const gigPositions = jobOrderData?.gigPositions as Array<{jobTitle: string; payRate: string}> | undefined;
+      
+      // Use tenant/job_order subcollection path
+      const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
+      const q = query(shiftsRef);
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        return [];
+      }
+
+      // Helper to find pay rate for a job title
+      const getPayRateForJobTitle = (jobTitle: string | undefined): number | undefined => {
+        if (!jobTitle || !gigPositions) return undefined;
+        const position = gigPositions.find(p => p.jobTitle === jobTitle);
+        if (position && position.payRate) {
+          const rate = parseFloat(position.payRate);
+          return isNaN(rate) ? undefined : rate;
+        }
+        return undefined;
+      };
+
+      // Convert Firestore shifts to JobBoardShift format
+      const shifts: JobBoardShift[] = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
+        const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
+        
+        return {
+          shiftId: doc.id,
+          shiftTitle: data.shiftTitle || 'Unnamed Shift',
+          shiftDate: data.shiftDate, // ISO date string
+          startTime: data.defaultStartTime, // HH:mm format
+          endTime: data.defaultEndTime, // HH:mm format
+          staffNeeded: data.totalStaffRequested || 1,
+          staffFilled: 0, // TODO: Calculate from assignments in future phase
+          spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate in future phase
+          showStaffNeeded: data.showStaffNeeded || false,
+          poNumber: data.poNumber,
+          shiftDescription: data.shiftDescription,
+          defaultJobTitle: defaultJobTitle,
+          payRate: payRate,
+        };
+      });
+
+      // Sort by date
+      shifts.sort((a, b) => new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime());
+
+      return shifts;
+    } catch (error) {
+      console.error('Error fetching shifts for job order:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch active/upcoming shifts for a job order (dynamic loading)
+   * Only returns shifts starting today or in the future
+   * @param tenantId Tenant ID
+   * @param jobOrderId Job Order ID
+   * @param filterDays Number of days in future to include (default: 30)
+   */
+  async fetchActiveShiftsForJobOrder(
+    tenantId: string, 
+    jobOrderId: string, 
+    filterDays = 30
+  ): Promise<JobBoardShift[]> {
+    try {
+      // Fetch job order to get gigPositions for pay rate lookup
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      const jobOrderData = jobOrderSnap.exists() ? jobOrderSnap.data() : null;
+      const gigPositions = jobOrderData?.gigPositions as Array<{jobTitle: string; payRate: string}> | undefined;
+      
+      // Get today's date at midnight (local time)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      // Format as YYYY-MM-DD in local timezone (not UTC)
+      const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      
+      // Get cutoff date (today + filterDays)
+      const cutoffDate = new Date(today);
+      cutoffDate.setDate(cutoffDate.getDate() + filterDays);
+      const cutoffISO = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, '0')}-${String(cutoffDate.getDate()).padStart(2, '0')}`;
+      
+      // Use tenant/job_order subcollection path
+      const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
+      const q = query(shiftsRef);
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty) {
+        return [];
+      }
+
+      // Helper to find pay rate for a job title
+      const getPayRateForJobTitle = (jobTitle: string | undefined): number | undefined => {
+        if (!jobTitle || !gigPositions) return undefined;
+        const position = gigPositions.find(p => p.jobTitle === jobTitle);
+        if (position && position.payRate) {
+          const rate = parseFloat(position.payRate);
+          return isNaN(rate) ? undefined : rate;
+        }
+        return undefined;
+      };
+
+      // Convert and filter shifts
+      const shifts: JobBoardShift[] = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
+          const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
+          
+          return {
+            shiftId: doc.id,
+            shiftTitle: data.shiftTitle || 'Unnamed Shift',
+            shiftDate: data.shiftDate, // ISO date string
+            startTime: data.defaultStartTime, // HH:mm format
+            endTime: data.defaultEndTime, // HH:mm format
+            staffNeeded: data.totalStaffRequested || 1,
+            staffFilled: 0, // TODO: Calculate from assignments
+            spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate
+            showStaffNeeded: data.showStaffNeeded || false,
+            poNumber: data.poNumber,
+            shiftDescription: data.shiftDescription,
+            defaultJobTitle: defaultJobTitle,
+            payRate: payRate,
+          };
+        })
+        // Filter: only include shifts >= today and <= cutoff
+        .filter(shift => shift.shiftDate >= todayISO && shift.shiftDate <= cutoffISO)
+        // Sort by date (earliest first)
+        .sort((a, b) => a.shiftDate.localeCompare(b.shiftDate));
+
+      return shifts;
+    } catch (error) {
+      console.error('Error fetching active shifts:', error);
+      return [];
+    }
+  }
+
   // Create a jobs board post from a job order
   async createPostFromJobOrder(tenantId: string, jobOrderId: string, createdBy: string, customData?: Partial<CreatePostData>): Promise<string> {
     try {
@@ -241,6 +415,40 @@ export class JobsBoardService {
       
       const jobOrder = { id: jobOrderDoc.id, ...jobOrderDoc.data() } as JobOrder;
       
+      // Fetch location details if worksiteId exists but worksiteAddress is missing/incomplete
+      let worksiteAddress = customData?.worksiteAddress || jobOrder.worksiteAddress || {
+        street: '',
+        city: '',
+        state: '',
+        zipCode: '',
+      };
+      
+      // If we have a worksiteId but no proper address, fetch from location document
+      if (jobOrder.worksiteId && (!worksiteAddress.city || !worksiteAddress.state)) {
+        try {
+          const locationRef = doc(db, 'tenants', tenantId, 'locations', jobOrder.worksiteId);
+          const locationSnap = await getDoc(locationRef);
+          
+          if (locationSnap.exists()) {
+            const locationData = locationSnap.data();
+            worksiteAddress = {
+              street: locationData.address?.street || locationData.street || '',
+              city: locationData.address?.city || locationData.city || '',
+              state: locationData.address?.state || locationData.state || '',
+              zipCode: locationData.address?.zipCode || locationData.zipCode || '',
+              coordinates: locationData.address?.coordinates || locationData.coordinates || locationData.coords || undefined,
+            };
+            console.log('✅ Fetched location details for', jobOrder.worksiteId, worksiteAddress);
+          }
+        } catch (err) {
+          console.warn('Could not fetch location details:', err);
+        }
+      }
+      
+      // For Gig jobs, use dynamic shift loading (not static)
+      const jobType = customData?.jobType || (jobOrder as any).jobType || 'gig';
+      const usesDynamicShifts = jobType === 'gig'; // All Gig jobs use dynamic shifts now
+      
       // Generate sequential job post ID
       const jobPostId = await this.getNextJobPostId(tenantId);
       
@@ -252,6 +460,19 @@ export class JobsBoardService {
         visibility = 'restricted';
       }
       
+      // For Gig jobs, check if gigPositions exist and use first position's job title and pay rate
+      const gigPositions = (jobOrder as any).gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
+      const isGigJob = jobType === 'gig';
+      const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+      
+      // Use job title and pay rate from first position if available, otherwise fall back to job order fields
+      const jobTitle = customData?.jobTitle || (isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle);
+      const payRate = customData?.payRate !== undefined 
+        ? customData.payRate 
+        : (isGigJob && firstPosition && firstPosition.payRate 
+          ? parseFloat(firstPosition.payRate) || undefined 
+          : (jobOrder.showPayRate ? jobOrder.payRate : undefined));
+      
       // Create the post data
       const postData: Omit<JobsBoardPost, 'id'> = {
         jobPostId,
@@ -260,7 +481,7 @@ export class JobsBoardService {
         // Posting Details
         postTitle: customData?.postTitle || jobOrder.jobOrderName,
         jobType: customData?.jobType || 'gig', // Default to gig if not specified
-        jobTitle: customData?.jobTitle || jobOrder.jobTitle,
+        jobTitle: jobTitle,
         jobDescription: customData?.jobDescription || jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
         
         // Company & Location
@@ -268,19 +489,15 @@ export class JobsBoardService {
         companyName: customData?.companyName || jobOrder.companyName,
         worksiteId: jobOrder.worksiteId,
         worksiteName: customData?.worksiteName || jobOrder.worksiteName,
-        worksiteAddress: customData?.worksiteAddress || jobOrder.worksiteAddress || {
-          street: '',
-          city: '',
-          state: '',
-          zipCode: '',
-        },
+        worksiteAddress: worksiteAddress, // Use the fetched/resolved address
         
         // Dates & Compensation
         startDate: customData?.startDate ? (typeof customData.startDate === 'string' ? new Date(customData.startDate) : customData.startDate) : jobOrder.startDate,
         endDate: customData?.endDate ? (typeof customData.endDate === 'string' ? new Date(customData.endDate) : customData.endDate) : jobOrder.endDate,
-        payRate: customData?.payRate !== undefined ? customData.payRate : (jobOrder.showPayRate ? jobOrder.payRate : undefined),
+        nextShiftDate: undefined, // Will be set below for Gig jobs
+        payRate: payRate,
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
-        workersNeeded: customData?.workersNeeded !== undefined ? customData.workersNeeded : jobOrder.workersNeeded,
+        workersNeeded: isGigJob ? undefined : (customData?.workersNeeded !== undefined ? customData.workersNeeded : jobOrder.workersNeeded),
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
         showBackgroundChecks: customData?.showBackgroundChecks !== undefined ? customData.showBackgroundChecks : false,
@@ -307,6 +524,11 @@ export class JobsBoardService {
         jobOrderId,
         autoAddToUserGroup: customData?.autoAddToUserGroup,
         
+        // Shift Selection (for Gig jobs - use dynamic loading)
+        usesDynamicShifts, // New approach: load shifts at runtime
+        shiftFilterDays: 30, // Show shifts for next 30 days
+        includeShiftsInPosting: usesDynamicShifts, // Show shift selector if using dynamic shifts
+        
         // Requirements & Additional Info
         requirements: customData?.requirements || [
           ...jobOrder.requiredLicenses,
@@ -331,6 +553,18 @@ export class JobsBoardService {
         createdAt: new Date(),
         updatedAt: new Date()
       };
+
+      // For Gig jobs with dynamic shifts, fetch and set nextShiftDate
+      if (usesDynamicShifts && jobOrderId) {
+        try {
+          const shifts = await this.fetchActiveShiftsForJobOrder(tenantId, jobOrderId, 30);
+          if (shifts.length > 0) {
+            postData.nextShiftDate = new Date(shifts[0].shiftDate);
+          }
+        } catch (err) {
+          console.warn('Could not fetch next shift date:', err);
+        }
+      }
 
       const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_postings'), postData);
       return docRef.id;
@@ -392,7 +626,7 @@ export class JobsBoardService {
         showEnd: postData.showEnd || false,
         ...(postData.payRate !== null && postData.payRate !== undefined && { payRate: postData.payRate }),
         showPayRate: postData.showPayRate,
-        workersNeeded: postData.workersNeeded,
+        ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
         eVerifyRequired: postData.eVerifyRequired,
         backgroundCheckPackages: postData.backgroundCheckPackages,
         showBackgroundChecks: postData.showBackgroundChecks,
@@ -571,6 +805,42 @@ export class JobsBoardService {
   }
 
   // Update post status
+  // Sync shifts from job order to existing job posting (for Gig jobs)
+  async syncShiftsToPosting(tenantId: string, postId: string, jobOrderId: string): Promise<void> {
+    try {
+      // Fetch current posting to check if it's a Gig job
+      const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
+      const postSnap = await getDoc(postRef);
+      
+      if (!postSnap.exists()) {
+        throw new Error('Job posting not found');
+      }
+      
+      const posting = postSnap.data();
+      
+      // Only sync shifts for Gig jobs
+      if (posting.jobType !== 'gig') {
+        console.log('Skipping shift sync for non-Gig job');
+        return;
+      }
+      
+      // Fetch latest shifts
+      const availableShifts = await this.fetchShiftsForJobOrder(tenantId, jobOrderId);
+      
+      // Update posting with latest shifts
+      await updateDoc(postRef, {
+        availableShifts,
+        includeShiftsInPosting: availableShifts.length > 0,
+        updatedAt: new Date()
+      });
+      
+      console.log(`✅ Synced ${availableShifts.length} shifts to posting ${postId}`);
+    } catch (error) {
+      console.error('Error syncing shifts to posting:', error);
+      throw error;
+    }
+  }
+
   async updatePostStatus(tenantId: string, postId: string, status: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired'): Promise<void> {
     try {
       const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);

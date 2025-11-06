@@ -20,6 +20,14 @@ service cloud.firestore {
       match /job_orders/{doc} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && isTenantAdmin(tenantId);
+        
+        // Shifts subcollection
+        match /shifts/{shiftId} {
+          allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+          allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+          // Allow public read for job board display
+          allow read: if true;
+        }
       }
 
       match /applications/{doc} {
@@ -639,6 +647,15 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
         allow read: if isAssignedToTenant(tenantId);
+        
+        // --- SHIFTS (Job Order Subcollection) ---
+        match /shifts/{shiftId} {
+          allow read, write: if isHRX() || isTenantAdmin(tenantId);
+          allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+          allow read: if isAssignedToTenant(tenantId);
+          // Allow public read for job board display
+          allow read: if true;
+        }
       }
 
       // --- JOBS BOARD POSTS (Tenant Subcollection) ---

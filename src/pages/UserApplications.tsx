@@ -92,24 +92,54 @@ const UserApplications: React.FC = () => {
             let location = '';
             let payRate = undefined;
 
-            try {
-              const jobRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
-              const jobSnap = await getDoc(jobRef);
-              if (jobSnap.exists()) {
-                const jobData = jobSnap.data();
-                jobTitle = jobData.jobTitle || '';
-                postTitle = jobData.postTitle || '';
-                companyName = jobData.companyName || '';
-                payRate = jobData.payRate;
-                
-                if (jobData.city && jobData.state) {
-                  location = `${jobData.city}, ${jobData.state}`;
-                } else if (jobData.worksiteAddress?.city && jobData.worksiteAddress?.state) {
-                  location = `${jobData.worksiteAddress.city}, ${jobData.worksiteAddress.state}`;
+            // First, try to get cached data from user's applicationData
+            const userRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userRef);
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              const appDataMap = userData.applicationData || {};
+              
+              // Find this specific application in the map
+              for (const [key, value] of Object.entries(appDataMap)) {
+                const appData = value as any;
+                if (appData.jobId === jobId) {
+                  // Use cached data from application
+                  location = appData.location || '';
+                  companyName = appData.companyName || '';
+                  payRate = appData.payRate;
+                  jobTitle = appData.jobTitle || '';
+                  postTitle = appData.postTitle || '';
+                  break;
                 }
               }
-            } catch (jobErr) {
-              console.warn('Could not load job details for', jobId, jobErr);
+            }
+
+            // If not found in cache, fetch from job posting
+            if (!location || !jobTitle) {
+              try {
+                const jobRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
+                const jobSnap = await getDoc(jobRef);
+                if (jobSnap.exists()) {
+                  const jobData = jobSnap.data();
+                  jobTitle = jobTitle || jobData.jobTitle || '';
+                  postTitle = postTitle || jobData.postTitle || '';
+                  companyName = companyName || jobData.companyName || '';
+                  payRate = payRate !== undefined ? payRate : jobData.payRate;
+                  
+                  // Try multiple location fields
+                  if (!location) {
+                    if (jobData.city && jobData.state) {
+                      location = `${jobData.city}, ${jobData.state}`;
+                    } else if (jobData.worksiteAddress?.city && jobData.worksiteAddress?.state) {
+                      location = `${jobData.worksiteAddress.city}, ${jobData.worksiteAddress.state}`;
+                    } else if (jobData.worksiteName) {
+                      location = jobData.worksiteName;
+                    }
+                  }
+                }
+              } catch (jobErr) {
+                console.warn('Could not load job details for', jobId, jobErr);
+              }
             }
 
             loadedApplications.push({
@@ -218,8 +248,10 @@ const UserApplications: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Navigate back to jobs board (could be updated to show job details modal)
-                    navigate(`/c1/jobs-board`);
+                    // Navigate to specific job posting
+                    // Use tenantId from application if available, otherwise default to c1
+                    const tenantSlug = app.tenantId || 'c1';
+                    navigate(`/${tenantSlug}/jobs-board/${app.jobId}`);
                   }}
                 >
                   <TableCell>

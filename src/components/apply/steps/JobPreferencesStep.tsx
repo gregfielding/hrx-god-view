@@ -102,82 +102,87 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
 
   return (
     <Box>
-      {/* Availability to Start */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardHeader title={<Typography variant="h6">Availability to Start</Typography>} />
-        <CardContent>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-            <TextField
-              label="Available to start"
-              type="date"
-              value={availableToStartDate || ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                setAvailableToStartDate(v);
-                onChange({ ...value, availableToStartDate: v });
-                debouncedUpdate({ availableToStartDate: v });
-              }}
-              onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
-              InputLabelProps={{ shrink: true }}
-              sx={{ width: { xs: '100%', md: 260 } }}
-            />
-            <TextField
-              fullWidth
-              label="Availability notes"
-              value={notes}
-              onChange={(e) => {
-                const v = e.target.value;
-                setNotes(v);
-                onChange({ ...value, availabilityNotes: v });
-                debouncedUpdate({ 'preferences.availabilityNotes': v });
-              }}
-              onBlur={(e) => debouncedUpdate({ 'preferences.availabilityNotes': e.target.value })}
-              multiline
-              minRows={2}
-            />
-          </Stack>
-        </CardContent>
-      </Card>
-      {/* Shift Preferences card */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardHeader title={<Typography variant="h6">Shift Preferences</Typography>} />
-        <CardContent>
-          {shiftHelper && (
-            <Alert severity="info" sx={{ mb: 2 }}>{shiftHelper}</Alert>
-          )}
+      {/* Availability to Start - Only show for Career jobs, not Gig jobs with specific dates */}
+      {jobPosting?.jobType !== 'gig' && (
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6">Availability to Start</Typography>} />
+          <CardContent>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+              <TextField
+                label="Available to start"
+                type="date"
+                value={availableToStartDate || ''}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAvailableToStartDate(v);
+                  onChange({ ...value, availableToStartDate: v });
+                  debouncedUpdate({ availableToStartDate: v });
+                }}
+                onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
+                InputLabelProps={{ shrink: true }}
+                sx={{ width: { xs: '100%', md: 260 } }}
+              />
+              <TextField
+                fullWidth
+                label="Availability notes"
+                value={notes}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setNotes(v);
+                  onChange({ ...value, availabilityNotes: v });
+                  debouncedUpdate({ 'preferences.availabilityNotes': v });
+                }}
+                onBlur={(e) => debouncedUpdate({ 'preferences.availabilityNotes': e.target.value })}
+                multiline
+                minRows={2}
+              />
+            </Stack>
+          </CardContent>
+        </Card>
+      )}
+      
+      {/* Shift Preferences card - Only show for Career jobs, not Gig jobs with specific shifts */}
+      {jobPosting?.jobType !== 'gig' && (
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6">Shift Preferences</Typography>} />
+          <CardContent>
+            {shiftHelper && (
+              <Alert severity="info" sx={{ mb: 2 }}>{shiftHelper}</Alert>
+            )}
 
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={8}>
-              <Typography variant="subtitle2" gutterBottom>Selected shifts</Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {selectedShifts.map((name) => (
-                  <Chip key={name} label={name} onDelete={() => toggleShift(name)} color="primary" />
-                ))}
-                {selectedShifts.length === 0 && (
-                  <Typography variant="body2" color="text.secondary">No shifts selected</Typography>
-                )}
-              </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={8}>
+                <Typography variant="subtitle2" gutterBottom>Selected shifts</Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {selectedShifts.map((name) => (
+                    <Chip key={name} label={name} onDelete={() => toggleShift(name)} color="primary" />
+                  ))}
+                  {selectedShifts.length === 0 && (
+                    <Typography variant="body2" color="text.secondary">No shifts selected</Typography>
+                  )}
+                </Box>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>Available shifts (tap to add)</Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {allShiftOptions.map((name) => (
+                    <Chip
+                      key={name}
+                      label={name}
+                      onClick={() => toggleShift(name)}
+                      variant="outlined"
+                      sx={{
+                        cursor: 'pointer',
+                        opacity: selectedShifts.includes(name) ? 0.5 : 1,
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Grid>
             </Grid>
-            <Grid item xs={12} md={4}>
-              <Typography variant="subtitle2" gutterBottom>Available shifts (tap to add)</Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {allShiftOptions.map((name) => (
-                  <Chip
-                    key={name}
-                    label={name}
-                    onClick={() => toggleShift(name)}
-                    variant="outlined"
-                    sx={{
-                      cursor: 'pointer',
-                      opacity: selectedShifts.includes(name) ? 0.5 : 1,
-                    }}
-                  />
-                ))}
-              </Box>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Industry Preferences card */}
       <Card variant="outlined" sx={{ mb: 3 }}>

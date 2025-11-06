@@ -7,6 +7,7 @@ export interface JobOrder {
   jobOrderName: string;
   jobOrderDescription?: string;
   status: JobOrderStatus;
+  jobType?: 'gig' | 'career'; // Job type for determining if it's a gig or career position
   tenantId: string;
   startDate?: Date;
   endDate?: Date;

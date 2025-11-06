@@ -1372,29 +1372,34 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 </FormControl>
               </Grid>
 
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label={getFieldDef('startDate')?.label || 'Start Date'}
-                  type="date"
-                  value={formData.startDate}
-                  onChange={(e) => handleInputChange('startDate', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
+              {/* Only show Start/End Date for Career jobs (not for Gig jobs) */}
+              {formData.jobType !== 'gig' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('startDate')?.label || 'Start Date'}
+                      type="date"
+                      value={formData.startDate}
+                      onChange={(e) => handleInputChange('startDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('startDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
 
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label={getFieldDef('endDate')?.label || 'End Date'}
-                  type="date"
-                  value={formData.endDate}
-                  onChange={(e) => handleInputChange('endDate', e.target.value)}
-                  onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={getFieldDef('endDate')?.label || 'End Date'}
+                      type="date"
+                      value={formData.endDate}
+                      onChange={(e) => handleInputChange('endDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('endDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </>
+              )}
 
               {/* Career Type: Single Job Title and Workers Needed */}
               {formData.jobType === 'career' && (
@@ -1459,7 +1464,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     {gigPositions.map((position, index) => (
                       <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          {/* Row 1: Job Title and Workers Needed */}
+                          {/* Row 1: Job Title (Workers Needed removed for Gig type) */}
                           <Box sx={{ display: 'flex', gap: 2 }}>
                             <Box sx={{ flex: '1 1 400px' }}>
                               <Autocomplete
@@ -1485,22 +1490,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                     required
                                   />
                                 )}
-                              />
-                            </Box>
-                            <Box sx={{ flex: '0 1 150px' }}>
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="Workers Needed"
-                                type="number"
-                                value={position.workersNeeded}
-                                onChange={(e) => {
-                                  const updated = [...gigPositions];
-                                  updated[index].workersNeeded = parseInt(e.target.value) || 1;
-                                  setGigPositions(updated);
-                                }}
-                                required
-                                inputProps={{ min: 1 }}
                               />
                             </Box>
                           </Box>

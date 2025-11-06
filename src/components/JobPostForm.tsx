@@ -28,6 +28,7 @@ import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
 import { collection, getDocs, query, orderBy as firestoreOrderBy, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { geocodeAddress } from '../utils/geocodeAddress';
 
 export interface JobPostFormProps {
   initialData?: Partial<JobsBoardPost>;
@@ -125,6 +126,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   // City autocomplete
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
+  const [geocoding, setGeocoding] = useState(false);
 
   // Track original form values before job order connection
   const [originalFormValues, setOriginalFormValues] = useState<any>(null);
@@ -382,6 +384,41 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     }
   };
 
+  // Geocode city and state to get coordinates
+  const geocodeCityState = async (city: string, state: string) => {
+    if (!city?.trim() || !state?.trim()) {
+      return;
+    }
+
+    try {
+      setGeocoding(true);
+      const address = `${city}, ${state}`;
+      const coordinates = await geocodeAddress(address);
+      setFormData(prev => ({
+        ...prev,
+        coordinates,
+        worksiteName: prev.worksiteName || `${city}, ${state}`
+      }));
+    } catch (error) {
+      console.warn('Failed to geocode city/state:', error);
+      // Continue without coordinates - not critical
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  // Auto-geocode when both city and state are entered
+  useEffect(() => {
+    if (!useCompanyLocation && formData.city?.trim() && formData.state?.trim() && !formData.coordinates) {
+      // Debounce geocoding
+      const timeoutId = setTimeout(() => {
+        geocodeCityState(formData.city, formData.state);
+      }, 1000);
+      return () => clearTimeout(timeoutId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.city, formData.state, useCompanyLocation, formData.coordinates]);
+
   const handleJobOrderChange = async (jobOrderId: string) => {
     if (jobOrderId) {
       setOriginalFormValues({ ...formData });
@@ -396,12 +433,17 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         if (jobOrderDoc.exists()) {
           const jobOrderData = jobOrderDoc.data();
           
+          // For Gig jobs, check if gigPositions exist and use first position's job title and pay rate
+          const gigPositions = jobOrderData.gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
+          const isGigJob = jobOrderData.jobType === 'gig';
+          const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+          
           setFormData({
             ...formData,
             jobOrderId,
             postTitle: formData.postTitle || jobOrderData.jobOrderName || '',
             jobType: jobOrderData.jobType || 'career', // Copy job type from job order
-            jobTitle: formData.jobTitle || jobOrderData.jobTitle || '',
+            jobTitle: formData.jobTitle || (isGigJob && firstPosition ? firstPosition.jobTitle : jobOrderData.jobTitle) || '',
             jobDescription: formData.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
             companyId: jobOrderData.companyId || '',
             companyName: jobOrderData.companyName || '',
@@ -413,7 +455,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             zipCode: jobOrderData.worksiteAddress?.zipCode || '',
             startDate: formatDateForInput(jobOrderData.startDate),
             endDate: formatDateForInput(jobOrderData.endDate),
-            payRate: jobOrderData.payRate?.toString() || '',
+            payRate: formData.payRate || (isGigJob && firstPosition && firstPosition.payRate 
+              ? firstPosition.payRate 
+              : jobOrderData.payRate?.toString()) || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
@@ -513,9 +557,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     if (!formData.jobType) return false;
     if (!formData.jobDescription?.trim()) return false;
     
-    if (useCompanyLocation) {
-      if (!selectedCompanyId || !selectedLocationId) return false;
+    // If using company location and a company is selected, require worksite
+    if (useCompanyLocation && selectedCompanyId) {
+      if (!selectedLocationId) return false;
     } else {
+      // Otherwise, require city and state
       if (!formData.city?.trim() || !formData.state?.trim()) return false;
     }
     
@@ -916,7 +962,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           />
         </Box>
 
-        {useCompanyLocation ? (
+        {useCompanyLocation && selectedCompanyId ? (
           <>
             <Box sx={{ mt: 2 }}>
               <Grid container spacing={2}>
@@ -1005,23 +1051,138 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             )}
           </>
         ) : (
-          <GoogleAutocomplete
-            onLoad={onCityAutocompleteLoad}
-            onPlaceChanged={onCityPlaceChanged}
-            options={{
-              types: ['(cities)'],
-              componentRestrictions: { country: 'us' }
-            }}
-          >
-            <TextField
-              fullWidth
-              label="City, State"
-              placeholder="Search for a city..."
-              required
-              helperText="Search and select a city - coordinates will be saved automatically"
-              inputRef={(ref) => setCityInputRef(ref)}
-            />
-          </GoogleAutocomplete>
+          <>
+            {/* Show Company dropdown when toggle is ON but no company selected */}
+            {useCompanyLocation && (
+              <Box sx={{ mt: 2 }}>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <Autocomplete
+                      fullWidth
+                      options={companies}
+                      getOptionLabel={(option) => option.name}
+                      value={companies.find(c => c.id === selectedCompanyId) || null}
+                      onChange={(event, newValue) => {
+                        if (newValue) {
+                          handleCompanyChange(newValue.id);
+                        } else {
+                          setSelectedCompanyId('');
+                          setSelectedLocationId('');
+                          setLocations([]);
+                          setFormData({
+                            ...formData,
+                            companyId: '',
+                            companyName: '',
+                            worksiteId: '',
+                            worksiteName: '',
+                            street: '',
+                            city: '',
+                            state: '',
+                            zipCode: ''
+                          });
+                        }
+                      }}
+                      loading={loadingCompanies}
+                      disabled={loadingCompanies}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Company"
+                          helperText="Select a company, or leave empty to use city/state"
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
+            
+            {/* Always show City/State when no company is selected */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="City"
+                    value={formData.city || ''}
+                    onChange={(e) => {
+                      const city = e.target.value;
+                      setFormData({ ...formData, city, coordinates: undefined });
+                    }}
+                    required
+                    placeholder="e.g., Las Vegas"
+                    helperText="Enter the city name"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="State"
+                    value={formData.state || ''}
+                    onChange={(e) => {
+                      const state = e.target.value.toUpperCase();
+                      setFormData({ ...formData, state, coordinates: undefined });
+                    }}
+                    required
+                    placeholder="e.g., NV"
+                    helperText="Enter state abbreviation"
+                    inputProps={{ maxLength: 2 }}
+                  />
+                </Grid>
+                {formData.city && formData.state && (
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      {geocoding ? (
+                        <>
+                          <CircularProgress size={16} />
+                          <Typography variant="caption" color="text.secondary">
+                            Getting coordinates...
+                          </Typography>
+                        </>
+                      ) : formData.coordinates ? (
+                        <>
+                          <Typography variant="caption" color="text.secondary">
+                            Coordinates: {formData.coordinates.lat.toFixed(6)}, {formData.coordinates.lng.toFixed(6)}
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => geocodeCityState(formData.city, formData.state)}
+                            sx={{ ml: 'auto' }}
+                          >
+                            Refresh
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Typography variant="caption" color="text.secondary">
+                            Coordinates will be fetched automatically
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => geocodeCityState(formData.city, formData.state)}
+                            sx={{ ml: 'auto' }}
+                          >
+                            Get Coordinates
+                          </Button>
+                        </>
+                      )}
+                    </Box>
+                  </Grid>
+                )}
+              </Grid>
+            </Box>
+          </>
         )}
 
         <Box sx={{ mt: 2 }}>

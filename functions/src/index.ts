@@ -88,6 +88,7 @@ import { enrichContactOnDemand } from './contactEnrichment';
 import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker } from './gmailBulkImport';
 import { getEmailLogBody } from './emailLogs';
 import { backfillLoggedActivities } from './backfillLoggedActivities';
+import { backfillShiftIdsInApplications } from './backfillShiftIdsInApplications';
 export { getGoogleStatus, getGoogleStatusHttp } from './getGoogleStatus';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
@@ -149,6 +150,10 @@ export { logContactEnhanced };
 export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHttp, queueGmailBulkImportHttp, processGmailImportWorker };
 export { getEmailLogBody };
 export { backfillLoggedActivities };
+export { backfillShiftIdsInApplications };
+export { backfillJobPostingLocations } from './backfillJobPostingLocations';
+export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
+export { autoWithdrawApplicationsOnHire } from './autoWithdrawApplicationsOnHire';
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
@@ -220,6 +225,13 @@ export {
 
 // Export optimized task functions
 export { updateTaskOptimized, batchUpdateTasksOptimized } from './updateTaskOptimized';
+
+// Export Google Jobs Indexing API functions
+export { 
+  notifyGoogleJobsIndexing, 
+  requestJobIndexing, 
+  batchSubmitJobsToGoogle 
+} from './notifyGoogleJobsIndexing';
 
 // Export deal association functions
 export {
@@ -10699,6 +10711,12 @@ export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 // Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED
 // export { processAILog } from './safeAiEngineProcessor';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
+
+// Applicant AI Scoring System
+export { 
+  calculateApplicantScores,
+  recalculateApplicantScore
+} from './calculateApplicantFitScore';
 
 // Auto Activity Logger
 export { 

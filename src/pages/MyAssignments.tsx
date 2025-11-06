@@ -13,7 +13,7 @@ import {
   CircularProgress,
   Alert
 } from '@mui/material';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -21,9 +21,11 @@ import { useNavigate } from 'react-router-dom';
 interface Assignment {
   id: string;
   tenantId: string;
+  jobOrderId?: string;
   jobTitle?: string;
   companyName?: string;
   location?: string;
+  payRate?: number;
   startDate?: Date;
   endDate?: Date;
   status: string;
@@ -50,9 +52,89 @@ const MyAssignments: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // TODO: Load assignments from Firestore
-      // For now, just set empty array
-      setAssignments([]);
+      // Load assignments from Firestore
+      // Assignments can be stored in two places:
+      // 1. tenants/{tenantId}/job_orders/{jobOrderId}/assignments/{assignmentId} (Phase 2 structure)
+      // 2. assignments/{assignmentId} (legacy structure with userId)
+      
+      // Try legacy structure first (assignments collection with userId)
+      const assignmentsRef = collection(db, 'assignments');
+      const q = query(
+        assignmentsRef,
+        where('userId', '==', user.uid),
+        orderBy('startDate', 'desc')
+      );
+      
+      const snapshot = await getDocs(q);
+      const loadedAssignments: Assignment[] = [];
+
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        
+        // Parse dates
+        let startDate: Date | undefined;
+        let endDate: Date | undefined;
+        
+        if (data.startDate) {
+          startDate = data.startDate.toDate ? data.startDate.toDate() : new Date(data.startDate);
+        }
+        if (data.endDate) {
+          endDate = data.endDate.toDate ? data.endDate.toDate() : new Date(data.endDate);
+        }
+
+        // Get job order details if jobOrderId exists
+        let jobTitle = data.jobTitle || '';
+        let companyName = data.companyName || '';
+        let location = data.location || data.worksiteName || '';
+        
+        if (data.jobOrderId && data.tenantId) {
+          try {
+            const jobOrderRef = doc(db, 'tenants', data.tenantId, 'job_orders', data.jobOrderId);
+            const jobOrderSnap = await getDoc(jobOrderRef);
+            
+            if (jobOrderSnap.exists()) {
+              const jobOrderData = jobOrderSnap.data();
+              jobTitle = jobTitle || jobOrderData.jobOrderName || jobOrderData.jobTitle || '';
+              companyName = companyName || jobOrderData.companyName || '';
+              
+              // Get location from worksite
+              if (!location && jobOrderData.worksiteName) {
+                location = jobOrderData.worksiteName;
+              } else if (!location && jobOrderData.worksiteAddress) {
+                const addr = jobOrderData.worksiteAddress;
+                if (addr.city && addr.state) {
+                  location = `${addr.city}, ${addr.state}`;
+                }
+              }
+            }
+          } catch (jobOrderErr) {
+            console.warn('Could not load job order details:', jobOrderErr);
+          }
+        }
+
+        loadedAssignments.push({
+          id: docSnap.id,
+          tenantId: data.tenantId || '',
+          jobOrderId: data.jobOrderId,
+          jobTitle,
+          companyName,
+          location,
+          payRate: data.payRate,
+          startDate,
+          endDate,
+          status: data.status || 'pending',
+        });
+      }
+
+      // Sort by start date (newest first)
+      loadedAssignments.sort((a, b) => {
+        if (!a.startDate && !b.startDate) return 0;
+        if (!a.startDate) return 1;
+        if (!b.startDate) return -1;
+        return b.startDate.getTime() - a.startDate.getTime();
+      });
+
+      setAssignments(loadedAssignments);
       
     } catch (err: any) {
       console.error('Error loading assignments:', err);
@@ -116,6 +198,7 @@ const MyAssignments: React.FC = () => {
               <TableRow sx={{ backgroundColor: 'grey.100' }}>
                 <TableCell sx={{ fontWeight: 600 }}>Job Title</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Location</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Pay Rate</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Start Date</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>End Date</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
@@ -133,8 +216,10 @@ const MyAssignments: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Navigate to assignment details (can be updated later)
-                    navigate(`/c1/jobs-board`);
+                    // Navigate to assignment details
+                    // Use tenantId from assignment if available, otherwise default to c1
+                    const tenantSlug = assignment.tenantId || 'c1';
+                    navigate(`/${tenantSlug}/assignments/${assignment.id}`);
                   }}
                 >
                   <TableCell>
@@ -150,6 +235,11 @@ const MyAssignments: React.FC = () => {
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
                       {assignment.location || 'N/A'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {assignment.payRate ? `$${assignment.payRate}/hr` : 'N/A'}
                     </Typography>
                   </TableCell>
                   <TableCell>

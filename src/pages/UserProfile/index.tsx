@@ -7,6 +7,7 @@ import { db } from '../../firebase'; // adjust path
 import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
+import { calculateProfileScore } from '../../utils/applicantScoring';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
@@ -60,6 +61,7 @@ const UserProfilePage = () => {
   const [managerId, setManagerId] = useState<string>('');
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
+  const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const navigate = useNavigate();
 
   // Check if user has access to this profile
@@ -328,6 +330,10 @@ const UserProfilePage = () => {
             setManagerId('');
             setManagerName('');
           }
+          
+          // Calculate profile score
+          const score = calculateProfileScore(data);
+          setProfileScore(score);
         }
       }
     };
@@ -467,6 +473,7 @@ const UserProfilePage = () => {
           showBreadcrumbs={user?.uid !== uid}
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
+          profileScore={profileScore}
         />
 
         <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>

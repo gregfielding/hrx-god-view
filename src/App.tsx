@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
 
@@ -41,6 +41,7 @@ import JobPostingDetail from './pages/JobPostingDetail';
 import ApplyWizardPage from './pages/ApplyWizardPage';
 import UserApplications from './pages/UserApplications';
 import MyAssignments from './pages/MyAssignments';
+import AssignmentDetails from './pages/AssignmentDetails';
 import Communications from './pages/Communications';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
@@ -114,6 +115,7 @@ import RecruiterApplicants from './pages/RecruiterApplicants';
 import RecruiterCompanies from './pages/RecruiterCompanies';
 import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
+import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
 
 import InsightReports from './pages/InsightReports';
@@ -233,13 +235,18 @@ function App() {
       {/* Public Jobs Board routes with conditional layout */}
       <Route element={<ConditionalJobsBoardLayout />}>
         <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
-        <Route path="/jobs-board" element={<PublicJobsBoard />} />
+        <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
+        <Route path="/c1/jobs-board/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
+        {/* Legacy routes for backwards compatibility */}
         <Route path="/c1/jobs/:postId" element={<JobPostingDetail />} />
         <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
         <Route path="/c1/applications" element={<UserApplications />} />
         <Route path="/applications" element={<UserApplications />} />
         <Route path="/c1/assignments" element={<MyAssignments />} />
         <Route path="/assignments" element={<MyAssignments />} />
+        <Route path="/c1/assignments/:assignmentId" element={<AssignmentDetails />} />
+        <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
         <Route path="/c1/users/:uid" element={<UserProfile />} />
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
@@ -803,6 +810,7 @@ function App() {
           <Route path="companies" element={<RecruiterCompanies />} />
           <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
           <Route path="contacts" element={<RecruiterContacts />} />
+          <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
           <Route path="reports" element={
             <Box>
               <Typography variant="h6">Reports</Typography>

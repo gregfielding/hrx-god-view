@@ -34,6 +34,7 @@
     "react-dom": "^18.2.0",
     "react-dropzone": "^14.3.8",
     "react-easy-crop": "^5.4.2",
+    "react-helmet-async": "^2.0.5",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.6.0",
     "react-scripts": "^5.0.1",

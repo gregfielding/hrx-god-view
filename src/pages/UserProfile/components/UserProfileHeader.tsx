@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -17,6 +17,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 import { storage, db } from '../../../firebase'; // adjust path
+import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -46,6 +47,7 @@ interface UserProfileHeaderProps {
   showBreadcrumbs?: boolean;
   breadcrumbPath?: Array<{ label: string; href?: string }>;
   isAdminView?: boolean; // True if viewer is admin (security >= 5)
+  profileScore?: number; // Profile completeness score (0-100)
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -76,6 +78,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   showBreadcrumbs = false,
   breadcrumbPath = [],
   isAdminView = false,
+  profileScore,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -455,6 +458,19 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                     label={getEmploymentTypeLabel(employmentType)}
                     color={getEmploymentTypeColor(employmentType)}
                   />
+                </>
+              )}
+              {profileScore !== undefined && (
+                <>
+                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Profile Score:</Typography>
+                  <Tooltip title="Profile completeness score based on resume, skills, certifications, and work history">
+                    <Chip
+                      size="small"
+                      label={getScoreLabel(profileScore)}
+                      color={getScoreColor(profileScore)}
+                      sx={{ fontWeight: 600 }}
+                    />
+                  </Tooltip>
                 </>
               )}
             </Stack>

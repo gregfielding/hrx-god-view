@@ -63,7 +63,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
   const [formData, setFormData] = useState<CreatePostData>({
     jobOrderId: jobOrder.id,
     postTitle: jobOrder.jobOrderName,
-    jobType: 'gig',
+    jobType: jobOrder.jobType || 'career',
     jobTitle: jobOrder.jobTitle,
     jobDescription: jobOrder.jobOrderDescription || '',
     companyName: jobOrder.companyName,
@@ -71,7 +71,7 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
     worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
     payRate: jobOrder.payRate,
     showPayRate: jobOrder.showPayRate,
-    workersNeeded: jobOrder.workersNeeded,
+    workersNeeded: jobOrder.jobType === 'gig' ? undefined : jobOrder.workersNeeded,
     eVerifyRequired: jobOrder.eVerifyRequired,
     backgroundCheckPackages: jobOrder.backgroundCheckPackages,
     showBackgroundChecks: false,
@@ -111,19 +111,26 @@ const PostToJobsBoardDialog: React.FC<PostToJobsBoardDialogProps> = ({
 
   useEffect(() => {
     if (open) {
+      // For Gig jobs, check if gigPositions exist and use first position's job title and pay rate
+      const gigPositions = (jobOrder as any).gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
+      const isGigJob = jobOrder.jobType === 'gig';
+      const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+      
       // Reset form when dialog opens
       setFormData({
         jobOrderId: jobOrder.id,
         postTitle: jobOrder.jobOrderName,
-        jobType: 'gig',
-        jobTitle: jobOrder.jobTitle,
+        jobType: jobOrder.jobType || 'career',
+        jobTitle: isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle,
         jobDescription: jobOrder.jobOrderDescription || '',
         companyName: jobOrder.companyName,
         worksiteName: jobOrder.worksiteName,
         worksiteAddress: jobOrder.worksiteAddress || { street: '', city: '', state: '', zipCode: '' },
-        payRate: jobOrder.payRate,
+        payRate: isGigJob && firstPosition && firstPosition.payRate 
+          ? parseFloat(firstPosition.payRate) || jobOrder.payRate 
+          : jobOrder.payRate,
         showPayRate: jobOrder.showPayRate,
-        workersNeeded: jobOrder.workersNeeded,
+        workersNeeded: isGigJob ? undefined : jobOrder.workersNeeded,
         eVerifyRequired: jobOrder.eVerifyRequired,
         backgroundCheckPackages: jobOrder.backgroundCheckPackages,
         showBackgroundChecks: false,
