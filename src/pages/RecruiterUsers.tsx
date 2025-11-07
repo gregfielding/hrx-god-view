@@ -42,9 +42,6 @@ type SecurityLevel =
   | '2'
   | '3'
   | '4'
-  | '5'
-  | '6'
-  | '7'
   | 'all';
 
 interface RecruiterUser {
@@ -120,7 +117,7 @@ const RecruiterUsers: React.FC = () => {
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
-        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4', '5', '6', '7'])
+        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
       );
 
       const snapshot = await getDocs(q);
@@ -189,12 +186,6 @@ const RecruiterUsers: React.FC = () => {
         return 'Candidate';
       case '4':
         return 'Staff';
-      case '5':
-        return 'Worker';
-      case '6':
-        return 'Manager';
-      case '7':
-        return 'Admin';
       default:
         return level;
     }
@@ -219,12 +210,6 @@ const RecruiterUsers: React.FC = () => {
         return 'primary';
       case '4':
         return 'success';
-      case '5':
-        return 'secondary';
-      case '6':
-        return 'warning';
-      case '7':
-        return 'default';
       default:
         return 'default';
     }
@@ -450,9 +435,6 @@ const RecruiterUsers: React.FC = () => {
             }
           >
             <MenuItem value="all">All Levels</MenuItem>
-            <MenuItem value="7">Admin</MenuItem>
-            <MenuItem value="6">Manager</MenuItem>
-            <MenuItem value="5">Worker</MenuItem>
             <MenuItem value="4">Staff</MenuItem>
             <MenuItem value="3">Candidate</MenuItem>
             <MenuItem value="2">Applicant</MenuItem>
