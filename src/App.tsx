@@ -21,8 +21,6 @@ import AgencyProfile from './pages/AgencyProfile';
 import TenantWorkforce from './pages/TenantViews/TenantWorkforce';
 import WorkforceDashboard from './pages/TenantViews/WorkforceDashboard';
 import CompanyDirectory from './pages/TenantViews/CompanyDirectory';
-import HiredStaff from './pages/TenantViews/HiredStaff';
-import FlexWorkers from './pages/TenantViews/FlexWorkers';
 import AddWorkers from './pages/TenantViews/AddWorkers';
 import PendingInvites from './pages/TenantViews/PendingInvites';
 import WorkforcePageWrapper from './pages/TenantViews/WorkforcePageWrapper';
@@ -117,6 +115,7 @@ import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
+import RecruiterUserGroups from './pages/RecruiterUserGroups';
 
 import InsightReports from './pages/InsightReports';
 
@@ -364,36 +363,6 @@ function App() {
               { label: 'Company Directory' }
             ]}>
               <CompanyDirectory />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/hired-staff" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Hired Staff' }
-            ]}>
-              <HiredStaff />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/flex-workers" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Flex Workers' }
-            ]}>
-              <FlexWorkers />
-            </WorkforcePageWrapper>
-          </ProtectedRoute>
-        } />
-        <Route path="workforce/user-groups" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'User Groups' }
-            ]}>
-              <TenantUserGroups />
             </WorkforcePageWrapper>
           </ProtectedRoute>
         } />
@@ -811,6 +780,7 @@ function App() {
           <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
           <Route path="contacts" element={<RecruiterContacts />} />
           <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
+          <Route path="user-groups" element={<RecruiterUserGroups />} />
           <Route path="reports" element={
             <Box>
               <Typography variant="h6">Reports</Typography>

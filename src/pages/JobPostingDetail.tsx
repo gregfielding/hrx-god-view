@@ -22,6 +22,7 @@ import {
   Business as BusinessIcon,
   ArrowBack as ArrowBackIcon,
   ContentCopy as ContentCopyIcon,
+  VerifiedUser as VerifiedIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
@@ -821,8 +822,9 @@ const JobPostingDetail: React.FC = () => {
             (posting.showEducation && posting.educationLevels?.length > 0) ||
             (posting.showLanguages && posting.languages?.length > 0) ||
             (posting.showPhysicalRequirements && posting.physicalRequirements?.length > 0) ||
-            (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
-            (posting.showRequiredPpe && posting.requiredPpe?.length > 0)) && (
+          (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
+          (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
+          posting.eVerifyRequired) && (
             <Card>
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
@@ -839,6 +841,23 @@ const JobPostingDetail: React.FC = () => {
                         {posting.backgroundCheckPackages.map((pkg: string, index: number) => (
                           <Chip key={index} label={pkg} size="small" />
                         ))}
+                      </Box>
+                    </Box>
+                  )}
+
+                  {posting.eVerifyRequired && (
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        Employment Eligibility
+                      </Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                        <Chip
+                          icon={<VerifiedIcon fontSize="small" />}
+                          label="E-Verify Required"
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                        />
                       </Box>
                     </Box>
                   )}

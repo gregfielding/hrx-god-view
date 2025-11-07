@@ -12,6 +12,7 @@ import {
   Work as WorkIcon,
   People as PeopleIcon,
   Timeline as TimelineIcon,
+  Group as GroupIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { BreadcrumbNav } from '../components/BreadcrumbNav';
@@ -34,6 +35,13 @@ const RecruiterDashboard: React.FC = () => {
       icon: <PeopleIcon sx={{ fontSize: 40 }} />,
       path: '/recruiter/applicants',
       color: theme.palette.secondary.main,
+    },
+    {
+      title: 'User Groups',
+      description: 'Organize staff cohorts and teams',
+      icon: <GroupIcon sx={{ fontSize: 40 }} />,
+      path: '/recruiter/user-groups',
+      color: theme.palette.info.main,
     },
     {
       title: 'Pipeline',

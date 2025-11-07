@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   Box,
   Typography,
@@ -6,88 +6,19 @@ import {
   Card,
   CardContent,
   CardActionArea,
-  Paper,
   useTheme,
 } from '@mui/material';
 import {
   People as PeopleIcon,
-  Business as BusinessIcon,
-  Group as GroupIcon,
   PersonAdd as PersonAddIcon,
   PendingActions as PendingIcon,
   IntegrationInstructions as IntegrationIcon,
-  Work as WorkIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
 
 const WorkforceDashboard: React.FC = () => {
-  const { tenantId, activeTenant } = useAuth();
   const navigate = useNavigate();
   const theme = useTheme();
-  
-  const effectiveTenantId = activeTenant?.id || tenantId;
-  
-  const [flexModuleEnabled, setFlexModuleEnabled] = useState(false);
-  const [staffingModuleEnabled, setStaffingModuleEnabled] = useState(false);
-  const [isStaffingCompany, setIsStaffingCompany] = useState(false);
-
-  // Real-time listener for flex module status
-  useEffect(() => {
-    if (!effectiveTenantId) {
-      setFlexModuleEnabled(false);
-      return;
-    }
-
-    const flexModuleRef = doc(db, 'tenants', effectiveTenantId, 'modules', 'hrx-flex');
-    const unsubscribe = onSnapshot(flexModuleRef, (doc) => {
-      if (doc.exists()) {
-        const isEnabled = doc.data()?.isEnabled || false;
-        setFlexModuleEnabled(isEnabled);
-      } else {
-        setFlexModuleEnabled(false);
-      }
-    }, (error) => {
-      console.error('Error listening to flex module status:', error);
-      setFlexModuleEnabled(false);
-    });
-
-    return () => unsubscribe();
-  }, [effectiveTenantId]);
-
-  // Real-time listener for staffing module status
-  useEffect(() => {
-    if (!effectiveTenantId) {
-      setStaffingModuleEnabled(false);
-      return;
-    }
-
-    const staffingModuleRef = doc(db, 'tenants', effectiveTenantId, 'modules', 'hrx-staffing');
-    const unsubscribe = onSnapshot(staffingModuleRef, (doc) => {
-      if (doc.exists()) {
-        const isEnabled = doc.data()?.isEnabled || false;
-        setStaffingModuleEnabled(isEnabled);
-      } else {
-        setStaffingModuleEnabled(false);
-      }
-    }, (error) => {
-      console.error('Error listening to staffing module status:', error);
-      setStaffingModuleEnabled(false);
-    });
-
-    return () => unsubscribe();
-  }, [effectiveTenantId]);
-
-  useEffect(() => {
-    if (effectiveTenantId) {
-      // Import the function dynamically to avoid circular dependencies
-      import('../../utils/staffingCompanies').then(({ isStaffingCompany: checkIfStaffingCompany }) => {
-        setIsStaffingCompany(checkIfStaffingCompany(effectiveTenantId));
-      });
-    }
-  }, [effectiveTenantId]);
 
   const dashboardItems = [
     {
@@ -96,13 +27,6 @@ const WorkforceDashboard: React.FC = () => {
       icon: <PeopleIcon sx={{ fontSize: 40 }} />,
       path: '/workforce/company-directory',
       color: theme.palette.primary.main,
-    },
-    {
-      title: 'User Groups',
-      description: 'Organize employees into groups and teams',
-      icon: <GroupIcon sx={{ fontSize: 40 }} />,
-      path: '/workforce/user-groups',
-      color: theme.palette.secondary.main,
     },
     {
       title: 'Add Workers',
@@ -126,27 +50,6 @@ const WorkforceDashboard: React.FC = () => {
       color: theme.palette.info.main,
     },
   ];
-
-  // Add conditional items based on module status
-  if (isStaffingCompany && staffingModuleEnabled) {
-    dashboardItems.splice(1, 0, {
-      title: 'Hired Staff',
-      description: 'Manage staff hired for client assignments',
-      icon: <BusinessIcon sx={{ fontSize: 40 }} />,
-      path: '/workforce/hired-staff',
-      color: theme.palette.primary.dark,
-    });
-  }
-
-  if (flexModuleEnabled) {
-    dashboardItems.splice(isStaffingCompany && staffingModuleEnabled ? 2 : 1, 0, {
-      title: 'Flex Workers',
-      description: 'Manage flexible and temporary workers',
-      icon: <WorkIcon sx={{ fontSize: 40 }} />,
-      path: '/workforce/flex-workers',
-      color: theme.palette.secondary.dark,
-    });
-  }
 
   const handleCardClick = (path: string) => {
     navigate(path);
