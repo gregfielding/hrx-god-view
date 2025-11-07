@@ -89,6 +89,7 @@ interface PublicJobPosting {
   payRate?: number;
   showPayRate: boolean;
   workersNeeded?: number;
+  showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired?: boolean;
   backgroundCheckPackages?: string[];
   showBackgroundChecks?: boolean;
@@ -395,6 +396,7 @@ const PublicJobsBoard: React.FC = () => {
       payRate: payRate,
       showPayRate: jobOrder.showPayRate || false,
       workersNeeded: jobOrder.workersNeeded,
+      showWorkersNeeded: jobOrder.showWorkersNeeded !== false, // Default to true if not set
       eVerifyRequired: jobOrder.eVerifyRequired || false,
       backgroundCheckPackages: jobOrder.backgroundCheckPackages || [],
       showBackgroundChecks: false,
@@ -667,6 +669,7 @@ const PublicJobsBoard: React.FC = () => {
             payRate: post.payRate,
             showPayRate: post.showPayRate,
             workersNeeded: post.workersNeeded,
+            showWorkersNeeded: post.showWorkersNeeded !== false, // Default to true if not set
             eVerifyRequired: post.eVerifyRequired,
             backgroundCheckPackages: post.backgroundCheckPackages,
             showBackgroundChecks: post.showBackgroundChecks,
@@ -848,6 +851,7 @@ const PublicJobsBoard: React.FC = () => {
               payRate: post.payRate,
               showPayRate: post.showPayRate,
               workersNeeded: post.workersNeeded,
+            showWorkersNeeded: post.showWorkersNeeded !== false, // Default to true if not set
               eVerifyRequired: post.eVerifyRequired,
               backgroundCheckPackages: post.backgroundCheckPackages,
               showBackgroundChecks: post.showBackgroundChecks,

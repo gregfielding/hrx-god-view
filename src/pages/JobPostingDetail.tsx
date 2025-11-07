@@ -96,6 +96,7 @@ const JobPostingDetail: React.FC = () => {
               payRate: payRate,
               showPayRate: jobOrderData.showPayRate || false,
               workersNeeded: jobOrderData.workersNeeded,
+              showWorkersNeeded: jobOrderData.showWorkersNeeded !== undefined ? jobOrderData.showWorkersNeeded : true, // Default to true if not set
               eVerifyRequired: jobOrderData.eVerifyRequired || false,
               backgroundCheckPackages: Array.isArray(jobOrderData.backgroundCheckPackages) ? jobOrderData.backgroundCheckPackages : [],
               drugScreeningPanels: Array.isArray(jobOrderData.drugScreeningPanels) ? jobOrderData.drugScreeningPanels : [],
@@ -147,7 +148,13 @@ const JobPostingDetail: React.FC = () => {
           const postSnap = await getDoc(postRef);
 
           if (postSnap.exists()) {
-            setPosting({ id: postSnap.id, ...postSnap.data() });
+            const postData = postSnap.data();
+            setPosting({ 
+              id: postSnap.id, 
+              ...postData,
+              // Ensure showWorkersNeeded defaults to true if not set
+              showWorkersNeeded: postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : true
+            });
           } else {
             setError('Job posting not found');
           }
@@ -642,7 +649,7 @@ const JobPostingDetail: React.FC = () => {
               )}
               
               {/* Hide openings count for gig jobs - individual shifts show their own staff needed */}
-              {posting.workersNeeded && !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
+              {posting.workersNeeded && posting.showWorkersNeeded !== false && !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
                 <Chip 
                   icon={<WorkIcon />}
                   label={`${posting.workersNeeded} position${posting.workersNeeded > 1 ? 's' : ''}`} 
@@ -998,7 +1005,7 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
                   
-                  {posting.workersNeeded && (
+                  {posting.workersNeeded && posting.showWorkersNeeded !== false && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
                         Openings

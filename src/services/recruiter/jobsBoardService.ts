@@ -82,6 +82,7 @@ export interface JobsBoardPost {
   payRate?: number;
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
+  showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired: boolean;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
@@ -181,6 +182,7 @@ export interface CreatePostData {
   payRate?: number | null;
   showPayRate: boolean;
   workersNeeded?: number; // Optional for Gig jobs
+  showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired: boolean;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
@@ -498,6 +500,7 @@ export class JobsBoardService {
         payRate: payRate,
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
         workersNeeded: isGigJob ? undefined : (customData?.workersNeeded !== undefined ? customData.workersNeeded : jobOrder.workersNeeded),
+        showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : true, // Default to true if not set
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
         showBackgroundChecks: customData?.showBackgroundChecks !== undefined ? customData.showBackgroundChecks : false,
@@ -627,6 +630,7 @@ export class JobsBoardService {
         ...(postData.payRate !== null && postData.payRate !== undefined && { payRate: postData.payRate }),
         showPayRate: postData.showPayRate,
         ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
+        ...(postData.showWorkersNeeded !== undefined && { showWorkersNeeded: postData.showWorkersNeeded }),
         eVerifyRequired: postData.eVerifyRequired,
         backgroundCheckPackages: postData.backgroundCheckPackages,
         showBackgroundChecks: postData.showBackgroundChecks,

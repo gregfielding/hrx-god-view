@@ -70,6 +70,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     payRate: '',
     showPayRate: true,
     workersNeeded: 1,
+    showWorkersNeeded: true,
     eVerifyRequired: false,
     backgroundCheckPackages: [],
     showBackgroundChecks: false,
@@ -127,6 +128,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
   const [geocoding, setGeocoding] = useState(false);
+  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
 
   // Track original form values before job order connection
   const [originalFormValues, setOriginalFormValues] = useState<any>(null);
@@ -163,6 +165,20 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       return '';
     }
   };
+
+  // Check if Google Maps is loaded
+  useEffect(() => {
+    const checkGoogleMapsLoaded = () => {
+      const isLoaded = !!(window as any).google?.maps?.places;
+      if (isLoaded) {
+        setIsGoogleMapsLoaded(true);
+      } else {
+        // Retry after 100ms if not loaded
+        setTimeout(checkGoogleMapsLoaded, 100);
+      }
+    };
+    checkGoogleMapsLoaded();
+  }, []);
 
   useEffect(() => {
     if (initialData) {
@@ -347,7 +363,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const onCityPlaceChanged = () => {
     if (cityAutocomplete) {
       const place = cityAutocomplete.getPlace();
-      if (place.geometry && place.geometry.location) {
+      if (place && place.geometry && place.geometry.location) {
         let city = '';
         let state = '';
         let zipCode = '';
@@ -370,8 +386,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           lng: place.geometry.location.lng()
         };
 
-        setFormData({
-          ...formData,
+        setFormData(prev => ({
+          ...prev,
           worksiteName: place.formatted_address || `${city}, ${state}`,
           street: '',
           city,
@@ -379,7 +395,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           zipCode,
           // Store coordinates for distance calculations
           coordinates
-        });
+        }));
       }
     }
   };
@@ -459,6 +475,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               ? firstPosition.payRate 
               : jobOrderData.payRate?.toString()) || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
+            showWorkersNeeded: formData.showWorkersNeeded !== undefined ? formData.showWorkersNeeded : true,
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
             drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
@@ -561,7 +578,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     if (useCompanyLocation && selectedCompanyId) {
       if (!selectedLocationId) return false;
     } else {
-      // Otherwise, require city and state
+      // Otherwise, require city and state (company is optional)
       if (!formData.city?.trim() || !formData.state?.trim()) return false;
     }
     
@@ -694,15 +711,26 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
-                label="Workers Needed"
-                type="number"
-                value={formData.workersNeeded}
-                onChange={(e) => setFormData({ ...formData, workersNeeded: parseInt(e.target.value) || 1 })}
-                fullWidth
-                inputProps={{ min: 1 }}
-                helperText="Number of workers needed"
-              />
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <TextField
+                  label="Workers Needed"
+                  type="number"
+                  value={formData.workersNeeded}
+                  onChange={(e) => setFormData({ ...formData, workersNeeded: parseInt(e.target.value) || 1 })}
+                  fullWidth
+                  inputProps={{ min: 1 }}
+                  helperText="Number of workers needed"
+                />
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Show Workers Needed on Public Jobs Board
+                  </Typography>
+                  <Switch
+                    checked={formData.showWorkersNeeded}
+                    onChange={(e) => setFormData({ ...formData, showWorkersNeeded: e.target.checked })}
+                  />
+                </Box>
+              </Box>
             </Grid>
           </Grid>
         </Box>
@@ -998,7 +1026,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       <TextField
                         {...params}
                         label="Company"
-                        required
                         InputProps={{
                           ...params.InputProps,
                           endAdornment: (
@@ -1108,79 +1135,89 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             
             {/* Always show City/State when no company is selected */}
             <Box sx={{ mt: 2 }}>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
+              {isGoogleMapsLoaded ? (
+                <GoogleAutocomplete
+                  onLoad={onCityAutocompleteLoad}
+                  onPlaceChanged={onCityPlaceChanged}
+                  options={{
+                    types: ['(cities)'],
+                    componentRestrictions: { country: 'us' }
+                  }}
+                >
                   <TextField
                     fullWidth
-                    label="City"
-                    value={formData.city || ''}
-                    onChange={(e) => {
-                      const city = e.target.value;
-                      setFormData({ ...formData, city, coordinates: undefined });
-                    }}
+                    label="City, State"
                     required
-                    placeholder="e.g., Las Vegas"
-                    helperText="Enter the city name"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    label="State"
-                    value={formData.state || ''}
-                    onChange={(e) => {
-                      const state = e.target.value.toUpperCase();
-                      setFormData({ ...formData, state, coordinates: undefined });
+                    placeholder="Search for a city..."
+                    helperText="Search and select a city - coordinates will be saved automatically"
+                    inputRef={(ref) => {
+                      setCityInputRef(ref);
                     }}
-                    required
-                    placeholder="e.g., NV"
-                    helperText="Enter state abbreviation"
-                    inputProps={{ maxLength: 2 }}
                   />
-                </Grid>
-                {formData.city && formData.state && (
-                  <Grid item xs={12}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
-                      {geocoding ? (
-                        <>
-                          <CircularProgress size={16} />
-                          <Typography variant="caption" color="text.secondary">
-                            Getting coordinates...
-                          </Typography>
-                        </>
-                      ) : formData.coordinates ? (
-                        <>
-                          <Typography variant="caption" color="text.secondary">
-                            Coordinates: {formData.coordinates.lat.toFixed(6)}, {formData.coordinates.lng.toFixed(6)}
-                          </Typography>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => geocodeCityState(formData.city, formData.state)}
-                            sx={{ ml: 'auto' }}
-                          >
-                            Refresh
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Typography variant="caption" color="text.secondary">
-                            Coordinates will be fetched automatically
-                          </Typography>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => geocodeCityState(formData.city, formData.state)}
-                            sx={{ ml: 'auto' }}
-                          >
-                            Get Coordinates
-                          </Button>
-                        </>
-                      )}
-                    </Box>
-                  </Grid>
-                )}
-              </Grid>
+                </GoogleAutocomplete>
+              ) : (
+                <TextField
+                  fullWidth
+                  label="City, State"
+                  value={formData.city && formData.state ? `${formData.city}, ${formData.state}` : ''}
+                  onChange={(e) => {
+                    // Allow manual entry while Google Maps loads
+                    const value = e.target.value;
+                    const parts = value.split(',').map(s => s.trim());
+                    if (parts.length >= 2) {
+                      setFormData({
+                        ...formData,
+                        city: parts[0],
+                        state: parts[1].toUpperCase().substring(0, 2),
+                        coordinates: undefined
+                      });
+                    }
+                  }}
+                  required
+                  placeholder="Search for a city..."
+                  helperText="Loading Google Maps... (you can type manually)"
+                />
+              )}
+              {formData.city && formData.state && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1, mt: 2 }}>
+                  {geocoding ? (
+                    <>
+                      <CircularProgress size={16} />
+                      <Typography variant="caption" color="text.secondary">
+                        Getting coordinates...
+                      </Typography>
+                    </>
+                  ) : formData.coordinates ? (
+                    <>
+                      <Typography variant="caption" color="text.secondary">
+                        Coordinates: {formData.coordinates.lat.toFixed(6)}, {formData.coordinates.lng.toFixed(6)}
+                      </Typography>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => geocodeCityState(formData.city, formData.state)}
+                        sx={{ ml: 'auto' }}
+                      >
+                        Refresh
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Typography variant="caption" color="text.secondary">
+                        Coordinates will be fetched automatically
+                      </Typography>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => geocodeCityState(formData.city, formData.state)}
+                        sx={{ ml: 'auto' }}
+                      >
+                        Get Coordinates
+                      </Button>
+                    </>
+                  )}
+                </Box>
+              )}
             </Box>
           </>
         )}
