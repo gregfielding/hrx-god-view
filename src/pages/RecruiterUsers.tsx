@@ -128,6 +128,23 @@ const RecruiterUsers: React.FC = () => {
         const userData = userDoc.data() as any;
         const tenantData = userData.tenantIds?.[tenantId] || {};
         const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
+        const rawSkills = Array.isArray(userData.skills)
+          ? userData.skills
+          : Array.isArray(tenantData.skills)
+          ? tenantData.skills
+          : [];
+        const normalizedSkills = rawSkills
+          .map((skill: any) => {
+            if (!skill) return null;
+            if (typeof skill === 'string') return skill;
+            if (typeof skill === 'object') {
+              if (typeof skill.label === 'string') return skill.label;
+              if (typeof skill.name === 'string') return skill.name;
+              if (typeof skill.value === 'string') return skill.value;
+            }
+            return null;
+          })
+          .filter((skill): skill is string => !!skill);
 
         return {
           id: userDoc.id,
@@ -147,7 +164,7 @@ const RecruiterUsers: React.FC = () => {
             userData.aiProfile?.score,
           aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
           userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
-          skills: Array.isArray(userData.skills) ? userData.skills : [],
+          skills: normalizedSkills,
         };
       });
 
