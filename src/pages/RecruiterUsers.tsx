@@ -35,6 +35,7 @@ import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { calculateProfileScore } from '../utils/applicantScoring';
 
 type SecurityLevel =
   | '0'
@@ -158,13 +159,13 @@ const RecruiterUsers: React.FC = () => {
             tenantData.aiProfileScore ??
             userData.aiProfileScore ??
             userData.aiScore ??
-            userData.aiProfile?.score,
+            userData.aiProfile?.score ??
+            calculateProfileScore(userData),
           aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
           userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
           skills: normalizedSkills,
         };
       });
-
       setUsers(data);
     } catch (err) {
       console.error('RecruiterUsers: Failed to load users', err);
