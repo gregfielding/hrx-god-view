@@ -24,7 +24,7 @@ import {
   ContentCopy as ContentCopyIcon,
   VerifiedUser as VerifiedIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -44,6 +44,7 @@ const JobPostingDetail: React.FC = () => {
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
+  const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!tenantId || !postId) return;
@@ -207,16 +208,19 @@ const JobPostingDetail: React.FC = () => {
         
         // Find the first application that matches (they should all have the same status)
         let foundStatus: string | null = null;
+        let foundDocId: string | null = null;
         for (const snapshot of snapshots) {
           if (!snapshot.empty) {
             const firstDoc = snapshot.docs[0];
             const appData = firstDoc.data();
             foundStatus = appData.status || 'submitted';
+            foundDocId = firstDoc.id;
             break;
           }
         }
         
         setApplicationStatus(foundStatus);
+        setApplicationDocId(foundDocId);
       } catch (err: any) {
         // Silently handle permission errors - this is not critical functionality
         // The appliedShifts query will still work to show "Application Submitted"
@@ -224,6 +228,7 @@ const JobPostingDetail: React.FC = () => {
           console.error('Error loading application status:', err);
         }
         setApplicationStatus(null);
+        setApplicationDocId(null);
       }
     };
 
@@ -472,6 +477,25 @@ const JobPostingDetail: React.FC = () => {
         ? `?shifts=${selectedShifts.join(',')}`
         : '';
       navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+    }
+  };
+
+  const handleCancelApplication = async () => {
+    if (!applicationDocId || !tenantId) return;
+    const confirmed = window.confirm('Are you sure you want to cancel your application?');
+    if (!confirmed) return;
+
+    try {
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDocId);
+      await updateDoc(applicationRef, {
+        status: 'withdrawn',
+        withdrawnAt: new Date(),
+        withdrawnBy: user?.uid || null,
+      });
+      setApplicationStatus('withdrawn');
+    } catch (err) {
+      console.error('Failed to cancel application:', err);
+      alert('We were unable to cancel your application. Please try again.');
     }
   };
 
@@ -734,25 +758,63 @@ const JobPostingDetail: React.FC = () => {
                 </Button>
               </Box>
             ) : statusButtonProps ? (
-              <Button
-                variant="contained"
-                size="large"
-                sx={{
-                  minWidth: 200,
-                  py: 1.5,
-                  fontSize: '1.1rem',
-                  fontWeight: 'bold',
-                  backgroundColor: statusButtonProps.backgroundColor,
-                  color: statusButtonProps.color,
-                  '&:hover': {
+              statusButtonProps.label === 'Application Submitted' ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: { xs: 'stretch', sm: 'flex-end' }, gap: 1 }}>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    disableElevation
+                    sx={{
+                      borderRadius: '999px',
+                      px: 2.5,
+                      py: 0.75,
+                      fontWeight: 700,
+                      fontSize: '0.9rem',
+                      backgroundColor: statusButtonProps.backgroundColor,
+                      color: statusButtonProps.color,
+                      '&:hover': {
+                        backgroundColor: statusButtonProps.backgroundColor,
+                      },
+                    }}
+                  >
+                    {statusButtonProps.label}
+                  </Button>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    color="error"
+                    onClick={handleCancelApplication}
+                    sx={{
+                      borderRadius: '999px',
+                      px: 2,
+                      fontWeight: 600,
+                    }}
+                    disabled={!applicationDocId}
+                  >
+                    Cancel Application
+                  </Button>
+                </Box>
+              ) : (
+                <Button
+                  variant="contained"
+                  size="large"
+                  sx={{
+                    minWidth: 200,
+                    py: 1.5,
+                    fontSize: '1.1rem',
+                    fontWeight: 'bold',
                     backgroundColor: statusButtonProps.backgroundColor,
-                  },
-                  cursor: statusButtonProps.cursor,
-                  pointerEvents: statusButtonProps.pointerEvents,
-                }}
-              >
-                {statusButtonProps.label}
-              </Button>
+                    color: statusButtonProps.color,
+                    '&:hover': {
+                      backgroundColor: statusButtonProps.backgroundColor,
+                    },
+                    cursor: statusButtonProps.cursor,
+                    pointerEvents: statusButtonProps.pointerEvents,
+                  }}
+                >
+                  {statusButtonProps.label}
+                </Button>
+              )
             ) : (
               <Button
                 variant="contained"
