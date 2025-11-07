@@ -13,6 +13,7 @@ import {
   People as PeopleIcon,
   Timeline as TimelineIcon,
   Group as GroupIcon,
+  Badge as BadgeIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { BreadcrumbNav } from '../components/BreadcrumbNav';
@@ -35,6 +36,13 @@ const RecruiterDashboard: React.FC = () => {
       icon: <PeopleIcon sx={{ fontSize: 40 }} />,
       path: '/recruiter/applicants',
       color: theme.palette.secondary.main,
+    },
+    {
+      title: 'All Users',
+      description: 'Search and filter every worker, candidate, and admin',
+      icon: <BadgeIcon sx={{ fontSize: 40 }} />,
+      path: '/recruiter/users',
+      color: theme.palette.info.main,
     },
     {
       title: 'User Groups',
