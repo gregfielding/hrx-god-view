@@ -777,6 +777,7 @@ function App() {
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="users" element={<RecruiterUsers />} />
+          <Route path="users/:uid" element={<UserProfile />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
           <Route path="companies" element={<RecruiterCompanies />} />
           <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
