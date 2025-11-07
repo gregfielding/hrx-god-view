@@ -531,7 +531,7 @@ const RecruiterUsers: React.FC = () => {
                       backgroundColor: 'action.selected',
                     },
                   }}
-                  onClick={() => navigate(`/users/${user.id}`)}
+                  onClick={() => navigate(`/recruiter/users/${user.id}`)}
                 >
                   <TableCell onClick={(event) => event.stopPropagation()}>
                     <FavoriteButton

@@ -433,12 +433,21 @@ const UserProfilePage = () => {
     setTabIndex(availableTabs[0].index);
   }
 
-  // Create breadcrumb path for workforce navigation
-  const breadcrumbPath = [
-    { label: 'Workforce', href: '/workforce' },
-    { label: 'Company Directory', href: '/workforce/company-directory' },
-    { label: `${firstName} ${lastName}${preferredName && preferredName !== firstName ? ` (${preferredName})` : ''}` }
-  ];
+  // Create breadcrumb path based on current route
+  const pathname = window.location.pathname;
+  const isRecruiterRoute = pathname.startsWith('/recruiter/users');
+  const displayName = `${firstName} ${lastName}${preferredName && preferredName !== firstName ? ` (${preferredName})` : ''}`;
+  const breadcrumbPath = isRecruiterRoute
+    ? [
+        { label: 'Recruiter', href: '/recruiter' },
+        { label: 'All Users', href: '/recruiter/users' },
+        { label: displayName },
+      ]
+    : [
+        { label: 'Workforce', href: '/workforce' },
+        { label: 'Company Directory', href: '/workforce/company-directory' },
+        { label: displayName },
+      ];
 
   const isAdminView = parseInt(securityLevel) >= 5;
 
@@ -452,8 +461,8 @@ const UserProfilePage = () => {
           preferredName={preferredName}
           avatarUrl={avatarUrl}
           onAvatarUpdated={setAvatarUrl}
-          showBackButton={user?.uid !== uid}
-          onBack={() => navigate(-1)}
+          showBackButton={isRecruiterRoute || user?.uid !== uid}
+          onBack={() => (isRecruiterRoute ? navigate('/recruiter/users') : navigate(-1))}
           jobTitle={jobTitle}
           phone={phone}
           email={email}
@@ -470,7 +479,7 @@ const UserProfilePage = () => {
           regionName={regionName}
           managerName={managerName}
           managerId={managerId}
-          showBreadcrumbs={user?.uid !== uid}
+          showBreadcrumbs={isRecruiterRoute || user?.uid !== uid}
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
           profileScore={profileScore}

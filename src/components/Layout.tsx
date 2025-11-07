@@ -96,6 +96,11 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'Company Setup';
     }
     
+    // Recruiter user record routes
+    if (pathname.includes('/recruiter/users/')) {
+      return 'User Record';
+    }
+    
     // User Profile routes
     if (pathname.includes('/user-profile') || pathname.includes('/users/')) {
       return 'My Profile';
