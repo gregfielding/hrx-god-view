@@ -816,16 +816,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (posting?.autoAddToUserGroup) {
             try {
               const userGroupRef = doc(db, 'tenants', tenantId, 'userGroups', posting.autoAddToUserGroup);
-              // Add user ID to group's memberIds array
-              await updateDoc(userGroupRef, {
-                memberIds: arrayUnion(uid),
-                updatedAt: serverTimestamp()
-              });
-              
-              // Add group ID to user's userGroupIds array
-              await updateDoc(userRef, {
-                userGroupIds: arrayUnion(posting.autoAddToUserGroup)
-              });
+              await Promise.all([
+                updateDoc(userGroupRef, {
+                  memberIds: arrayUnion(uid),
+                  updatedAt: serverTimestamp(),
+                }),
+                updateDoc(userRef, {
+                  userGroupIds: arrayUnion(posting.autoAddToUserGroup),
+                  [`tenantIds.${tenantId}.userGroupIds`]: arrayUnion(posting.autoAddToUserGroup),
+                }),
+              ]);
             } catch (groupErr) {
               console.error('Error adding user to group:', groupErr);
             }
