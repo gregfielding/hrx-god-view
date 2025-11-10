@@ -423,8 +423,8 @@ const JobPostingDetail: React.FC = () => {
       case 'withdrawn':
       case 'cancelled':
         return {
-          label: 'Cancelled',
-          backgroundColor: '#9E9E9E', // Grey
+          label: 'cancelled',
+          backgroundColor: '#9E9E9E',
           color: '#fff',
           cursor: 'default',
           pointerEvents: 'none' as const
@@ -765,11 +765,11 @@ const JobPostingDetail: React.FC = () => {
                     size="small"
                     disableElevation
                     sx={{
-                      borderRadius: '999px',
+                      borderRadius: '32px',
                       px: 2.5,
-                      py: 0.75,
-                      fontWeight: 700,
-                      fontSize: '0.9rem',
+                      py: 0.65,
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
                       backgroundColor: statusButtonProps.backgroundColor,
                       color: statusButtonProps.color,
                       '&:hover': {
@@ -785,15 +785,28 @@ const JobPostingDetail: React.FC = () => {
                     color="error"
                     onClick={handleCancelApplication}
                     sx={{
-                      borderRadius: '999px',
-                      px: 2,
-                      fontWeight: 600,
-                    }}
-                    disabled={!applicationDocId}
-                  >
-                    Cancel Application
-                  </Button>
-                </Box>
+                        borderRadius: '999px',
+                        px: 2,
+                        fontWeight: 600,
+                      }}
+                      disabled={!applicationDocId}
+                    >
+                      Cancel Application
+                    </Button>
+                  </Box>
+              ) : statusButtonProps.label === 'cancelled' ? (
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={handleApply}
+                  sx={{
+                    borderRadius: '999px',
+                    px: 2,
+                    fontWeight: 600,
+                  }}
+                >
+                  Apply Again
+                </Button>
               ) : (
                 <Button
                   variant="contained"
@@ -818,13 +831,12 @@ const JobPostingDetail: React.FC = () => {
             ) : (
               <Button
                 variant="contained"
-                size="large"
+                size="small"
                 onClick={handleApply}
                 sx={{
-                  minWidth: 200,
-                  py: 1.5,
-                  fontSize: '1.1rem',
-                  fontWeight: 'bold'
+                  borderRadius: '999px',
+                  px: 2,
+                  fontWeight: 600,
                 }}
               >
                 Apply Now
@@ -903,23 +915,6 @@ const JobPostingDetail: React.FC = () => {
                         {posting.backgroundCheckPackages.map((pkg: string, index: number) => (
                           <Chip key={index} label={pkg} size="small" />
                         ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.eVerifyRequired && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Employment Eligibility
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        <Chip
-                          icon={<VerifiedIcon fontSize="small" />}
-                          label="E-Verify Required"
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                        />
                       </Box>
                     </Box>
                   )}
@@ -1053,6 +1048,21 @@ const JobPostingDetail: React.FC = () => {
                       </Box>
                     </Box>
                   )}
+
+                {posting.eVerifyRequired && (
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 1 }}>
+                    <Box
+                      component="img"
+                      src="/img/everify.png"
+                      alt="E-Verify"
+                      sx={{
+                        height: { xs: 32, sm: 36 },
+                        width: 'auto',
+                        objectFit: 'contain',
+                      }}
+                    />
+                  </Box>
+                )}
                 </Stack>
               </CardContent>
             </Card>
@@ -1158,24 +1168,36 @@ const JobPostingDetail: React.FC = () => {
                     </Button>
                   </Box>
                 ) : statusButtonProps ? (
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    size="large"
-                    sx={{ 
-                      mt: 3, 
-                      py: 1.5,
-                      backgroundColor: statusButtonProps.backgroundColor,
-                      color: statusButtonProps.color,
-                      '&:hover': {
+                  statusButtonProps.label === 'cancelled' ? (
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      size="large"
+                      onClick={handleApply}
+                      sx={{ mt: 3, py: 1.5 }}
+                    >
+                      Apply Again
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      size="large"
+                      sx={{ 
+                        mt: 3, 
+                        py: 1.5,
                         backgroundColor: statusButtonProps.backgroundColor,
-                      },
-                      cursor: statusButtonProps.cursor,
-                      pointerEvents: statusButtonProps.pointerEvents,
-                    }}
-                  >
-                    {statusButtonProps.label}
-                  </Button>
+                        color: statusButtonProps.color,
+                        '&:hover': {
+                          backgroundColor: statusButtonProps.backgroundColor,
+                        },
+                        cursor: statusButtonProps.cursor,
+                        pointerEvents: statusButtonProps.pointerEvents,
+                      }}
+                    >
+                      {statusButtonProps.label}
+                    </Button>
+                  )
                 ) : (
                   <Button
                     variant="contained"

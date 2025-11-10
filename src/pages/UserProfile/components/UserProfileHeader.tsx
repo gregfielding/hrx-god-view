@@ -18,6 +18,8 @@ import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 import { storage, db } from '../../../firebase'; // adjust path
 import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
+import FavoriteButton from '../../../components/FavoriteButton';
+import { useFavorites } from '../../../hooks/useFavorites';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -82,6 +84,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
+  const { isFavorite, toggleFavorite } = useFavorites('users');
 
   const handleAvatarClick = () => {
     if (!canEditAvatar) return;
@@ -335,10 +338,25 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         </Box>
 
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-            {`${firstName} ${lastName}`}
-            {preferredName && preferredName !== firstName && ` (${preferredName})`}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+              {`${firstName} ${lastName}`}
+              {preferredName && preferredName !== firstName && ` (${preferredName})`}
+            </Typography>
+            {securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+              <FavoriteButton
+                itemId={uid}
+                favoriteType="users"
+                isFavorite={isFavorite}
+                toggleFavorite={toggleFavorite}
+                size="medium"
+                tooltipText={{
+                  favorited: 'Remove from favorites',
+                  notFavorited: 'Add to favorites',
+                }}
+              />
+            )}
+          </Box>
           {Boolean(jobTitle) && (
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 'bold', mt: 0.25 }}>
               {jobTitle}

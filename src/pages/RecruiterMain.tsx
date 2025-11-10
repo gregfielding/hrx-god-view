@@ -18,7 +18,8 @@ const RecruiterMain: React.FC = () => {
     if (location.pathname.startsWith('/recruiter/companies')) return 4;
     if (location.pathname.startsWith('/recruiter/contacts')) return 5;
     if (location.pathname.startsWith('/recruiter/user-groups')) return 6;
-    if (location.pathname.startsWith('/recruiter/reports')) return 7;
+    if (location.pathname.startsWith('/recruiter/jobs-board')) return 7;
+    if (location.pathname.startsWith('/recruiter/reports')) return 8;
     return 0;
   };
 
@@ -33,6 +34,7 @@ const RecruiterMain: React.FC = () => {
       '/recruiter/companies',
       '/recruiter/contacts',
       '/recruiter/user-groups',
+      '/recruiter/jobs-board',
       '/recruiter/reports',
     ];
     navigate(paths[newValue]);
@@ -424,7 +426,7 @@ const RecruiterMain: React.FC = () => {
             )}
           </Box>
 
-          {/* Reports Tab */}
+          {/* Jobs Board Tab */}
           <Box 
             sx={{ 
               cursor: 'pointer', 
@@ -460,9 +462,62 @@ const RecruiterMain: React.FC = () => {
                 pb: tabValue === 7 ? 1 : 0
               }}
             >
-              Reports
+              Jobs Board
             </Typography>
             {tabValue === 7 && (
+              <Box 
+                sx={{ 
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '17.5%',
+                  right: '17.5%',
+                  height: '2px',
+                  bgcolor: '#0B63C5',
+                  transition: 'width 200ms ease-in'
+                }} 
+              />
+            )}
+          </Box>
+
+          {/* Reports Tab */}
+          <Box 
+            sx={{ 
+              cursor: 'pointer', 
+              position: 'relative',
+              px: 1,
+              py: 1,
+              transition: 'color 200ms ease-in',
+              '&:hover': {
+                color: '#111827',
+                '&::after': {
+                  content: '""',
+                  position: 'absolute',
+                  bottom: -3,
+                  left: '20%',
+                  right: '20%',
+                  height: '1px',
+                  bgcolor: '#D1D5DB',
+                  transition: 'width 200ms ease-in'
+                }
+              }
+            }}
+            onClick={() => handleTabChange(8)}
+          >
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                fontSize: { xs: '14px', sm: '15px' },
+                fontWeight: tabValue === 8 ? 600 : 500,
+                lineHeight: '20px',
+                color: tabValue === 8 ? '#0B63C5' : '#4B5563',
+                textTransform: 'none',
+                position: 'relative',
+                pb: tabValue === 8 ? 1 : 0
+              }}
+            >
+              Reports
+            </Typography>
+            {tabValue === 8 && (
               <Box 
                 sx={{ 
                   position: 'absolute',

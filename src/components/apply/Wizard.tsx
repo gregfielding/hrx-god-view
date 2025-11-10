@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme } from '@mui/material';
 import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { auth } from '../../firebase';
 import { updateEmail } from 'firebase/auth';
@@ -812,23 +813,53 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             // The user can be updated later via the migration script if needed
           }
           
-          // Auto-add to user group if specified in job posting
-          if (posting?.autoAddToUserGroup) {
+          // Auto-add to user groups if specified in job posting
+          // Support both new array format (autoAddToUserGroups) and legacy single value (autoAddToUserGroup)
+          console.log('🔍 Checking auto-add to user groups:', {
+            posting: posting ? {
+              autoAddToUserGroups: posting.autoAddToUserGroups,
+              autoAddToUserGroup: posting.autoAddToUserGroup,
+            } : null,
+            tenantId,
+            uid,
+          });
+          
+          const groupIdsToAdd: string[] = [];
+          if (posting?.autoAddToUserGroups && Array.isArray(posting.autoAddToUserGroups) && posting.autoAddToUserGroups.length > 0) {
+            groupIdsToAdd.push(...posting.autoAddToUserGroups);
+            console.log('✅ Found autoAddToUserGroups array:', posting.autoAddToUserGroups);
+          } else if (posting?.autoAddToUserGroup && typeof posting.autoAddToUserGroup === 'string') {
+            // Legacy support for single group ID
+            groupIdsToAdd.push(posting.autoAddToUserGroup);
+            console.log('✅ Found legacy autoAddToUserGroup:', posting.autoAddToUserGroup);
+          }
+          
+          if (groupIdsToAdd.length > 0) {
+            console.log(`🚀 Adding user ${uid} to ${groupIdsToAdd.length} group(s):`, groupIdsToAdd);
             try {
-              const userGroupRef = doc(db, 'tenants', tenantId, 'userGroups', posting.autoAddToUserGroup);
-              await Promise.all([
-                updateDoc(userGroupRef, {
-                  memberIds: arrayUnion(uid),
-                  updatedAt: serverTimestamp(),
-                }),
-                updateDoc(userRef, {
-                  userGroupIds: arrayUnion(posting.autoAddToUserGroup),
-                  [`tenantIds.${tenantId}.userGroupIds`]: arrayUnion(posting.autoAddToUserGroup),
-                }),
-              ]);
+              // Use Firebase Function to add user to groups (has admin privileges)
+              const functions = getFunctions();
+              const addUsersToGroups = httpsCallable(functions as any, 'addUsersToGroups');
+              
+              await addUsersToGroups({
+                userId: uid,
+                groupIds: groupIdsToAdd,
+                tenantId: tenantId,
+              });
+              
+              console.log(`✅ Successfully added user ${uid} to ${groupIdsToAdd.length} user group(s):`, groupIdsToAdd);
             } catch (groupErr) {
-              console.error('Error adding user to group:', groupErr);
+              console.error('❌ Error adding user to group(s):', groupErr);
+              console.error('Error details:', {
+                message: groupErr instanceof Error ? groupErr.message : String(groupErr),
+                stack: groupErr instanceof Error ? groupErr.stack : undefined,
+                groupIdsToAdd,
+                tenantId,
+                uid,
+              });
             }
+          } else {
+            console.log('⚠️ No group IDs found to add user to');
           }
         }
       } catch (e) {

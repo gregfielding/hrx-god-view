@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Avatar,
+  Autocomplete,
   Box,
   Chip,
   CircularProgress,
@@ -252,7 +253,7 @@ const RecruiterUsers: React.FC = () => {
     return (
       <Chip
         icon={<InsightsIcon sx={{ fontSize: 16 }} />}
-        label={`${Math.round(score)} / 100`}
+        label={`${Math.round(score)}`}
         color={color}
         size="small"
         variant={color === 'default' ? 'outlined' : 'filled'}
@@ -427,15 +428,15 @@ const RecruiterUsers: React.FC = () => {
         />
 
         <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Security Level</InputLabel>
+          <InputLabel>Role</InputLabel>
           <Select
-            label="Security Level"
+            label="Role"
             value={securityLevelFilter}
             onChange={(event: SelectChangeEvent<SecurityLevel>) =>
               setSecurityLevelFilter(event.target.value as SecurityLevel)
             }
           >
-            <MenuItem value="all">All Levels</MenuItem>
+            <MenuItem value="all">All Roles</MenuItem>
             <MenuItem value="4">Staff</MenuItem>
             <MenuItem value="3">Candidate</MenuItem>
             <MenuItem value="2">Applicant</MenuItem>
@@ -444,37 +445,36 @@ const RecruiterUsers: React.FC = () => {
           </Select>
         </FormControl>
 
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>User Group</InputLabel>
-          <Select
-            label="User Group"
-            value={groupFilter}
-            onChange={(event) => setGroupFilter(event.target.value)}
-          >
-            <MenuItem value="all">All Groups</MenuItem>
-            {groups.map((group) => (
-              <MenuItem key={group.id} value={group.id}>
-                {group.title || group.id}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <Autocomplete
+          size="small"
+          options={groups}
+          getOptionLabel={(option) => option.title || option.id || 'Unnamed Group'}
+          value={groupFilter === 'all' ? null : groups.find(g => g.id === groupFilter) || null}
+          onChange={(_, newValue) => setGroupFilter(newValue ? newValue.id : 'all')}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="User Group"
+              placeholder="Search groups..."
+              sx={{ minWidth: 160 }}
+            />
+          )}
+        />
 
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Primary Skill</InputLabel>
-          <Select
-            label="Primary Skill"
-            value={skillFilter}
-            onChange={(event) => setSkillFilter(event.target.value)}
-          >
-            <MenuItem value="all">All Skills</MenuItem>
-            {uniqueSkills.map((skill) => (
-              <MenuItem key={skill} value={skill}>
-                {skill}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <Autocomplete
+          size="small"
+          options={uniqueSkills}
+          value={skillFilter === 'all' ? null : skillFilter}
+          onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Primary Skill"
+              placeholder="Search skills..."
+              sx={{ minWidth: 160 }}
+            />
+          )}
+        />
 
         <FormControl size="small" sx={{ minWidth: 180 }}>
           <InputLabel>Sort By</InputLabel>
@@ -504,10 +504,10 @@ const RecruiterUsers: React.FC = () => {
                   Contact
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Security Level
+                  Role
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  AI Profile
+                  Profile Score
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Groups

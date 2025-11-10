@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -15,14 +15,17 @@ import {
   Snackbar,
   Alert,
   Autocomplete,
-  Checkbox,
+  InputAdornment,
 } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
 import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 
 import { db } from '../../../firebase';
-import BroadcastDialog from '../../../components/BroadcastDialog';
+import FavoriteButton from '../../../components/FavoriteButton';
+import FavoritesFilter from '../../../components/FavoritesFilter';
+import { useFavorites } from '../../../hooks/useFavorites';
 
 const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [form, setForm] = useState({ title: '', description: '' });
@@ -34,9 +37,15 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [showForm, setShowForm] = useState(false);
   const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
-  const [showBroadcastDialog, setShowBroadcastDialog] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Check if we're accessing from the recruiter module
+  const isFromRecruiter = location.pathname.includes('/recruiter/user-groups');
+
+  const { favorites, isFavorite, toggleFavorite } = useFavorites('userGroups');
 
   useEffect(() => {
     fetchGroups();
@@ -90,23 +99,28 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleGroupSelection = (groupId: string) => {
-    setSelectedGroups((prev) =>
-      prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId],
-    );
-  };
+  const filteredGroups = useMemo(() => {
+    return groups.filter((group) => {
+      if (showFavoritesOnly && !favorites.includes(group.id)) {
+        return false;
+      }
 
-  const handleSelectAll = () => {
-    if (selectedGroups.length === groups.length) {
-      setSelectedGroups([]);
-    } else {
-      setSelectedGroups(groups.map((group) => group.id));
-    }
-  };
+      if (!searchTerm) {
+        return true;
+      }
+
+      const search = searchTerm.toLowerCase();
+      return (
+        group.title?.toLowerCase().includes(search) ||
+        group.description?.toLowerCase().includes(search) ||
+        group.createdBy?.firstName?.toLowerCase().includes(search) ||
+        group.createdBy?.lastName?.toLowerCase().includes(search)
+      );
+    });
+  }, [groups, searchTerm, showFavoritesOnly, favorites]);
 
   const handleBroadcastSuccess = (result: any) => {
     setSuccess(true);
-    setSelectedGroups([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -222,62 +236,114 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
         </>
       )}
 
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        {/* <Typography variant="h6">Groups</Typography> */}
-        {selectedGroups.length > 0 && (
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={() => setShowBroadcastDialog(true)}
-            sx={{ ml: 2 }}
-          >
-            Send Broadcast to {selectedGroups.length} Group{selectedGroups.length !== 1 ? 's' : ''}{' '}
-            Members
-          </Button>
-        )}
+      <Box
+        sx={{
+          mb: 3,
+          display: 'flex',
+          gap: 2,
+          alignItems: 'center',
+        }}
+      >
+        <TextField
+          placeholder="Search groups..."
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          variant="outlined"
+          size="small"
+          sx={{
+            flexGrow: 1,
+            maxWidth: 480,
+            '& .MuiOutlinedInput-root': {
+              borderRadius: '8px',
+              backgroundColor: 'white',
+            },
+          }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: 'text.secondary' }} />
+              </InputAdornment>
+            ),
+            endAdornment: (
+              <InputAdornment position="end">
+                <FavoritesFilter
+                  favoriteType="userGroups"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={setShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                />
+              </InputAdornment>
+            ),
+          }}
+        />
       </Box>
 
       <TableContainer component={Paper}>
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox">
-                <Checkbox
-                  checked={selectedGroups.length === groups.length && groups.length > 0}
-                  indeterminate={selectedGroups.length > 0 && selectedGroups.length < groups.length}
-                  onChange={handleSelectAll}
-                />
+              <TableCell sx={{ width: 60 }} />
+              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Title
               </TableCell>
-              <TableCell>Title</TableCell>
-              <TableCell>Description</TableCell>
-              <TableCell>Created</TableCell>
-              <TableCell>Created By</TableCell>
-              <TableCell>Members</TableCell>
-              <TableCell>Open</TableCell>
+              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Description
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Created
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Created By
+              </TableCell>
+              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Members
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {groups.length === 0 ? (
+            {filteredGroups.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5}>No groups yet.</TableCell>
+                <TableCell colSpan={6} sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {groups.length === 0
+                      ? 'No groups yet.'
+                      : 'No groups match your search.'}
+                  </Typography>
+                </TableCell>
               </TableRow>
             ) : (
-              groups.map((group) => (
-                <TableRow key={group.id}>
-                  <TableCell padding="checkbox">
-                    <Checkbox
-                      checked={selectedGroups.includes(group.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleGroupSelection(group.id);
+              filteredGroups.map((group, index) => (
+                <TableRow
+                  key={group.id}
+                  hover
+                  sx={{
+                    cursor: 'pointer',
+                    backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                    '&:hover': {
+                      backgroundColor: 'action.selected',
+                    },
+                  }}
+                  onClick={() => navigate(isFromRecruiter ? `/recruiter/user-groups/${group.id}` : `/usergroups/${group.id}`)}
+                >
+                  <TableCell onClick={(event) => event.stopPropagation()}>
+                    <FavoriteButton
+                      itemId={group.id}
+                      favoriteType="userGroups"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
+                      size="small"
+                      tooltipText={{
+                        favorited: 'Remove from favorites',
+                        notFavorited: 'Add to favorites',
                       }}
                     />
                   </TableCell>
                   <TableCell>{group.title}</TableCell>
                   <TableCell>
-                    {group.description.length > 40
+                    {group.description && group.description.length > 40
                       ? group.description.slice(0, 40) + '...'
-                      : group.description}
+                      : group.description || '-'}
                   </TableCell>
                   <TableCell>
                     {group.createdAt?.toDate ? group.createdAt.toDate().toLocaleDateString() : '-'}
@@ -289,15 +355,6 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   </TableCell>
                   <TableCell>
                     {Array.isArray(group.memberIds) ? group.memberIds.length : 0}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => navigate(`/usergroups/${group.id}`)}
-                    >
-                      Open
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))
@@ -315,18 +372,6 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           Group added!
         </Alert>
       </Snackbar>
-
-      <BroadcastDialog
-        open={showBroadcastDialog}
-        onClose={() => setShowBroadcastDialog(false)}
-        tenantId={tenantId}
-        senderId="admin" // Replace with actual user ID
-        initialAudienceFilter={{
-          userGroupId: selectedGroups.length === 1 ? selectedGroups[0] : undefined,
-        }}
-        title={`Send Broadcast to Group Members`}
-        onSuccess={handleBroadcastSuccess}
-      />
     </Box>
   );
 };

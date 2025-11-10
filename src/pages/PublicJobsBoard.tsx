@@ -1545,6 +1545,25 @@ const PublicJobsBoard: React.FC = () => {
                       
                       if (hasApplied) {
                         const status = userApplicationStatuses[applicationId] || 'submitted';
+                        // If application is withdrawn or cancelled, show "Apply Now" button instead
+                        if (status === 'withdrawn' || status === 'cancelled') {
+                          return (
+                            <Button 
+                              variant="contained" 
+                              sx={{ 
+                                width: '50%',
+                                ml: 'auto'
+                              }} 
+                              onClick={(e) => {
+                                e.stopPropagation(); // Prevent card click
+                                handleApply(job);
+                              }}
+                            >
+                              Apply Now
+                            </Button>
+                          );
+                        }
+                        
                         const buttonProps = getApplicationStatusButton(status);
                         return (
                           <Button 
@@ -1997,6 +2016,25 @@ const PublicJobsBoard: React.FC = () => {
                 
                 if (hasApplied) {
                   const status = userApplicationStatuses[applicationId] || 'submitted';
+                  // If application is withdrawn or cancelled, show "Apply Now" button instead
+                  if (status === 'withdrawn' || status === 'cancelled') {
+                    return (
+                      <Button 
+                        variant="contained" 
+                        onClick={() => handleApply(selectedJob)}
+                        sx={{ 
+                          minWidth: 120,
+                          backgroundColor: 'success.main',
+                          '&:hover': {
+                            backgroundColor: 'success.dark',
+                          }
+                        }}
+                      >
+                        Apply Now
+                      </Button>
+                    );
+                  }
+                  
                   const buttonProps = getApplicationStatusButton(status);
                   return (
                     <Button 

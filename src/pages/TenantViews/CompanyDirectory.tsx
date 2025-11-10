@@ -247,7 +247,7 @@ const CompanyDirectory: React.FC = () => {
         selectedWorkers={[]}
         handleWorkerSelection={() => {}}
         handleSelectAll={() => {}}
-        navigateToUser={(userId) => navigate(`/users/${userId}`)}
+        navigateToUser={(userId) => navigate(`/workforce/users/${userId}`)}
         contextType="agency"
         loading={false}
         search={search}

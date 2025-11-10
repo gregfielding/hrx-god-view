@@ -45,6 +45,18 @@ export interface JobBoardShift {
   payRate?: number; // Pay rate for this shift's job title (from gigPositions)
 }
 
+const normalizeAutoAddGroups = (value?: string | string[] | null): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((id) => (typeof id === 'string' ? id.trim() : ''))
+      .filter((id): id is string => Boolean(id));
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+};
+
 export interface JobsBoardPost {
   id: string;
   jobPostId: string; // Sequential counter like 2002, 2003, 2004
@@ -124,7 +136,8 @@ export interface JobsBoardPost {
   showUniformRequirements?: boolean; // Whether to show uniform requirements on public posting
   requiredPpe?: string[]; // Required PPE
   showRequiredPpe?: boolean; // Whether to show PPE requirements on public posting
-  autoAddToUserGroup?: string; // Optional: auto-add applicants to this user group
+  autoAddToUserGroups?: string[]; // Optional: auto-add applicants to these user groups
+  autoAddToUserGroup?: string; // Legacy single value support
   
   // Shift Selection Model (for Gig jobs only)
   availableShifts?: JobBoardShift[]; // DEPRECATED - Use dynamic shift loading instead
@@ -207,7 +220,8 @@ export interface CreatePostData {
   // Links
   jobOrderId?: string;
   skills?: string[];
-  autoAddToUserGroup?: string;
+  autoAddToUserGroups?: string[];
+  autoAddToUserGroup?: string; // Legacy single value support
   
   // Requirements & Additional Info
   requirements?: string[];
@@ -474,6 +488,9 @@ export class JobsBoardService {
         : (isGigJob && firstPosition && firstPosition.payRate 
           ? parseFloat(firstPosition.payRate) || undefined 
           : (jobOrder.showPayRate ? jobOrder.payRate : undefined));
+      const autoAddGroups = normalizeAutoAddGroups(
+        customData?.autoAddToUserGroups ?? customData?.autoAddToUserGroup
+      );
       
       // Create the post data
       const postData: Omit<JobsBoardPost, 'id'> = {
@@ -525,7 +542,8 @@ export class JobsBoardService {
         
         // Links
         jobOrderId,
-        autoAddToUserGroup: customData?.autoAddToUserGroup,
+        autoAddToUserGroups: autoAddGroups,
+        ...(autoAddGroups.length === 1 ? { autoAddToUserGroup: autoAddGroups[0] } : {}),
         
         // Shift Selection (for Gig jobs - use dynamic loading)
         usesDynamicShifts, // New approach: load shifts at runtime
@@ -604,6 +622,8 @@ export class JobsBoardService {
         expiresAt = typeof postData.expiresAt === 'string' ? new Date(postData.expiresAt) : postData.expiresAt;
       }
 
+      const autoAddGroups = normalizeAutoAddGroups(postData.autoAddToUserGroups ?? postData.autoAddToUserGroup);
+
       const fullPostData: Omit<JobsBoardPost, 'id'> = {
         jobPostId,
         tenantId,
@@ -657,7 +677,8 @@ export class JobsBoardService {
         // Links
         ...(postData.jobOrderId && { jobOrderId: postData.jobOrderId }),
         skills: postData.skills || [],
-        ...(postData.autoAddToUserGroup && { autoAddToUserGroup: postData.autoAddToUserGroup }),
+        ...(autoAddGroups.length ? { autoAddToUserGroups: autoAddGroups } : {}),
+        autoAddToUserGroup: autoAddGroups.length === 1 ? autoAddGroups[0] : undefined,
         
         // Requirements & Additional Info
         requirements: postData.requirements || [],

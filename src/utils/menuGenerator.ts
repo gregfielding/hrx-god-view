@@ -165,7 +165,8 @@ export async function generateMenuItems(
       //   icon: 'assignment',
       //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       // }] : []),
-      // Show Jobs Board: always for security levels 0-4, module access for 5-7
+      // Show Jobs Board: always for security levels 0-4 (public view)
+      // For security levels 5-7, Jobs Board is now in the Recruiter module
       ...((() => {
         // Always show for security levels 0-4 (Applicants, Flex, Workers)
         if (effectiveSecurityLevel && ['0', '1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
@@ -177,16 +178,7 @@ export async function generateMenuItems(
           }];
         }
         
-        // For security levels 5-7 (Managers, Admins), only show if module is enabled or user has jobsBoard flag
-        if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel) && (jobsBoardModuleEnabled || userJobsBoardEnabled)) {
-          return [{
-            text: 'Jobs Board',
-            to: '/jobs-dashboard',
-            icon: 'work',
-            requiredRoles: ['Manager', 'Admin'] as ClaimsRole[],
-          }];
-        }
-        
+        // Removed Jobs Board for security levels 5-7 - now in Recruiter module
         return [];
       })()),
       // Show My Applications and My Assignments for staff (security levels 1-4)

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel } from '@mui/material';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip } from '@mui/material';
 
 export interface WorkersTableProps {
   contacts: any[];
@@ -28,9 +28,62 @@ const getTenantField = (contact: any, field: string, effectiveTenantId?: string)
   return contact.tenantIds[effectiveTenantId][field] || contact[field];
 };
 
+// Helper function to get security level label
+const getSecurityLevelLabel = (level: string | number | undefined): string => {
+  const levelStr = String(level || '0');
+  switch (levelStr) {
+    case '7': return 'Admin';
+    case '6': return 'Manager';
+    case '5': return 'Worker';
+    case '4': return 'Hired Staff';
+    case '3': return 'Flex';
+    case '2': return 'Applicant';
+    case '1': return 'Dismissed';
+    case '0': return 'Suspended';
+    default: return levelStr;
+  }
+};
+
+// Helper function to get security level color
+const getSecurityLevelColor = (level: string | number | undefined): 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
+  const levelStr = String(level || '0');
+  switch (levelStr) {
+    case '7': return 'primary';
+    case '6': return 'secondary';
+    case '5': return 'info';
+    case '4': return 'success';
+    case '3': return 'info';
+    case '2': return 'default';
+    case '1': return 'error';
+    case '0': return 'error';
+    default: return 'default';
+  }
+};
+
+// Helper function to get module access chips for a user
+const getModuleAccessChips = (contact: any, effectiveTenantId?: string): string[] => {
+  const modules: string[] = [];
+  
+  // Check user-level module flags
+  if (contact.recruiter || contact.tenantIds?.[effectiveTenantId || '']?.recruiter) {
+    modules.push('Recruiter');
+    // Jobs Board is included with Recruiter access, so don't show it separately
+  }
+  if (contact.crm_sales || contact.tenantIds?.[effectiveTenantId || '']?.crm_sales) {
+    modules.push('CRM');
+  }
+  
+  // Check for other common module flags
+  if (contact.flex || contact.tenantIds?.[effectiveTenantId || '']?.flex) {
+    modules.push('Flex');
+  }
+  
+  return modules;
+};
+
 // Removed unused sortableColumns to satisfy TS6133
 
-function getComparator(order: 'asc' | 'desc', orderBy: string) {
+function getComparator(order: 'asc' | 'desc', orderBy: string, effectiveTenantId?: string) {
   return (a: any, b: any) => {
     let aValue = a[orderBy];
     let bValue = b[orderBy];
@@ -50,6 +103,10 @@ function getComparator(order: 'asc' | 'desc', orderBy: string) {
   if (orderBy === 'region') {
     aValue = a.regionId || '';
     bValue = b.regionId || '';
+  }
+  if (orderBy === 'securityLevel') {
+    aValue = a.securityLevel || a.tenantIds?.[effectiveTenantId || '']?.securityLevel || '0';
+    bValue = b.securityLevel || b.tenantIds?.[effectiveTenantId || '']?.securityLevel || '0';
   }
     if (aValue === undefined || aValue === null) aValue = '';
     if (bValue === undefined || bValue === null) bValue = '';
@@ -178,11 +235,22 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                if (aRegion > bRegion) return order === 'asc' ? 1 : -1;
                return 0;
              });
+           } else if (orderBy === 'securityLevel') {
+             data.sort((a, b) => {
+               const aLevel = getTenantField(a, 'securityLevel', effectiveTenantId) || '0';
+               const bLevel = getTenantField(b, 'securityLevel', effectiveTenantId) || '0';
+               // Convert to numbers for proper sorting (higher number = higher level)
+               const aNum = parseInt(String(aLevel), 10);
+               const bNum = parseInt(String(bLevel), 10);
+               if (aNum < bNum) return order === 'asc' ? -1 : 1;
+               if (aNum > bNum) return order === 'asc' ? 1 : -1;
+               return 0;
+             });
            } else {
-      data.sort(getComparator(order, orderBy));
+      data.sort(getComparator(order, orderBy, effectiveTenantId));
     }
     return data;
-  }, [filteredContacts, order, orderBy, departments, locations, divisions, regions]);
+  }, [filteredContacts, order, orderBy, departments, locations, divisions, regions, effectiveTenantId]);
 
   if (loading) {
     return (
@@ -267,6 +335,20 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     >
                       Location
                     </TableSortLabel>
+                  </TableCell>
+                  {/* Role */}
+                  <TableCell sortDirection={orderBy === 'securityLevel' ? order : false}>
+                    <TableSortLabel
+                      active={orderBy === 'securityLevel'}
+                      direction={orderBy === 'securityLevel' ? order : 'asc'}
+                      onClick={() => handleRequestSort('securityLevel')}
+                    >
+                      Role
+                    </TableSortLabel>
+                  </TableCell>
+                  {/* Module Access */}
+                  <TableCell>
+                    Module Access
                   </TableCell>
           </TableRow>
         </TableHead>
@@ -398,11 +480,47 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                   return '-';
                 })()}
               </TableCell>
+              {/* Role */}
+              <TableCell>
+                {(() => {
+                  const securityLevel = getTenantField(contact, 'securityLevel', effectiveTenantId);
+                  const label = getSecurityLevelLabel(securityLevel);
+                  const color = getSecurityLevelColor(securityLevel);
+                  return (
+                    <Chip
+                      label={label}
+                      color={color}
+                      size="small"
+                      variant="outlined"
+                    />
+                  );
+                })()}
+              </TableCell>
+              {/* Module Access */}
+              <TableCell>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {(() => {
+                    const modules = getModuleAccessChips(contact, effectiveTenantId);
+                    if (modules.length === 0) {
+                      return <Typography variant="body2" color="text.secondary">—</Typography>;
+                    }
+                    return modules.map((module) => (
+                      <Chip
+                        key={module}
+                        label={module}
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                      />
+                    ));
+                  })()}
+                </Box>
+              </TableCell>
             </TableRow>
           ))}
           {contacts.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} align="center">
+              <TableCell colSpan={11} align="center">
                 No workers found. Add your first worker using the button above.
               </TableCell>
             </TableRow>

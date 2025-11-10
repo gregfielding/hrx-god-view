@@ -117,6 +117,7 @@ import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
 import RecruiterUserGroups from './pages/RecruiterUserGroups';
+import RecruiterUserGroupDetails from './pages/RecruiterUserGroupDetails';
 
 import InsightReports from './pages/InsightReports';
 
@@ -397,6 +398,7 @@ function App() {
             </WorkforcePageWrapper>
           </ProtectedRoute>
         } />
+        <Route path="workforce/users/:uid" element={<UserProfile />} />
         <Route path="customers" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <Customers />
@@ -784,6 +786,17 @@ function App() {
           <Route path="contacts" element={<RecruiterContacts />} />
           <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
           <Route path="user-groups" element={<RecruiterUserGroups />} />
+          <Route path="user-groups/:groupId" element={<RecruiterUserGroupDetails />} />
+          <Route path="jobs-board" element={
+            <JobsBoardAccessGuard>
+              <JobsBoard />
+            </JobsBoardAccessGuard>
+          } />
+          <Route path="jobs-board/edit/:postId" element={
+            <JobsBoardAccessGuard>
+              <EditJobPost />
+            </JobsBoardAccessGuard>
+          } />
           <Route path="reports" element={
             <Box>
               <Typography variant="h6">Reports</Typography>

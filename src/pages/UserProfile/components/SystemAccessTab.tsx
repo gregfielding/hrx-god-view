@@ -16,17 +16,19 @@ import { Security as SecurityIcon } from '@mui/icons-material';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from '../../../firebase';
+import { useAuth } from '../../../contexts/AuthContext';
 
 type Props = {
   uid: string;
 };
 
 const SystemAccessTab: React.FC<Props> = ({ uid }) => {
+  const { tenantId, activeTenant } = useAuth();
+  const effectiveTenantId = activeTenant?.id || tenantId;
+  
   const [systemAccess, setSystemAccess] = useState({
     uid: uid,
     securityLevel: '5',
-    role: 'Worker',
-    jobsBoard: false,
     recruiter: false,
     crm_sales: false,
   });
@@ -34,8 +36,10 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
   const [resetEmailSent, setResetEmailSent] = useState(false);
 
   useEffect(() => {
-    loadSystemAccess();
-  }, [uid]);
+    if (effectiveTenantId) {
+      loadSystemAccess();
+    }
+  }, [uid, effectiveTenantId]);
 
   const loadSystemAccess = async () => {
     try {
@@ -43,13 +47,23 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
       const userSnap = await getDoc(userRef);
       if (userSnap.exists()) {
         const data = userSnap.data();
+        
+        // Get tenant-specific data first, then fallback to top-level
+        const tenantData = effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
+        
         const access = {
           uid: uid,
-          securityLevel: data.securityLevel || '5',
-          role: data.role || 'Worker',
-          jobsBoard: data.jobsBoard || false,
-          recruiter: data.recruiter || false,
-          crm_sales: data.crm_sales || false,
+          securityLevel: (() => {
+            // Read from tenant-specific field first, then fallback to top-level
+            const level = tenantData.securityLevel || data.securityLevel || '5';
+            // Ensure security level is between 5-7 for System Access tab
+            const levelNum = parseInt(String(level), 10);
+            if (levelNum < 5) return '5';
+            if (levelNum > 7) return '7';
+            return String(levelNum);
+          })(),
+          recruiter: tenantData.recruiter ?? data.recruiter ?? false,
+          crm_sales: tenantData.crm_sales ?? data.crm_sales ?? false,
         };
         setSystemAccess(access);
         setOriginalAccess(access);
@@ -60,18 +74,42 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
   };
 
   const handleSave = async () => {
+    if (!effectiveTenantId) {
+      alert('No tenant ID available. Cannot save system access.');
+      return;
+    }
+    
     try {
       const userRef = doc(db, 'users', uid);
-      await updateDoc(userRef, {
-        securityLevel: systemAccess.securityLevel,
-        role: systemAccess.role,
-        jobsBoard: systemAccess.jobsBoard,
-        recruiter: systemAccess.recruiter,
-        crm_sales: systemAccess.crm_sales,
-      });
+      
+      // Get current user document to check tenantIds structure
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
+      
+      // Ensure tenantIds object exists
+      if (!userData?.tenantIds) {
+        // Initialize tenantIds if it doesn't exist
+        await updateDoc(userRef, {
+          tenantIds: {},
+        });
+      }
+      
+      // Update tenant-specific fields using nested path syntax
+      // Firestore will automatically create nested structure if needed
+      const updateData: any = {
+        [`tenantIds.${effectiveTenantId}.securityLevel`]: systemAccess.securityLevel,
+        [`tenantIds.${effectiveTenantId}.recruiter`]: systemAccess.recruiter,
+        [`tenantIds.${effectiveTenantId}.crm_sales`]: systemAccess.crm_sales,
+        [`tenantIds.${effectiveTenantId}.updatedAt`]: new Date(),
+      };
+      
+      await updateDoc(userRef, updateData);
 
       setOriginalAccess(systemAccess);
       alert('System access updated successfully');
+      
+      // Reload to reflect changes
+      await loadSystemAccess();
     } catch (error) {
       console.error('Error updating system access:', error);
       alert('Failed to update system access');
@@ -123,29 +161,9 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
                     value={systemAccess.securityLevel}
                     onChange={(e) => setSystemAccess({ ...systemAccess, securityLevel: e.target.value })}
                   >
-                    <MenuItem value="1">1 - Applicant</MenuItem>
-                    <MenuItem value="2">2 - Applicant (Verified)</MenuItem>
-                    <MenuItem value="3">3 - Candidate</MenuItem>
-                    <MenuItem value="4">4 - Hired Staff</MenuItem>
-                    <MenuItem value="5">5 - Staff Manager</MenuItem>
+                    <MenuItem value="5">5 - Worker</MenuItem>
                     <MenuItem value="6">6 - Manager</MenuItem>
                     <MenuItem value="7">7 - Admin</MenuItem>
-                  </TextField>
-                </Grid>
-
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth
-                    select
-                    label="Role"
-                    value={systemAccess.role}
-                    onChange={(e) => setSystemAccess({ ...systemAccess, role: e.target.value })}
-                  >
-                    <MenuItem value="Tenant">Tenant</MenuItem>
-                    <MenuItem value="Worker">Worker</MenuItem>
-                    <MenuItem value="Staff">Staff</MenuItem>
-                    <MenuItem value="Manager">Manager</MenuItem>
-                    <MenuItem value="Admin">Admin</MenuItem>
                   </TextField>
                 </Grid>
 
@@ -153,18 +171,9 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
                   <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
                     Module Access
                   </Typography>
-                </Grid>
-
-                <Grid item xs={12} sm={6}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={systemAccess.jobsBoard}
-                        onChange={(e) => setSystemAccess({ ...systemAccess, jobsBoard: e.target.checked })}
-                      />
-                    }
-                    label="Jobs Board Access"
-                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+                    Note: Jobs Board access is included with Recruiter access
+                  </Typography>
                 </Grid>
 
                 <Grid item xs={12} sm={6}>

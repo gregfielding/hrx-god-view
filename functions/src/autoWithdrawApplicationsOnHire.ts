@@ -51,7 +51,7 @@ async function getShiftDatesFromApplication(
           .doc(applicationData.shiftId);
         
         const shiftSnap = await shiftRef.get();
-        if (shiftSnap.exists()) {
+        if (shiftSnap.exists) {
           const shiftData = shiftSnap.data();
           if (shiftData?.shiftDate) {
             const dateStr = extractDateFromShiftDate(shiftData.shiftDate);
@@ -77,7 +77,7 @@ async function getShiftDatesFromApplication(
             .doc(shiftId);
           
           const shiftSnap = await shiftRef.get();
-          if (shiftSnap.exists()) {
+          if (shiftSnap.exists) {
             const shiftData = shiftSnap.data();
             if (shiftData?.shiftDate) {
               const dateStr = extractDateFromShiftDate(shiftData.shiftDate);

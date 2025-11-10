@@ -1,7 +1,7 @@
 // Universal Favorites Service
 // Supports different types of favorites: jobPosts, users, jobOrders, etc.
 
-export type FavoriteType = 'jobPosts' | 'users' | 'jobOrders' | 'companies' | 'worksites' | 'applications';
+export type FavoriteType = 'jobPosts' | 'users' | 'jobOrders' | 'companies' | 'worksites' | 'applications' | 'userGroups';
 
 export interface FavoritesData {
   [key: string]: string[]; // tenantId -> array of favorite IDs
@@ -95,7 +95,7 @@ class FavoritesService {
   // Get all favorites data for a tenant (useful for debugging or migration)
   getAllFavorites(tenantId: string): Record<FavoriteType, string[]> {
     const result: Record<string, string[]> = {};
-    const types: FavoriteType[] = ['jobPosts', 'users', 'jobOrders', 'companies', 'worksites', 'applications'];
+    const types: FavoriteType[] = ['jobPosts', 'users', 'jobOrders', 'companies', 'worksites', 'applications', 'userGroups'];
     
     types.forEach(type => {
       result[type] = this.getFavorites(tenantId, type);
@@ -123,7 +123,7 @@ class FavoritesService {
         return false;
       }
       
-      const types: FavoriteType[] = ['jobPosts', 'users', 'jobOrders', 'companies', 'worksites', 'applications'];
+      const types: FavoriteType[] = ['jobPosts', 'users', 'jobOrders', 'companies', 'worksites', 'applications', 'userGroups'];
       types.forEach(type => {
         if (data.favorites[type] && Array.isArray(data.favorites[type])) {
           this.setFavorites(tenantId, type, data.favorites[type]);

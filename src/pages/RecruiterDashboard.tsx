@@ -14,6 +14,7 @@ import {
   Timeline as TimelineIcon,
   Group as GroupIcon,
   Badge as BadgeIcon,
+  Assignment as AssignmentIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { BreadcrumbNav } from '../components/BreadcrumbNav';
@@ -50,6 +51,13 @@ const RecruiterDashboard: React.FC = () => {
       icon: <GroupIcon sx={{ fontSize: 40 }} />,
       path: '/recruiter/user-groups',
       color: theme.palette.info.main,
+    },
+    {
+      title: 'Jobs Board',
+      description: 'Manage and publish job postings',
+      icon: <AssignmentIcon sx={{ fontSize: 40 }} />,
+      path: '/recruiter/jobs-board',
+      color: theme.palette.primary.main,
     },
     {
       title: 'Pipeline',

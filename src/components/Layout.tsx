@@ -87,6 +87,9 @@ const Layout: React.FC = React.memo(function Layout() {
     const pathname = location.pathname;
     
     // Jobs Board routes
+    if (pathname.includes('/recruiter/jobs-board')) {
+      return 'Recruiter';
+    }
     if (pathname.includes('/jobs-board') || pathname.includes('/jobs-dashboard')) {
       return 'Jobs Board';
     }
@@ -96,13 +99,32 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'Company Setup';
     }
     
-    // Recruiter user record routes
-    if (pathname.includes('/recruiter/users/')) {
-      return 'User Record';
+    // Recruiter user record routes - check if path includes /recruiter/users/ anywhere
+    if (pathname.includes('/recruiter/users/') && pathname.split('/recruiter/users/').length > 1) {
+      return 'User Details';
     }
     
-    // User Profile routes
-    if (pathname.includes('/user-profile') || pathname.includes('/users/')) {
+    // Workforce user record routes - check if path includes /workforce/users/ anywhere
+    if (pathname.includes('/workforce/users/') && pathname.split('/workforce/users/').length > 1) {
+      return 'User Details';
+    }
+    
+    // User Profile routes - check if viewing someone else's profile
+    if (pathname.includes('/users/') && !pathname.includes('/recruiter/') && !pathname.includes('/workforce/')) {
+      const pathParts = pathname.split('/users/');
+      if (pathParts.length > 1 && pathParts[1]) {
+        const uidPart = pathParts[1].split('/')[0];
+        // If viewing someone else's profile (not your own), show "User Details"
+        if (uidPart && user?.uid && uidPart !== user.uid) {
+          return 'User Details';
+        }
+        // If viewing your own profile, show "My Profile"
+        if (uidPart === user?.uid) {
+          return 'My Profile';
+        }
+        // Default to "User Details" if we can't determine (likely viewing someone else)
+        return 'User Details';
+      }
       return 'My Profile';
     }
     

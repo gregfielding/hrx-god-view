@@ -9237,6 +9237,67 @@ export const validateTenantSlug = onCall(async (request) => {
   }
 });
 
+// Add users to user groups (for auto-add on job application)
+export const addUsersToGroups = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
+  const { userId, groupIds, tenantId } = request.data;
+  const start = Date.now();
+  
+  try {
+    if (!userId || !groupIds || !Array.isArray(groupIds) || groupIds.length === 0 || !tenantId) {
+      throw new Error('userId, groupIds (array), and tenantId are required');
+    }
+    
+    console.log(`Adding user ${userId} to ${groupIds.length} group(s) in tenant ${tenantId}`);
+    
+    const db = admin.firestore();
+    
+    // Update each group's memberIds array
+    const groupUpdatePromises = groupIds.map(async (groupId: string) => {
+      const userGroupRef = db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('userGroups')
+        .doc(groupId);
+      
+      await userGroupRef.update({
+        memberIds: admin.firestore.FieldValue.arrayUnion(userId),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      
+      console.log(`✅ Added user ${userId} to group ${groupId}`);
+    });
+    
+    // Update user's userGroupIds
+    const userRef = db.collection('users').doc(userId);
+    await userRef.update({
+      userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
+      [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    
+    await Promise.all(groupUpdatePromises);
+    
+    console.log(`✅ Successfully added user ${userId} to ${groupIds.length} group(s)`);
+    
+    return {
+      success: true,
+      message: `User added to ${groupIds.length} group(s)`,
+      groupIds
+    };
+  } catch (error: any) {
+    console.error('❌ Error adding user to groups:', error);
+    throw new HttpsError('internal', error.message || 'Failed to add user to groups');
+  }
+});
+
 // Generate slug from tenant name
 export const generateTenantSlug = onCall(async (request) => {
   const { name } = request.data;

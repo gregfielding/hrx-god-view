@@ -48,6 +48,18 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const { tenantId, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
+  const normalizeGroupIds = (value?: string | string[] | null): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id): id is string => Boolean(id));
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+    return [];
+  };
+
   // Form data - using the same structure as JobsBoard
   const [formData, setFormData] = useState({
     postTitle: '',
@@ -104,7 +116,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     endTime: '',
     showStartTime: false,
     showEndTime: false,
-    autoAddToUserGroup: '',
+    autoAddToUserGroups: [] as string[],
     coordinates: undefined as { lat: number; lng: number } | undefined,
     ...initialData
   });
@@ -195,7 +207,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           city: initialData.worksiteAddress?.city || '',
           state: initialData.worksiteAddress?.state || '',
           zipCode: initialData.worksiteAddress?.zipCode || '',
-        }
+        },
+        autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
       }));
       // Set company/location if initial data has them
       if (initialData.companyId) {
@@ -608,6 +621,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           coordinates: formData.coordinates || undefined,
         },
         payRate: formData.payRate ? parseFloat(formData.payRate.toString()) : undefined,
+        autoAddToUserGroups: formData.autoAddToUserGroups,
+        autoAddToUserGroup: formData.autoAddToUserGroups.length === 1 ? formData.autoAddToUserGroups[0] : undefined,
       };
       
       await onSave(dataToSave);
@@ -1232,11 +1247,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   label="Visibility"
                   onChange={(e) => {
                     const visibility = e.target.value as any;
-                    setFormData({ 
-                      ...formData, 
+                    setFormData({
+                      ...formData,
                       visibility,
                       restrictedGroups: visibility === 'restricted' ? formData.restrictedGroups : [],
-                      autoAddToUserGroup: visibility === 'restricted' ? '' : formData.autoAddToUserGroup
+                      autoAddToUserGroups: visibility === 'restricted' ? [] : formData.autoAddToUserGroups,
                     });
                   }}
                 >
@@ -1805,20 +1820,33 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         </Box>
 
         <Autocomplete
+          multiple
           options={userGroups}
           getOptionLabel={(option) => option.name || 'Unnamed Group'}
-          value={userGroups.find(g => g.id === formData.autoAddToUserGroup) || null}
-          onChange={(_, newValue) => setFormData({ ...formData, autoAddToUserGroup: newValue?.id || '' })}
+          value={userGroups.filter((group) => formData.autoAddToUserGroups.includes(group.id))}
+          onChange={(_, newValue) =>
+            setFormData({ ...formData, autoAddToUserGroups: newValue.map((group) => group.id) })
+          }
           disabled={formData.visibility === 'restricted' || loadingUserGroups}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => (
+              <Chip
+                {...getTagProps({ index })}
+                key={option.id}
+                label={option.name || 'Unnamed Group'}
+                size="small"
+              />
+            ))
+          }
           renderInput={(params) => (
             <TextField
               {...params}
-              label="Auto-Add to User Group"
+              label="Auto-Add to User Groups"
               placeholder="Search user groups..."
               helperText={
-                formData.visibility === 'restricted' 
+                formData.visibility === 'restricted'
                   ? 'Auto-add to group is not available when visibility is restricted'
-                  : 'Automatically add applicants to this user group'
+                  : 'Automatically add applicants to these user groups'
               }
             />
           )}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -44,6 +44,7 @@ import { db } from '../../firebase';
 import { useFavorites, useFavoritesFilter } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
 import FavoritesFilter from '../../components/FavoritesFilter';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import jobTitlesList from '../../data/onetJobTitles.json';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
@@ -54,6 +55,11 @@ import { getOptionsForField } from '../../utils/fieldOptions';
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Check if we're accessing from the recruiter module
+  const isFromRecruiter = location.pathname.includes('/recruiter/jobs-board');
+  
   const [posts, setPosts] = useState<JobsBoardPost[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<JobsBoardPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +70,18 @@ const JobsBoard: React.FC = () => {
   const [openNewPostModal, setOpenNewPostModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  
+  const normalizeGroupIds = (value?: string | string[] | null): string[] => {
+    if (Array.isArray(value)) {
+      return value
+        .map((id) => (typeof id === 'string' ? id.trim() : ''))
+        .filter((id): id is string => Boolean(id));
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+    return [];
+  };
   
   // Sorting state
   const [sortField, setSortField] = useState<string>('createdAt');
@@ -217,7 +235,11 @@ const JobsBoard: React.FC = () => {
   };
 
   const handleRowClick = (post: JobsBoardPost) => {
-    navigate(`/jobs-dashboard/edit/${post.id}`);
+    if (isFromRecruiter) {
+      navigate(`/recruiter/jobs-board/edit/${post.id}`);
+    } else {
+      navigate(`/jobs-dashboard/edit/${post.id}`);
+    }
   };
 
   const handleStatusUpdate = async (postId: string, newStatus: 'draft' | 'active' | 'paused' | 'cancelled' | 'expired') => {
@@ -319,7 +341,7 @@ const JobsBoard: React.FC = () => {
     endTime: '',
     showStartTime: false,
     showEndTime: false,
-    autoAddToUserGroup: '',
+    autoAddToUserGroups: [] as string[],
     coordinates: undefined as { lat: number; lng: number } | undefined,
   });
 
@@ -964,7 +986,7 @@ const JobsBoard: React.FC = () => {
       endTime: '',
       showStartTime: false,
       showEndTime: false,
-      autoAddToUserGroup: '',
+    autoAddToUserGroups: [],
       coordinates: undefined,
     });
     setSelectedCompanyId('');
@@ -1073,7 +1095,8 @@ const JobsBoard: React.FC = () => {
           restrictedGroups: newPost.restrictedGroups,
           jobOrderId: newPost.jobOrderId || undefined,
           skills: newPost.skills,
-          autoAddToUserGroup: newPost.autoAddToUserGroup || undefined,
+          autoAddToUserGroups: newPost.autoAddToUserGroups,
+          autoAddToUserGroup: newPost.autoAddToUserGroups.length === 1 ? newPost.autoAddToUserGroups[0] : undefined,
         },
         user?.uid || 'system'
       );
@@ -1106,6 +1129,12 @@ const JobsBoard: React.FC = () => {
 
   return (
     <Box sx={{ p: 0, width: '100%' }}>
+      <BreadcrumbNav
+        items={[
+          { label: 'Recruiter', href: '/recruiter' },
+          { label: 'Jobs Board' },
+        ]}
+      />
 
       {/* Filters */}
       <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
@@ -1962,13 +1991,13 @@ const JobsBoard: React.FC = () => {
                       label="Visibility"
                       onChange={(e) => {
                         const visibility = e.target.value as any;
-                        setNewPost({ 
-                          ...newPost, 
+                        setNewPost({
+                          ...newPost,
                           visibility,
                           // Clear restricted groups if not restricted
                           restrictedGroups: visibility === 'restricted' ? newPost.restrictedGroups : [],
-                          // Clear auto-add to group if restricted
-                          autoAddToUserGroup: visibility === 'restricted' ? '' : newPost.autoAddToUserGroup
+                          // Clear auto-add groups if restricted
+                          autoAddToUserGroups: visibility === 'restricted' ? [] : newPost.autoAddToUserGroups,
                         });
                       }}
                     >
@@ -2682,20 +2711,33 @@ const JobsBoard: React.FC = () => {
             </Box>
 
             <Autocomplete
+              multiple
               options={userGroups}
               getOptionLabel={(option) => option.name || 'Unnamed Group'}
-              value={userGroups.find(g => g.id === newPost.autoAddToUserGroup) || null}
-              onChange={(_, newValue) => setNewPost({ ...newPost, autoAddToUserGroup: newValue?.id || '' })}
+              value={userGroups.filter((group) => newPost.autoAddToUserGroups.includes(group.id))}
+              onChange={(_, newValue) =>
+                setNewPost({ ...newPost, autoAddToUserGroups: newValue.map((group) => group.id) })
+              }
               disabled={newPost.visibility === 'restricted' || loadingUserGroups}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => (
+                  <Chip
+                    {...getTagProps({ index })}
+                    key={option.id}
+                    label={option.name || 'Unnamed Group'}
+                    size="small"
+                  />
+                ))
+              }
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Auto-Add to User Group"
+                  label="Auto-Add to User Groups"
                   placeholder="Search user groups..."
                   helperText={
-                    newPost.visibility === 'restricted' 
+                    newPost.visibility === 'restricted'
                       ? 'Auto-add to group is not available when visibility is restricted'
-                      : 'Automatically add applicants to this user group'
+                      : 'Automatically add applicants to these user groups'
                   }
                 />
               )}

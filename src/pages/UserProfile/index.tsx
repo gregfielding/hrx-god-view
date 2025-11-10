@@ -107,6 +107,14 @@ const UserProfilePage = () => {
     // Check if we're on the /c1/ route (worker view) or /users/ route (admin view)
     const pathname = window.location.pathname;
     const isWorkerRoute = pathname.includes('/c1/users/');
+    const isWorkforceRoute = pathname.includes('/workforce/users/');
+    
+    // Check if target user is internal team member (security levels 5-7)
+    const targetUserLevel = parseInt(targetUserSecurityLevel || '0');
+    const isInternalTeamMember = targetUserLevel >= 5 && targetUserLevel <= 7;
+    
+    // For internal team members (5-7) viewed from Workforce route, only show Overview and System Access
+    const isWorkforceInternalTeamView = isWorkforceRoute && isInternalTeamMember;
     
     // Debug logging to understand what's happening
     console.log('Tab availability check:', {
@@ -114,59 +122,67 @@ const UserProfilePage = () => {
       viewerSecurityLevel,
       isAdminViewer,
       isWorkerRoute,
-      isOwnProfile
+      isWorkforceRoute,
+      isOwnProfile,
+      targetUserSecurityLevel,
+      targetUserLevel,
+      isInternalTeamMember,
+      isWorkforceInternalTeamView
     });
 
     const tabs = [
       { label: 'Overview', available: true },
-      { label: 'Work Eligibility', available: true },
+      { 
+        label: 'Work Eligibility', 
+        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
+      },
       { 
         label: 'Resumé', 
-        available: true // Everyone can see
+        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Qualifications', 
-        available: true // Everyone can see
+        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Preferences', 
-        available: true // Everyone can see
+        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Licenses & Certs', 
-        available: true // Everyone can see
+        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
-        label: 'My Assignments', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        label: 'Assignments', 
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Background & Vaccination', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Reports & Insights', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Notes', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'Activity Log', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'User Groups', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
       { 
         label: 'System Access', 
-        available: isAdminViewer && !isWorkerRoute // Only show to admins in admin view
+        available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView // Show for workforce internal team view
       },
       { 
         label: 'Privacy & Notifications', 
-        available: (isOwnProfile || isAdminViewer) && !isWorkerRoute // Own profile or admins, not in worker view
+        available: ((isOwnProfile || isAdminViewer) && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
       },
     ];
 
@@ -435,19 +451,36 @@ const UserProfilePage = () => {
 
   // Create breadcrumb path based on current route
   const pathname = window.location.pathname;
-  const isRecruiterRoute = pathname.startsWith('/recruiter/users');
+  // Check if this is a recruiter route - more robust check
+  const isRecruiterRoute = pathname.includes('/recruiter/users/') || 
+                          (pathname.includes('/recruiter/users') && pathname.split('/').length > 3);
+  // Check if this is a workforce route (from Company Directory)
+  const isWorkforceRoute = pathname.includes('/workforce/users/');
+  // Also check if viewing someone else's profile (not own profile) - treat as recruiter view
+  const isViewingOtherProfile = user?.uid !== uid;
   const displayName = `${firstName} ${lastName}${preferredName && preferredName !== firstName ? ` (${preferredName})` : ''}`;
-  const breadcrumbPath = isRecruiterRoute
-    ? [
-        { label: 'Recruiter', href: '/recruiter' },
-        { label: 'All Users', href: '/recruiter/users' },
-        { label: displayName },
-      ]
-    : [
-        { label: 'Workforce', href: '/workforce' },
-        { label: 'Company Directory', href: '/workforce/company-directory' },
-        { label: displayName },
-      ];
+  
+  // Determine breadcrumb path based on route
+  let breadcrumbPath: Array<{ label: string; href?: string }>;
+  if (isRecruiterRoute) {
+    breadcrumbPath = [
+      { label: 'Recruiter', href: '/recruiter' },
+      { label: 'All Users', href: '/recruiter/users' },
+      { label: displayName },
+    ];
+  } else if (isWorkforceRoute) {
+    breadcrumbPath = [
+      { label: 'Workforce', href: '/workforce' },
+      { label: 'Company Directory', href: '/workforce/company-directory' },
+      { label: displayName },
+    ];
+  } else {
+    breadcrumbPath = [
+      { label: 'Workforce', href: '/workforce' },
+      { label: 'Company Directory', href: '/workforce/company-directory' },
+      { label: displayName },
+    ];
+  }
 
   const isAdminView = parseInt(securityLevel) >= 5;
 
@@ -461,8 +494,16 @@ const UserProfilePage = () => {
           preferredName={preferredName}
           avatarUrl={avatarUrl}
           onAvatarUpdated={setAvatarUrl}
-          showBackButton={isRecruiterRoute || user?.uid !== uid}
-          onBack={() => (isRecruiterRoute ? navigate('/recruiter/users') : navigate(-1))}
+          showBackButton={isRecruiterRoute || isWorkforceRoute || user?.uid !== uid}
+          onBack={() => {
+            if (isRecruiterRoute) {
+              navigate('/recruiter/users');
+            } else if (isWorkforceRoute) {
+              navigate('/workforce/company-directory');
+            } else {
+              navigate(-1);
+            }
+          }}
           jobTitle={jobTitle}
           phone={phone}
           email={email}
@@ -479,7 +520,7 @@ const UserProfilePage = () => {
           regionName={regionName}
           managerName={managerName}
           managerId={managerId}
-          showBreadcrumbs={isRecruiterRoute || user?.uid !== uid}
+          showBreadcrumbs={isRecruiterRoute || isWorkforceRoute || user?.uid !== uid}
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
           profileScore={profileScore}
@@ -526,7 +567,7 @@ const UserProfilePage = () => {
                 return <PreferencesTab uid={uid} />;
               case 'Licenses & Certs':
                 return <LicensesAndCertsTab uid={uid} />;
-              case 'My Assignments':
+              case 'Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':
                 return <CombinedBackgroundAndVaccinationTab uid={uid} />;
