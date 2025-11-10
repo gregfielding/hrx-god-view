@@ -52,6 +52,16 @@ interface AssignmentDetails {
   notes?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  // Staff instructions from job order
+  staffInstructions?: {
+    uniform?: { text?: string; files?: any[] };
+    checkIn?: { text?: string; files?: any[] };
+    firstDay?: { text?: string; files?: any[] };
+    parking?: { text?: string; files?: any[] };
+    [key: string]: { text?: string; files?: any[] } | undefined;
+  };
+  checkInInstructions?: string;
+  uniformRequirements?: string;
 }
 
 const AssignmentDetails: React.FC = () => {
@@ -74,35 +84,61 @@ const AssignmentDetails: React.FC = () => {
       setLoading(true);
       setError('');
 
+      // Check if this is a confirmed application (prefixed with "app_")
+      if (assignmentId.startsWith('app_')) {
+        // Load from confirmed application
+        const applicationId = assignmentId.replace('app_', '');
+        
+        // Get tenant IDs from user
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        const tenantIds: string[] = [];
+        
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          if (userData.tenantIds && typeof userData.tenantIds === 'object') {
+            tenantIds.push(...Object.keys(userData.tenantIds));
+          }
+          if (!tenantIds.includes('c1')) {
+            tenantIds.push('c1');
+          }
+        }
+        
+        // Find the application across tenants
+        let applicationData: any = null;
+        let foundTenantId = '';
+        
+        for (const tenantId of tenantIds) {
+          try {
+            const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+            const applicationSnap = await getDoc(applicationRef);
+            
+            if (applicationSnap.exists() && applicationSnap.data().userId === user.uid) {
+              applicationData = applicationSnap.data();
+              foundTenantId = tenantId;
+              break;
+            }
+          } catch (err) {
+            // Continue to next tenant
+          }
+        }
+        
+        if (!applicationData || !applicationData.jobOrderId) {
+          setError('Assignment not found');
+          setLoading(false);
+          return;
+        }
+        
+        // Load job order details
+        await loadFromJobOrder(foundTenantId, applicationData.jobOrderId, applicationData);
+        return;
+      }
+
       // Try legacy structure first (assignments collection with userId)
       const assignmentRef = doc(db, 'assignments', assignmentId);
       const assignmentSnap = await getDoc(assignmentRef);
 
       if (!assignmentSnap.exists()) {
-        // Try Phase 2 structure: tenants/{tenantId}/job_orders/{jobOrderId}/assignments/{assignmentId}
-        // We need to search across tenants - this is less efficient but necessary
-        // For now, we'll try common tenant IDs or search user's applications to find tenantId
-        
-        // First, try to get tenantId from user's applications
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-        
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          const applicationIds: string[] = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
-          
-          // Try to find tenantId from applications
-          for (const appId of applicationIds) {
-            const [tenantId] = appId.split('_');
-            if (tenantId) {
-              // Try to find assignment in this tenant's job orders
-              // This is a simplified approach - in production you might want to store assignment references
-              // For now, we'll show an error if not found in legacy structure
-              break;
-            }
-          }
-        }
-        
         setError('Assignment not found');
         setLoading(false);
         return;
@@ -137,43 +173,19 @@ const AssignmentDetails: React.FC = () => {
       }
 
       // Get job order details if jobOrderId exists
-      let jobTitle = data.jobTitle || '';
-      let companyName = data.companyName || '';
-      let location = data.location || data.worksiteName || '';
-      let worksiteName = data.worksiteName || '';
-      let worksiteAddress = data.worksiteAddress || data.address;
+      const jobTitle = data.jobTitle || '';
+      const companyName = data.companyName || '';
+      const location = data.location || data.worksiteName || '';
+      const worksiteName = data.worksiteName || '';
+      const worksiteAddress = data.worksiteAddress || data.address;
 
+      // Load job order details if available
       if (data.jobOrderId && data.tenantId) {
-        try {
-          const jobOrderRef = doc(db, 'tenants', data.tenantId, 'job_orders', data.jobOrderId);
-          const jobOrderSnap = await getDoc(jobOrderRef);
-
-          if (jobOrderSnap.exists()) {
-            const jobOrderData = jobOrderSnap.data();
-            jobTitle = jobTitle || jobOrderData.jobOrderName || jobOrderData.jobTitle || '';
-            companyName = companyName || jobOrderData.companyName || '';
-            worksiteName = worksiteName || jobOrderData.worksiteName || '';
-
-            // Get location from worksite
-            if (!location && jobOrderData.worksiteName) {
-              location = jobOrderData.worksiteName;
-            } else if (!location && jobOrderData.worksiteAddress) {
-              const addr = jobOrderData.worksiteAddress;
-              if (addr.city && addr.state) {
-                location = `${addr.city}, ${addr.state}`;
-              }
-            }
-
-            // Get worksite address
-            if (!worksiteAddress && jobOrderData.worksiteAddress) {
-              worksiteAddress = jobOrderData.worksiteAddress;
-            }
-          }
-        } catch (jobOrderErr) {
-          console.warn('Could not load job order details:', jobOrderErr);
-        }
+        await loadFromJobOrder(data.tenantId, data.jobOrderId, data, assignmentSnap.id);
+        return;
       }
 
+      // If no job order, set assignment with basic data
       setAssignment({
         id: assignmentSnap.id,
         tenantId: data.tenantId || '',
@@ -196,6 +208,89 @@ const AssignmentDetails: React.FC = () => {
     } catch (err: any) {
       console.error('Error loading assignment:', err);
       setError(err.message || 'Failed to load assignment');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadFromJobOrder = async (
+    tenantId: string,
+    jobOrderId: string,
+    sourceData: any,
+    assignmentId?: string
+  ) => {
+    try {
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+
+      if (!jobOrderSnap.exists()) {
+        setError('Job order not found');
+        setLoading(false);
+        return;
+      }
+
+      const jobOrderData = jobOrderSnap.data();
+      
+      // Parse dates
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+      let createdAt: Date | undefined;
+      let updatedAt: Date | undefined;
+
+      if (jobOrderData.startDate) {
+        startDate = jobOrderData.startDate.toDate ? jobOrderData.startDate.toDate() : new Date(jobOrderData.startDate);
+      }
+      if (jobOrderData.endDate) {
+        endDate = jobOrderData.endDate.toDate ? jobOrderData.endDate.toDate() : new Date(jobOrderData.endDate);
+      }
+      if (sourceData.createdAt) {
+        createdAt = sourceData.createdAt.toDate ? sourceData.createdAt.toDate() : new Date(sourceData.createdAt);
+      }
+      if (sourceData.updatedAt) {
+        updatedAt = sourceData.updatedAt.toDate ? sourceData.updatedAt.toDate() : new Date(sourceData.updatedAt);
+      }
+
+      // Get location from worksite
+      let location = '';
+      let worksiteName = '';
+      const worksiteAddress = jobOrderData.worksiteAddress;
+
+      if (jobOrderData.worksiteName) {
+        location = jobOrderData.worksiteName;
+        worksiteName = jobOrderData.worksiteName;
+      } else if (jobOrderData.worksiteAddress) {
+        const addr = jobOrderData.worksiteAddress;
+        if (addr.city && addr.state) {
+          location = `${addr.city}, ${addr.state}`;
+        }
+      }
+
+      setAssignment({
+        id: assignmentId || `jobOrder_${jobOrderId}`,
+        tenantId: tenantId,
+        jobOrderId: jobOrderId,
+        jobTitle: jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
+        companyName: jobOrderData.companyName || '',
+        location,
+        worksiteName,
+        worksiteAddress,
+        payRate: jobOrderData.payRate,
+        startDate,
+        endDate,
+        status: sourceData.status || 'confirmed',
+        hoursWorked: sourceData.hoursWorked,
+        totalEarnings: sourceData.totalEarnings,
+        notes: sourceData.notes || jobOrderData.jobOrderDescription,
+        createdAt,
+        updatedAt,
+        // Load staff instructions
+        staffInstructions: jobOrderData.staffInstructions || {},
+        checkInInstructions: jobOrderData.checkInInstructions,
+        uniformRequirements: jobOrderData.uniformRequirements,
+      });
+    } catch (err: any) {
+      console.error('Error loading job order:', err);
+      setError(err.message || 'Failed to load job order details');
     } finally {
       setLoading(false);
     }
@@ -455,12 +550,139 @@ const AssignmentDetails: React.FC = () => {
           </CardContent>
         </Card>
 
+        {/* Staff Instructions */}
+        {(assignment.staffInstructions || assignment.checkInInstructions || assignment.uniformRequirements) && (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                Work Instructions
+              </Typography>
+              <Stack spacing={3}>
+                {/* Uniform Requirements */}
+                {(assignment.uniformRequirements || assignment.staffInstructions?.uniform?.text) && (
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                      Uniform Requirements
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
+                      {assignment.staffInstructions?.uniform?.text || assignment.uniformRequirements}
+                    </Typography>
+                    {assignment.staffInstructions?.uniform?.files && assignment.staffInstructions.uniform.files.length > 0 && (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        {assignment.staffInstructions.uniform.files.map((file: any, index: number) => (
+                          <Button
+                            key={index}
+                            variant="outlined"
+                            size="small"
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {file.label || file.name || 'View File'}
+                          </Button>
+                        ))}
+                      </Stack>
+                    )}
+                  </Box>
+                )}
+
+                {/* Check-In Instructions */}
+                {(assignment.checkInInstructions || assignment.staffInstructions?.checkIn?.text) && (
+                  <Box>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                      Check-In Instructions
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
+                      {assignment.staffInstructions?.checkIn?.text || assignment.checkInInstructions}
+                    </Typography>
+                    {assignment.staffInstructions?.checkIn?.files && assignment.staffInstructions.checkIn.files.length > 0 && (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        {assignment.staffInstructions.checkIn.files.map((file: any, index: number) => (
+                          <Button
+                            key={index}
+                            variant="outlined"
+                            size="small"
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {file.label || file.name || 'View File'}
+                          </Button>
+                        ))}
+                      </Stack>
+                    )}
+                  </Box>
+                )}
+
+                {/* First Day Instructions */}
+                {assignment.staffInstructions?.firstDay?.text && (
+                  <Box>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                      First Day Instructions
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
+                      {assignment.staffInstructions.firstDay.text}
+                    </Typography>
+                    {assignment.staffInstructions.firstDay.files && assignment.staffInstructions.firstDay.files.length > 0 && (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        {assignment.staffInstructions.firstDay.files.map((file: any, index: number) => (
+                          <Button
+                            key={index}
+                            variant="outlined"
+                            size="small"
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {file.label || file.name || 'View File'}
+                          </Button>
+                        ))}
+                      </Stack>
+                    )}
+                  </Box>
+                )}
+
+                {/* Parking Instructions */}
+                {assignment.staffInstructions?.parking?.text && (
+                  <Box>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                      Parking Information
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
+                      {assignment.staffInstructions.parking.text}
+                    </Typography>
+                    {assignment.staffInstructions.parking.files && assignment.staffInstructions.parking.files.length > 0 && (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        {assignment.staffInstructions.parking.files.map((file: any, index: number) => (
+                          <Button
+                            key={index}
+                            variant="outlined"
+                            size="small"
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {file.label || file.name || 'View File'}
+                          </Button>
+                        ))}
+                      </Stack>
+                    )}
+                  </Box>
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Notes */}
         {assignment.notes && (
           <Card elevation={0} sx={{ borderRadius: 0 }}>
             <CardContent>
               <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                Notes
+                Additional Notes
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
                 {assignment.notes}
@@ -492,4 +714,5 @@ const AssignmentDetails: React.FC = () => {
 };
 
 export default AssignmentDetails;
+
 

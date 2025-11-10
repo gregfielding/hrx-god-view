@@ -219,7 +219,6 @@ export interface CreatePostData {
   
   // Links
   jobOrderId?: string;
-  skills?: string[];
   autoAddToUserGroups?: string[];
   autoAddToUserGroup?: string; // Legacy single value support
   
@@ -232,6 +231,24 @@ export interface CreatePostData {
   // Expiration
   maxApplications?: number;
   expiresAt?: Date | string | null;
+  
+  // Additional requirement fields
+  skills?: string[];
+  showSkills?: boolean;
+  licensesCerts?: string[];
+  showLicensesCerts?: boolean;
+  experienceLevels?: string[];
+  showExperience?: boolean;
+  educationLevels?: string[];
+  showEducation?: boolean;
+  languages?: string[];
+  showLanguages?: boolean;
+  physicalRequirements?: string[];
+  showPhysicalRequirements?: boolean;
+  uniformRequirements?: string[];
+  showUniformRequirements?: boolean;
+  requiredPpe?: string[];
+  showRequiredPpe?: boolean;
 }
 
 export class JobsBoardService {
@@ -677,6 +694,21 @@ export class JobsBoardService {
         // Links
         ...(postData.jobOrderId && { jobOrderId: postData.jobOrderId }),
         skills: postData.skills || [],
+        ...(postData.showSkills !== undefined && { showSkills: postData.showSkills }),
+        ...(postData.licensesCerts && { licensesCerts: postData.licensesCerts }),
+        ...(postData.showLicensesCerts !== undefined && { showLicensesCerts: postData.showLicensesCerts }),
+        ...(postData.experienceLevels && { experienceLevels: postData.experienceLevels }),
+        ...(postData.showExperience !== undefined && { showExperience: postData.showExperience }),
+        ...(postData.educationLevels && { educationLevels: postData.educationLevels }),
+        ...(postData.showEducation !== undefined && { showEducation: postData.showEducation }),
+        ...(postData.languages && { languages: postData.languages }),
+        ...(postData.showLanguages !== undefined && { showLanguages: postData.showLanguages }),
+        ...(postData.physicalRequirements && { physicalRequirements: postData.physicalRequirements }),
+        ...(postData.showPhysicalRequirements !== undefined && { showPhysicalRequirements: postData.showPhysicalRequirements }),
+        ...(postData.uniformRequirements && { uniformRequirements: postData.uniformRequirements }),
+        ...(postData.showUniformRequirements !== undefined && { showUniformRequirements: postData.showUniformRequirements }),
+        ...(postData.requiredPpe && { requiredPpe: postData.requiredPpe }),
+        ...(postData.showRequiredPpe !== undefined && { showRequiredPpe: postData.showRequiredPpe }),
         ...(autoAddGroups.length ? { autoAddToUserGroups: autoAddGroups } : {}),
         autoAddToUserGroup: autoAddGroups.length === 1 ? autoAddGroups[0] : undefined,
         

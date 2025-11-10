@@ -147,6 +147,12 @@ export async function sendWorkerMessage(
     }
   } catch (error: any) {
     console.error('Worker message error:', error);
+    console.error('Error details:', {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      stack: error.stack
+    });
     
     // Handle specific Firebase Functions errors
     if (error.code === 'functions/unauthenticated') {
@@ -158,7 +164,10 @@ export async function sendWorkerMessage(
     } else if (error.code === 'functions/not-found') {
       throw new Error('Recipient not found in system');
     } else if (error.code === 'functions/internal') {
-      throw new Error('Service temporarily unavailable. Please try again.');
+      // Provide more helpful error message
+      const errorMessage = error.message || 'Service temporarily unavailable';
+      console.error('Internal error details:', errorMessage);
+      throw new Error(`SMS service error: ${errorMessage}. Please check Firebase function logs for details.`);
     }
     
     throw error;

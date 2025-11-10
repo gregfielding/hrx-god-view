@@ -3,6 +3,7 @@ import { getFirestore, setLogLevel, initializeFirestore } from 'firebase/firesto
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
+import { getAnalytics } from 'firebase/analytics';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBQA9bc25_7ncjvY75nAtIUv47C3w5jl6c',
@@ -45,6 +46,19 @@ export const db = (() => {
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, 'us-central1');
+
+// Initialize Analytics (only in browser environment)
+export const analytics = (() => {
+  if (typeof window !== 'undefined') {
+    try {
+      return getAnalytics(app);
+    } catch (error) {
+      console.warn('Firebase Analytics initialization failed:', error);
+      return null;
+    }
+  }
+  return null;
+})();
 
 // Firestore client logging (opt‑in).
 // Enable by appending ?firestoreDebug=1 to the URL or setting

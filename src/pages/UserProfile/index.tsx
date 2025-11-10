@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Tabs, Tab, Typography, Button, Paper, Alert } from '@mui/material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
 
 import { db } from '../../firebase'; // adjust path
@@ -28,6 +28,8 @@ import SystemAccessTab from './components/SystemAccessTab';
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
   const { user, securityLevel, role } = useAuth();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   
   // Debug logging
   console.log('UserProfile Debug:', {
@@ -62,7 +64,6 @@ const UserProfilePage = () => {
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
-  const navigate = useNavigate();
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -397,8 +398,28 @@ const UserProfilePage = () => {
     return () => unsubscribe();
   }, [uid, user, securityLevel]);
 
+  // Handle tab query parameter - must be before early returns
+  const availableTabs = getAvailableTabs();
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'licenses') {
+      const licensesTab = availableTabs.find(tab => tab.label === 'Licenses & Certs');
+      if (licensesTab) {
+        setTabIndex(licensesTab.index);
+      }
+    }
+  }, [searchParams, availableTabs]);
+
   const handleTabChange = (_: React.SyntheticEvent, newIndex: number) => {
     setTabIndex(newIndex);
+    // Update URL with tab parameter if it's the licenses tab
+    const selectedTab = availableTabs.find(tab => tab.index === newIndex);
+    if (selectedTab?.label === 'Licenses & Certs') {
+      navigate(`/profile?tab=licenses`, { replace: true });
+    } else {
+      // Remove tab parameter for other tabs
+      navigate('/profile', { replace: true });
+    }
   };
 
   const handleSkillsUpdate = async (updated: any) => {
@@ -441,7 +462,6 @@ const UserProfilePage = () => {
     );
   }
 
-  const availableTabs = getAvailableTabs();
   const currentTab = availableTabs.find(tab => tab.index === tabIndex);
   
   // If current tab is not available, reset to first available tab

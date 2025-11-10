@@ -33,14 +33,17 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
+  ContentCopy as DuplicateIcon,
   CalendarMonth as CalendarIcon,
   AccessTime as TimeIcon,
   Group as GroupIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
-import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { format } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
 interface Shift {
   id: string;
   tenantId: string;
@@ -100,6 +103,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
+  const [shiftToDuplicate, setShiftToDuplicate] = useState<Shift | null>(null);
+  const [selectedDates, setSelectedDates] = useState<Date[]>([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   // Get available positions from job order (gigPositions for gig jobs, or single position for career jobs)
   const getAvailablePositions = (): Position[] => {
@@ -280,6 +287,79 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  const handleOpenDuplicateModal = (shift: Shift) => {
+    setShiftToDuplicate(shift);
+    setSelectedDates([]);
+    setCalendarMonth(new Date());
+    setDuplicateModalOpen(true);
+    setError('');
+  };
+
+  const handleCloseDuplicateModal = () => {
+    setDuplicateModalOpen(false);
+    setShiftToDuplicate(null);
+    setSelectedDates([]);
+    setError('');
+  };
+
+  const handleDateClick = (date: Date) => {
+    setSelectedDates(prev => {
+      const dateStr = format(date, 'yyyy-MM-dd');
+      const existingIndex = prev.findIndex(d => format(d, 'yyyy-MM-dd') === dateStr);
+      if (existingIndex >= 0) {
+        // Remove if already selected
+        return prev.filter((_, index) => index !== existingIndex);
+      } else {
+        // Add if not selected
+        return [...prev, date];
+      }
+    });
+  };
+
+  const handleDuplicateShifts = async () => {
+    if (!shiftToDuplicate || selectedDates.length === 0) {
+      setError('Please select at least one date');
+      return;
+    }
+
+    try {
+      const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
+      
+      // Create a shift for each selected date
+      const promises = selectedDates.map(date => {
+        const shiftDate = format(date, 'yyyy-MM-dd');
+        const shiftData = {
+          ...shiftToDuplicate,
+          shiftDate,
+          createdAt: serverTimestamp(),
+          createdBy: user?.uid || 'unknown',
+          updatedAt: serverTimestamp(),
+        };
+        // Remove the id field so a new document is created
+        const { id, ...dataWithoutId } = shiftData;
+        return addDoc(shiftsRef, dataWithoutId);
+      });
+
+      await Promise.all(promises);
+      setSuccess(`Successfully duplicated shift to ${selectedDates.length} date${selectedDates.length > 1 ? 's' : ''}`);
+      handleCloseDuplicateModal();
+      fetchShifts();
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      console.error('Error duplicating shifts:', err);
+      setError('Failed to duplicate shifts');
+    }
+  };
+
+  // Get calendar days for the current month
+  const getCalendarDays = () => {
+    const monthStart = startOfMonth(calendarMonth);
+    const monthEnd = endOfMonth(calendarMonth);
+    const calendarStart = startOfWeek(monthStart);
+    const calendarEnd = endOfWeek(monthEnd);
+    return eachDayOfInterval({ start: calendarStart, end: calendarEnd });
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
@@ -409,8 +489,19 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                         e.stopPropagation();
                         handleOpenDialog(shift);
                       }}
+                      title="Edit"
                     >
                       <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenDuplicateModal(shift);
+                      }}
+                      title="Duplicate"
+                    >
+                      <DuplicateIcon fontSize="small" />
                     </IconButton>
                     <IconButton
                       size="small"
@@ -419,6 +510,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                         e.stopPropagation();
                         handleDelete(shift.id);
                       }}
+                      title="Delete"
                     >
                       <DeleteIcon fontSize="small" />
                     </IconButton>
@@ -595,6 +687,148 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
             disabled={!formData.shiftTitle || !formData.shiftDate || !formData.defaultStartTime || !formData.defaultEndTime}
           >
             {editingShift ? 'Update Shift' : 'Add Shift'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Duplicate Shift Modal */}
+      <Dialog
+        open={duplicateModalOpen}
+        onClose={handleCloseDuplicateModal}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Duplicate Shift: {shiftToDuplicate?.shiftTitle}
+        </DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+          
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Select the dates you want to copy this shift to:
+          </Typography>
+
+          {/* Calendar Navigation */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+            <IconButton
+              size="small"
+              onClick={() => setCalendarMonth(subMonths(calendarMonth, 1))}
+            >
+              <ChevronLeftIcon />
+            </IconButton>
+            <Typography variant="h6" fontWeight={600}>
+              {format(calendarMonth, 'MMMM yyyy')}
+            </Typography>
+            <IconButton
+              size="small"
+              onClick={() => setCalendarMonth(addMonths(calendarMonth, 1))}
+            >
+              <ChevronRightIcon />
+            </IconButton>
+          </Box>
+
+          {/* Calendar Grid */}
+          <Box>
+            {/* Day headers */}
+            <Grid container spacing={0.5} sx={{ mb: 0.5 }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                <Grid item xs={12 / 7} key={day}>
+                  <Typography
+                    variant="caption"
+                    fontWeight={600}
+                    color="text.secondary"
+                    align="center"
+                    sx={{ display: 'block', py: 0.5 }}
+                  >
+                    {day}
+                  </Typography>
+                </Grid>
+              ))}
+            </Grid>
+
+            {/* Calendar days */}
+            <Grid container spacing={0.5}>
+              {getCalendarDays().map((date) => {
+                const isCurrentMonth = isSameMonth(date, calendarMonth);
+                const isSelected = selectedDates.some(d => format(d, 'yyyy-MM-dd') === format(date, 'yyyy-MM-dd'));
+                const isTodayDate = isToday(date);
+                
+                return (
+                  <Grid item xs={12 / 7} key={date.toISOString()}>
+                    <Box
+                      onClick={() => handleDateClick(date)}
+                      sx={{
+                        aspectRatio: '1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        borderRadius: 1,
+                        bgcolor: isSelected
+                          ? 'primary.main'
+                          : isTodayDate
+                          ? 'action.selected'
+                          : 'transparent',
+                        color: isSelected
+                          ? 'primary.contrastText'
+                          : isCurrentMonth
+                          ? 'text.primary'
+                          : 'text.disabled',
+                        '&:hover': {
+                          bgcolor: isSelected ? 'primary.dark' : 'action.hover',
+                        },
+                        border: isTodayDate && !isSelected ? '1px solid' : 'none',
+                        borderColor: 'primary.main',
+                      }}
+                    >
+                      <Typography
+                        variant="body2"
+                        fontWeight={isSelected || isTodayDate ? 600 : 400}
+                      >
+                        {format(date, 'd')}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                );
+              })}
+            </Grid>
+
+            {/* Selected dates summary */}
+            {selectedDates.length > 0 && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
+                  Selected Dates ({selectedDates.length}):
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {selectedDates
+                    .sort((a, b) => a.getTime() - b.getTime())
+                    .map((date) => (
+                      <Chip
+                        key={format(date, 'yyyy-MM-dd')}
+                        label={format(date, 'MMM dd, yyyy')}
+                        size="small"
+                        onDelete={() => handleDateClick(date)}
+                      />
+                    ))}
+                </Box>
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={handleCloseDuplicateModal}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleDuplicateShifts}
+            disabled={selectedDates.length === 0}
+          >
+            Duplicate to {selectedDates.length} Date{selectedDates.length !== 1 ? 's' : ''}
           </Button>
         </DialogActions>
       </Dialog>

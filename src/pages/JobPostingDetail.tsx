@@ -23,6 +23,7 @@ import {
   ArrowBack as ArrowBackIcon,
   ContentCopy as ContentCopyIcon,
   VerifiedUser as VerifiedIcon,
+  Lock as LockIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 
@@ -43,6 +44,7 @@ const JobPostingDetail: React.FC = () => {
   const [dynamicShifts, setDynamicShifts] = useState<any[]>([]);
   const [loadingShifts, setLoadingShifts] = useState(false);
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
+  const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
 
@@ -290,6 +292,7 @@ const JobPostingDetail: React.FC = () => {
     const loadAppliedShifts = async () => {
       if (!user?.uid || !tenantId || !postId || dynamicShifts.length === 0) {
         setAppliedShifts([]);
+        setShiftStatuses({});
         return;
       }
 
@@ -320,6 +323,7 @@ const JobPostingDetail: React.FC = () => {
         const snapshots = await Promise.all(queries);
         
         const applied: string[] = [];
+        const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
         
         snapshots.forEach((snapshot) => {
@@ -329,22 +333,32 @@ const JobPostingDetail: React.FC = () => {
             seenDocs.add(doc.id);
             
             const data = doc.data();
-            console.log(`🔍 Checking application ${doc.id}:`, { jobId: data.jobId, jobOrderId: data.jobOrderId, shiftId: data.shiftId, shiftIds: data.shiftIds });
+            const appStatus = data.status || 'submitted';
             
             // Check if application has shiftId or shiftIds
             if (data.shiftId) {
               applied.push(data.shiftId);
+              statuses[data.shiftId] = appStatus;
             } else if (Array.isArray(data.shiftIds)) {
-              applied.push(...data.shiftIds);
+              data.shiftIds.forEach((shiftId: string) => {
+                applied.push(shiftId);
+                // If multiple shifts, use the most advanced status
+                if (!statuses[shiftId] || (appStatus === 'confirmed' || appStatus === 'accepted')) {
+                  statuses[shiftId] = appStatus;
+                }
+              });
             }
           });
         });
         
         console.log(`✅ Loaded applied shifts for user ${user.uid}:`, applied);
+        console.log(`✅ Shift statuses:`, statuses);
         setAppliedShifts(applied);
+        setShiftStatuses(statuses);
       } catch (err) {
         console.error('Error loading applied shifts:', err);
         setAppliedShifts([]);
+        setShiftStatuses({});
       }
     };
 
@@ -443,10 +457,18 @@ const JobPostingDetail: React.FC = () => {
       case 'accepted':
         return {
           label: 'accepted_special', // Special flag for custom UI
-          backgroundColor: '#4CAF50', // Green for confirm button
+          backgroundColor: '#2196F3', // Blue for Accepted button
           color: '#fff',
-          cursor: 'pointer',
-          pointerEvents: 'auto' as const
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
+      case 'confirmed':
+        return {
+          label: 'confirmed_special', // Special flag for confirmed UI with lock
+          backgroundColor: '#4CAF50', // Green
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
         };
       case 'submitted':
       case 'new':
@@ -496,6 +518,87 @@ const JobPostingDetail: React.FC = () => {
     } catch (err) {
       console.error('Failed to cancel application:', err);
       alert('We were unable to cancel your application. Please try again.');
+    }
+  };
+
+  const handleConfirmAssignment = async () => {
+    if (!applicationDocId || !tenantId || !user?.uid) return;
+    
+    const confirmed = window.confirm('Are you sure you want to confirm this assignment? This confirms that you will work this shift.');
+    if (!confirmed) return;
+
+    try {
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDocId);
+      await updateDoc(applicationRef, {
+        status: 'confirmed',
+        confirmedAt: new Date(),
+        confirmedBy: user.uid,
+      });
+      setApplicationStatus('confirmed');
+      alert('Assignment confirmed! Thank you for confirming your availability.');
+    } catch (err) {
+      console.error('Failed to confirm assignment:', err);
+      alert('We were unable to confirm your assignment. Please try again.');
+    }
+  };
+
+  const handleConfirmAssignmentForShift = async (shiftId: string) => {
+    if (!user?.uid || !tenantId) return;
+    
+    const confirmed = window.confirm('Are you sure you want to confirm this assignment? This confirms that you will work this shift.');
+    if (!confirmed) return;
+
+    try {
+      // Find the application document for this shift
+      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      
+      // Query by userId and shiftId or shiftIds
+      const q1 = query(
+        applicationsRef,
+        where('userId', '==', user.uid),
+        where('shiftId', '==', shiftId)
+      );
+      const q2 = query(
+        applicationsRef,
+        where('userId', '==', user.uid),
+        where('shiftIds', 'array-contains', shiftId)
+      );
+      
+      const [snapshot1, snapshot2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      
+      let applicationDoc = snapshot1.docs[0] || snapshot2.docs[0];
+      
+      if (!applicationDoc && posting?.jobOrderId) {
+        // Fallback: query by jobOrderId
+        const q3 = query(
+          applicationsRef,
+          where('userId', '==', user.uid),
+          where('jobOrderId', '==', posting.jobOrderId)
+        );
+        const snapshot3 = await getDocs(q3);
+        applicationDoc = snapshot3.docs.find(doc => {
+          const data = doc.data();
+          return data.shiftId === shiftId || (Array.isArray(data.shiftIds) && data.shiftIds.includes(shiftId));
+        });
+      }
+      
+      if (applicationDoc) {
+        const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDoc.id);
+        await updateDoc(applicationRef, {
+          status: 'confirmed',
+          confirmedAt: new Date(),
+          confirmedBy: user.uid,
+        });
+        
+        // Update local state
+        setShiftStatuses(prev => ({ ...prev, [shiftId]: 'confirmed' }));
+        alert('Assignment confirmed! Thank you for confirming your availability.');
+      } else {
+        alert('Could not find your application for this shift. Please try again.');
+      }
+    } catch (err) {
+      console.error('Failed to confirm assignment:', err);
+      alert('We were unable to confirm your assignment. Please try again.');
     }
   };
 
@@ -722,19 +825,31 @@ const JobPostingDetail: React.FC = () => {
           {!(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
             statusButtonProps?.label === 'accepted_special' ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                <Typography variant="body1" sx={{ fontWeight: 500, mb: 1 }}>
-                  You've been hired!
-                </Typography>
                 <Button
                   variant="contained"
-                  size="large"
-                  onClick={() => {/* TODO: Handle confirm */}}
+                  size="small"
+                  disabled
                   sx={{
-                    minWidth: 200,
-                    py: 1.5,
-                    fontSize: '1.1rem',
-                    fontWeight: 'bold',
+                    borderRadius: '999px',
+                    px: 2,
+                    fontWeight: 600,
+                    backgroundColor: '#2196F3',
+                    color: '#fff',
+                    mb: 1,
+                  }}
+                >
+                  Accepted
+                </Button>
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={handleConfirmAssignment}
+                  sx={{
+                    borderRadius: '999px',
+                    px: 2,
+                    fontWeight: 600,
                     backgroundColor: '#4CAF50',
+                    color: '#fff',
                     '&:hover': {
                       backgroundColor: '#45a049',
                     },
@@ -742,21 +857,23 @@ const JobPostingDetail: React.FC = () => {
                 >
                   Click to Confirm
                 </Button>
-                <Button
-                  variant="contained"
-                  size="small"
-                  onClick={() => {/* TODO: Handle cancel */}}
-                  sx={{
-                    minWidth: 150,
-                    backgroundColor: '#F44336',
-                    '&:hover': {
-                      backgroundColor: '#da190b',
-                    },
-                  }}
-                >
-                  Cancel
-                </Button>
               </Box>
+            ) : statusButtonProps?.label === 'confirmed_special' ? (
+              <Button
+                variant="contained"
+                size="small"
+                disabled
+                startIcon={<LockIcon />}
+                sx={{
+                  borderRadius: '999px',
+                  px: 2,
+                  fontWeight: 600,
+                  backgroundColor: '#4CAF50',
+                  color: '#fff',
+                }}
+              >
+                Confirmed
+              </Button>
             ) : statusButtonProps ? (
               statusButtonProps.label === 'Application Submitted' ? (
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: { xs: 'stretch', sm: 'flex-end' }, gap: 1 }}>
@@ -874,6 +991,8 @@ const JobPostingDetail: React.FC = () => {
                     shifts={dynamicShifts}
                     onApplyToShift={handleApplyToShift}
                     appliedShifts={appliedShifts}
+                    shiftStatuses={shiftStatuses}
+                    onConfirmShift={handleConfirmAssignmentForShift}
                     jobPostId={postId}
                     tenantId={tenantId}
                   />
@@ -1132,14 +1251,24 @@ const JobPostingDetail: React.FC = () => {
 
                 {statusButtonProps?.label === 'accepted_special' ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
-                    <Typography variant="body1" sx={{ fontWeight: 500, mb: 1, textAlign: 'center' }}>
-                      You've been hired!
-                    </Typography>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled
+                      fullWidth
+                      sx={{
+                        backgroundColor: '#2196F3',
+                        color: '#fff',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Accepted
+                    </Button>
                     <Button
                       variant="contained"
                       size="large"
                       fullWidth
-                      onClick={() => {/* TODO: Handle confirm */}}
+                      onClick={handleConfirmAssignment}
                       sx={{
                         py: 1.5,
                         fontSize: '1.1rem',
@@ -1152,21 +1281,25 @@ const JobPostingDetail: React.FC = () => {
                     >
                       Click to Confirm
                     </Button>
-                    <Button
-                      variant="contained"
-                      size="medium"
-                      fullWidth
-                      onClick={() => {/* TODO: Handle cancel */}}
-                      sx={{
-                        backgroundColor: '#F44336',
-                        '&:hover': {
-                          backgroundColor: '#da190b',
-                        },
-                      }}
-                    >
-                      Cancel
-                    </Button>
                   </Box>
+                ) : statusButtonProps?.label === 'confirmed_special' ? (
+                  <Button
+                    variant="contained"
+                    size="large"
+                    fullWidth
+                    disabled
+                    startIcon={<LockIcon />}
+                    sx={{
+                      mt: 3,
+                      py: 1.5,
+                      fontSize: '1.1rem',
+                      fontWeight: 'bold',
+                      backgroundColor: '#4CAF50',
+                      color: '#fff',
+                    }}
+                  >
+                    Confirmed
+                  </Button>
                 ) : statusButtonProps ? (
                   statusButtonProps.label === 'cancelled' ? (
                     <Button

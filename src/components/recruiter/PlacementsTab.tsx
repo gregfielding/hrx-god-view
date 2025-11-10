@@ -88,6 +88,8 @@ interface Worker {
   licenses?: any[];
   aiProfileScore?: number;
   aiJobFitScore?: number;
+  isAssignedToShift?: boolean; // Track if worker is assigned to the selected shift
+  confirmationStatus?: 'accepted' | 'confirmed'; // Track confirmation status
 }
 
 const PlacementsTab: React.FC<PlacementsTabProps> = ({
@@ -257,25 +259,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
       try {
         const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-        // Query applications for this shift with status 'accepted' (confirmed)
+        // Query applications for this shift with status 'confirmed' (worker has confirmed)
         // Applications can have either shiftId (single) or shiftIds (array)
         const q1 = query(
           applicationsRef,
           where('shiftId', '==', selectedShiftId),
-          where('status', '==', 'accepted')
+          where('status', '==', 'confirmed')
         );
         const q2 = query(
           applicationsRef,
           where('shiftIds', 'array-contains', selectedShiftId),
-          where('status', '==', 'accepted')
+          where('status', '==', 'confirmed')
         );
         
         const [snapshot1, snapshot2] = await Promise.all([getDocs(q1), getDocs(q2)]);
         
-        // Count unique applications (in case someone applies with both shiftId and shiftIds)
+        // Count unique applications that match this shift and are confirmed
         const uniqueAppIds = new Set<string>();
         snapshot1.docs.forEach(doc => uniqueAppIds.add(doc.id));
-        snapshot2.docs.forEach(doc => uniqueAppIds.add(doc.id));
+        snapshot2.docs.forEach(doc => {
+          const data = doc.data();
+          if (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) {
+            uniqueAppIds.add(doc.id);
+          }
+        });
         
         setConfirmedApplicationsCount(uniqueAppIds.size);
       } catch (err: any) {
@@ -506,7 +513,103 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           }
         }
         
-        setWorkers(workforceUsers);
+        // Check assignment status for each worker if a shift is selected
+        if (selectedShiftId && workforceUsers.length > 0) {
+          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          
+          // Get job posting ID to find applications
+          const jobPostingsRef = collection(db, 'tenants', tenantId, 'job_postings');
+          const jobPostingsQuery = query(
+            jobPostingsRef,
+            where('jobOrderId', '==', jobOrderId)
+          );
+          const jobPostingsSnapshot = await getDocs(jobPostingsQuery);
+          
+          if (!jobPostingsSnapshot.empty) {
+            const jobPostId = jobPostingsSnapshot.docs[0].id;
+            
+            // Check each worker's assignment status
+            const assignmentChecks = workforceUsers.map(async (worker) => {
+              let isAssigned = false;
+              let confirmationStatus: 'accepted' | 'confirmed' | undefined = undefined;
+              
+              // Method 1: Check applications collection
+              const applicationId = `${worker.id}_${jobPostId}`;
+              const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
+              const applicationDoc = await getDoc(applicationRef);
+              
+              if (applicationDoc.exists()) {
+                const appData = applicationDoc.data();
+                // Check if status is 'accepted' or 'confirmed' and shiftId matches or shiftIds contains the shift
+                if (appData.status === 'accepted' || appData.status === 'confirmed') {
+                  if (appData.shiftId === selectedShiftId) {
+                    isAssigned = true;
+                    confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
+                  } else if (Array.isArray(appData.shiftIds) && appData.shiftIds.includes(selectedShiftId)) {
+                    isAssigned = true;
+                    confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
+                  }
+                }
+              } else {
+                // Also check by userId and jobOrderId
+                const applicationQuery = query(
+                  applicationsRef,
+                  where('userId', '==', worker.id),
+                  where('jobOrderId', '==', jobOrderId)
+                );
+                const applicationSnapshot = await getDocs(applicationQuery);
+                
+                if (!applicationSnapshot.empty) {
+                  const appDoc = applicationSnapshot.docs[0];
+                  const appData = appDoc.data();
+                  if (appData.status === 'accepted' || appData.status === 'confirmed') {
+                    if (appData.shiftId === selectedShiftId) {
+                      isAssigned = true;
+                      confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
+                    } else if (Array.isArray(appData.shiftIds) && appData.shiftIds.includes(selectedShiftId)) {
+                      isAssigned = true;
+                      confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
+                    }
+                  }
+                }
+              }
+              
+              // Method 2: Also check user's applicationData.shiftAssignments (if not already found)
+              if (!isAssigned) {
+                const userRef = doc(db, 'users', worker.id);
+                const userDoc = await getDoc(userRef);
+                if (userDoc.exists()) {
+                  const userData = userDoc.data();
+                  const applicationData = userData.applicationData || {};
+                  const appKey = `${tenantId}_${jobPostId}`;
+                  const appData = applicationData[appKey];
+                  
+                  if (appData?.shiftAssignments) {
+                    const shiftAssignmentStatus = appData.shiftAssignments[selectedShiftId];
+                    // Consider 'pending', 'accepted', or 'confirmed' as assigned
+                    if (shiftAssignmentStatus && ['pending', 'accepted', 'confirmed'].includes(shiftAssignmentStatus)) {
+                      isAssigned = true;
+                      if (shiftAssignmentStatus === 'confirmed') {
+                        confirmationStatus = 'confirmed';
+                      } else if (shiftAssignmentStatus === 'accepted') {
+                        confirmationStatus = 'accepted';
+                      }
+                    }
+                  }
+                }
+              }
+              
+              return { ...worker, isAssignedToShift: isAssigned, confirmationStatus };
+            });
+            
+            const workersWithAssignments = await Promise.all(assignmentChecks);
+            setWorkers(workersWithAssignments);
+          } else {
+            setWorkers(workforceUsers);
+          }
+        } else {
+          setWorkers(workforceUsers);
+        }
       } catch (err: any) {
         console.error('Error loading workforce:', err);
         setError(err.message || 'Failed to load workforce');
@@ -516,7 +619,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId]);
 
   // Build workforce options based on job order visibility settings
   const getWorkforceOptions = () => {
@@ -710,15 +813,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
       // Create SMS message
       const firstName = worker.firstName || worker.displayName?.split(' ')[0] || 'there';
-      const message = `Congratulations ${firstName}, you've been hired to work as ${jobTitle}, on ${formattedDate}, from ${timeRange}${worksiteName ? ` at ${worksiteName}` : ''}. Please click to confirm or cancel: ${jobUrl}`;
+      const message = `Hi ${firstName}, you've been accepted for ${jobTitle} on ${formattedDate} from ${timeRange}${worksiteName ? ` at ${worksiteName}` : ''}. Please confirm your assignment: ${jobUrl}`;
 
       // Send SMS
+      let smsSuccess = false;
       try {
         await sendWorkerMessage(phone, message);
+        smsSuccess = true;
       } catch (smsError: any) {
         console.error('Failed to send SMS:', smsError);
         // Don't throw - status update succeeded even if SMS fails
-        setError('Shift assigned, but SMS notification failed. Please notify the worker manually.');
+        smsSuccess = false;
       }
 
       // Refresh confirmed applications count - need to check both shiftId and shiftIds
@@ -754,9 +859,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         setConfirmedApplicationsCount(matchingAppIds.size);
       }
 
-      // Show success message
-      setError(null);
-      alert(`Successfully assigned ${worker.displayName} to shift. SMS notification sent.`);
+      // Show success message with SMS status
+      if (smsSuccess) {
+        setError(null);
+        alert(`Successfully assigned ${worker.displayName} to shift. SMS notification sent.`);
+      } else {
+        setError('Shift assigned, but SMS notification failed. Please notify the worker manually.');
+        alert(`Successfully assigned ${worker.displayName} to shift. However, SMS notification failed - please notify the worker manually.`);
+      }
+      
+      // Reload workers to update assignment status
+      // Trigger reload by updating selectedShiftId (temporarily) or reloading workforce
+      const currentShiftId = selectedShiftId;
+      setSelectedShiftId(''); // Clear to trigger reload
+      setTimeout(() => {
+        setSelectedShiftId(currentShiftId); // Restore to trigger reload with updated data
+      }, 100);
       
     } catch (err: any) {
       console.error('Error assigning to shift:', err);
@@ -768,6 +886,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
   const showContent = selectedShiftId && selectedWorkforce && workers.length > 0;
+
+  // Debug: Log shift data to help identify field names
+  useEffect(() => {
+    if (selectedShift) {
+      console.log('Selected Shift Data:', selectedShift);
+      console.log('Start Time:', (selectedShift as any).startTime || (selectedShift as any).defaultStartTime);
+      console.log('End Time:', (selectedShift as any).endTime || (selectedShift as any).defaultEndTime);
+      console.log('Staff Needed:', (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded);
+    }
+  }, [selectedShift]);
 
   // Convert date string to Date for display
   const selectedDateObj = selectedDate ? new Date(selectedDate) : null;
@@ -913,50 +1041,94 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             year: 'numeric'
                           }) : selectedDate}
                         </Typography>
-                        {selectedShift.startTime && (
-                          <Typography variant="body2" color="text.secondary">
-                            {(() => {
-                              // Format time if needed (convert 08:00 to 8:00 AM)
-                              const formatTime = (time: string) => {
-                                if (!time) return '';
-                                const [hours, minutes] = time.split(':');
+                        {(() => {
+                          // Check for startTime in various possible field names
+                          const startTime = (selectedShift as any).startTime || (selectedShift as any).defaultStartTime;
+                          const endTime = (selectedShift as any).endTime || (selectedShift as any).defaultEndTime;
+                          
+                          if (startTime) {
+                            const formatTime = (time: string) => {
+                              if (!time) return '';
+                              // Handle formats like "08:00", "08:00 AM", "8:00 AM"
+                              let hours: string, minutes: string;
+                              if (time.includes(' ')) {
+                                // Format like "08:00 AM"
+                                const parts = time.split(' ');
+                                [hours, minutes] = parts[0].split(':');
+                                const ampm = parts[1] || (parseInt(hours, 10) >= 12 ? 'PM' : 'AM');
+                                const hour = parseInt(hours, 10);
+                                const displayHour = hour % 12 || 12;
+                                return `${displayHour}:${minutes || '00'} ${ampm}`;
+                              } else {
+                                // Format like "08:00"
+                                [hours, minutes] = time.split(':');
                                 const hour = parseInt(hours, 10);
                                 const ampm = hour >= 12 ? 'PM' : 'AM';
                                 const displayHour = hour % 12 || 12;
-                                return `${displayHour}:${minutes} ${ampm}`;
-                              };
-                              const start = formatTime(selectedShift.startTime);
-                              const end = selectedShift.endTime ? formatTime(selectedShift.endTime) : null;
-                              return end ? `${start} - ${end}` : start;
-                            })()}
-                          </Typography>
-                        )}
+                                return `${displayHour}:${minutes || '00'} ${ampm}`;
+                              }
+                            };
+                            const formattedStart = formatTime(startTime);
+                            const formattedEnd = endTime ? formatTime(endTime) : null;
+                            return (
+                              <Typography variant="body2" fontWeight={500} sx={{ mt: 0.5 }}>
+                                {formattedEnd ? `${formattedStart} - ${formattedEnd}` : formattedStart}
+                              </Typography>
+                            );
+                          }
+                          return null;
+                        })()}
                       </Box>
                       
-                      {/* Staffing Info */}
-                      {(selectedShift.spotsRemaining !== undefined || selectedShift.staffNeeded !== undefined || confirmedApplicationsCount > 0) && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                            Staffing
-                          </Typography>
-                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', flexDirection: 'column' }}>
-                            {selectedShift.staffNeeded !== undefined && (
-                              <Chip 
-                                label={`${confirmedApplicationsCount}/${selectedShift.staffNeeded} confirmed`}
-                                size="small"
-                                color={confirmedApplicationsCount >= selectedShift.staffNeeded ? 'success' : confirmedApplicationsCount > 0 ? 'info' : 'default'}
-                                variant="outlined"
-                                sx={{ width: 'fit-content' }}
-                              />
-                            )}
-                            {selectedShift.spotsRemaining !== undefined && selectedShift.spotsRemaining !== confirmedApplicationsCount && (
-                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                                {selectedShift.spotsRemaining} spots remaining
+                      {/* Staff Needed */}
+                      {(() => {
+                        // Check for staffNeeded in various possible field names
+                        const staffNeeded = (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded;
+                        if (staffNeeded !== undefined && staffNeeded !== null) {
+                          return (
+                            <Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                Staff Needed
                               </Typography>
-                            )}
-                          </Box>
-                        </Box>
-                      )}
+                              <Typography variant="body2" fontWeight={500}>
+                                {staffNeeded}
+                              </Typography>
+                            </Box>
+                          );
+                        }
+                        return null;
+                      })()}
+                      
+                      {/* Staffing Info */}
+                      {(() => {
+                        const staffNeeded = (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded;
+                        if (selectedShift.spotsRemaining !== undefined || confirmedApplicationsCount > 0 || staffNeeded !== undefined) {
+                          return (
+                            <Box>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                Staffing
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', flexDirection: 'column' }}>
+                                {staffNeeded !== undefined && (
+                                  <Chip 
+                                    label={`${confirmedApplicationsCount}/${staffNeeded} confirmed`}
+                                    size="small"
+                                    color={confirmedApplicationsCount >= staffNeeded ? 'success' : confirmedApplicationsCount > 0 ? 'info' : 'default'}
+                                    variant="outlined"
+                                    sx={{ width: 'fit-content' }}
+                                  />
+                                )}
+                                {selectedShift.spotsRemaining !== undefined && selectedShift.spotsRemaining !== confirmedApplicationsCount && (
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                                    {selectedShift.spotsRemaining} spots remaining
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Box>
+                          );
+                        }
+                        return null;
+                      })()}
                       
                       {/* Pay Rate */}
                       {(selectedShift as any).payRate && (
@@ -1277,12 +1449,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
                                 {/* Action Button */}
                                 <Button 
-                                  variant="contained" 
+                                  variant="contained"
+                                  color={worker.isAssignedToShift ? "success" : "primary"}
                                   size="small"
                                   onClick={() => handleAssignToShift(worker, selectedShift)}
-                                  disabled={!selectedShift}
+                                  disabled={!selectedShift || worker.isAssignedToShift}
+                                  sx={worker.isAssignedToShift ? {
+                                    backgroundColor: worker.confirmationStatus === 'confirmed' ? '#2e7d32' : worker.confirmationStatus === 'accepted' ? '#2196F3' : '#2e7d32',
+                                    color: '#fff',
+                                    '&:hover': {
+                                      backgroundColor: worker.confirmationStatus === 'confirmed' ? '#1b5e20' : worker.confirmationStatus === 'accepted' ? '#1976d2' : '#1b5e20',
+                                    },
+                                    '&:disabled': {
+                                      backgroundColor: worker.confirmationStatus === 'confirmed' ? '#2e7d32' : worker.confirmationStatus === 'accepted' ? '#2196F3' : '#2e7d32',
+                                      color: '#fff',
+                                    }
+                                  } : {}}
                                 >
-                                  Assign to Shift
+                                  {worker.isAssignedToShift 
+                                    ? (worker.confirmationStatus === 'confirmed' 
+                                        ? "Confirmed" 
+                                        : worker.confirmationStatus === 'accepted' 
+                                        ? "Accepted" 
+                                        : "Assigned")
+                                    : "Assign to Shift"}
                                 </Button>
                               </Box>
                             </Paper>

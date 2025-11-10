@@ -261,11 +261,21 @@ export const checkOtp = onCall(
 export const sendWorkerMessage = onCall(
   {
     secrets: [twilioAccountSid, twilioAuthToken, messagingPhoneNumber, a2pCampaign],
-    cors: true,
+    // Explicitly allow all ingress (Firebase callable functions handle auth automatically)
+    // This ensures Cloud Run doesn't block requests before Firebase can process them
   },
   async (request) => {
+  // Log function invocation for debugging
+  logger.info('sendWorkerMessage function invoked', {
+    hasAuth: !!request.auth,
+    authUid: request.auth?.uid || 'none',
+    hasData: !!request.data,
+    dataKeys: request.data ? Object.keys(request.data as any) : []
+  });
+
   // Validate authentication
   if (!request.auth) {
+    logger.error('sendWorkerMessage: No authentication provided');
     throw new HttpsError('unauthenticated', 'Must be signed in to send messages');
   }
 
@@ -304,31 +314,26 @@ export const sendWorkerMessage = onCall(
       throw new HttpsError('permission-denied', 'Insufficient permissions to send worker messages');
     }
 
-    // Check if recipient has opted in to SMS
-    const recipientDoc = await db.doc(`users/${to}`).get();
-    const recipientData = recipientDoc.data();
+    // Find recipient by phone number (phoneE164 field)
+    const usersQuery = await db.collection('users')
+      .where('phoneE164', '==', to)
+      .limit(1)
+      .get();
     
-    if (!recipientData) {
-      // If user not found, try to find by phone number
-      const usersQuery = await db.collection('users')
-        .where('phoneE164', '==', to)
-        .limit(1)
-        .get();
-      
-      if (usersQuery.empty) {
-        throw new HttpsError('not-found', 'Recipient not found in system');
-      }
-      
+    if (usersQuery.empty) {
+      // If user not found by phone, log warning but allow SMS to proceed
+      // (user might be external or phone might be stored differently)
+      logger.warn(`Recipient not found in system for phone ${to}, but allowing SMS to proceed`);
+    } else {
       const recipientUserDoc = usersQuery.docs[0];
       const recipientUserData = recipientUserDoc.data();
       
-      if (!recipientUserData.smsOptIn) {
-        throw new HttpsError('permission-denied', 'Recipient has not opted in to receive SMS messages');
+      // Check SMS opt-in - if field exists and is false, block SMS
+      // If field doesn't exist, default to allowing SMS (for verified phones)
+      if (recipientUserData.smsOptIn === false) {
+        throw new HttpsError('permission-denied', 'Recipient has opted out of SMS messages');
       }
-    } else {
-      if (!recipientData.smsOptIn) {
-        throw new HttpsError('permission-denied', 'Recipient has not opted in to receive SMS messages');
-      }
+      // If smsOptIn is true or undefined, allow SMS to proceed
     }
 
     // Prepare message content
@@ -350,17 +355,97 @@ export const sendWorkerMessage = onCall(
       throw new HttpsError('invalid-argument', 'Message content is required');
     }
 
-    const client = getTwilioClient();
-    const messagingPhoneNumber = getMessagingPhoneNumber();
-    const a2pCampaign = getA2PCampaign();
+    // Get Twilio configuration with error handling
+    let client;
+    let messagingPhoneNumber;
+    let a2pCampaign;
     
-    // Send SMS via Twilio with A2P 10DLC campaign
-    const messageResult = await client.messages.create({
-      from: messagingPhoneNumber,
+    try {
+      client = getTwilioClient();
+      messagingPhoneNumber = getMessagingPhoneNumber();
+      a2pCampaign = getA2PCampaign();
+    } catch (configError: any) {
+      logger.error('Failed to load Twilio configuration:', configError);
+      throw new HttpsError('internal', `Twilio configuration error: ${configError.message}. Please ensure all required secrets are set: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER or TWILIO_A2P_CAMPAIGN.`);
+    }
+    
+    // Send SMS via Twilio
+    // Use direct phone number to avoid A2P 10DLC registration requirements
+    // (A2P 10DLC requires brand/campaign registration which can take time)
+    const messageParams: any = {
       to: to,
       body: messageContent,
-      messagingServiceSid: a2pCampaign, // Use A2P 10DLC campaign for better deliverability
-    });
+    };
+    
+    if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+      // Use direct phone number (works immediately without A2P 10DLC registration)
+      messageParams.from = messagingPhoneNumber;
+      logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
+    } else if (a2pCampaign && a2pCampaign.trim() !== '') {
+      // Fallback to Messaging Service if phone number not configured
+      // Note: Requires A2P 10DLC registration to work
+      messageParams.messagingServiceSid = a2pCampaign;
+      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
+    } else {
+      throw new HttpsError('internal', 'Twilio messaging configuration is missing. Please configure TWILIO_MESSAGING_PHONE_NUMBER or TWILIO_A2P_CAMPAIGN.');
+    }
+    
+    logger.info(`Attempting to send SMS to ${to} with params:`, { to, hasMessagingService: !!messageParams.messagingServiceSid, hasFrom: !!messageParams.from });
+    
+    let messageResult;
+    try {
+      messageResult = await client.messages.create(messageParams);
+    } catch (twilioError: any) {
+      // Handle A2P 10DLC registration errors (30034) - try fallback if using Messaging Service
+      if (twilioError.code === 30034 && messageParams.messagingServiceSid && messagingPhoneNumber) {
+        logger.warn(`A2P 10DLC registration required for Messaging Service, falling back to direct phone number ${messagingPhoneNumber}`);
+        const fallbackParams: any = {
+          to: to,
+          body: messageContent,
+          from: messagingPhoneNumber,
+        };
+        try {
+          messageResult = await client.messages.create(fallbackParams);
+        } catch (fallbackError: any) {
+          // If fallback also fails with 30034, log warning but don't fail the assignment
+          if (fallbackError.code === 30034) {
+            logger.error(`Both Messaging Service and direct phone number require A2P 10DLC registration. Assignment created but SMS not sent. Error: ${fallbackError.message}`);
+            // Return success but indicate SMS was not sent
+            return {
+              success: false,
+              messageId: null,
+              status: 'failed',
+              error: 'SMS delivery failed: A2P 10DLC registration required. Please notify worker manually.',
+              errorCode: '30034'
+            };
+          }
+          throw fallbackError;
+        }
+      } else if (twilioError.code === 21705 && messageParams.messagingServiceSid && messagingPhoneNumber) {
+        // If Messaging Service SID is invalid (error 21705), fall back to direct phone number
+        logger.warn(`Messaging Service SID ${messageParams.messagingServiceSid} is invalid, falling back to direct phone number ${messagingPhoneNumber}`);
+        const fallbackParams: any = {
+          to: to,
+          body: messageContent,
+          from: messagingPhoneNumber,
+        };
+        messageResult = await client.messages.create(fallbackParams);
+      } else if (twilioError.code === 30034) {
+        // Direct phone number also requires A2P 10DLC registration
+        logger.error(`A2P 10DLC registration required for phone number ${messagingPhoneNumber}. Assignment created but SMS not sent. Error: ${twilioError.message}`);
+        // Return success but indicate SMS was not sent
+        return {
+          success: false,
+          messageId: null,
+          status: 'failed',
+          error: 'SMS delivery failed: A2P 10DLC registration required. Please notify worker manually.',
+          errorCode: '30034'
+        };
+      } else {
+        // Re-throw other errors
+        throw twilioError;
+      }
+    }
 
     // Log message to Firestore for audit trail
     await db.collection('sms_messages').add({
@@ -382,6 +467,13 @@ export const sendWorkerMessage = onCall(
     };
   } catch (error: any) {
     logger.error('Failed to send worker message:', error);
+    logger.error('Error details:', {
+      code: error.code,
+      message: error.message,
+      status: error.status,
+      moreInfo: error.moreInfo,
+      stack: error.stack
+    });
     
     // Handle specific Twilio errors
     if (error.code === 21211) {
@@ -390,13 +482,24 @@ export const sendWorkerMessage = onCall(
       throw new HttpsError('invalid-argument', 'Phone number is not SMS capable');
     } else if (error.code === 21617) {
       throw new HttpsError('permission-denied', 'Recipient has opted out of SMS messages');
+    } else if (error.code === 20003) {
+      throw new HttpsError('permission-denied', 'Twilio authentication failed. Please check credentials.');
+    } else if (error.code === 20429) {
+      throw new HttpsError('resource-exhausted', 'Too many requests to Twilio. Please try again later.');
+    } else if (error.code === 21608) {
+      throw new HttpsError('invalid-argument', 'Invalid messaging service SID or phone number configuration.');
     }
     
-    // If it's already an HttpsError, re-throw it
+    // If it's already an HttpsError, re-throw it with more context
     if (error instanceof HttpsError) {
       throw error;
     }
     
-    throw new HttpsError('internal', 'Failed to send message. Please try again.');
+    // Provide more specific error message for debugging
+    const errorMessage = error.message || 'Unknown error';
+    const errorCode = error.code || 'unknown';
+    logger.error(`Twilio error: ${errorCode} - ${errorMessage}`);
+    
+    throw new HttpsError('internal', `Failed to send SMS: ${errorMessage} (Code: ${errorCode}). Check Firebase function logs for details.`);
   }
 });

@@ -285,7 +285,7 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
               </TableSortLabel>
             </TableCell>
             <TableCell>Email</TableCell>
-            <TableCell>Phone</TableCell>
+            <TableCell sx={{ minWidth: '140px' }}>Phone</TableCell>
             {/* Job Title */}
             <TableCell sortDirection={orderBy === 'jobTitle' ? order : false}>
               <TableSortLabel
@@ -364,7 +364,7 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                 {contact.lastName}
               </TableCell>
               <TableCell>{contact.email}</TableCell>
-              <TableCell>{contact.phone || '-'}</TableCell>
+              <TableCell sx={{ minWidth: '140px', whiteSpace: 'nowrap' }}>{contact.phone || '-'}</TableCell>
               <TableCell>{getTenantField(contact, 'jobTitle', effectiveTenantId) || '-'}</TableCell>
               {/* Region */}
               <TableCell>

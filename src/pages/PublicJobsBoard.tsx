@@ -49,6 +49,7 @@ import {
   Build,
   Close,
   Event,
+  Warning as WarningIcon,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -61,6 +62,7 @@ import FavoritesFilter from '../components/FavoritesFilter';
 import Layout from '../components/Layout';
 import AuthDialog from '../components/AuthDialog';
 import EligibilityModal from '../components/EligibilityModal';
+import { checkMissingCertifications } from '../utils/checkMissingCertifications';
 
 interface PublicJobPosting {
   id: string;
@@ -164,6 +166,7 @@ const PublicJobsBoard: React.FC = () => {
   const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
   const [userApplicationStatuses, setUserApplicationStatuses] = useState<Record<string, string>>({}); // Map of applicationId -> status
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
+  const [userCertifications, setUserCertifications] = useState<Array<{ name?: string }>>([]);
   
   // Track shifts for selected job in dialog
   const [selectedJobShifts, setSelectedJobShifts] = useState<any[]>([]);
@@ -186,6 +189,7 @@ const PublicJobsBoard: React.FC = () => {
         setUserApplicationIds([]);
         setUserApplicationStatuses({});
         setUserGroupIds([]);
+        setUserCertifications([]);
         return;
       }
       try {
@@ -196,6 +200,12 @@ const PublicJobsBoard: React.FC = () => {
           const applicationIds = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
           setUserApplicationIds(applicationIds);
           setUserGroupIds(Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : []);
+          
+          // Load user certifications
+          const certs = Array.isArray(userData?.certifications) 
+            ? userData.certifications.filter((c: any) => c && (typeof c === 'object' ? c.name || c.fileUrl : typeof c === 'string'))
+            : [];
+          setUserCertifications(certs);
           
           // Load application statuses
           // applicationId format is: ${tenantId}_${jobId}
@@ -1502,6 +1512,60 @@ const PublicJobsBoard: React.FC = () => {
                     </Box>
                   )}
 
+                  {/* Missing Certifications Warning - Only show after application submission */}
+                  {user && job.licensesCerts && job.licensesCerts.length > 0 && job.showLicensesCerts && (() => {
+                    // Check if user has applied to this job
+                    const applicationId = `${job.tenantId}_${job.id}`;
+                    const hasApplied = userApplicationIds.includes(applicationId);
+                    
+                    // Only show warning if user has applied
+                    if (!hasApplied) return null;
+                    
+                    const missingCerts = checkMissingCertifications(job.licensesCerts, userCertifications);
+                    if (missingCerts.length > 0) {
+                      return (
+                        <Alert 
+                          severity="warning" 
+                          icon={<WarningIcon />}
+                          sx={{ 
+                            mb: 2,
+                            mt: 1,
+                            '& .MuiAlert-message': {
+                              fontSize: '0.875rem',
+                              width: '100%'
+                            }
+                          }}
+                          action={
+                            <Button
+                              size="small"
+                              color="inherit"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate('/profile?tab=licenses');
+                              }}
+                              sx={{ 
+                                textTransform: 'none',
+                                fontSize: '0.75rem',
+                                minWidth: 'auto',
+                                px: 1
+                              }}
+                            >
+                              Upload
+                            </Button>
+                          }
+                        >
+                          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                            Missing Required Certification{missingCerts.length > 1 ? 's' : ''}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Please upload {missingCerts.length === 1 ? 'this certification' : 'these certifications'} to your profile: {missingCerts.slice(0, 2).join(', ')}{missingCerts.length > 2 ? ` +${missingCerts.length - 2} more` : ''}
+                          </Typography>
+                        </Alert>
+                      );
+                    }
+                    return null;
+                  })()}
+
 
 
                   <Box sx={{ mt: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1834,11 +1898,62 @@ const PublicJobsBoard: React.FC = () => {
                         <Security sx={{ fontSize: 20, mr: 1, verticalAlign: 'middle' }} />
                         Licenses & Certifications
                       </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                         {selectedJob.licensesCerts.map((license, index) => (
                           <Chip key={index} label={license} size="small" variant="outlined" />
                         ))}
                       </Box>
+                      
+                      {/* Missing Certifications Warning - Only show after application submission */}
+                      {user && (() => {
+                        // Check if user has applied to this job
+                        const applicationId = `${selectedJob.tenantId}_${selectedJob.id}`;
+                        const hasApplied = userApplicationIds.includes(applicationId);
+                        
+                        // Only show warning if user has applied
+                        if (!hasApplied) return null;
+                        
+                        const missingCerts = checkMissingCertifications(selectedJob.licensesCerts, userCertifications);
+                        if (missingCerts.length > 0) {
+                          return (
+                            <Alert 
+                              severity="warning" 
+                              icon={<WarningIcon />}
+                              sx={{ mt: 2 }}
+                            >
+                              <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                                Missing Required Certification{missingCerts.length > 1 ? 's' : ''}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                Please upload {missingCerts.length === 1 ? 'this certification' : 'these certifications'} to your profile as soon as possible:
+                              </Typography>
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                {missingCerts.map((cert, index) => (
+                                  <Chip 
+                                    key={index} 
+                                    label={cert} 
+                                    size="small" 
+                                    color="warning"
+                                    variant="outlined"
+                                  />
+                                ))}
+                              </Box>
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                sx={{ mt: 1.5 }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate('/profile?tab=licenses');
+                                }}
+                              >
+                                Upload to Profile
+                              </Button>
+                            </Alert>
+                          );
+                        }
+                        return null;
+                      })()}
                     </Box>
                   )}
 

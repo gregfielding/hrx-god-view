@@ -13,6 +13,7 @@ import {
   CalendarMonth as CalendarIcon,
   AccessTime as TimeIcon,
   AttachMoney as AttachMoneyIcon,
+  Lock as LockIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { JobBoardShift } from '../services/recruiter/jobsBoardService';
@@ -23,6 +24,8 @@ interface ShiftSelectorProps {
   onToggleShift?: (shiftId: string) => void; // Deprecated
   onApplyToShift?: (shiftId: string) => void; // New callback for individual shift applications
   appliedShifts?: string[]; // Array of shift IDs the user has already applied to
+  shiftStatuses?: Record<string, string>; // Map of shiftId -> application status
+  onConfirmShift?: (shiftId: string) => void; // Callback for confirming a shift assignment
   disabled?: boolean;
   jobPostId?: string; // For building application URLs
   tenantId?: string; // For building application URLs
@@ -34,6 +37,8 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   onToggleShift,
   onApplyToShift,
   appliedShifts = [],
+  shiftStatuses = {},
+  onConfirmShift,
   disabled = false,
   jobPostId,
   tenantId,
@@ -88,6 +93,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
       <Stack spacing={1.5} sx={{ mt: 2 }}>
         {shifts.map((shift) => {
           const hasApplied = appliedShifts.includes(shift.shiftId);
+          const shiftStatus = shiftStatuses[shift.shiftId] || (hasApplied ? 'submitted' : null);
+          const isAccepted = shiftStatus === 'accepted';
+          const isConfirmed = shiftStatus === 'confirmed';
           const isFull = shift.spotsRemaining <= 0;
           const isLowAvailability = shift.spotsRemaining > 0 && shift.spotsRemaining <= 2;
 
@@ -97,13 +105,13 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               variant="outlined"
               sx={{
                 border: '1px solid',
-                borderColor: hasApplied ? '#FFC700' : 'divider',
-                bgcolor: hasApplied ? '#FFF9E6' : 'background.paper', // Light yellow background
+                borderColor: isConfirmed ? '#4CAF50' : isAccepted ? '#2196F3' : hasApplied ? '#FFC700' : 'divider',
+                bgcolor: isConfirmed ? '#E8F5E9' : isAccepted ? '#E3F2FD' : hasApplied ? '#FFF9E6' : 'background.paper',
                 opacity: isFull ? 0.6 : 1,
                 transition: 'all 0.2s ease',
                 '&:hover': {
-                  bgcolor: disabled || isFull ? undefined : hasApplied ? '#FFF4CC' : 'grey.50', // Slightly darker yellow on hover
-                  borderColor: disabled || isFull ? undefined : hasApplied ? '#E6B300' : 'primary.main',
+                  bgcolor: disabled || isFull ? undefined : isConfirmed ? '#C8E6C9' : isAccepted ? '#BBDEFB' : hasApplied ? '#FFF4CC' : 'grey.50',
+                  borderColor: disabled || isFull ? undefined : isConfirmed ? '#4CAF50' : isAccepted ? '#2196F3' : hasApplied ? '#E6B300' : 'primary.main',
                 },
               }}
             >
@@ -171,14 +179,68 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     )}
                   </Box>
 
-                  {/* Apply Button */}
-                  <Box sx={{ ml: 2 }}>
-                    {hasApplied ? (
+                  {/* Action Buttons */}
+                  <Box sx={{ ml: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {isConfirmed ? (
                       <Button
                         variant="contained"
-                        disabled={false}
+                        disabled
+                        startIcon={<LockIcon />}
                         sx={{
-                          minWidth: 120,
+                          minWidth: 140,
+                          backgroundColor: '#4CAF50 !important',
+                          color: '#fff',
+                          fontWeight: 600,
+                          '&.Mui-disabled': {
+                            backgroundColor: '#4CAF50 !important',
+                            color: '#fff',
+                            opacity: 1,
+                          },
+                        }}
+                      >
+                        Confirmed
+                      </Button>
+                    ) : isAccepted ? (
+                      <>
+                        <Button
+                          variant="contained"
+                          disabled
+                          sx={{
+                            minWidth: 140,
+                            backgroundColor: '#2196F3 !important',
+                            color: '#fff',
+                            fontWeight: 600,
+                            '&.Mui-disabled': {
+                              backgroundColor: '#2196F3 !important',
+                              color: '#fff',
+                              opacity: 1,
+                            },
+                          }}
+                        >
+                          Accepted
+                        </Button>
+                        <Button
+                          variant="contained"
+                          onClick={() => onConfirmShift?.(shift.shiftId)}
+                          sx={{
+                            minWidth: 140,
+                            backgroundColor: '#4CAF50',
+                            color: '#fff',
+                            fontWeight: 600,
+                            '&:hover': {
+                              backgroundColor: '#45a049',
+                            },
+                          }}
+                        >
+                          Click to Confirm
+                        </Button>
+                      </>
+                    ) : hasApplied ? (
+                      <Button
+                        variant="contained"
+                        disabled
+                        sx={{
+                          minWidth: 140,
                           backgroundColor: '#FFC700 !important',
                           color: '#000',
                           fontWeight: 600,
@@ -202,7 +264,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                         disabled={disabled || isFull}
                         onClick={() => handleApply(shift.shiftId)}
                         sx={{
-                          minWidth: 120,
+                          minWidth: 140,
                         }}
                       >
                         {isFull ? 'Full' : 'Apply'}

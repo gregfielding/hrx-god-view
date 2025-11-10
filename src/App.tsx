@@ -5,6 +5,7 @@ import { logger } from './utils/logger';
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
+import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
 import AIDashboard from './pages/TenantViews/AIDashboard';
 import UserProfile from './pages/UserProfile';
@@ -836,6 +837,7 @@ function App() {
   return (
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>
+        <PageViewTracker />
         <AuthProvider>
           <AssociationsCacheProvider>
             <SalespeopleProvider>

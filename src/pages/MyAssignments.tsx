@@ -29,6 +29,7 @@ interface Assignment {
   startDate?: Date;
   endDate?: Date;
   status: string;
+  jobPostId?: string; // For confirmed applications - link to job posting
 }
 
 const MyAssignments: React.FC = () => {
@@ -52,12 +53,9 @@ const MyAssignments: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Load assignments from Firestore
-      // Assignments can be stored in two places:
-      // 1. tenants/{tenantId}/job_orders/{jobOrderId}/assignments/{assignmentId} (Phase 2 structure)
-      // 2. assignments/{assignmentId} (legacy structure with userId)
-      
-      // Try legacy structure first (assignments collection with userId)
+      const loadedAssignments: Assignment[] = [];
+
+      // Method 1: Load from legacy assignments collection
       const assignmentsRef = collection(db, 'assignments');
       const q = query(
         assignmentsRef,
@@ -66,7 +64,6 @@ const MyAssignments: React.FC = () => {
       );
       
       const snapshot = await getDocs(q);
-      const loadedAssignments: Assignment[] = [];
 
       for (const docSnap of snapshot.docs) {
         const data = docSnap.data();
@@ -124,6 +121,121 @@ const MyAssignments: React.FC = () => {
           endDate,
           status: data.status || 'pending',
         });
+      }
+
+      // Method 2: Load confirmed applications and convert to assignments
+      // We need to check all tenants the user might belong to
+      // For now, we'll check common tenant IDs or get from user's tenantIds
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+      
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        const tenantIds: string[] = [];
+        
+        // Get tenant IDs from user's tenantIds object
+        if (userData.tenantIds && typeof userData.tenantIds === 'object') {
+          tenantIds.push(...Object.keys(userData.tenantIds));
+        }
+        
+        // Also check common tenant slugs (c1, etc.)
+        if (!tenantIds.includes('c1')) {
+          tenantIds.push('c1');
+        }
+        
+        // Query applications with status 'confirmed' for each tenant
+        for (const tenantId of tenantIds) {
+          try {
+            const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+            const confirmedQuery = query(
+              applicationsRef,
+              where('userId', '==', user.uid),
+              where('status', '==', 'confirmed')
+            );
+            
+            const confirmedSnapshot = await getDocs(confirmedQuery);
+            
+            for (const appDoc of confirmedSnapshot.docs) {
+              const appData = appDoc.data();
+              
+              // Skip if we already have this as an assignment (check by jobOrderId)
+              if (appData.jobOrderId && loadedAssignments.some(a => a.jobOrderId === appData.jobOrderId)) {
+                continue;
+              }
+              
+              // Get job order details
+              let jobTitle = '';
+              let companyName = '';
+              let location = '';
+              let payRate: number | undefined;
+              let startDate: Date | undefined;
+              let endDate: Date | undefined;
+              let jobPostId: string | undefined;
+              
+              if (appData.jobOrderId) {
+                try {
+                  const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', appData.jobOrderId);
+                  const jobOrderSnap = await getDoc(jobOrderRef);
+                  
+                  if (jobOrderSnap.exists()) {
+                    const jobOrderData = jobOrderSnap.data();
+                    jobTitle = jobOrderData.jobOrderName || jobOrderData.jobTitle || '';
+                    companyName = jobOrderData.companyName || '';
+                    payRate = jobOrderData.payRate;
+                    
+                    if (jobOrderData.startDate) {
+                      startDate = jobOrderData.startDate.toDate ? jobOrderData.startDate.toDate() : new Date(jobOrderData.startDate);
+                    }
+                    if (jobOrderData.endDate) {
+                      endDate = jobOrderData.endDate.toDate ? jobOrderData.endDate.toDate() : new Date(jobOrderData.endDate);
+                    }
+                    
+                    // Get location from worksite
+                    if (jobOrderData.worksiteName) {
+                      location = jobOrderData.worksiteName;
+                    } else if (jobOrderData.worksiteAddress) {
+                      const addr = jobOrderData.worksiteAddress;
+                      if (addr.city && addr.state) {
+                        location = `${addr.city}, ${addr.state}`;
+                      }
+                    }
+                  }
+                  
+                  // Find the job posting ID for this job order
+                  const jobPostingsRef = collection(db, 'tenants', tenantId, 'job_postings');
+                  const jobPostingsQuery = query(
+                    jobPostingsRef,
+                    where('jobOrderId', '==', appData.jobOrderId),
+                    where('status', '==', 'active')
+                  );
+                  const jobPostingsSnapshot = await getDocs(jobPostingsQuery);
+                  if (!jobPostingsSnapshot.empty) {
+                    jobPostId = jobPostingsSnapshot.docs[0].id;
+                  }
+                } catch (jobOrderErr) {
+                  console.warn('Could not load job order details for confirmed application:', jobOrderErr);
+                }
+              }
+              
+              // Use application ID as assignment ID (or create a virtual one)
+              loadedAssignments.push({
+                id: `app_${appDoc.id}`, // Prefix to distinguish from regular assignments
+                tenantId: tenantId,
+                jobOrderId: appData.jobOrderId,
+                jobTitle: jobTitle || appData.jobTitle || 'Assignment',
+                companyName,
+                location,
+                payRate,
+                startDate,
+                endDate,
+                status: 'confirmed',
+                jobPostId, // Store job posting ID for navigation
+              });
+            }
+          } catch (err) {
+            console.warn(`Error loading confirmed applications for tenant ${tenantId}:`, err);
+          }
+        }
       }
 
       // Sort by start date (newest first)
@@ -217,7 +329,6 @@ const MyAssignments: React.FC = () => {
                   }}
                   onClick={() => {
                     // Navigate to assignment details
-                    // Use tenantId from assignment if available, otherwise default to c1
                     const tenantSlug = assignment.tenantId || 'c1';
                     navigate(`/${tenantSlug}/assignments/${assignment.id}`);
                   }}
