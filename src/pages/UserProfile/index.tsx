@@ -412,13 +412,30 @@ const UserProfilePage = () => {
 
   const handleTabChange = (_: React.SyntheticEvent, newIndex: number) => {
     setTabIndex(newIndex);
+    // Determine current route to preserve it
+    const pathname = window.location.pathname;
+    const isRecruiterRoute = pathname.includes('/recruiter/users/');
+    const isWorkforceRoute = pathname.includes('/workforce/users/');
+    
     // Update URL with tab parameter if it's the licenses tab
     const selectedTab = availableTabs.find(tab => tab.index === newIndex);
     if (selectedTab?.label === 'Licenses & Certs') {
-      navigate(`/profile?tab=licenses`, { replace: true });
+      if (isRecruiterRoute) {
+        navigate(`/recruiter/users/${uid}?tab=licenses`, { replace: true });
+      } else if (isWorkforceRoute) {
+        navigate(`/workforce/users/${uid}?tab=licenses`, { replace: true });
+      } else {
+        navigate(`/profile?tab=licenses`, { replace: true });
+      }
     } else {
-      // Remove tab parameter for other tabs
-      navigate('/profile', { replace: true });
+      // Preserve current route for other tabs
+      if (isRecruiterRoute) {
+        navigate(`/recruiter/users/${uid}`, { replace: true });
+      } else if (isWorkforceRoute) {
+        navigate(`/workforce/users/${uid}`, { replace: true });
+      } else {
+        navigate('/profile', { replace: true });
+      }
     }
   };
 
