@@ -10,8 +10,6 @@ import {
 } from '@mui/material';
 import {
   Work as WorkIcon,
-  People as PeopleIcon,
-  Timeline as TimelineIcon,
   Group as GroupIcon,
   Badge as BadgeIcon,
   Assignment as AssignmentIcon,
@@ -51,13 +49,6 @@ const RecruiterDashboard: React.FC = () => {
       icon: <AssignmentIcon sx={{ fontSize: 40 }} />,
       path: '/recruiter/jobs-board',
       color: theme.palette.primary.main,
-    },
-    {
-      title: 'Pipeline',
-      description: 'Track candidates through the recruitment pipeline',
-      icon: <TimelineIcon sx={{ fontSize: 40 }} />,
-      path: '/recruiter/pipeline',
-      color: theme.palette.success.main,
     },
   ];
 
