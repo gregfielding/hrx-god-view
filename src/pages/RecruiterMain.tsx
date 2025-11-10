@@ -14,12 +14,11 @@ const RecruiterMain: React.FC = () => {
     if (location.pathname === '/recruiter' || location.pathname === '/recruiter/') return 0;
     if (location.pathname.startsWith('/recruiter/job-orders')) return 1;
     if (location.pathname.startsWith('/recruiter/users')) return 2;
-    if (location.pathname.startsWith('/recruiter/applicants')) return 3;
-    if (location.pathname.startsWith('/recruiter/companies')) return 4;
-    if (location.pathname.startsWith('/recruiter/contacts')) return 5;
-    if (location.pathname.startsWith('/recruiter/user-groups')) return 6;
-    if (location.pathname.startsWith('/recruiter/jobs-board')) return 7;
-    if (location.pathname.startsWith('/recruiter/reports')) return 8;
+    if (location.pathname.startsWith('/recruiter/companies')) return 3;
+    if (location.pathname.startsWith('/recruiter/contacts')) return 4;
+    if (location.pathname.startsWith('/recruiter/user-groups')) return 5;
+    if (location.pathname.startsWith('/recruiter/jobs-board')) return 6;
+    if (location.pathname.startsWith('/recruiter/reports')) return 7;
     return 0;
   };
 
@@ -30,7 +29,6 @@ const RecruiterMain: React.FC = () => {
       '/recruiter',
       '/recruiter/job-orders',
       '/recruiter/users',
-      '/recruiter/applicants',
       '/recruiter/companies',
       '/recruiter/contacts',
       '/recruiter/user-groups',
@@ -214,7 +212,7 @@ const RecruiterMain: React.FC = () => {
             )}
           </Box>
 
-          {/* Applicants Tab */}
+          {/* Companies Tab */}
           <Box 
             sx={{ 
               cursor: 'pointer', 
@@ -250,62 +248,9 @@ const RecruiterMain: React.FC = () => {
                 pb: tabValue === 3 ? 1 : 0
               }}
             >
-              Applicants
-            </Typography>
-            {tabValue === 3 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-
-          {/* Companies Tab */}
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange(4)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 4 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 4 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 4 ? 1 : 0
-              }}
-            >
               Companies
             </Typography>
-            {tabValue === 4 && (
+            {tabValue === 3 && (
               <Box 
                 sx={{ 
                   position: 'absolute',
@@ -342,23 +287,23 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange(5)}
+            onClick={() => handleTabChange(4)}
           >
             <Typography 
               variant="body1" 
               sx={{ 
                 fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 5 ? 600 : 500,
+                fontWeight: tabValue === 4 ? 600 : 500,
                 lineHeight: '20px',
-                color: tabValue === 5 ? '#0B63C5' : '#4B5563',
+                color: tabValue === 4 ? '#0B63C5' : '#4B5563',
                 textTransform: 'none',
                 position: 'relative',
-                pb: tabValue === 5 ? 1 : 0
+                pb: tabValue === 4 ? 1 : 0
               }}
             >
               Contacts
             </Typography>
-            {tabValue === 5 && (
+            {tabValue === 4 && (
               <Box 
                 sx={{ 
                   position: 'absolute',
@@ -395,23 +340,23 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange(6)}
+            onClick={() => handleTabChange(5)}
           >
             <Typography 
               variant="body1" 
               sx={{ 
                 fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 6 ? 600 : 500,
+                fontWeight: tabValue === 5 ? 600 : 500,
                 lineHeight: '20px',
-                color: tabValue === 6 ? '#0B63C5' : '#4B5563',
+                color: tabValue === 5 ? '#0B63C5' : '#4B5563',
                 textTransform: 'none',
                 position: 'relative',
-                pb: tabValue === 6 ? 1 : 0
+                pb: tabValue === 5 ? 1 : 0
               }}
             >
               User Groups
             </Typography>
-            {tabValue === 6 && (
+            {tabValue === 5 && (
               <Box 
                 sx={{ 
                   position: 'absolute',
@@ -448,23 +393,23 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange(7)}
+            onClick={() => handleTabChange(6)}
           >
             <Typography 
               variant="body1" 
               sx={{ 
                 fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 7 ? 600 : 500,
+                fontWeight: tabValue === 6 ? 600 : 500,
                 lineHeight: '20px',
-                color: tabValue === 7 ? '#0B63C5' : '#4B5563',
+                color: tabValue === 6 ? '#0B63C5' : '#4B5563',
                 textTransform: 'none',
                 position: 'relative',
-                pb: tabValue === 7 ? 1 : 0
+                pb: tabValue === 6 ? 1 : 0
               }}
             >
               Jobs Board
             </Typography>
-            {tabValue === 7 && (
+            {tabValue === 6 && (
               <Box 
                 sx={{ 
                   position: 'absolute',
@@ -501,23 +446,23 @@ const RecruiterMain: React.FC = () => {
                 }
               }
             }}
-            onClick={() => handleTabChange(8)}
+            onClick={() => handleTabChange(7)}
           >
             <Typography 
               variant="body1" 
               sx={{ 
                 fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 8 ? 600 : 500,
+                fontWeight: tabValue === 7 ? 600 : 500,
                 lineHeight: '20px',
-                color: tabValue === 8 ? '#0B63C5' : '#4B5563',
+                color: tabValue === 7 ? '#0B63C5' : '#4B5563',
                 textTransform: 'none',
                 position: 'relative',
-                pb: tabValue === 8 ? 1 : 0
+                pb: tabValue === 7 ? 1 : 0
               }}
             >
               Reports
             </Typography>
-            {tabValue === 8 && (
+            {tabValue === 7 && (
               <Box 
                 sx={{ 
                   position: 'absolute',

@@ -37,7 +37,8 @@ import {
   InputLabel,
   Select,
   Stack,
-  Tooltip
+  Tooltip,
+  Autocomplete
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
@@ -1169,6 +1170,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
   const [manageContactsOpen, setManageContactsOpen] = useState(false);
+  const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
+  const [availableRecruiters, setAvailableRecruiters] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
+  const [selectedRecruiterIds, setSelectedRecruiterIds] = useState<string[]>([]);
+  const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
 
   // Load job order
@@ -1421,7 +1426,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           const u: any = d.data() || {};
           const displayName = (u.firstName && u.lastName ? `${u.firstName} ${u.lastName}`.trim() : '') ||
                               u.displayName ||
-                              (u.email ? String(u.email).split('@')[0] : 'Salesperson');
+                              (u.email ? String(u.email).split('@')[0] : 'Recruiter');
           results.push({ id: d.id, displayName, email: u.email });
         });
       }
@@ -1429,6 +1434,94 @@ const RecruiterJobOrderDetail: React.FC = () => {
     } catch (error) {
       console.error('Error loading assigned recruiters:', error);
       setRecruiterUsers([]);
+    }
+  };
+
+  // Load available recruiters (users with security level 5-7 or recruiter access)
+  const loadAvailableRecruiters = async () => {
+    if (!tenantId) return;
+    
+    setLoadingRecruiters(true);
+    try {
+      const usersRef = collection(db, 'users');
+      const usersSnapshot = await getDocs(usersRef);
+      
+      const recruiters: Array<{id: string; displayName: string; email?: string}> = [];
+      
+      usersSnapshot.docs.forEach(doc => {
+        const userData = doc.data();
+        
+        // Check if user belongs to this tenant
+        if (!userData.tenantIds || !userData.tenantIds[tenantId]) return;
+        
+        const tenantData = userData.tenantIds[tenantId];
+        const securityLevel = parseInt(tenantData.securityLevel || userData.securityLevel || '0');
+        
+        // Include users with security level 5-7 (internal team) or users with recruiter access
+        const hasRecruiterAccess = tenantData.recruiter || userData.recruiter || false;
+        const isInternalTeam = securityLevel >= 5 && securityLevel <= 7;
+        
+        if (!isInternalTeam && !hasRecruiterAccess) return;
+        
+        const displayName = (userData.firstName && userData.lastName ? `${userData.firstName} ${userData.lastName}`.trim() : '') ||
+                            userData.displayName ||
+                            (userData.email ? String(userData.email).split('@')[0] : 'Recruiter');
+        
+        recruiters.push({
+          id: doc.id,
+          displayName,
+          email: userData.email
+        });
+      });
+      
+      // Sort by name
+      recruiters.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      
+      setAvailableRecruiters(recruiters);
+    } catch (error) {
+      console.error('Error loading available recruiters:', error);
+      setAvailableRecruiters([]);
+    } finally {
+      setLoadingRecruiters(false);
+    }
+  };
+
+  // Handle opening manage recruiters dialog
+  const handleOpenManageRecruiters = () => {
+    if (jobOrder?.assignedRecruiters) {
+      setSelectedRecruiterIds([...jobOrder.assignedRecruiters]);
+    } else {
+      setSelectedRecruiterIds([]);
+    }
+    loadAvailableRecruiters();
+    setManageRecruitersOpen(true);
+  };
+
+  // Handle saving assigned recruiters
+  const handleSaveRecruiters = async () => {
+    if (!jobOrderId || !tenantId) return;
+    
+    try {
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      await updateDoc(jobOrderRef, {
+        assignedRecruiters: selectedRecruiterIds,
+        updatedAt: serverTimestamp()
+      });
+      
+      // Update local state
+      setJobOrder(prev => prev ? { ...prev, assignedRecruiters: selectedRecruiterIds } : null);
+      
+      // Reload recruiter users for display
+      if (selectedRecruiterIds.length > 0) {
+        await loadAssignedRecruiters(selectedRecruiterIds);
+      } else {
+        setRecruiterUsers([]);
+      }
+      
+      setManageRecruitersOpen(false);
+    } catch (error) {
+      console.error('Error saving assigned recruiters:', error);
+      alert('Failed to save assigned recruiters. Please try again.');
     }
   };
 
@@ -2237,6 +2330,57 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 )}
               </SectionCard>
 
+              {/* Assigned Recruiters Widget */}
+              <SectionCard title="Assigned Recruiters" action={
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleOpenManageRecruiters}
+                  sx={{ 
+                    minWidth: 'auto',
+                    px: 1,
+                    py: 0.5,
+                    fontSize: '0.75rem',
+                    textTransform: 'none'
+                  }}
+                >
+                  Edit
+                </Button>
+              }>
+                {recruiterUsers.length > 0 ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {recruiterUsers.map((recruiter) => (
+                      <Box
+                        key={recruiter.id}
+                        sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                        onClick={() => navigate(`/recruiter/users/${recruiter.id}`)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/users/${recruiter.id}`); } }}
+                      >
+                        <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                          {recruiter.displayName?.charAt(0) || 'R'}
+                        </Avatar>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="body2" fontWeight="medium">
+                            {recruiter.displayName || 'Unknown Recruiter'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {recruiter.email || 'No email'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    ))}
+                  </Box>
+                ) : (
+                  <Box sx={{ textAlign: 'center', py: 3 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      No recruiters assigned
+                    </Typography>
+                  </Box>
+                )}
+              </SectionCard>
+
               {/* Active Salespeople Widget */}
               <SectionCard title="Active Salespeople" action={
                 <Button
@@ -2606,6 +2750,64 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </TabPanel>
 
       {/* Action Menu */}
+
+      {/* Manage Recruiters Dialog */}
+      <Dialog
+        open={manageRecruitersOpen}
+        onClose={() => setManageRecruitersOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Assign Recruiters</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 2 }}>
+            <Alert severity="info">
+              Select one or more recruiters to assign to this job order. Recruiters can be internal team members (security levels 5-7) or users with recruiter access.
+            </Alert>
+            {loadingRecruiters ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                <CircularProgress />
+              </Box>
+            ) : (
+              <Autocomplete
+                multiple
+                options={availableRecruiters}
+                getOptionLabel={(option) => option.displayName || option.email || 'Unknown'}
+                value={availableRecruiters.filter(r => selectedRecruiterIds.includes(r.id))}
+                onChange={(_, newValue) => {
+                  setSelectedRecruiterIds(newValue.map(r => r.id));
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Select Recruiters"
+                    placeholder="Choose recruiters..."
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip
+                      label={option.displayName || option.email || 'Unknown'}
+                      {...getTagProps({ index })}
+                      key={option.id}
+                    />
+                  ))
+                }
+              />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setManageRecruitersOpen(false)}>Cancel</Button>
+          <Button 
+            onClick={handleSaveRecruiters} 
+            variant="contained"
+            disabled={loadingRecruiters}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Manage Contacts Dialog */}
       <ManageContactsDialog

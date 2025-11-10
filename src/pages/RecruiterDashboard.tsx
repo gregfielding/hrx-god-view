@@ -32,13 +32,6 @@ const RecruiterDashboard: React.FC = () => {
       color: theme.palette.primary.main,
     },
     {
-      title: 'Applicants',
-      description: 'View and manage candidate applications',
-      icon: <PeopleIcon sx={{ fontSize: 40 }} />,
-      path: '/recruiter/applicants',
-      color: theme.palette.secondary.main,
-    },
-    {
       title: 'All Users',
       description: 'Search and filter every worker, candidate, and admin',
       icon: <BadgeIcon sx={{ fontSize: 40 }} />,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { 
   Box, 
   Typography, 
@@ -17,14 +17,8 @@ import {
   FormHelperText,
   Checkbox,
   FormControlLabel,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails
+  Divider
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import PersonIcon from '@mui/icons-material/Person';
-import WorkIcon from '@mui/icons-material/Work';
-import InfoIcon from '@mui/icons-material/Info';
 
 // Define the prop types for the AddWorkerForm
 export interface AddWorkerFormProps {
@@ -78,12 +72,6 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
   isStaffingCompany = false,
   flexModuleEnabled = false,
 }) => {
-  const [expandedSection, setExpandedSection] = useState<string | false>('basic');
-
-  const handleSectionChange = (section: string) => (event: React.SyntheticEvent, isExpanded: boolean) => {
-    setExpandedSection(isExpanded ? section : false);
-  };
-
   const handleDateChange = (field: string, value: string) => {
     onChange(field, value || '');
   };
@@ -100,17 +88,9 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
       
       <form onSubmit={onSubmit}>
         {/* Basic Identity Section */}
-        <Accordion 
-          expanded={expandedSection === 'basic'} 
-          onChange={handleSectionChange('basic')}
-          defaultExpanded
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <PersonIcon sx={{ mr: 1 }} />
-            <Typography variant="subtitle1">Basic Identity</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Grid container spacing={2}>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 600 }}>Basic Identity</Typography>
+          <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <TextField
                   label="First Name"
@@ -190,20 +170,14 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                 </FormControl>
               </Grid>
             </Grid>
-          </AccordionDetails>
-        </Accordion>
+        </Box>
+
+        <Divider sx={{ my: 3 }} />
 
         {/* Employment Classification Section */}
-        <Accordion 
-          expanded={expandedSection === 'employment'} 
-          onChange={handleSectionChange('employment')}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <WorkIcon sx={{ mr: 1 }} />
-            <Typography variant="subtitle1">Employment Classification</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Grid container spacing={2}>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 600 }}>Employment Classification</Typography>
+          <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth required>
                   <InputLabel>Security Level</InputLabel>
@@ -365,20 +339,14 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                 )}
               </Grid>
             </Grid>
-          </AccordionDetails>
-        </Accordion>
+        </Box>
+
+        <Divider sx={{ my: 3 }} />
 
         {/* Metadata & Structure Section */}
-        <Accordion 
-          expanded={expandedSection === 'metadata'} 
-          onChange={handleSectionChange('metadata')}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <InfoIcon sx={{ mr: 1 }} />
-            <Typography variant="subtitle1">Metadata & Structure</Typography>
-          </AccordionSummary>
-          <AccordionDetails>
-            <Grid container spacing={2}>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 600 }}>Metadata & Structure</Typography>
+          <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <TextField
                   label="Start Date"
@@ -461,46 +429,7 @@ const AddWorkerForm: React.FC<AddWorkerFormProps> = ({
                 />
               </Grid>
             </Grid>
-          </AccordionDetails>
-        </Accordion>
-
-        {/* User Groups Section */}
-        {userGroups.length > 0 && (
-          <Accordion 
-            expanded={expandedSection === 'groups'} 
-            onChange={handleSectionChange('groups')}
-          >
-            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Typography variant="subtitle1">User Groups</Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  <Autocomplete
-                    multiple
-                    options={userGroups}
-                    getOptionLabel={(option) => option.name}
-                    value={userGroups.filter(group => selectedUserGroups.includes(group.id))}
-                    onChange={(_, newValue) => {
-                      const groupIds = newValue.map(group => group.id);
-                      setSelectedUserGroups && setSelectedUserGroups(groupIds);
-                    }}
-                    renderInput={(params) => (
-                      <TextField {...(params as any)} label="User Groups" fullWidth size="small" />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => {
-                        const { key, ...chipProps } = getTagProps({ index });
-                        return <Chip key={String(key)} label={option.name} {...chipProps} />;
-                      })
-                    }
-                    isOptionEqualToValue={(option, value) => option.id === value.id}
-                  />
-                </Grid>
-              </Grid>
-            </AccordionDetails>
-          </Accordion>
-        )}
+        </Box>
 
         {/* Form Actions */}
         <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
