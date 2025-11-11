@@ -5303,6 +5303,8 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                   <MenuItem value="Fairgrounds">Fairgrounds</MenuItem>
                   <MenuItem value="Concert Venue">Concert Venue</MenuItem>
                   <MenuItem value="Convention Center">Convention Center</MenuItem>
+                  <MenuItem value="College">College</MenuItem>
+                  <MenuItem value="High School">High School</MenuItem>
                 </TextField>
               </Grid>
               {company.divisions && company.divisions.length > 0 && (

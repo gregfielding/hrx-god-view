@@ -65,6 +65,8 @@ const locationTypeOptions = [
   'Library',
   'School',
   'University',
+  'College',
+  'High School',
   'Government Building',
   'Police Station',
   'Fire Station',

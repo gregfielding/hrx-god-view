@@ -1371,6 +1371,8 @@ const LocationDetails: React.FC = () => {
                       <MenuItem value="Fairgrounds">Fairgrounds</MenuItem>
                       <MenuItem value="Concert Venue">Concert Venue</MenuItem>
                       <MenuItem value="Convention Center">Convention Center</MenuItem>
+                      <MenuItem value="College">College</MenuItem>
+                      <MenuItem value="High School">High School</MenuItem>
                     </Select>
                   </FormControl>
                   
