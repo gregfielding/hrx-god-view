@@ -113,9 +113,25 @@ const RecruiterContacts: React.FC = () => {
     try {
       setLoading(true);
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-      const q = query(contactsRef, orderBy('fullName', 'asc'));
       
-      const snapshot = await getDocs(q);
+      // Try to order by fullName first, fallback to createdAt if that fails
+      let snapshot;
+      try {
+        const q = query(contactsRef, orderBy('fullName', 'asc'));
+        snapshot = await getDocs(q);
+      } catch (orderByError: any) {
+        // If orderBy fails (e.g., missing index or field), try ordering by createdAt
+        console.warn('Failed to order by fullName, trying createdAt:', orderByError);
+        try {
+          const q = query(contactsRef, orderBy('createdAt', 'desc'));
+          snapshot = await getDocs(q);
+        } catch (createdAtError: any) {
+          // If that also fails, just get all contacts without ordering
+          console.warn('Failed to order by createdAt, loading without order:', createdAtError);
+          snapshot = await getDocs(contactsRef);
+        }
+      }
+      
       const contactsData: Contact[] = [];
       
       for (const contactDoc of snapshot.docs) {
@@ -123,6 +139,11 @@ const RecruiterContacts: React.FC = () => {
           id: contactDoc.id,
           ...contactDoc.data()
         } as Contact;
+        
+        // Ensure fullName exists (construct from firstName/lastName if needed)
+        if (!contactData.fullName && (contactData.firstName || contactData.lastName)) {
+          contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
+        }
         
         // Load company name if companyId exists
         if (contactData.companyId) {
@@ -155,9 +176,18 @@ const RecruiterContacts: React.FC = () => {
         contactsData.push(contactData);
       }
       
+      // Sort in memory by fullName if we couldn't order by it in the query
+      contactsData.sort((a, b) => {
+        const aName = (a.fullName || `${a.firstName || ''} ${a.lastName || ''}` || '').toLowerCase();
+        const bName = (b.fullName || `${b.firstName || ''} ${b.lastName || ''}` || '').toLowerCase();
+        return aName.localeCompare(bName);
+      });
+      
+      console.log(`✅ Loaded ${contactsData.length} contacts`);
       setContacts(contactsData);
     } catch (error) {
       console.error('Error loading contacts:', error);
+      setContacts([]);
     } finally {
       setLoading(false);
     }

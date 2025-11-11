@@ -447,7 +447,7 @@ const PublicJobsBoard: React.FC = () => {
   };
 
   const loadPublicJobs = async () => {
-    console.log('🚀 loadPublicJobs called, specificTenantId:', specificTenantId);
+    // Load public jobs for the specified tenant or all tenants
     try {
       setLoading(true);
       const jobsBoardService = JobsBoardService.getInstance();
@@ -455,22 +455,18 @@ const PublicJobsBoard: React.FC = () => {
       const allJobs: PublicJobPosting[] = [];
 
       if (specificTenantId) {
-        console.log('🔍 Loading jobs for specific tenant:', specificTenantId);
         // If we're on the C1 route, load all jobs from the specific tenant (will filter by visibility client-side)
         try {
           // Load public, restricted, and private jobs (client-side filtering will handle visibility)
-          console.log('🔍 Loading job_postings for tenant:', specificTenantId);
           const [publicPosts, restrictedPosts] = await Promise.all([
             jobsBoardService.getPostsByVisibility(specificTenantId, 'public'),
             jobsBoardService.getPostsByVisibility(specificTenantId, 'restricted')
           ]);
           
-          console.log('🔍 Loaded', publicPosts.length, 'public posts and', restrictedPosts.length, 'restricted posts');
           const allPosts = [...publicPosts, ...restrictedPosts];
           
           // Filter for active posts only
           const activePosts = allPosts.filter(post => post.status === 'active');
-          console.log('🔍 Active posts after filtering:', activePosts.length);
           
           // Get job order IDs that already have postings (to avoid duplicates)
           const jobOrderIdsWithPostings = new Set(
@@ -480,7 +476,7 @@ const PublicJobsBoard: React.FC = () => {
           );
           
           // Load Gig job orders that don't have postings
-          console.log('🔍 Loading gig job orders for tenant:', specificTenantId);
+          // Load gig job orders that don't have postings yet
           const gigJobOrdersRef = collection(db, 'tenants', specificTenantId, 'job_orders');
           const gigJobOrdersQuery = query(
             gigJobOrdersRef,
@@ -488,55 +484,34 @@ const PublicJobsBoard: React.FC = () => {
             where('status', '==', 'open')
           );
           const gigJobOrdersSnapshot = await getDocs(gigJobOrdersQuery);
-          console.log('🔍 Found', gigJobOrdersSnapshot.docs.length, 'gig job orders');
           
           const gigJobOrders: PublicJobPosting[] = [];
           // Fetch location data for job orders that need it
           const locationPromises = gigJobOrdersSnapshot.docs.map(async (jobOrderDoc) => {
             const jobOrderData = jobOrderDoc.data();
             const jobOrderId = jobOrderDoc.id;
-            console.log('🔍 Processing job order:', jobOrderId, 'Name:', jobOrderData.jobOrderName, 'worksiteId:', jobOrderData.worksiteId);
+            // Processing job order for public jobs board
             
             // Skip if this job order already has a posting
             if (jobOrderIdsWithPostings.has(jobOrderId)) {
-              console.log('⏭️ Skipping job order', jobOrderId, 'because it already has a posting');
               return null;
             }
-            console.log('✅ Job order', jobOrderId, 'does not have existing posting, continuing...');
             
             // Check visibility - only include public or restricted
             const visibility = jobOrderData.jobsBoardVisibility || jobOrderData.visibility || 'public';
-            console.log('🔍 Job order', jobOrderId, 'visibility:', visibility);
             if (visibility !== 'public' && visibility !== 'restricted') {
-              console.log('⏭️ Skipping job order', jobOrderId, 'because visibility is', visibility);
               return null;
             }
-            console.log('✅ Job order', jobOrderId, 'has valid visibility');
-            
-            // Log the job order data to debug
-            console.log('🔍 Job order data:', {
-              id: jobOrderId,
-              worksiteAddress: jobOrderData.worksiteAddress,
-              worksiteName: jobOrderData.worksiteName,
-              worksiteId: jobOrderData.worksiteId,
-              companyId: jobOrderData.companyId
-            });
             
             // Always try to fetch location data from worksite document if worksiteId exists
             // Path: tenants/{tenantId}/locations/{worksiteId}
-            console.log('🔍 Checking if worksiteId exists. Type:', typeof jobOrderData.worksiteId, 'Value:', jobOrderData.worksiteId);
             if (jobOrderData.worksiteId) {
-              console.log('✅ WorksiteId exists, fetching location for:', jobOrderData.worksiteId);
               try {
                 const locationRef = doc(db, 'tenants', specificTenantId, 'locations', jobOrderData.worksiteId);
-                console.log('🔍 Attempting to fetch location at path:', locationRef.path);
                 const locationSnap = await getDoc(locationRef);
-                console.log('🔍 Location document exists?', locationSnap.exists());
                 
                 if (locationSnap.exists()) {
                   const locationData = locationSnap.data() as any;
-                  console.log('✅ Fetched location document:', locationData);
-                  console.log('✅ Location address field:', locationData.address);
                   
                   // Initialize worksiteAddress if it doesn't exist
                   if (!jobOrderData.worksiteAddress) {
@@ -570,21 +545,15 @@ const PublicJobsBoard: React.FC = () => {
                   if (!jobOrderData.worksiteName && locationData.name) {
                     jobOrderData.worksiteName = locationData.name;
                   }
-                  
-                  console.log('✅ Updated worksiteAddress:', jobOrderData.worksiteAddress);
-                } else {
-                  console.warn(`❌ Location document not found for worksiteId: ${jobOrderData.worksiteId} at path: tenants/${specificTenantId}/locations/${jobOrderData.worksiteId}`);
                 }
+                // Silently handle missing locations - this is expected for some job orders
               } catch (locationErr) {
-                console.error(`❌ Error fetching location for job order ${jobOrderId} (worksiteId: ${jobOrderData.worksiteId}):`, locationErr);
+                // Only log actual errors, not missing documents
+                console.debug(`Location fetch failed for job order ${jobOrderId}:`, locationErr);
               }
-            } else {
-              console.warn(`❌ Job order ${jobOrderId} (${jobOrderData.jobOrderName}) missing worksiteId`);
             }
             
-            console.log('🔍 Converting job order to posting, final worksiteAddress:', jobOrderData.worksiteAddress);
             const converted = convertJobOrderToPosting({ ...jobOrderData, id: jobOrderId }, specificTenantId);
-            console.log('🔍 Converted posting worksiteAddress:', converted.worksiteAddress);
             return converted;
           });
           
@@ -601,33 +570,25 @@ const PublicJobsBoard: React.FC = () => {
             // If posting doesn't have worksiteId but has jobOrderId, fetch it from the job order
             if (!worksiteId && (post as any).jobOrderId) {
               try {
-                console.log('🔍 Posting', post.id, 'missing worksiteId, fetching from jobOrderId:', (post as any).jobOrderId);
                 const jobOrderRef = doc(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId);
                 const jobOrderSnap = await getDoc(jobOrderRef);
                 if (jobOrderSnap.exists()) {
                   const jobOrderData = jobOrderSnap.data();
                   worksiteId = jobOrderData.worksiteId;
-                  console.log('✅ Got worksiteId from job order:', worksiteId);
                 }
               } catch (err) {
-                console.warn('❌ Failed to fetch job order for posting', post.id, ':', err);
+                console.debug('Failed to fetch job order for posting', post.id, ':', err);
               }
             }
             
             // Now fetch location if we have worksiteId and location data is missing
             if ((!worksiteAddress || !worksiteAddress.city || !worksiteAddress.state) && worksiteId) {
               try {
-                console.log('🔍 Posting', post.id, 'missing location data, fetching from worksiteId:', worksiteId);
                 const locationRef = doc(db, 'tenants', specificTenantId, 'locations', worksiteId);
-                console.log('🔍 Fetching location from path:', locationRef.path);
                 const locationSnap = await getDoc(locationRef);
-                console.log('🔍 Location document exists?', locationSnap.exists());
                 
                 if (locationSnap.exists()) {
                   const locationData = locationSnap.data() as any;
-                  console.log('✅ Fetched location document:', locationData);
-                  console.log('✅ Location address field:', locationData.address);
-                  
                   const locAddress = locationData.address || {};
                   if (!worksiteAddress) {
                     worksiteAddress = {};
@@ -650,15 +611,12 @@ const PublicJobsBoard: React.FC = () => {
                       lng: locAddress.coordinates.longitude || locAddress.coordinates.lng
                     };
                   }
-                  console.log('✅ Updated posting', post.id, 'worksiteAddress:', worksiteAddress);
-                } else {
-                  console.warn('❌ Location document not found for worksiteId:', worksiteId, 'at path:', locationRef.path);
                 }
+                // Silently handle missing locations - this is expected for some postings
               } catch (err) {
-                console.error('❌ Error fetching location for posting', post.id, ':', err);
+                // Only log actual errors, not missing documents
+                console.debug('Location fetch failed for posting', post.id, ':', err);
               }
-            } else if (!worksiteId) {
-              console.warn('⚠️ Posting', post.id, 'has no worksiteId and no jobOrderId to fetch it from');
             }
             
             return {
@@ -777,15 +735,11 @@ const PublicJobsBoard: React.FC = () => {
                 // Path: tenants/{tenantId}/locations/{worksiteId}
                 if (jobOrderData.worksiteId) {
                   try {
-                    console.log('🔍 Job Order worksiteId:', jobOrderData.worksiteId);
                     const locationRef = doc(db, 'tenants', tenantId, 'locations', jobOrderData.worksiteId);
-                    console.log('🔍 Location path:', locationRef.path);
                     const locationSnap = await getDoc(locationRef);
                     
                     if (locationSnap.exists()) {
                       const locationData = locationSnap.data() as any;
-                      console.log('✅ Fetched location document:', locationData);
-                      console.log('✅ Location address field:', locationData.address);
                       
                       // Initialize worksiteAddress if it doesn't exist
                       if (!jobOrderData.worksiteAddress) {
@@ -819,16 +773,12 @@ const PublicJobsBoard: React.FC = () => {
                       if (!jobOrderData.worksiteName && locationData.name) {
                         jobOrderData.worksiteName = locationData.name;
                       }
-                      
-                      console.log('Updated worksiteAddress:', jobOrderData.worksiteAddress);
-                    } else {
-                      console.warn(`❌ Location document not found for worksiteId: ${jobOrderData.worksiteId}`);
                     }
+                    // Silently handle missing locations - this is expected for some job orders
                   } catch (locationErr) {
-                    console.warn(`❌ Failed to fetch location for job order ${jobOrderId} (worksiteId: ${jobOrderData.worksiteId}):`, locationErr);
+                    // Only log actual errors, not missing documents
+                    console.debug(`Location fetch failed for job order ${jobOrderId}:`, locationErr);
                   }
-                } else {
-                  console.warn(`❌ Job order ${jobOrderId} missing worksiteId`);
                 }
                 
                 const converted = convertJobOrderToPosting({ ...jobOrderData, id: jobOrderId }, tenantId);
