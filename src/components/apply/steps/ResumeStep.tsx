@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Typography, Button, Card, CardContent, Chip, Stack, Alert } from '@mui/material';
+import { Box, Typography, Button, Card, CardContent, Chip, Stack, Alert, useTheme, useMediaQuery } from '@mui/material';
 import { Visibility, Download, Upload, Description } from '@mui/icons-material';
 import ResumeUpload from '../../../components/ResumeUpload';
 import { httpsCallable } from 'firebase/functions';
@@ -30,6 +30,8 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
   const [showUpload, setShowUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const { user } = useAuth();
   const userId = value?.userId || '';
@@ -257,8 +259,16 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
       )}
 
       {currentResume && (
-        <Card sx={{ mb: 2 }}>
-          <CardContent>
+        <Card
+          sx={{
+            mb: 2,
+            boxShadow: isMobile ? 0 : undefined,
+            borderRadius: 2,
+            border: isMobile ? '1px solid' : undefined,
+            borderColor: isMobile ? 'divider' : undefined
+          }}
+        >
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
               <Description color="primary" />
               <Typography variant="h6">Current Resume</Typography>

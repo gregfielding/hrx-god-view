@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Checkbox, FormControlLabel, Grid, MenuItem, TextField, Typography, Card, CardHeader, CardContent } from '@mui/material';
+import { Box, Checkbox, FormControlLabel, Grid, MenuItem, TextField, Typography, Card, CardHeader, CardContent, useTheme, useMediaQuery } from '@mui/material';
 
 type Props = {
   value: any;
@@ -7,14 +7,12 @@ type Props = {
 };
 
 const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const handle = (field: string, v: any) => onChange({ ...value, [field]: v });
 
-  return (
-    <Box>
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardHeader title={<Typography variant="h6">Work authorization and optional EEO</Typography>} />
-        <CardContent>
-      <Grid container spacing={2}>
+  const content = (
+    <Grid container spacing={2}>
         <Grid item xs={12}>
           <FormControlLabel
             control={<Checkbox checked={!!value.workAuthorized} onChange={(e) => handle('workAuthorized', e.target.checked)} aria-label="Authorized to work in the US" />}
@@ -92,9 +90,24 @@ const WorkEligibilityStep: React.FC<Props> = ({ value, onChange }) => {
             <MenuItem value="Has disability">Has disability</MenuItem>
           </TextField>
         </Grid>
-      </Grid>
-        </CardContent>
-      </Card>
+    </Grid>
+  );
+
+  return (
+    <Box>
+      {isMobile ? (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 500, mb: 1.5 }}>
+            Work authorization and optional EEO
+          </Typography>
+          {content}
+        </Box>
+      ) : (
+        <Card variant="outlined" sx={{ mb: 3 }}>
+          <CardHeader title={<Typography variant="h6">Work authorization and optional EEO</Typography>} />
+          <CardContent>{content}</CardContent>
+        </Card>
+      )}
     </Box>
   );
 };

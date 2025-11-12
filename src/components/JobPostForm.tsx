@@ -26,7 +26,7 @@ import onetSkills from '../data/onetSkills.json';
 import credentialsSeed from '../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
-import { collection, getDocs, query, orderBy as firestoreOrderBy, where } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
 
@@ -194,6 +194,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
   useEffect(() => {
     if (initialData) {
+      // Extract worksiteAddress fields to top-level form fields
+      const worksiteAddress = initialData.worksiteAddress || {} as any;
+      
       // Format dates properly for form inputs
       setFormData(prev => ({ 
         ...prev, 
@@ -202,20 +205,70 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         endDate: formatDateForInput(initialData.endDate),
         expDate: formatDateForInput(initialData.expDate),
         payRate: initialData.payRate ? initialData.payRate.toString() : '',
+        // Extract worksiteAddress fields to top-level form fields
+        street: worksiteAddress.street || prev.street || '',
+        city: worksiteAddress.city || prev.city || '',
+        state: worksiteAddress.state || prev.state || '',
+        zipCode: worksiteAddress.zipCode || prev.zipCode || '',
+        coordinates: worksiteAddress.coordinates || prev.coordinates,
         worksiteAddress: {
-          street: initialData.worksiteAddress?.street || '',
-          city: initialData.worksiteAddress?.city || '',
-          state: initialData.worksiteAddress?.state || '',
-          zipCode: initialData.worksiteAddress?.zipCode || '',
+          street: worksiteAddress.street || '',
+          city: worksiteAddress.city || '',
+          state: worksiteAddress.state || '',
+          zipCode: worksiteAddress.zipCode || '',
         },
         autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
       }));
       // Set company/location if initial data has them
       if (initialData.companyId) {
         setSelectedCompanyId(initialData.companyId);
-        loadLocationsForCompany(initialData.companyId);
-      }
-      if (initialData.worksiteId) {
+        // Load locations and then set the selected location
+        loadLocationsForCompany(initialData.companyId).then((locationsData) => {
+          if (initialData.worksiteId && locationsData) {
+            setSelectedLocationId(initialData.worksiteId);
+            // Find the location and populate form data
+            const selectedLocation = locationsData.find(l => l.id === initialData.worksiteId);
+            if (selectedLocation) {
+              setFormData(prev => ({
+                ...prev,
+                worksiteId: initialData.worksiteId!,
+                worksiteName: selectedLocation.nickname || selectedLocation.name,
+                // Use location address data if form data is empty, otherwise keep existing form data
+                street: prev.street || selectedLocation.address.street || '',
+                city: prev.city || selectedLocation.address.city || '',
+                state: prev.state || selectedLocation.address.state || '',
+                zipCode: prev.zipCode || selectedLocation.address.zipCode || '',
+                coordinates: selectedLocation.address.coordinates || prev.coordinates,
+              }));
+            } else {
+              // Location not found in loaded locations, but we have worksiteId
+              // Try to fetch it directly
+              const worksiteRef = doc(db, 'tenants', tenantId, 'crm_companies', initialData.companyId, 'locations', initialData.worksiteId);
+              getDoc(worksiteRef).then((worksiteDoc: any) => {
+                if (worksiteDoc.exists()) {
+                  const worksiteData = worksiteDoc.data();
+                  setFormData(prev => ({
+                    ...prev,
+                    worksiteId: initialData.worksiteId!,
+                    worksiteName: worksiteData.nickname || worksiteData.name || prev.worksiteName || '',
+                    street: prev.street || worksiteData.address || '',
+                    city: prev.city || worksiteData.city || '',
+                    state: prev.state || worksiteData.state || '',
+                    zipCode: prev.zipCode || worksiteData.zipCode || worksiteData.zipcode || '',
+                    coordinates: worksiteData.coordinates || (worksiteData.latitude && worksiteData.longitude ? {
+                      lat: worksiteData.latitude,
+                      lng: worksiteData.longitude
+                    } : undefined) || prev.coordinates,
+                  }));
+                }
+              }).catch((err: any) => {
+                console.warn('Failed to fetch worksite directly:', err);
+              });
+            }
+          }
+        });
+      } else if (initialData.worksiteId) {
+        // If we have worksiteId but no companyId, just set it (shouldn't happen normally)
         setSelectedLocationId(initialData.worksiteId);
       }
     }
@@ -305,25 +358,29 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       const snapshot = await getDocs(locationsRef);
       const locationsData = snapshot.docs.map(doc => {
         const data = doc.data();
+        // Location documents store address fields directly, not nested in an address object
+        // Structure: { address: string, city: string, state: string, zipcode: string, ... }
         return {
           id: doc.id,
           name: data.name || 'Unnamed Location',
           nickname: data.nickname,
           address: {
-            street: data.address || '',
+            street: data.address || '', // address is a string field
             city: data.city || '',
             state: data.state || '',
-            zipCode: data.zipcode || data.zipCode || '',
-            coordinates: data.latitude && data.longitude ? {
+            zipCode: data.zipCode || data.zipcode || '', // Support both zipCode and zipcode
+            coordinates: data.coordinates || (data.latitude && data.longitude ? {
               lat: data.latitude,
               lng: data.longitude
-            } : undefined
+            } : undefined)
           }
         };
       });
       setLocations(locationsData);
+      return locationsData; // Return locations so we can use them after loading
     } catch (err: any) {
       console.error('Error loading locations:', err);
+      return [];
     } finally {
       setLoadingLocations(false);
     }
@@ -1087,7 +1144,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 </Typography>
                 <Typography variant="body2">
                   {formData.street && `${formData.street}, `}
-                  {formData.city}, {formData.state} {formData.zipCode}
+                  {formData.city && formData.state ? `${formData.city}, ${formData.state}` : (formData.city || formData.state || 'Location details not available')}
+                  {formData.zipCode && ` ${formData.zipCode}`}
                 </Typography>
               </Box>
             )}

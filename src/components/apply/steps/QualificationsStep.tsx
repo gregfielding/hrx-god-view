@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip, Grid } from '@mui/material';
+import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip, Grid, useTheme, useMediaQuery } from '@mui/material';
 import { CheckCircle } from '@mui/icons-material';
 import Autocomplete from '@mui/material/Autocomplete';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
@@ -22,6 +22,8 @@ type Props = {
 };
 
 const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const job = jobPosting; // job-driven gating comes from parent (Wizard)
   const debounceRef = React.useRef<any>(null);
@@ -229,7 +231,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
   return (
     <Box>
       {showBio && (
-        <Card variant="outlined" sx={{ mb: 3 }}>
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
           <CardHeader
             title={<Typography variant="h6">Professional Bio</Typography>}
             action={
@@ -237,8 +239,9 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
                 Save
               </Button>
             }
+            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
           />
-          <CardContent>
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             <TextField
               fullWidth
               multiline
@@ -252,9 +255,9 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
       )}
 
       {showExperience && (
-        <Card variant="outlined" sx={{ mb: 3 }}>
-          <CardHeader title={<Typography variant="h6">Experience & Work History</Typography>} action={<></>} />
-          <CardContent>
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader title={<Typography variant="h6">Experience & Work History</Typography>} action={<></>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Tell us about your most relevant work experience</Typography>
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
               <TextField
@@ -331,9 +334,9 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
 
       {/* Conditional Languages */}
       {showLanguages && (
-        <Card variant="outlined" sx={{ mt: 3 }}>
-          <CardHeader title={<Typography variant="h6">Languages</Typography>} />
-          <CardContent>
+        <Card variant="outlined" sx={{ mt: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader title={<Typography variant="h6">Languages</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             {languagesHelper && (
               <Alert severity="info" sx={{ mb: 2 }}>
                 {languagesHelper}

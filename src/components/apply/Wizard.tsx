@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme } from '@mui/material';
+import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme, Paper, TextField } from '@mui/material';
 import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { updateEmail } from 'firebase/auth';
 import { db } from '../../firebase';
@@ -43,6 +44,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const returnTo = useMemo(() => {
+    try {
+      const val = searchParams.get('returnTo');
+      return val && val.startsWith('/') ? val : null;
+    } catch {
+      return null;
+    }
+  }, [searchParams]);
   
   // Extract selected shifts from query params (for Gig jobs)
   // Support both 'shifts' (comma-separated) and 'shiftId' (single shift)
@@ -89,6 +98,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const [stepRestored, setStepRestored] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   // Check if step was restored from localStorage
   useEffect(() => {
@@ -246,7 +257,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       city: userProfile.city || addressInfo.city || '',
       state: userProfile.state || addressInfo.state || '',
       zip: userProfile.zipCode || addressInfo.zip || '',
-      transportMethod: userProfile.transportMethod || '',
+      
     };
 
     const eligibility = {
@@ -334,7 +345,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       : [];
 
     // 1) Certifications must be uploaded or already present on profile
-    const missingCerts = (requirements.certifications || []).filter((name) => !profileCerts.includes(name) && !uploaded[name]);
+    const showLicensesCerts = posting?.showLicensesCerts === true;
+    const missingCerts = showLicensesCerts
+      ? (requirements.certifications || []).filter((name) => !profileCerts.includes(name) && !uploaded[name])
+      : [];
 
     // 2) Drug screening
     const needsDrug = !!posting?.showDrugScreening;
@@ -350,10 +364,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const needsEVerify = !!posting?.eVerifyRequired;
     const eVerifyAnswered = typeof req.eVerifyComfort === 'string' && req.eVerifyComfort.length > 0;
 
-    // 5) Additional screenings
-    const addList: string[] = Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
+    // 5) Additional screenings (only if enabled)
+    const showAdditional = posting?.showAdditionalScreenings === true;
+    const addList: string[] = showAdditional && Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
     const addMap = (req.additionalScreenings || {}) as Record<string, string>;
-    const missingAdditional = addList.filter((name) => !(addMap[name] && String(addMap[name]).length > 0));
+    const missingAdditional = showAdditional ? addList.filter((name) => !(addMap[name] && String(addMap[name]).length > 0)) : [];
 
     return {
       certs: missingCerts,
@@ -430,7 +445,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
           if (p.phone) update.phone = String(p.phone).trim();
           if (p.dob) update.dob = String(p.dob).trim();
-          if (p.transportMethod) update.transportMethod = String(p.transportMethod).trim();
+          
           const addr: any = {};
           if (p.street) addr.street = String(p.street).trim();
           if (p.unit) addr.unit = String(p.unit).trim();
@@ -458,7 +473,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           if (Object.keys(update).length > 1) {
-            await updateDoc(userRef, update);
+            await setDoc(userRef, update, { merge: true });
           }
 
           // If phone changed, enforce Twilio verification via modal
@@ -478,7 +493,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
           if (e.disabilityStatus !== undefined) update.disabilityStatus = String(e.disabilityStatus || '');
           if (Object.keys(update).length > 1) {
-            await updateDoc(userRef, update);
+            await setDoc(userRef, update, { merge: true });
           }
         } else if (activeStep === 2) {
           // Profile Picture → save profile picture URL
@@ -486,7 +501,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (p.profilePicture) update.avatar = p.profilePicture;
           if (Object.keys(update).length > 1) {
-            await updateDoc(userRef, update);
+            await setDoc(userRef, update, { merge: true });
           }
         } else if (activeStep === 4) {
           // Qualifications → save key arrays to profile
@@ -497,7 +512,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(q.languages)) update.languages = q.languages;
           if (Array.isArray(q.education)) update.education = q.education;
           if (Array.isArray(q.workHistory)) update.workHistory = q.workHistory;
-          if (Object.keys(update).length > 1) await updateDoc(userRef, update);
+          if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
         } else if (activeStep === 5) {
           // Preferences → persist to user profile under a nested preferences object
           const p = formData.preferences || {};
@@ -519,7 +534,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(update.preferences.industryPreferences)) {
             update['preferences.industryPreferences'] = update.preferences.industryPreferences;
           }
-          await updateDoc(userRef, update);
+          await setDoc(userRef, update, { merge: true });
         } else if (activeStep === 6) {
           // Requirements → save screening responses to user profile
           const r = formData.requirements || {};
@@ -541,7 +556,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
           
           if (Object.keys(update).length > 1) {
-            await updateDoc(userRef, update);
+            await setDoc(userRef, update, { merge: true });
           }
         }
       }
@@ -569,9 +584,61 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   };
 
   const handleSubmit = async () => {
-    if (!uid || !appId) return;
     setSaving(true);
     try {
+      // Ensure we have an authenticated user (provision account if necessary)
+      let effectiveUid: string | null = auth.currentUser?.uid || (uid || null);
+      if (!effectiveUid) {
+        const email = String(formData?.personal?.email || '').trim();
+        if (!email) {
+          alert('Please enter your email on the Personal Info step before submitting.');
+          setSaving(false);
+          return;
+        }
+        if (!password || password.length < 6 || password !== confirmPassword) {
+          alert('Please create a password (min 6 characters) and confirm it to submit your application.');
+          setSaving(false);
+          return;
+        }
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, email, password);
+          effectiveUid = cred.user.uid;
+        } catch (e: any) {
+          alert(`We could not create your account: ${e?.message || 'unknown error'}`);
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Final guard: ensure all required requirement fields are answered
+      const m = computeMissing();
+      if (m.drug || m.background || m.everify || (m.additional && m.additional.length > 0)) {
+        setSaving(false);
+        try {
+          alert('Please complete all required items (Drug, Background, E‑Verify, and Additional screenings) before submitting.');
+        } catch {}
+        return;
+      }
+
+      // Ensure we have a draft id even if initial draft creation hasn't completed yet
+      let effectiveAppId = appId;
+      if (!effectiveAppId) {
+        const key = `appDraft:${effectiveUid}:${tenantId || 'na'}:${jobId || 'na'}`;
+        try {
+          const draft = {
+            status: 'draft',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            tenantId,
+            jobId,
+            uid: effectiveUid,
+            data: formData || {},
+          };
+          localStorage.setItem(key, JSON.stringify(draft));
+        } catch {}
+        effectiveAppId = key;
+        setAppId(key);
+      }
       // Check for shift date conflicts if this is a gig job with shifts
       if (selectedShifts.length > 0 && posting?.jobOrderId) {
         let conflict: any = null;
@@ -585,7 +652,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             if (shiftSnap.exists()) {
               const shiftData = shiftSnap.data();
               if (shiftData.shiftDate) {
-                conflict = await checkShiftDateConflict(uid, tenantId, shiftData.shiftDate);
+                conflict = await checkShiftDateConflict(effectiveUid, tenantId, shiftData.shiftDate);
               }
             }
           } catch (error) {
@@ -594,7 +661,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         } else {
           // Multiple shifts - check all of them
           conflict = await checkMultipleShiftDateConflicts(
-            uid,
+            effectiveUid,
             tenantId,
             selectedShifts,
             posting.jobOrderId
@@ -622,18 +689,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
       }
       
-      if (appId.startsWith('appDraft:')) {
-        const existing = localStorage.getItem(appId);
+      if ((effectiveAppId || '').startsWith('appDraft:')) {
+        const existing = localStorage.getItem(effectiveAppId!);
         const parsed = existing ? JSON.parse(existing) : {};
-        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, status: 'submitted', submittedAt: Date.now() })); } catch {}
+        try { localStorage.setItem(effectiveAppId!, JSON.stringify({ ...parsed, status: 'submitted', submittedAt: Date.now() })); } catch {}
       } else {
         // Mark draft as submitted in tenants/{tenantId}/applicationDrafts
-        const draftRef = doc(db, 'tenants', tenantId, 'applicationDrafts', appId);
+        const draftRef = doc(db, 'tenants', tenantId, 'applicationDrafts', effectiveAppId!);
         await updateDoc(draftRef, { status: 'submitted', submittedAt: serverTimestamp(), updatedAt: serverTimestamp() });
       }
 
       // Merge selected profile fields into users/{uid}
-      const userRef = doc(db, 'users', uid!);
+      const userRef = doc(db, 'users', effectiveUid!);
       const personal = formData.personal || {};
       const eligibility = formData.eligibility || {};
       const profilePicture = formData.profilePicture || {};
@@ -682,12 +749,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         });
       }
       
-      await updateDoc(userRef, profileUpdate);
+      // Upsert via callable function for server-side creation, then merge on client as fallback
+      try {
+        const functions = getFunctions();
+        const upsertUserFromWizard = httpsCallable(functions as any, 'upsertUserFromWizard');
+        await upsertUserFromWizard({
+          tenantId,
+          profileUpdate: {
+            ...profileUpdate,
+            ...(tenantId ? { [`tenantIds.${tenantId}.securityLevel`]: '2', [`tenantIds.${tenantId}.role`]: 'Applicant' } : {}),
+            // Keep security level scoped to tenant map; do not override root securityLevel
+          }
+        });
+      } catch (err) {
+        console.warn('upsertUserFromWizard callable failed, falling back to client merge:', err);
+      }
+      await setDoc(userRef, profileUpdate, { merge: true });
 
       // Create final submitted application in tenants/{tenantId}/applications
       try {
-        if (tenantId && uid && jobId) {
-          const tidAppId = `${uid}_${jobId}`;
+        if (tenantId && effectiveUid && jobId) {
+          const tidAppId = `${effectiveUid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           
           // Get shift dates for gig jobs (for one-shift-per-day validation)
@@ -718,7 +800,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
           
           await setDoc(tRef, {
-            userId: uid,
+            userId: effectiveUid,
             tenantId,
             jobId,
             jobOrderId: posting?.jobOrderId || null, // CRITICAL: Link to job order if posting is connected
@@ -795,16 +877,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           // Add application ID to user's applicationIds array AND applicationData map
           try {
             console.log('Updating user document with application data:', {
-              userId: uid,
+              userId: effectiveUid,
               applicationId,
               applicationQuickData
             });
             
-            await updateDoc(userRef, {
+            await setDoc(userRef, {
               applicationIds: arrayUnion(applicationId),
               [`applicationData.${applicationId}`]: applicationQuickData,
               updatedAt: serverTimestamp()
-            });
+            }, { merge: true });
             
             console.log('Successfully updated user document with application data');
           } catch (userUpdateError) {
@@ -821,7 +903,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               autoAddToUserGroup: posting.autoAddToUserGroup,
             } : null,
             tenantId,
-            uid,
+            uid: effectiveUid,
           });
           
           const groupIdsToAdd: string[] = [];
@@ -835,19 +917,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
           
           if (groupIdsToAdd.length > 0) {
-            console.log(`🚀 Adding user ${uid} to ${groupIdsToAdd.length} group(s):`, groupIdsToAdd);
+            console.log(`🚀 Adding user ${effectiveUid} to ${groupIdsToAdd.length} group(s):`, groupIdsToAdd);
             try {
               // Use Firebase Function to add user to groups (has admin privileges)
               const functions = getFunctions();
               const addUsersToGroups = httpsCallable(functions as any, 'addUsersToGroups');
               
               await addUsersToGroups({
-                userId: uid,
+                userId: effectiveUid,
                 groupIds: groupIdsToAdd,
                 tenantId: tenantId,
               });
               
-              console.log(`✅ Successfully added user ${uid} to ${groupIdsToAdd.length} user group(s):`, groupIdsToAdd);
+              console.log(`✅ Successfully added user ${effectiveUid} to ${groupIdsToAdd.length} user group(s):`, groupIdsToAdd);
             } catch (groupErr) {
               console.error('❌ Error adding user to group(s):', groupErr);
               console.error('Error details:', {
@@ -866,20 +948,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         console.error('Error saving application:', e);
       }
       
-      // Clear saved step from localStorage after successful submission
+      // Redirect immediately (no flicker back to step 1). Prefer explicit returnTo.
+      const redirectPath = returnTo || (tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board');
       try {
-        localStorage.removeItem(`${sessionKey}-step`);
-      } catch (error) {
-        console.warn('Failed to clear step from localStorage:', error);
+        window.location.replace(redirectPath);
+        return;
+      } catch {
+        navigate(redirectPath, { replace: true });
+        return;
       }
-      setSubmitOpen(true);
-      
-      // Redirect to jobs board after successful submission
-      setTimeout(() => {
-        // Use tenant slug if available, fallback to c1
-        const redirectPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
-        navigate(redirectPath);
-      }, 2000); // Wait 2 seconds to show the success message
+    } catch (err: any) {
+      console.error('Submit error:', err);
+      try {
+        alert(`We couldn't submit your application. Please try again in a moment. ${err?.message ? '\n\nDetails: ' + err.message : ''}`);
+      } catch {}
     } finally {
       setSaving(false);
     }
@@ -910,14 +992,44 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         return <JobPreferencesStep value={formData.preferences || {}} onChange={(v) => persist({ preferences: v })} jobPosting={posting} />;
       case 6:
         return (
-          <RequirementsAcknowledgementStep
-            requirements={requirements}
-            profile={userProfile}
-            uid={uid || ''}
-            value={formData.requirements || { acks: {}, uploaded: {} }}
-            onChange={(v) => persist({ requirements: v })}
-            jobPosting={posting}
-          />
+          <Box>
+            <RequirementsAcknowledgementStep
+              requirements={requirements}
+              profile={userProfile}
+              uid={uid || ''}
+              value={formData.requirements || { acks: {}, uploaded: {} }}
+              onChange={(v) => persist({ requirements: v })}
+              jobPosting={posting}
+            />
+            {!auth.currentUser && (
+              <Box sx={{ mt: 3, px: { xs: 1, md: 0 } }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                  Create a password to submit
+                </Typography>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="password"
+                    label="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    helperText="At least 6 characters"
+                  />
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="password"
+                    label="Confirm Password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    error={confirmPassword.length > 0 && password !== confirmPassword}
+                    helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
+                  />
+                </Stack>
+              </Box>
+            )}
+          </Box>
         );
       default:
         return null;
@@ -956,16 +1068,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   })();
 
   const personalValid = !!(
-    formData?.personal?.firstName &&
-    formData?.personal?.lastName &&
-    formData?.personal?.email &&
-    formData?.personal?.phone &&
-    formData?.personal?.dob &&
-    formData?.personal?.street &&
-    formData?.personal?.city &&
-    formData?.personal?.state &&
-    formData?.personal?.zip &&
-    formData?.personal?.transportMethod
+    formData?.personal?.firstName?.trim() &&
+    formData?.personal?.lastName?.trim() &&
+    formData?.personal?.email?.trim() &&
+    formData?.personal?.phone?.trim() &&
+    formData?.personal?.phone?.replace(/\D/g, '').length >= 10 && // Phone must have at least 10 digits
+    formData?.personal?.dob?.trim() && // Must be in YYYY-MM-DD format
+    formData?.personal?.dob?.length === 10 && // YYYY-MM-DD format is exactly 10 characters
+    formData?.personal?.street?.trim() &&
+    formData?.personal?.city?.trim() &&
+    formData?.personal?.state?.trim() &&
+    formData?.personal?.zip?.trim()
   );
 
   // Debug logging for form validation
@@ -983,77 +1096,118 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         street: !formData?.personal?.street,
         city: !formData?.personal?.city,
         state: !formData?.personal?.state,
-        zip: !formData?.personal?.zip,
-        transportMethod: !formData?.personal?.transportMethod
+        zip: !formData?.personal?.zip
       }
     });
   }
 
   return (
-    <Box sx={{ px: 0, py: 0 }}>
+    <Box sx={{ 
+      px: 0, 
+      py: 0,
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
       {/* Job Details Header */}
       {posting && (
-        <Box sx={{ px: 3, py: 2, backgroundColor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
-          <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
-            {posting.jobTitle || posting.postTitle || 'Job Application'}
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Typography variant="body2" color="text.secondary">
-              {posting.city && posting.state ? `${posting.city}, ${posting.state}` : posting.worksiteName || ''}
+        <Box sx={{ 
+          px: { xs: 2, md: 3 }, 
+          py: { xs: 2, md: 2.5 }, 
+          backgroundColor: 'background.paper', 
+          borderBottom: 1, 
+          borderColor: 'divider',
+          flexShrink: 0
+        }}>
+          <Box sx={{ 
+            maxWidth: { xs: '100%', md: '1200px' },
+            mx: { xs: 0, md: 'auto' }
+          }}>
+            <Typography variant={isMobile ? 'h6' : 'h5'} sx={{ fontWeight: 600, mb: 0.5 }}>
+              {posting.jobTitle || posting.postTitle || 'Job Application'}
             </Typography>
-            {posting.payRate && (
-              <>
-                <Typography variant="body2" color="text.secondary">•</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  ${posting.payRate}/hr
-                </Typography>
-              </>
-            )}
-          </Stack>
+            <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+              <Typography variant="body2" color="text.secondary">
+                {posting.city && posting.state ? `${posting.city}, ${posting.state}` : posting.worksiteName || ''}
+              </Typography>
+              {posting.payRate && (
+                <>
+                  <Typography variant="body2" color="text.secondary">•</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    ${posting.payRate}/hr
+                  </Typography>
+                </>
+              )}
+            </Stack>
+          </Box>
         </Box>
       )}
       
-      {/* Full-bleed sticky progress under top bar (no side spacing) */}
-      <MilestoneProgress
-        total={steps.length}
-        completed={activeStep}
-        labels={steps}
-        sticky="top"
-        onJump={undefined}
-        sx={{ px: 2, py: 1 }}
-      />
-      {saving && (
-        <Box sx={{ mb: 2 }} aria-live="polite" aria-atomic>
-          <LinearProgress />
-        </Box>
-      )}
+      {/* Main content area - framed on desktop, fullscreen on mobile */}
+      <Box sx={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        maxWidth: { xs: '100%', md: '1200px' },
+        mx: { xs: 0, md: 'auto' },
+        width: '100%',
+        px: { xs: 0, md: 3 },
+        py: { xs: 0, md: 2 }
+      }}>
+        <Paper 
+          elevation={isMobile ? 0 : 2}
+          sx={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            borderRadius: { xs: 0, md: 2 },
+            overflow: 'hidden',
+            backgroundColor: 'background.paper'
+          }}
+        >
+          {/* Full-bleed sticky progress under top bar (no side spacing) */}
+          <MilestoneProgress
+            total={steps.length}
+            completed={activeStep}
+            labels={steps}
+            sticky="top"
+            onJump={undefined}
+            sx={{ px: { xs: 2, md: 3 }, py: 1 }}
+          />
+          {saving && (
+            <Box sx={{ mb: 2 }} aria-live="polite" aria-atomic>
+              <LinearProgress />
+            </Box>
+          )}
 
-      {/* Keep stepper for structure but hide visually to reduce clutter (a11y preserved) */}
-      <Box sx={{ display: { xs: 'none', md: 'none' } }} aria-hidden>
-        <Stepper activeStep={activeStep} alternativeLabel>
-        {steps.map((label) => (
-          <Step key={label}><StepLabel>{label}</StepLabel></Step>
-        ))}
-        </Stepper>
-      </Box>
+          {/* Keep stepper for structure but hide visually to reduce clutter (a11y preserved) */}
+          <Box sx={{ display: { xs: 'none', md: 'none' } }} aria-hidden>
+            <Stepper activeStep={activeStep} alternativeLabel>
+            {steps.map((label) => (
+              <Step key={label}><StepLabel>{label}</StepLabel></Step>
+            ))}
+            </Stepper>
+          </Box>
 
-      <Box sx={{ mt: 2, mb: 12, mx: 0, px: 0, py: 0 }}>
-        {renderStep()}
+          <Box sx={{ mt: 2, mb: 12, mx: 0, px: { xs: 1, md: 3 }, py: 0 }}>
+            {renderStep()}
+          </Box>
+        </Paper>
       </Box>
 
       {/* Bottom content bar (fixed to bottom; 24px offset on md+, 0 on mobile) */}
       <Box
         sx={{
           position: 'fixed',
-          // Use CSS var set by Layout for current drawer width if available; fallback to 64px collapsed width
-          left: { xs: 0, md: 'calc(var(--drawer-width, 64px) + 32px)' },
-          right: { xs: 0, md: 32 },
+          left: 0,
+          right: 0,
           bottom: { xs: 0, md: 24 },
-          width: { xs: '100%', md: 'calc(100% - (var(--drawer-width, 64px) + 64px))' },
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'center',
           bgcolor: 'background.paper',
           borderTop: 1,
           borderColor: 'divider',
-          px: { xs: 2, md: 4 },
           py: 1.5,
           zIndex: (t) => t.zIndex.appBar,
           boxShadow: 1,
@@ -1063,24 +1217,27 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           borderBottomRightRadius: { xs: 0, md: 8 },
         }}
       >
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
-          <Button
-            variant="contained"
-            onClick={activeStep === 6 ? handleSubmit : handleNext}
-            disabled={
-              (activeStep === 6 && (
-                missing.drug || missing.background || missing.everify || missing.additional.length > 0
-              )) ||
-              (activeStep === 0 && (!personalValid || phoneNeedsVerification)) ||
-              (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
-              (activeStep === 4 && posting?.showExperience === true && !formData?.qualifications?.experienceSummary) ||
-              saving
-            }
-          >
-            {activeStep === 6 ? 'Submit Application' : 'Next'}
-          </Button>
-        </Stack>
+        <Box sx={{ width: '100%', maxWidth: 1200, px: { xs: 2, md: 4 } }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Button onClick={handleBack} disabled={activeStep === 0}>Back</Button>
+            <Button
+              variant="contained"
+              onClick={activeStep === 6 ? handleSubmit : handleNext}
+              disabled={
+                (activeStep === 6 && (
+                  missing.drug || missing.background || missing.everify || missing.additional.length > 0 ||
+                  (!auth.currentUser && (password.length < 6 || password !== confirmPassword))
+                )) ||
+                (activeStep === 0 && !personalValid) ||
+                (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
+                (activeStep === 4 && posting?.showExperience === true && !formData?.qualifications?.experienceSummary) ||
+                saving
+              }
+            >
+              {activeStep === 6 ? 'Submit Application' : 'Next'}
+            </Button>
+          </Stack>
+        </Box>
       </Box>
 
       {/* Phone verification modal when phone changes */}

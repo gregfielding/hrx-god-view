@@ -173,6 +173,8 @@ export { cleanupUndefinedValues };
 
 // Bulk Operations
 export { bulkEmailDomainMatching };
+// Application Wizard upsert
+export { upsertUserFromWizard } from './upsertUserFromWizard';
 
 // 🚀 DENORMALIZED ASSOCIATIONS IMPORTS
 // Temporarily commented out due to TypeScript errors

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Chip, Grid, TextField, Typography, Card, CardHeader, CardContent, Alert, Stack } from '@mui/material';
+import { Box, Chip, Grid, TextField, Typography, Card, CardHeader, CardContent, Alert, Stack, useTheme, useMediaQuery } from '@mui/material';
 import { doc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 
@@ -22,6 +22,8 @@ const industryOptions = [
 ];
 
 const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const handle = (field: string, v: any) => onChange({ ...value, [field]: v });
 
   // Debounced Firestore updater (avoid excessive writes)
@@ -100,123 +102,148 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
     });
   };
 
+  const Section = ({
+    title,
+    children,
+    hidden,
+    action
+  }: {
+    title: string;
+    children: React.ReactNode;
+    hidden?: boolean;
+    action?: React.ReactNode;
+  }) => {
+    if (hidden) return null;
+    if (isMobile) {
+      return (
+        <Box sx={{ mb: 2 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+            <Typography variant="h6" sx={{ fontSize: '1rem', fontWeight: 500 }}>
+              {title}
+            </Typography>
+            {action}
+          </Stack>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</Box>
+        </Box>
+      );
+    }
+    return (
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardHeader title={<Typography variant="h6">{title}</Typography>} action={action} />
+        <CardContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</Box>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <Box>
       {/* Availability to Start - Only show for Career jobs, not Gig jobs with specific dates */}
-      {jobPosting?.jobType !== 'gig' && (
-        <Card variant="outlined" sx={{ mb: 3 }}>
-          <CardHeader title={<Typography variant="h6">Availability to Start</Typography>} />
-          <CardContent>
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-              <TextField
-                label="Available to start"
-                type="date"
-                value={availableToStartDate || ''}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAvailableToStartDate(v);
-                  onChange({ ...value, availableToStartDate: v });
-                  debouncedUpdate({ availableToStartDate: v });
-                }}
-                onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-                sx={{ width: { xs: '100%', md: 260 } }}
-              />
-              <TextField
-                fullWidth
-                label="Availability notes"
-                value={notes}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setNotes(v);
-                  onChange({ ...value, availabilityNotes: v });
-                  debouncedUpdate({ 'preferences.availabilityNotes': v });
-                }}
-                onBlur={(e) => debouncedUpdate({ 'preferences.availabilityNotes': e.target.value })}
-                multiline
-                minRows={2}
-              />
-            </Stack>
-          </CardContent>
-        </Card>
-      )}
+      <Section
+        title="Availability to Start"
+        hidden={jobPosting?.jobType === 'gig'}
+      >
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField
+            label="Available to start"
+            type="date"
+            value={availableToStartDate || ''}
+            onChange={(e) => {
+              const v = e.target.value;
+              setAvailableToStartDate(v);
+              onChange({ ...value, availableToStartDate: v });
+              debouncedUpdate({ availableToStartDate: v });
+            }}
+            onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
+            InputLabelProps={{ shrink: true }}
+            sx={{ width: { xs: '100%', md: 260 } }}
+          />
+          <TextField
+            fullWidth
+            label="Availability notes"
+            value={notes}
+            onChange={(e) => {
+              const v = e.target.value;
+              setNotes(v);
+              onChange({ ...value, availabilityNotes: v });
+              debouncedUpdate({ 'preferences.availabilityNotes': v });
+            }}
+            onBlur={(e) => debouncedUpdate({ 'preferences.availabilityNotes': e.target.value })}
+            multiline
+            minRows={2}
+          />
+        </Stack>
+      </Section>
       
       {/* Shift Preferences card - Only show for Career jobs, not Gig jobs with specific shifts */}
-      {jobPosting?.jobType !== 'gig' && (
-        <Card variant="outlined" sx={{ mb: 3 }}>
-          <CardHeader title={<Typography variant="h6">Shift Preferences</Typography>} />
-          <CardContent>
-            {shiftHelper && (
-              <Alert severity="info" sx={{ mb: 2 }}>{shiftHelper}</Alert>
-            )}
+      <Section title="Shift Preferences" hidden={jobPosting?.jobType === 'gig'}>
+        {shiftHelper && (
+          <Alert severity="info">{shiftHelper}</Alert>
+        )}
 
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={8}>
-                <Typography variant="subtitle2" gutterBottom>Selected shifts</Typography>
-                <Box display="flex" flexWrap="wrap" gap={1}>
-                  {selectedShifts.map((name) => (
-                    <Chip key={name} label={name} onDelete={() => toggleShift(name)} color="primary" />
-                  ))}
-                  {selectedShifts.length === 0 && (
-                    <Typography variant="body2" color="text.secondary">No shifts selected</Typography>
-                  )}
-                </Box>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <Typography variant="subtitle2" gutterBottom>Available shifts (tap to add)</Typography>
-                <Box display="flex" flexWrap="wrap" gap={1}>
-                  {allShiftOptions.map((name) => (
-                    <Chip
-                      key={name}
-                      label={name}
-                      onClick={() => toggleShift(name)}
-                      variant="outlined"
-                      sx={{
-                        cursor: 'pointer',
-                        opacity: selectedShifts.includes(name) ? 0.5 : 1,
-                      }}
-                    />
-                  ))}
-                </Box>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
-      )}
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={8}>
+            <Typography variant="subtitle2" gutterBottom>Selected shifts</Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {selectedShifts.map((name) => (
+                <Chip key={name} label={name} onDelete={() => toggleShift(name)} color="primary" />
+              ))}
+              {selectedShifts.length === 0 && (
+                <Typography variant="body2" color="text.secondary">No shifts selected</Typography>
+              )}
+            </Box>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Typography variant="subtitle2" gutterBottom>Available shifts (tap to add)</Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {allShiftOptions.map((name) => (
+                <Chip
+                  key={name}
+                  label={name}
+                  onClick={() => toggleShift(name)}
+                  variant="outlined"
+                  sx={{
+                    cursor: 'pointer',
+                    opacity: selectedShifts.includes(name) ? 0.5 : 1,
+                  }}
+                />
+              ))}
+            </Box>
+          </Grid>
+        </Grid>
+      </Section>
 
       {/* Industry Preferences card */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardHeader title={<Typography variant="h6">Industry Preferences (optional)</Typography>} />
-        <CardContent>
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={8}>
-              <Typography variant="subtitle2" gutterBottom>Selected industries</Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {industryPrefs.map((name) => (
-                  <Chip key={name} label={name} onDelete={() => toggleIndustry(name)} color="primary" />
-                ))}
-                {industryPrefs.length === 0 && (
-                  <Typography variant="body2" color="text.secondary">No industries selected</Typography>
-                )}
-              </Box>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Typography variant="subtitle2" gutterBottom>Available industries (tap to add)</Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {industryOptions.map((name) => (
-                  <Chip
-                    key={name}
-                    label={name}
-                    onClick={() => toggleIndustry(name)}
-                    variant="outlined"
-                    sx={{ cursor: 'pointer', opacity: industryPrefs.includes(name) ? 0.5 : 1 }}
-                  />
-                ))}
-              </Box>
-            </Grid>
+      <Section title="Industry Preferences (optional)">
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={8}>
+            <Typography variant="subtitle2" gutterBottom>Selected industries</Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {industryPrefs.map((name) => (
+                <Chip key={name} label={name} onDelete={() => toggleIndustry(name)} color="primary" />
+              ))}
+              {industryPrefs.length === 0 && (
+                <Typography variant="body2" color="text.secondary">No industries selected</Typography>
+              )}
+            </Box>
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid item xs={12} md={4}>
+            <Typography variant="subtitle2" gutterBottom>Available industries (tap to add)</Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {industryOptions.map((name) => (
+                <Chip
+                  key={name}
+                  label={name}
+                  onClick={() => toggleIndustry(name)}
+                  variant="outlined"
+                  sx={{ cursor: 'pointer', opacity: industryPrefs.includes(name) ? 0.5 : 1 }}
+                />
+              ))}
+            </Box>
+          </Grid>
+        </Grid>
+      </Section>
 
       {/* Pay preferences removed per request */}
     </Box>

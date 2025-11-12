@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Box, Button, Typography, Avatar, IconButton, CircularProgress, Alert, Paper } from '@mui/material';
+import { Box, Button, Typography, Avatar, IconButton, CircularProgress, Alert, Paper, useTheme, useMediaQuery } from '@mui/material';
 import { CameraAlt, PhotoCamera, Upload, Delete } from '@mui/icons-material';
 import { uploadBytes, ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { storage } from '../../../firebase';
@@ -16,6 +16,8 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const handleFileSelect = (file: File) => {
     if (!file) return;
@@ -90,16 +92,30 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>
+      <Typography
+        variant="h6"
+        gutterBottom
+        sx={{ fontSize: isMobile ? '1rem' : undefined, fontWeight: isMobile ? 500 : undefined }}
+      >
         Profile Picture
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: isMobile ? 2 : 3 }}>
         Add a professional profile picture to help recruiters recognize you.
       </Typography>
 
       {/* Current Profile Picture */}
       {value.profilePicture && (
-        <Paper elevation={2} sx={{ p: 3, mb: 3, textAlign: 'center' }}>
+        <Paper
+          elevation={isMobile ? 0 : 2}
+          sx={{
+            p: { xs: 2, md: 3 },
+            mb: 3,
+            textAlign: 'center',
+            borderRadius: 2,
+            border: isMobile ? '1px solid' : undefined,
+            borderColor: isMobile ? 'divider' : undefined
+          }}
+        >
           <Typography variant="subtitle2" gutterBottom>
             Current Profile Picture
           </Typography>
@@ -122,7 +138,15 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
       )}
 
       {/* Upload Options */}
-      <Paper elevation={2} sx={{ p: 3 }}>
+      <Paper
+        elevation={isMobile ? 0 : 2}
+        sx={{
+          p: { xs: 2, md: 3 },
+          borderRadius: 2,
+          border: isMobile ? '1px solid' : undefined,
+          borderColor: isMobile ? 'divider' : undefined
+        }}
+      >
         <Typography variant="subtitle2" gutterBottom>
           {value.profilePicture ? 'Update Profile Picture' : 'Add Profile Picture'}
         </Typography>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   Box,
@@ -13,6 +13,10 @@ import {
   Alert,
   Stack,
   Paper,
+  useTheme,
+  useMediaQuery,
+  Snackbar,
+  Skeleton,
 } from '@mui/material';
 import {
   LocationOn as LocationIcon,
@@ -34,9 +38,17 @@ import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 
 const JobPostingDetail: React.FC = () => {
-  const { postId } = useParams<{ postId: string }>();
+  const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
   const navigate = useNavigate();
-  const { tenantId, user } = useAuth();
+  const location = useLocation();
+  const { tenantId: authTenantId, user } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
+  // Determine tenant ID: use auth tenantId if logged in, otherwise extract from URL
+  const isC1Route = location.pathname.startsWith('/c1/');
+  const resolvedTenantId = authTenantId || (isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null);
+  
   const [posting, setPosting] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,21 +59,28 @@ const JobPostingDetail: React.FC = () => {
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
+  const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
   useEffect(() => {
-    if (!tenantId || !postId) return;
+    if (!resolvedTenantId || !postId) {
+      console.log('⚠️ Missing tenantId or postId:', { resolvedTenantId, postId, isC1Route, authTenantId });
+      return;
+    }
 
     const loadPosting = async () => {
       try {
         setLoading(true);
+        console.log('🔄 Loading job posting:', { resolvedTenantId, postId });
         
         // Check if this is a job order ID (prefixed with "job-order-")
         if (postId.startsWith('job-order-')) {
           const jobOrderId = postId.replace('job-order-', '');
-          const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+          console.log('📋 Loading as job order:', jobOrderId);
+          const jobOrderRef = doc(db, 'tenants', resolvedTenantId, 'job_orders', jobOrderId);
           const jobOrderSnap = await getDoc(jobOrderRef);
           
           if (jobOrderSnap.exists()) {
+            console.log('✅ Job order found');
             const jobOrderData = jobOrderSnap.data();
             
             // Convert job order to posting format
@@ -82,7 +101,7 @@ const JobPostingDetail: React.FC = () => {
             setPosting({
               id: postId,
               jobOrderId: jobOrderId,
-              tenantId: tenantId,
+              tenantId: resolvedTenantId,
               postTitle: jobOrderData.jobOrderName || jobTitle,
               jobTitle: jobTitle,
               jobType: 'gig',
@@ -144,15 +163,24 @@ const JobPostingDetail: React.FC = () => {
               usesDynamicShifts: true, // Always use dynamic shifts for job orders
             });
           } else {
+            console.error('❌ Job order not found:', { resolvedTenantId, jobOrderId });
             setError('Job order not found');
           }
         } else {
           // Regular posting ID - load from job_postings
-          const postRef = doc(db, 'tenants', tenantId, 'job_postings', postId);
+          console.log('📄 Loading as job posting:', postId);
+          const postRef = doc(db, 'tenants', resolvedTenantId, 'job_postings', postId);
           const postSnap = await getDoc(postRef);
 
           if (postSnap.exists()) {
+            console.log('✅ Job posting found:', postSnap.id);
             const postData = postSnap.data();
+            console.log('📊 Post data:', { 
+              id: postSnap.id, 
+              visibility: postData.visibility, 
+              status: postData.status,
+              postTitle: postData.postTitle 
+            });
             setPosting({ 
               id: postSnap.id, 
               ...postData,
@@ -160,24 +188,37 @@ const JobPostingDetail: React.FC = () => {
               showWorkersNeeded: postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : true
             });
           } else {
+            console.error('❌ Job posting not found:', { resolvedTenantId, postId });
             setError('Job posting not found');
           }
         }
       } catch (err: any) {
-        console.error('Error loading job posting:', err);
-        setError(err.message || 'Failed to load job posting');
+        console.error('❌ Error loading job posting:', err);
+        console.error('Error details:', {
+          code: err.code,
+          message: err.message,
+          stack: err.stack
+        });
+        // Provide more detailed error message
+        if (err.code === 'permission-denied') {
+          setError('Permission denied. This job posting may not be publicly visible.');
+        } else if (err.code === 'not-found') {
+          setError('Job posting not found');
+        } else {
+          setError(err.message || 'Failed to load job posting');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     loadPosting();
-  }, [tenantId, postId]);
+  }, [resolvedTenantId, postId]);
 
   // Load application status when posting and user are available
   useEffect(() => {
     const loadApplicationStatus = async () => {
-      if (!posting || !user?.uid || !tenantId || !postId) {
+      if (!posting || !user?.uid || !resolvedTenantId || !postId) {
         setApplicationStatus(null);
         return;
       }
@@ -185,7 +226,7 @@ const JobPostingDetail: React.FC = () => {
       try {
         // Query applications using the same approach as loadAppliedShifts
         // This respects Firestore security rules better than direct document access
-        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        const applicationsRef = collection(db, 'tenants', resolvedTenantId, 'applications');
         
         // Query by userId and jobId (posting ID)
         const q1 = query(
@@ -235,7 +276,7 @@ const JobPostingDetail: React.FC = () => {
     };
 
     loadApplicationStatus();
-  }, [posting, user?.uid, tenantId, postId]);
+  }, [posting, user?.uid, resolvedTenantId, postId]);
 
   // Load dynamic shifts for Gig jobs
   useEffect(() => {
@@ -290,7 +331,7 @@ const JobPostingDetail: React.FC = () => {
   // Load applied shifts for the current user
   useEffect(() => {
     const loadAppliedShifts = async () => {
-      if (!user?.uid || !tenantId || !postId || dynamicShifts.length === 0) {
+      if (!user?.uid || !resolvedTenantId || !postId || dynamicShifts.length === 0) {
         setAppliedShifts([]);
         setShiftStatuses({});
         return;
@@ -299,7 +340,7 @@ const JobPostingDetail: React.FC = () => {
       try {
         // Query applications for this job posting that include shiftId
         // For gig jobs, we need to check both jobId (posting ID) and jobOrderId
-        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        const applicationsRef = collection(db, 'tenants', resolvedTenantId, 'applications');
         
         // Query by userId and jobId (posting ID)
         const q1 = query(
@@ -383,7 +424,7 @@ const JobPostingDetail: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [user?.uid, tenantId, postId, posting?.jobOrderId, dynamicShifts.length]);
+  }, [user?.uid, resolvedTenantId, postId, posting?.jobOrderId, dynamicShifts.length]);
 
   const handleApplyToShift = (shiftId: string) => {
     if (!user) {
@@ -503,12 +544,12 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleCancelApplication = async () => {
-    if (!applicationDocId || !tenantId) return;
+    if (!applicationDocId || !resolvedTenantId) return;
     const confirmed = window.confirm('Are you sure you want to cancel your application?');
     if (!confirmed) return;
 
     try {
-      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDocId);
+      const applicationRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
       await updateDoc(applicationRef, {
         status: 'withdrawn',
         withdrawnAt: new Date(),
@@ -522,13 +563,13 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleConfirmAssignment = async () => {
-    if (!applicationDocId || !tenantId || !user?.uid) return;
+    if (!applicationDocId || !resolvedTenantId || !user?.uid) return;
     
     const confirmed = window.confirm('Are you sure you want to confirm this assignment? This confirms that you will work this shift.');
     if (!confirmed) return;
 
     try {
-      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDocId);
+      const applicationRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
       await updateDoc(applicationRef, {
         status: 'confirmed',
         confirmedAt: new Date(),
@@ -543,14 +584,14 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleConfirmAssignmentForShift = async (shiftId: string) => {
-    if (!user?.uid || !tenantId) return;
+    if (!user?.uid || !resolvedTenantId) return;
     
     const confirmed = window.confirm('Are you sure you want to confirm this assignment? This confirms that you will work this shift.');
     if (!confirmed) return;
 
     try {
       // Find the application document for this shift
-      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      const applicationsRef = collection(db, 'tenants', resolvedTenantId, 'applications');
       
       // Query by userId and shiftId or shiftIds
       const q1 = query(
@@ -583,7 +624,7 @@ const JobPostingDetail: React.FC = () => {
       }
       
       if (applicationDoc) {
-        const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDoc.id);
+        const applicationRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDoc.id);
         await updateDoc(applicationRef, {
           status: 'confirmed',
           confirmedAt: new Date(),
@@ -604,8 +645,10 @@ const JobPostingDetail: React.FC = () => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
+      <Box sx={{ maxWidth: 1200, mx: 'auto', p: isMobile ? 2 : 3 }}>
+        <Skeleton variant="rectangular" width="100%" height={200} sx={{ mb: 3, borderRadius: 1 }} />
+        <Skeleton variant="rectangular" width="100%" height={300} sx={{ mb: 3, borderRadius: 1 }} />
+        <Skeleton variant="rectangular" width="100%" height={400} sx={{ borderRadius: 1 }} />
       </Box>
     );
   }
@@ -695,7 +738,7 @@ const JobPostingDetail: React.FC = () => {
   };
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: isMobile ? 2 : 3 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>{posting.postTitle} - {posting.companyName || 'HRX'}</title>
@@ -709,29 +752,35 @@ const JobPostingDetail: React.FC = () => {
       <Button
         startIcon={<ArrowBackIcon />}
         onClick={() => navigate('/c1/jobs-board')}
+        size={isMobile ? 'small' : 'medium'}
         sx={{ mb: 3 }}
       >
         Back to Jobs Board
       </Button>
 
       {/* Header */}
-      <Paper elevation={2} sx={{ p: 4, mb: 3 }}>
+      <Paper elevation={2} sx={{ p: isMobile ? 2 : 4, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ flex: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
-              <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+              <Typography 
+                variant={isMobile ? 'h5' : 'h4'} 
+                component="h1" 
+                sx={{ fontWeight: 'bold', fontSize: isMobile ? '1.25rem' : undefined }}
+              >
                 {posting.postTitle}
               </Typography>
               {/* Share Button */}
               <Button
                 variant="outlined"
-                size="small"
+                size={isMobile ? 'small' : 'small'}
                 startIcon={<ContentCopyIcon />}
                 onClick={() => {
                   const url = window.location.href;
                   navigator.clipboard.writeText(url);
-                  alert('Link copied to clipboard!');
+                  setShareSnackbarOpen(true);
                 }}
+                sx={{ fontSize: isMobile ? '0.75rem' : undefined }}
               >
                 Share
               </Button>
@@ -740,8 +789,8 @@ const JobPostingDetail: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
               {posting.companyName && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography variant="body1" color="text.secondary">
+                  <BusinessIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
+                  <Typography variant={isMobile ? 'body2' : 'body1'} color="text.secondary">
                     {posting.companyName}
                   </Typography>
                 </Box>
@@ -749,8 +798,8 @@ const JobPostingDetail: React.FC = () => {
               
               {posting.worksiteName && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <LocationIcon fontSize="small" color="primary" />
-                  <Typography variant="body1" color="text.secondary">
+                  <LocationIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
+                  <Typography variant={isMobile ? 'body2' : 'body1'} color="text.secondary">
                     {posting.worksiteName}
                     {posting.worksiteAddress?.city && `, ${posting.worksiteAddress.city}`}
                     {posting.worksiteAddress?.state && `, ${posting.worksiteAddress.state}`}
@@ -827,11 +876,12 @@ const JobPostingDetail: React.FC = () => {
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
                 <Button
                   variant="contained"
-                  size="small"
+                  size={isMobile ? 'small' : 'small'}
                   disabled
                   sx={{
                     borderRadius: '999px',
-                    px: 2,
+                    px: isMobile ? 1.5 : 2,
+                    fontSize: isMobile ? '0.75rem' : undefined,
                     fontWeight: 600,
                     backgroundColor: '#2196F3',
                     color: '#fff',
@@ -842,11 +892,12 @@ const JobPostingDetail: React.FC = () => {
                 </Button>
                 <Button
                   variant="contained"
-                  size="small"
+                  size={isMobile ? 'small' : 'small'}
                   onClick={handleConfirmAssignment}
                   sx={{
                     borderRadius: '999px',
-                    px: 2,
+                    px: isMobile ? 1.5 : 2,
+                    fontSize: isMobile ? '0.75rem' : undefined,
                     fontWeight: 600,
                     backgroundColor: '#4CAF50',
                     color: '#fff',
@@ -861,12 +912,13 @@ const JobPostingDetail: React.FC = () => {
             ) : statusButtonProps?.label === 'confirmed_special' ? (
               <Button
                 variant="contained"
-                size="small"
+                size={isMobile ? 'small' : 'small'}
                 disabled
                 startIcon={<LockIcon />}
                 sx={{
                   borderRadius: '999px',
-                  px: 2,
+                  px: isMobile ? 1.5 : 2,
+                  fontSize: isMobile ? '0.75rem' : undefined,
                   fontWeight: 600,
                   backgroundColor: '#4CAF50',
                   color: '#fff',
@@ -927,11 +979,11 @@ const JobPostingDetail: React.FC = () => {
               ) : (
                 <Button
                   variant="contained"
-                  size="large"
+                  size={isMobile ? 'medium' : 'large'}
                   sx={{
-                    minWidth: 200,
-                    py: 1.5,
-                    fontSize: '1.1rem',
+                    minWidth: isMobile ? 150 : 200,
+                    py: isMobile ? 1 : 1.5,
+                    fontSize: isMobile ? '0.9rem' : '1.1rem',
                     fontWeight: 'bold',
                     backgroundColor: statusButtonProps.backgroundColor,
                     color: statusButtonProps.color,
@@ -963,11 +1015,15 @@ const JobPostingDetail: React.FC = () => {
         </Box>
       </Paper>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: posting.jobType === 'gig' && dynamicShifts.length > 0 ? '1fr' : '2fr 1fr' }, gap: 3 }}>
+      <Box sx={{ 
+        display: 'grid', 
+        gridTemplateColumns: { xs: '1fr', md: posting.jobType === 'gig' && dynamicShifts.length > 0 ? '1fr' : '2fr 1fr' }, 
+        gap: 3
+      }}>
         {/* Main Content */}
         <Box>
           {/* Job Description */}
-          <Card sx={{ mb: 3 }}>
+          <Card sx={{ mb: 3 }} elevation={2}>
             <CardContent>
               <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                 Job Description
@@ -980,7 +1036,7 @@ const JobPostingDetail: React.FC = () => {
 
           {/* Shift Selector (for Gig jobs only) */}
           {posting.jobType === 'gig' && (
-            <Card sx={{ mb: 3 }}>
+            <Card sx={{ mb: 3 }} elevation={2}>
               <CardContent>
                 {loadingShifts ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
@@ -994,7 +1050,7 @@ const JobPostingDetail: React.FC = () => {
                     shiftStatuses={shiftStatuses}
                     onConfirmShift={handleConfirmAssignmentForShift}
                     jobPostId={postId}
-                    tenantId={tenantId}
+                    tenantId={resolvedTenantId}
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">
@@ -1018,7 +1074,7 @@ const JobPostingDetail: React.FC = () => {
           (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
           (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
           posting.eVerifyRequired) && (
-            <Card>
+            <Card elevation={2}>
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Requirements
@@ -1195,7 +1251,7 @@ const JobPostingDetail: React.FC = () => {
             <Card sx={{ 
               mb: 3, 
               bgcolor: 'white'
-            }}>
+            }} elevation={2}>
               <CardContent>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Apply for this Position
@@ -1359,6 +1415,15 @@ const JobPostingDetail: React.FC = () => {
           </Box>
         )}
       </Box>
+
+      {/* Share Snackbar */}
+      <Snackbar
+        open={shareSnackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setShareSnackbarOpen(false)}
+        message="Link copied to clipboard!"
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
     </Box>
   );
 };

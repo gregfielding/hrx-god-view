@@ -747,6 +747,41 @@ const Layout: React.FC = React.memo(function Layout() {
         </Box>
         {/* Removed avatar/welcome and divider here */}
         <List sx={{ flexGrow: 1, pb: '80px' }}>
+          {/* Jobs Board shortcut for security levels 0-4 (above My Profile) */}
+          {(() => {
+            const secLevel = currentClaimsSecurityLevel || securityLevel;
+            const isLowLevel = secLevel && ['0','1','2','3','4'].includes(secLevel);
+            if (!isLowLevel) return null;
+            const tenantSlug = activeTenant?.slug || 'c1';
+            const jobsPath = `/${tenantSlug}/jobs-board`;
+            const isSelected = location.pathname.startsWith(jobsPath);
+            return (
+              <ListItem disablePadding sx={{ display: 'block' }}>
+                <ListItemButton
+                  component={Link}
+                  to={jobsPath}
+                  selected={isSelected}
+                  sx={{
+                    backgroundColor: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'inherit',
+                    '&.Mui-selected': {
+                      borderLeft: '4px solid #FFD700',
+                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                    },
+                    px: open ? 2.5 : 0,
+                    py: 1,
+                    justifyContent: open ? 'initial' : 'center',
+                  }}
+                >
+                  <ListItemIcon
+                    sx={open ? { minWidth: 0, mr: 3, color: 'inherit' } : { minWidth: 0, width: '100%', mr: 0, justifyContent: 'center', display: 'flex', color: 'inherit' }}
+                  >
+                    <WorkIcon />
+                  </ListItemIcon>
+                  {open && <ListItemText primary="Jobs Board" />}
+                </ListItemButton>
+              </ListItem>
+            );
+          })()}
           {/* My Profile menu item at the top */}
           {user && (() => {
             // Workers (security levels 1-4) use tenant-specific URL: /c1/users/{uid}

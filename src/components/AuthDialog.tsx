@@ -17,6 +17,8 @@ import {
   Link,
   Checkbox,
   FormControlLabel,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -44,6 +46,8 @@ interface AuthDialogProps {
 
 const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess }) => {
   const { setCreatingUserProfile } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [activeTab, setActiveTab] = useState(0);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -441,35 +445,47 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
+      fullScreen={isMobile}
       PaperProps={{
         sx: { 
-          borderRadius: 3,
-          maxWidth: '520px',
-          width: '100%'
+          borderRadius: isMobile ? 0 : 3,
+          maxWidth: isMobile ? '100%' : '520px',
+          width: '100%',
+          m: isMobile ? 0 : 2,
+          maxHeight: isMobile ? '100%' : '90vh'
         }
       }}
       aria-labelledby="auth-dialog-title"
       aria-describedby="auth-dialog-description"
     >
-      <DialogTitle sx={{ pb: 1 }}>
+      <DialogTitle sx={{ pb: 1, px: isMobile ? 2 : 3, pt: isMobile ? 2 : 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h5" sx={{ fontWeight: 600 }} id="auth-dialog-title">
+          <Typography 
+            variant={isMobile ? 'h6' : 'h5'} 
+            sx={{ fontWeight: 600, fontSize: isMobile ? '1.25rem' : undefined }} 
+            id="auth-dialog-title"
+          >
             {activeTab === 0 ? 'Create Your Account' : 'Welcome Back'}
           </Typography>
-          <IconButton onClick={handleClose} size="small" aria-label="Close dialog">
+          <IconButton 
+            onClick={handleClose} 
+            size={isMobile ? 'medium' : 'small'} 
+            aria-label="Close dialog"
+            sx={{ ml: 1 }}
+          >
             <CloseIcon />
           </IconButton>
         </Box>
       </DialogTitle>
 
-      <DialogContent>
+      <DialogContent sx={{ px: isMobile ? 2 : 3 }}>
         {/* Subheader */}
         <Typography 
           variant="body2" 
           sx={{ 
             color: 'text.secondary', 
-            mb: 3,
-            fontSize: '0.95rem'
+            mb: isMobile ? 2 : 3,
+            fontSize: isMobile ? '0.875rem' : '0.95rem'
           }}
           id="auth-dialog-description"
         >
@@ -479,7 +495,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           }
         </Typography>
 
-        <Box sx={{ mb: 3 }}>
+        <Box sx={{ mb: isMobile ? 2 : 3 }}>
           <Tabs 
             value={activeTab} 
             onChange={handleTabChange}
@@ -489,8 +505,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               borderColor: 'divider',
               '& .MuiTab-root': {
                 fontWeight: 600,
-                fontSize: '1rem',
+                fontSize: isMobile ? '0.875rem' : '1rem',
                 textTransform: 'none',
+                minHeight: isMobile ? 48 : 48,
+                padding: isMobile ? '12px 8px' : '12px 16px',
                 '&.Mui-selected': {
                   color: 'primary.main'
                 }
@@ -519,10 +537,14 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         )}
 
         <form onSubmit={activeTab === 0 ? handleSignUp : handleSignIn}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 2.5 }}>
             {activeTab === 0 && (
               <>
-                <Box sx={{ display: 'flex', gap: 2 }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: isMobile ? 2 : 2 
+                }}>
                   <TextField
                     ref={firstNameRef}
                     fullWidth
@@ -532,6 +554,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                     disabled={loading}
                     required
                     onKeyPress={handleKeyPress}
+                    size={isMobile ? 'medium' : 'medium'}
                   />
                   <TextField
                     fullWidth
@@ -541,6 +564,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                     disabled={loading}
                     required
                     onKeyPress={handleKeyPress}
+                    size={isMobile ? 'medium' : 'medium'}
                   />
                 </Box>
               </>
@@ -556,6 +580,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               disabled={loading}
               required
               onKeyPress={handleKeyPress}
+              size={isMobile ? 'medium' : 'medium'}
               InputProps={{
                 startAdornment: <EmailIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />
               }}
@@ -570,6 +595,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               disabled={loading}
               required
               onKeyPress={handleKeyPress}
+              size={isMobile ? 'medium' : 'medium'}
               InputProps={{
                 startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
                 endAdornment: (
@@ -579,6 +605,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                       edge="end"
                       disabled={loading}
                       aria-label="toggle password visibility"
+                      size={isMobile ? 'medium' : 'small'}
                     >
                       {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
@@ -598,6 +625,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 disabled={loading}
                 required
                 onKeyPress={handleKeyPress}
+                size={isMobile ? 'medium' : 'medium'}
                 InputProps={{
                   startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
                   endAdornment: (
@@ -607,6 +635,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                         edge="end"
                         disabled={loading}
                         aria-label="toggle confirm password visibility"
+                        size={isMobile ? 'medium' : 'small'}
                       >
                         {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
                       </IconButton>
@@ -617,22 +646,27 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             )}
 
           {activeTab === 0 && (
-            <Box sx={{ mt: 2 }}>
+            <Box sx={{ mt: isMobile ? 1 : 2 }}>
               <FormControlLabel
                 control={
                   <Checkbox
                     checked={agreedToTerms}
                     onChange={(e) => setAgreedToTerms(e.target.checked)}
                     required
+                    size={isMobile ? 'medium' : 'small'}
                   />
                 }
                 label={
-                  <Typography variant="body2">
+                  <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
                     I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and the <Link href="/consent" target="_blank" rel="noopener">SMS & Mobile Communications Consent</Link>.
                   </Typography>
                 }
               />
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1, ml: 4 }}>
+              <Typography 
+                variant="body2" 
+                color="text.secondary" 
+                sx={{ mt: 1, ml: isMobile ? 5 : 4, fontSize: isMobile ? '0.75rem' : undefined }}
+              >
                 By creating an account, you acknowledge that you have read our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
               </Typography>
             </Box>
@@ -659,13 +693,29 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         </form>
       </DialogContent>
 
-      <DialogActions sx={{ px: 3, pb: 3, flexDirection: 'column', gap: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, width: '100%' }}>
+      <DialogActions sx={{ 
+        px: isMobile ? 2 : 3, 
+        pb: isMobile ? 3 : 3, 
+        pt: isMobile ? 2 : 2,
+        flexDirection: 'column', 
+        gap: isMobile ? 2 : 2 
+      }}>
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: isMobile ? 'column-reverse' : 'row',
+          justifyContent: 'flex-end', 
+          gap: isMobile ? 1.5 : 2, 
+          width: '100%' 
+        }}>
           <Button 
             onClick={handleClose} 
             disabled={loading}
             variant="outlined"
-            sx={{ minWidth: 100 }}
+            fullWidth={isMobile}
+            sx={{ 
+              minWidth: isMobile ? '100%' : 100,
+              py: isMobile ? 1.5 : undefined
+            }}
           >
             Cancel
           </Button>
@@ -678,15 +728,19 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               (activeTab === 0 && (!agreedToTerms || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || password !== confirmPassword))
             }
             startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
-            sx={{ minWidth: 140 }}
+            fullWidth={isMobile}
+            sx={{ 
+              minWidth: isMobile ? '100%' : 140,
+              py: isMobile ? 1.5 : undefined
+            }}
           >
             {recaptchaLoading ? 'Verifying...' : loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
           </Button>
         </Box>
 
         {/* Footer microcopy */}
-        <Box sx={{ textAlign: 'center', width: '100%' }}>
-          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+        <Box sx={{ textAlign: 'center', width: '100%', pt: isMobile ? 1 : 0 }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.875rem' : undefined }}>
             {activeTab === 0 ? (
               <>
                 Already have an account?{' '}
@@ -696,7 +750,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   sx={{ 
                     textDecoration: 'none',
                     '&:hover': { textDecoration: 'underline' },
-                    fontWeight: 500
+                    fontWeight: 500,
+                    fontSize: isMobile ? '0.875rem' : undefined
                   }}
                 >
                   Sign in
@@ -711,7 +766,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   sx={{ 
                     textDecoration: 'none',
                     '&:hover': { textDecoration: 'underline' },
-                    fontWeight: 500
+                    fontWeight: 500,
+                    fontSize: isMobile ? '0.875rem' : undefined
                   }}
                 >
                   Create one here

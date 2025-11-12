@@ -24,6 +24,7 @@ import UserAssignmentsTab from './components/UserAssignmentsTab';
 import PrivacySettingsTab from './components/PrivacySettingsTab';
 import UserGroupsTab from './components/UserGroupsTab';
 import SystemAccessTab from './components/SystemAccessTab';
+import UserApplicationsTab from './components/UserApplicationsTab';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -97,7 +98,7 @@ const UserProfilePage = () => {
     return false;
   };
 
-  // Define which tabs are available based on user role
+  // Define which tabs are available based on user role (returns ordered labels)
   const getAvailableTabs = () => {
     const isOwnProfile = user?.uid === uid;
     const viewerSecurityLevel = parseInt(securityLevel);
@@ -133,67 +134,25 @@ const UserProfilePage = () => {
 
     const tabs = [
       { label: 'Overview', available: true },
-      { 
-        label: 'Work Eligibility', 
-        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Resumé', 
-        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Qualifications', 
-        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Preferences', 
-        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Licenses & Certs', 
-        available: !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Assignments', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Background & Vaccination', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Reports & Insights', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Notes', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'Activity Log', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'User Groups', 
-        available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
-      { 
-        label: 'System Access', 
-        available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView // Show for workforce internal team view
-      },
-      { 
-        label: 'Privacy & Notifications', 
-        available: ((isOwnProfile || isAdminViewer) && !isWorkerRoute) && !isWorkforceInternalTeamView // Hide for workforce internal team view
-      },
+      { label: 'Work Eligibility', available: !isWorkforceInternalTeamView },
+      { label: 'Resumé', available: !isWorkforceInternalTeamView },
+      { label: 'Qualifications', available: !isWorkforceInternalTeamView },
+      { label: 'Preferences', available: !isWorkforceInternalTeamView },
+      { label: 'Licenses & Certs', available: !isWorkforceInternalTeamView },
+      { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Background & Vaccination', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Reports & Insights', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Notes', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Activity Log', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'User Groups', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'System Access', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView },
+      { label: 'Privacy & Notifications', available: ((isOwnProfile || isAdminViewer) && !isWorkerRoute) && !isWorkforceInternalTeamView },
     ];
 
-    const availableTabs = tabs
-      .filter(tab => tab.available)
-      .map((tab, index) => ({ ...tab, index }));
-    
-    console.log('Available tabs:', availableTabs.map(t => `${t.label} (${t.index})`));
-    
-    return availableTabs;
+    const availableTabLabels = tabs.filter(t => t.available).map(t => t.label);
+    console.log('Available tabs:', availableTabLabels);
+    return availableTabLabels;
   };
 
   useEffect(() => {
@@ -403,10 +362,8 @@ const UserProfilePage = () => {
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     if (tabParam === 'licenses') {
-      const licensesTab = availableTabs.find(tab => tab.label === 'Licenses & Certs');
-      if (licensesTab) {
-        setTabIndex(licensesTab.index);
-      }
+      const idx = availableTabs.findIndex(label => label === 'Licenses & Certs');
+      if (idx >= 0) setTabIndex(idx);
     }
   }, [searchParams, availableTabs]);
 
@@ -418,8 +375,8 @@ const UserProfilePage = () => {
     const isWorkforceRoute = pathname.includes('/workforce/users/');
     
     // Update URL with tab parameter if it's the licenses tab
-    const selectedTab = availableTabs.find(tab => tab.index === newIndex);
-    if (selectedTab?.label === 'Licenses & Certs') {
+    const selectedLabel = availableTabs[newIndex];
+    if (selectedLabel === 'Licenses & Certs') {
       if (isRecruiterRoute) {
         navigate(`/recruiter/users/${uid}?tab=licenses`, { replace: true });
       } else if (isWorkforceRoute) {
@@ -479,11 +436,11 @@ const UserProfilePage = () => {
     );
   }
 
-  const currentTab = availableTabs.find(tab => tab.index === tabIndex);
+  const currentLabel = availableTabs[tabIndex];
   
   // If current tab is not available, reset to first available tab
-  if (!currentTab && availableTabs.length > 0) {
-    setTabIndex(availableTabs[0].index);
+  if (currentLabel === undefined && availableTabs.length > 0) {
+    setTabIndex(0);
   }
 
   // Create breadcrumb path based on current route
@@ -573,20 +530,18 @@ const UserProfilePage = () => {
             scrollButtons="auto"
             aria-label="user profile tabs"
           >
-            {availableTabs.map((tab) => (
-              <Tab key={tab.index} label={tab.label} />
+            {availableTabs.map((label, i) => (
+              <Tab key={i} label={label} />
             ))}
           </Tabs>
         </Paper>
 
         <Box sx={{ mt: 2 }}>
           {(() => {
-            const availableTabs = getAvailableTabs();
-            const currentTab = availableTabs.find(tab => tab.index === tabIndex);
-            
-            if (!currentTab) return null;
-            
-            switch (currentTab.label) {
+            const labels = getAvailableTabs();
+            const label = labels[tabIndex];
+            if (!label) return null;
+            switch (label) {
               case 'Overview':
                 return <ProfileOverview uid={uid} />;
               case 'Work Eligibility':
@@ -604,6 +559,8 @@ const UserProfilePage = () => {
                 return <PreferencesTab uid={uid} />;
               case 'Licenses & Certs':
                 return <LicensesAndCertsTab uid={uid} />;
+              case 'Applications':
+                return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
                 return <UserAssignmentsTab userId={uid} />;
               case 'Background & Vaccination':

@@ -50,6 +50,7 @@ import {
   Close,
   Event,
   Warning as WarningIcon,
+  FilterList,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -152,6 +153,7 @@ const PublicJobsBoard: React.FC = () => {
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [eligibilityModalOpen, setEligibilityModalOpen] = useState({
     open: false,
     needDOB: false,
@@ -457,16 +459,12 @@ const PublicJobsBoard: React.FC = () => {
       if (specificTenantId) {
         // If we're on the C1 route, load all jobs from the specific tenant (will filter by visibility client-side)
         try {
-          // Load public, restricted, and private jobs (client-side filtering will handle visibility)
-          const [publicPosts, restrictedPosts] = await Promise.all([
-            jobsBoardService.getPostsByVisibility(specificTenantId, 'public'),
-            jobsBoardService.getPostsByVisibility(specificTenantId, 'restricted')
-          ]);
-          
-          const allPosts = [...publicPosts, ...restrictedPosts];
+          // Load public posts (for unauthenticated users, this will only return public posts)
+          // For authenticated users with groups, restricted posts will also be included
+          const publicPosts = await jobsBoardService.getPublicPosts(specificTenantId, userGroupIds.length > 0 ? userGroupIds : undefined);
           
           // Filter for active posts only
-          const activePosts = allPosts.filter(post => post.status === 'active');
+          const activePosts = publicPosts.filter(post => post.status === 'active');
           
           // Get job order IDs that already have postings (to avoid duplicates)
           const jobOrderIdsWithPostings = new Set(
@@ -522,10 +520,10 @@ const PublicJobsBoard: React.FC = () => {
                   const locAddress = locationData.address || {};
                   
                   // Merge location address data into job order, preferring existing values
-                  if (!jobOrderData.worksiteAddress.city && locAddress.city) {
+                  if ((!jobOrderData.worksiteAddress.city || !jobOrderData.worksiteAddress.city.trim()) && locAddress.city) {
                     jobOrderData.worksiteAddress.city = locAddress.city;
                   }
-                  if (!jobOrderData.worksiteAddress.state && locAddress.state) {
+                  if ((!jobOrderData.worksiteAddress.state || !jobOrderData.worksiteAddress.state.trim()) && locAddress.state) {
                     jobOrderData.worksiteAddress.state = locAddress.state;
                   }
                   if (!jobOrderData.worksiteAddress.street && locAddress.street) {
@@ -582,7 +580,8 @@ const PublicJobsBoard: React.FC = () => {
             }
             
             // Now fetch location if we have worksiteId and location data is missing
-            if ((!worksiteAddress || !worksiteAddress.city || !worksiteAddress.state) && worksiteId) {
+            if ((!worksiteAddress || !worksiteAddress.city || !worksiteAddress.city.trim() || 
+                 !worksiteAddress.state || !worksiteAddress.state.trim()) && worksiteId) {
               try {
                 const locationRef = doc(db, 'tenants', specificTenantId, 'locations', worksiteId);
                 const locationSnap = await getDoc(locationRef);
@@ -593,10 +592,10 @@ const PublicJobsBoard: React.FC = () => {
                   if (!worksiteAddress) {
                     worksiteAddress = {};
                   }
-                  if (!worksiteAddress.city && locAddress.city) {
+                  if (!worksiteAddress.city || !worksiteAddress.city.trim()) {
                     worksiteAddress.city = locAddress.city;
                   }
-                  if (!worksiteAddress.state && locAddress.state) {
+                  if (!worksiteAddress.state || !worksiteAddress.state.trim()) {
                     worksiteAddress.state = locAddress.state;
                   }
                   if (!worksiteAddress.street && locAddress.street) {
@@ -682,6 +681,14 @@ const PublicJobsBoard: React.FC = () => {
         allJobs.push(...convertedPosts, ...gigJobOrders);
         } catch (err) {
           console.error(`Failed to load jobs for specific tenant ${specificTenantId}:`, err);
+          // Don't silently fail - show error to user
+          if (err instanceof Error) {
+            console.error('Error details:', {
+              message: err.message,
+              code: (err as any).code,
+              stack: err.stack
+            });
+          }
         }
       } else {
         // Original behavior: Query all tenants for public job postings
@@ -692,7 +699,8 @@ const PublicJobsBoard: React.FC = () => {
           
           try {
             // Use the JobsBoardService to get public posts
-            const publicPosts = await jobsBoardService.getPostsByVisibility(tenantId, 'public');
+            // For unauthenticated users, this will only return public posts
+            const publicPosts = await jobsBoardService.getPublicPosts(tenantId);
             
             // Filter for active posts only
             const activePosts = publicPosts.filter(post => post.status === 'active');
@@ -750,10 +758,10 @@ const PublicJobsBoard: React.FC = () => {
                       const locAddress = locationData.address || {};
                       
                       // Merge location address data into job order, preferring existing values
-                      if (!jobOrderData.worksiteAddress.city && locAddress.city) {
+                      if ((!jobOrderData.worksiteAddress.city || !jobOrderData.worksiteAddress.city.trim()) && locAddress.city) {
                         jobOrderData.worksiteAddress.city = locAddress.city;
                       }
-                      if (!jobOrderData.worksiteAddress.state && locAddress.state) {
+                      if ((!jobOrderData.worksiteAddress.state || !jobOrderData.worksiteAddress.state.trim()) && locAddress.state) {
                         jobOrderData.worksiteAddress.state = locAddress.state;
                       }
                       if (!jobOrderData.worksiteAddress.street && locAddress.street) {
@@ -984,7 +992,8 @@ const PublicJobsBoard: React.FC = () => {
     const locations = new Set<string>();
     jobs.forEach(job => {
       // Always prefer city, state format for dropdown
-      if (job.worksiteAddress?.city && job.worksiteAddress?.state) {
+      if (job.worksiteAddress?.city && job.worksiteAddress?.state &&
+          job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim()) {
         locations.add(`${job.worksiteAddress.city}, ${job.worksiteAddress.state}`);
       }
       // Skip jobs without proper city/state (they won't be filterable by location)
@@ -994,39 +1003,8 @@ const PublicJobsBoard: React.FC = () => {
 
 
   const handleApply = async (job: PublicJobPosting) => {
-    // Check if user is logged in
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      setAuthDialogOpen(true);
-      return;
-    }
-
-    try {
-      // Check user eligibility
-      const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-      const userData = userDoc.data();
-
-      const needDOB = !userData?.dob;
-      const needPhone = !userData?.phoneVerified;
-
-      // If either verification is missing or workEligibility is false, show modal
-      if (needDOB || needPhone || !userData?.workEligibility) {
-        setEligibilityModalOpen({
-          open: true,
-          needDOB,
-          needPhone,
-          jobId: job.id
-        });
-        return;
-      }
-
-      // User is eligible, proceed with application
-      navigate(`/apply/${job.tenantId}/${job.id}`);
-    } catch (error) {
-      console.error('Error checking eligibility:', error);
-      // Fallback to auth dialog
-      setAuthDialogOpen(true);
-    }
+    // Navigate to job posting detail page - user can apply from there
+    navigate(`/c1/jobs-board/${job.id}`);
   };
 
   const handleCardClick = (job: PublicJobPosting) => {
@@ -1174,8 +1152,16 @@ const PublicJobsBoard: React.FC = () => {
       {!user && (
         <Box sx={{ mb: 4 }}>
           {/* Header with logo, title, and auth button */}
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <Box sx={{ mb: 2 }}>
+            {/* First row: Logo and Sign In button */}
+            <Box sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between', 
+              mb: isMobile ? 1.5 : 2,
+              flexWrap: 'wrap',
+              gap: 1
+            }}>
               {/* C1 Logo - Left side */}
               {isC1Route && (
                 <Box
@@ -1183,7 +1169,7 @@ const PublicJobsBoard: React.FC = () => {
                   src="/C1.png" 
                   alt="C1 Staffing" 
                   sx={{ 
-                    height: { xs: '40px', sm: '50px', md: '64px' }, // Responsive height
+                    height: { xs: '36px', sm: '50px', md: '64px' }, // Smaller on mobile
                     width: 'auto',
                     objectFit: 'contain'
                   }}
@@ -1194,33 +1180,36 @@ const PublicJobsBoard: React.FC = () => {
                 />
               )}
               
-              {/* Main Page Title - Next to logo */}
-              <Typography 
-                variant="h3" 
-                sx={{ 
-                  fontWeight: 700,
-                  fontSize: { xs: '1.5rem', sm: '2rem', md: '3rem' } // Responsive font size
+              {/* Sign In or Create Account Button - Top right */}
+              <Button
+                variant="contained"
+                onClick={() => setAuthDialogOpen(true)}
+                size={isMobile ? 'small' : 'medium'}
+                sx={{
+                  px: { xs: 1.5, sm: 3 },
+                  py: { xs: 0.75, sm: 1.5 },
+                  fontWeight: 600,
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontSize: { xs: '0.75rem', sm: '1rem' }, // Smaller font on mobile
+                  whiteSpace: 'nowrap'
                 }}
               >
-                {isC1Route ? 'Jobs Board' : 'Find Your Next Opportunity'}
-              </Typography>
+                Sign In or Create Account
+              </Button>
             </Box>
-
-            {/* Sign In or Create Account Button - Top right */}
-            <Button
-              variant="contained"
-              onClick={() => setAuthDialogOpen(true)}
-              sx={{
-                px: { xs: 2, sm: 3 }, // Smaller padding on mobile
-                py: { xs: 1, sm: 1.5 }, // Smaller padding on mobile
-                fontWeight: 600,
-                borderRadius: 2,
-                textTransform: 'none',
-                fontSize: { xs: '0.875rem', sm: '1rem' } // Smaller font on mobile
+            
+            {/* Second row: Main Page Title */}
+            <Typography 
+              variant="h3" 
+              sx={{ 
+                fontWeight: 700,
+                fontSize: { xs: '1.25rem', sm: '2rem', md: '3rem' }, // Smaller on mobile
+                lineHeight: { xs: 1.3, sm: 1.2 }
               }}
             >
-              Sign In or Create Account
-            </Button>
+              {isC1Route ? 'Jobs Board' : 'Find Your Next Opportunity'}
+            </Typography>
           </Box>
         </Box>
       )}
@@ -1240,30 +1229,51 @@ const PublicJobsBoard: React.FC = () => {
                     <Search />
                   </InputAdornment>
                 ),
-                endAdornment: user ? (
+                endAdornment: (
                   <InputAdornment position="end">
-                    <FavoritesFilter
-                      favoriteType="jobPosts"
-                      showFavoritesOnly={showFavoritesOnly}
-                      onToggle={setShowFavoritesOnly}
-                      showText={false}
-                      size="small"
-                      sx={{
-                        minWidth: '32px',
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
-                        '&:hover': {
-                          backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                        }
-                      }}
-                    />
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {/* Filter icon button - only on mobile */}
+                      {isMobile && (
+                        <IconButton
+                          size="small"
+                          onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
+                          sx={{
+                            color: mobileFiltersOpen ? 'primary.main' : 'text.secondary',
+                            '&:hover': {
+                              backgroundColor: 'action.hover'
+                            }
+                          }}
+                        >
+                          <FilterList />
+                        </IconButton>
+                      )}
+                      {/* Favorites filter - only show if user is logged in */}
+                      {user && (
+                        <FavoritesFilter
+                          favoriteType="jobPosts"
+                          showFavoritesOnly={showFavoritesOnly}
+                          onToggle={setShowFavoritesOnly}
+                          showText={false}
+                          size="small"
+                          sx={{
+                            minWidth: '32px',
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '50%',
+                            '&:hover': {
+                              backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                            }
+                          }}
+                        />
+                      )}
+                    </Box>
                   </InputAdornment>
-                ) : undefined,
+                ),
               }}
             />
           </Grid>
-          <Grid item xs={12} md={2}>
+          {/* Desktop filters - hidden on mobile */}
+          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
               <InputLabel>Location</InputLabel>
               <Select
@@ -1280,7 +1290,7 @@ const PublicJobsBoard: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
               <InputLabel>Job Type</InputLabel>
               <Select
@@ -1294,7 +1304,7 @@ const PublicJobsBoard: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
               <InputLabel>Sort By</InputLabel>
               <Select
@@ -1316,6 +1326,67 @@ const PublicJobsBoard: React.FC = () => {
             </FormControl>
           </Grid>
         </Grid>
+
+        {/* Mobile Filter Panel - only shown when mobileFiltersOpen is true */}
+        {isMobile && mobileFiltersOpen && (
+          <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Location</InputLabel>
+                  <Select
+                    value={locationFilter}
+                    label="Location"
+                    onChange={(e) => setLocationFilter(e.target.value)}
+                  >
+                    <MenuItem value="all">All Locations</MenuItem>
+                    {getUniqueLocations().map((location) => (
+                      <MenuItem key={location} value={location}>
+                        {location}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Job Type</InputLabel>
+                  <Select
+                    value={jobTypeFilter}
+                    label="Job Type"
+                    onChange={(e) => setJobTypeFilter(e.target.value)}
+                  >
+                    <MenuItem value="all">All Types</MenuItem>
+                    <MenuItem value="gig">Gig</MenuItem>
+                    <MenuItem value="career">Career</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Sort By</InputLabel>
+                  <Select
+                    value={sortBy}
+                    label="Sort By"
+                    onChange={(e) => {
+                      const newSortBy = e.target.value;
+                      setSortBy(newSortBy);
+                      // If user selects "closest" and we don't have location yet, request it
+                      if (newSortBy === 'closest' && !userLocation && locationPermission === 'prompt') {
+                        // This onChange is a user gesture, so we can request location here
+                        requestLocationPermission();
+                      }
+                    }}
+                  >
+                    <MenuItem value="newest">Newest First</MenuItem>
+                    <MenuItem value="closest">Closest to Me</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+          </Box>
+        )}
+
         <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
           {(searchTerm || locationFilter !== 'all' || jobTypeFilter !== 'all' || showFavoritesOnly || sortBy !== 'newest') && (
             <Button
@@ -1325,8 +1396,8 @@ const PublicJobsBoard: React.FC = () => {
                 setSearchTerm('');
                 setLocationFilter('all');
                 setJobTypeFilter('all');
-              setShowFavoritesOnly(false);
-              setSortBy('newest');
+                setShowFavoritesOnly(false);
+                setSortBy('newest');
               }}
             >
               Clear Filters
@@ -1423,7 +1494,8 @@ const PublicJobsBoard: React.FC = () => {
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                     <LocationOn sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
                     <Typography variant="body2" color="text.secondary">
-                      {job.worksiteAddress?.city && job.worksiteAddress?.state ? (
+                      {job.worksiteAddress?.city && job.worksiteAddress?.state && 
+                       job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim() ? (
                         `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
                       ) : job.worksiteName ? (
                         job.worksiteName
@@ -1690,7 +1762,8 @@ const PublicJobsBoard: React.FC = () => {
                   <Stack direction="row" spacing={1} alignItems="center">
                     <LocationOn sx={{ fontSize: 20, color: 'text.secondary' }} />
                     <Typography variant="body1">
-                      {selectedJob.worksiteAddress?.city && selectedJob.worksiteAddress?.state ? (
+                      {selectedJob.worksiteAddress?.city && selectedJob.worksiteAddress?.state &&
+                       selectedJob.worksiteAddress.city.trim() && selectedJob.worksiteAddress.state.trim() ? (
                         `${selectedJob.worksiteAddress.city}, ${selectedJob.worksiteAddress.state}${selectedJob.worksiteAddress.zipCode ? ` ${selectedJob.worksiteAddress.zipCode}` : ''}`
                       ) : (
                         selectedJob.worksiteName

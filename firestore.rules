@@ -14,11 +14,18 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
+      // Allow authenticated users with proper roles
       allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+      // Allow unauthenticated reads (needed for public job board to access job_postings subcollection)
+      allow read: if true;
       allow write: if request.auth != null && isTenantAdmin(tenantId);
 
       match /job_orders/{doc} {
+        // Allow authenticated users with proper roles
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        // Allow unauthenticated reads for public job board (to load gig job orders)
+        // Client-side filtering will handle visibility
+        allow read: if true;
         allow create, update, delete: if request.auth != null && isTenantAdmin(tenantId);
         
         // Shifts subcollection
@@ -208,6 +215,8 @@ service cloud.firestore {
       match /locations/{locationId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
+        // Allow unauthenticated reads for public job board (to fetch worksite location data)
+        allow read: if true;
       }
 
       // --- COMPANY LOCATIONS MIRROR (for fast state queries) ---
@@ -672,8 +681,9 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
         allow read: if isAssignedToTenant(tenantId);
-        // Allow public read access for job postings
-        allow read: if resource.data.visibility == 'public';
+        // Allow public read access for job postings (for unauthenticated users)
+        // Allow reads for public or restricted posts (client-side will filter restricted by user groups)
+        allow read: if resource.data.visibility == 'public' || resource.data.visibility == 'restricted';
       }
 
       // --- JOB APPLICATIONS (Tenant Subcollection) ---

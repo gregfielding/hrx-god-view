@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Box, Stack, Typography, Button, Card, CardContent, CardHeader, TextField, MenuItem } from '@mui/material';
+import { Box, Stack, Typography, Button, Card, CardContent, CardHeader, TextField, MenuItem, useTheme, useMediaQuery } from '@mui/material';
 import { storage, db } from '../../../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { arrayUnion, doc, serverTimestamp, updateDoc, getDoc } from 'firebase/firestore';
@@ -21,6 +21,8 @@ type Props = {
 };
 
 const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profile, uid, value, onChange, jobPosting }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const setUploaded = (name: string) => onChange({ ...value, uploaded: { ...(value?.uploaded || {}), [name]: true } });
   const clearUploaded = (name: string) => {
     const uploaded = { ...(value?.uploaded || {}) } as Record<string, boolean>;
@@ -149,12 +151,13 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
     <Box>
       <Stack spacing={2} sx={{ mb: 2 }}>
         {showEVerify && (
-          <Card variant="outlined">
+          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
             <CardHeader
               title={<Typography variant="h6" sx={{ fontWeight: 700 }}>E-Verify</Typography>}
               action={<Box component="img" src="/img/everify.png" alt="E-Verify" sx={{ height: 28, width: 'auto' }} />}
+              sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
             />
-            <CardContent>
+            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
               <Stack spacing={2}>
                 <Typography color="text.secondary">
                   This position requires that employees be E-Verified. This process involves matching your social security number with tax records and other government documents to confirm your identity. Are you comfortable with us running you through E-Verify?
@@ -178,9 +181,9 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         )}
         {/* Drug Screening summary card */}
         {showDrugScreening && (
-          <Card variant="outlined">
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Drug Screening</Typography>} />
-            <CardContent>
+          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Drug Screening</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
               <Stack spacing={2}>
                 <Typography color="text.secondary">
                   This position requires a drug screening. Are you comfortable that you would pass a drug screening?
@@ -216,9 +219,9 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
 
         {/* Removed Physical, PPE, and Uniform requirement cards per request */}
         {showAdditionalScreenings && Array.isArray(jobPosting?.additionalScreenings) && jobPosting.additionalScreenings.length > 0 && (
-          <Card variant="outlined">
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Additional Screenings</Typography>} />
-            <CardContent>
+          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Additional Screenings</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
               <Stack spacing={2}>
                 {jobPosting.additionalScreenings.map((screenName: string) => (
                   <Stack key={`add-screen-${screenName}`} spacing={1}>
@@ -252,9 +255,9 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         )}
 
         {showBackgroundScreening && (
-          <Card variant="outlined">
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Background Screening</Typography>} />
-            <CardContent>
+          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Background Screening</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
               <Stack spacing={2}>
                 <Typography color="text.secondary">
                   This position requires a background screening. Are you comfortable that you would pass a background screening?
@@ -296,11 +299,11 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
           const uploads = computedUploads || [];
           const onProfile = uploads.length > 0;
           return (
-            <Card key={`cert-${name}`} variant="outlined">
+            <Card key={`cert-${name}`} variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
               {idx === 0 && (
-                <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Required Licenses & Certifications</Typography>} />
+                <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Required Licenses & Certifications</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
               )}
-              <CardContent>
+              <CardContent sx={{ p: { xs: 2, md: 3 } }}>
                 <Stack spacing={1}>
                   <Typography sx={{ fontWeight: 700 }}>{name}</Typography>
                   <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">

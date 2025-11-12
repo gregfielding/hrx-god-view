@@ -108,10 +108,15 @@ const RecruiterContacts: React.FC = () => {
   };
 
   const loadContacts = async () => {
-    if (!tenantId) return;
+    if (!tenantId) {
+      console.error('❌ Cannot load contacts: tenantId is missing');
+      setLoading(false);
+      return;
+    }
     
     try {
       setLoading(true);
+      console.log(`🔍 Loading contacts for tenant: ${tenantId}`);
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       
       // Try to order by fullName first, fallback to createdAt if that fails
@@ -119,16 +124,19 @@ const RecruiterContacts: React.FC = () => {
       try {
         const q = query(contactsRef, orderBy('fullName', 'asc'));
         snapshot = await getDocs(q);
+        console.log(`✅ Loaded ${snapshot.docs.length} contacts (ordered by fullName)`);
       } catch (orderByError: any) {
         // If orderBy fails (e.g., missing index or field), try ordering by createdAt
-        console.warn('Failed to order by fullName, trying createdAt:', orderByError);
+        console.warn('⚠️ Failed to order by fullName, trying createdAt:', orderByError);
         try {
           const q = query(contactsRef, orderBy('createdAt', 'desc'));
           snapshot = await getDocs(q);
+          console.log(`✅ Loaded ${snapshot.docs.length} contacts (ordered by createdAt)`);
         } catch (createdAtError: any) {
           // If that also fails, just get all contacts without ordering
-          console.warn('Failed to order by createdAt, loading without order:', createdAtError);
+          console.warn('⚠️ Failed to order by createdAt, loading without order:', createdAtError);
           snapshot = await getDocs(contactsRef);
+          console.log(`✅ Loaded ${snapshot.docs.length} contacts (no ordering)`);
         }
       }
       
@@ -183,10 +191,16 @@ const RecruiterContacts: React.FC = () => {
         return aName.localeCompare(bName);
       });
       
-      console.log(`✅ Loaded ${contactsData.length} contacts`);
+      console.log(`✅ Successfully processed ${contactsData.length} contacts`);
       setContacts(contactsData);
-    } catch (error) {
-      console.error('Error loading contacts:', error);
+    } catch (error: any) {
+      console.error('❌ Error loading contacts:', error);
+      console.error('Error details:', {
+        code: error?.code,
+        message: error?.message,
+        stack: error?.stack,
+        tenantId
+      });
       setContacts([]);
     } finally {
       setLoading(false);

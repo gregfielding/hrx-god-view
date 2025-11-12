@@ -796,48 +796,70 @@ export class JobsBoardService {
   // Get public jobs board posts (for public job board)
   async getPublicPosts(tenantId: string, userGroups?: string[]): Promise<JobsBoardPost[]> {
     try {
-      // First try to get posts with postedAt field
-      let q = query(
-        collection(db, 'tenants', tenantId, 'job_postings'),
-        where('status', '==', 'active'),
-        where('visibility', 'in', ['public', 'restricted']),
-        orderBy('postedAt', 'desc')
+      // First, try to get all posts (without status filter) to see what we have
+      let allPostsQuery = query(
+        collection(db, 'tenants', tenantId, 'job_postings')
       );
       
-      let querySnapshot;
+      let allPostsSnapshot;
       try {
-        querySnapshot = await getDocs(q);
+        // Try ordering by createdAt first
+        allPostsQuery = query(
+          collection(db, 'tenants', tenantId, 'job_postings'),
+          orderBy('createdAt', 'desc')
+        );
+        allPostsSnapshot = await getDocs(allPostsQuery);
       } catch (error: any) {
-        // If postedAt field doesn't exist, try ordering by createdAt instead
+        // If createdAt doesn't exist or index is missing, get all without ordering
         if (error.code === 'failed-precondition') {
-          console.warn('postedAt field not found, falling back to createdAt ordering');
-          q = query(
-            collection(db, 'tenants', tenantId, 'job_postings'),
-            where('status', '==', 'active'),
-            where('visibility', 'in', ['public', 'restricted']),
-            orderBy('createdAt', 'desc')
-          );
-          querySnapshot = await getDocs(q);
+          console.warn('createdAt field not found or index missing, getting all posts without ordering');
+          allPostsQuery = query(collection(db, 'tenants', tenantId, 'job_postings'));
+          allPostsSnapshot = await getDocs(allPostsQuery);
         } else {
+          console.error('Error fetching all posts:', error);
           throw error;
         }
       }
       
-      const allPosts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      const allPosts = allPostsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      
+      // Debug: Log all posts to see their status and visibility
+      console.log(`📊 Found ${allPosts.length} total job postings for tenant ${tenantId}`);
+      const statusCounts: Record<string, number> = {};
+      const visibilityCounts: Record<string, number> = {};
+      allPosts.forEach(post => {
+        statusCounts[post.status || 'undefined'] = (statusCounts[post.status || 'undefined'] || 0) + 1;
+        visibilityCounts[post.visibility || 'undefined'] = (visibilityCounts[post.visibility || 'undefined'] || 0) + 1;
+      });
+      console.log('📊 Status breakdown:', statusCounts);
+      console.log('📊 Visibility breakdown:', visibilityCounts);
+      
+      // Filter for active posts with public or restricted visibility
+      const filteredPosts = allPosts.filter(post => {
+        const isActive = post.status === 'active';
+        const isPublicOrRestricted = post.visibility === 'public' || post.visibility === 'restricted';
+        return isActive && isPublicOrRestricted;
+      });
+      
+      console.log(`✅ Filtered to ${filteredPosts.length} active public/restricted posts`);
       
       // Filter by group restrictions if user groups are provided
       if (userGroups && userGroups.length > 0) {
-        return allPosts.filter(post => {
+        const groupFiltered = filteredPosts.filter(post => {
           if (post.visibility === 'public') return true;
           if (post.visibility === 'restricted' && post.restrictedGroups) {
             return post.restrictedGroups.some(groupId => userGroups.includes(groupId));
           }
           return false;
         });
+        console.log(`✅ After group filtering: ${groupFiltered.length} posts`);
+        return groupFiltered;
       }
       
       // If no user groups provided, only return public posts
-      return allPosts.filter(post => post.visibility === 'public');
+      const publicOnly = filteredPosts.filter(post => post.visibility === 'public');
+      console.log(`✅ Public only (no user groups): ${publicOnly.length} posts`);
+      return publicOnly;
     } catch (error) {
       console.error('Error getting public jobs board posts:', error);
       throw error;
