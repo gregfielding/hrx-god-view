@@ -41,7 +41,7 @@ const UserProfilePage = () => {
     isOwnProfile: user?.uid === uid
   });
   
-  const [tabIndex, setTabIndex] = useState(0);
+  const [tabValue, setTabValue] = useState<string>('Overview');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [preferredName, setPreferredName] = useState<string>('');
@@ -362,38 +362,28 @@ const UserProfilePage = () => {
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     if (tabParam === 'licenses') {
-      const idx = availableTabs.findIndex(label => label === 'Licenses & Certs');
-      if (idx >= 0) setTabIndex(idx);
+      const hasLicenses = availableTabs.includes('Licenses & Certs');
+      if (hasLicenses) setTabValue('Licenses & Certs');
     }
   }, [searchParams, availableTabs]);
 
-  const handleTabChange = (_: React.SyntheticEvent, newIndex: number) => {
-    setTabIndex(newIndex);
-    // Determine current route to preserve it
+  const handleTabChange = (_: React.SyntheticEvent, newValue: string) => {
+    // Only change local state; do not navigate to a different route which
+    // causes a remount and resets the tab for worker (level 2) users.
+    setTabValue(newValue);
+
+    // Keep the current pathname exactly as-is and only update the search param
+    // when Licenses & Certs is selected, so deep links still work.
+    const selectedLabel = newValue;
     const pathname = window.location.pathname;
-    const isRecruiterRoute = pathname.includes('/recruiter/users/');
-    const isWorkforceRoute = pathname.includes('/workforce/users/');
-    
-    // Update URL with tab parameter if it's the licenses tab
-    const selectedLabel = availableTabs[newIndex];
+    const params = new URLSearchParams(window.location.search);
     if (selectedLabel === 'Licenses & Certs') {
-      if (isRecruiterRoute) {
-        navigate(`/recruiter/users/${uid}?tab=licenses`, { replace: true });
-      } else if (isWorkforceRoute) {
-        navigate(`/workforce/users/${uid}?tab=licenses`, { replace: true });
-      } else {
-        navigate(`/profile?tab=licenses`, { replace: true });
-      }
+      params.set('tab', 'licenses');
     } else {
-      // Preserve current route for other tabs
-      if (isRecruiterRoute) {
-        navigate(`/recruiter/users/${uid}`, { replace: true });
-      } else if (isWorkforceRoute) {
-        navigate(`/workforce/users/${uid}`, { replace: true });
-      } else {
-        navigate('/profile', { replace: true });
-      }
+      params.delete('tab');
     }
+    const search = params.toString();
+    navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
   };
 
   const handleSkillsUpdate = async (updated: any) => {
@@ -436,11 +426,11 @@ const UserProfilePage = () => {
     );
   }
 
-  const currentLabel = availableTabs[tabIndex];
+  const currentLabel = tabValue;
   
   // If current tab is not available, reset to first available tab
-  if (currentLabel === undefined && availableTabs.length > 0) {
-    setTabIndex(0);
+  if ((!currentLabel || !availableTabs.includes(currentLabel)) && availableTabs.length > 0) {
+    setTabValue(availableTabs[0]);
   }
 
   // Create breadcrumb path based on current route
@@ -522,7 +512,7 @@ const UserProfilePage = () => {
 
         <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
           <Tabs
-            value={tabIndex}
+            value={tabValue}
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"
@@ -531,16 +521,15 @@ const UserProfilePage = () => {
             aria-label="user profile tabs"
           >
             {availableTabs.map((label, i) => (
-              <Tab key={i} label={label} />
+              <Tab key={i} label={label} value={label} />
             ))}
           </Tabs>
         </Paper>
 
         <Box sx={{ mt: 2 }}>
           {(() => {
-            const labels = getAvailableTabs();
-            const label = labels[tabIndex];
-            if (!label) return null;
+            const label = currentLabel;
+            if (!label || !availableTabs.includes(label)) return null;
             switch (label) {
               case 'Overview':
                 return <ProfileOverview uid={uid} />;
