@@ -181,89 +181,92 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
 
   useEffect(() => {
     const fetchApplicants = async () => {
-      if (!tenantId || connectedJobPosts.length === 0) {
-        setLoading(false);
-        return;
-      }
-
       try {
-        console.log('🔍 Fetching applicants for connected job posts:', connectedJobPosts.map(p => p.id));
+        if (!tenantId) {
+          setApplicants([]);
+          setLoading(false);
+          return;
+        }
+        setLoading(true);
 
-        // Get all job post IDs
-        const jobPostIds = connectedJobPosts.map(post => post.id).filter(Boolean);
-        
-        if (jobPostIds.length === 0) {
+        // Build list of connected job post IDs (if any)
+        const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
+        console.log('🔍 ApplicantsTable: connected job posts', jobPostIds);
+
+        // Source of truth: tenant applications collection
+        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        // Prefer querying by jobOrderId (covers cases where job posts change)
+        const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
+        const appsByOrderSnap = await getDocs(appsByOrderQ);
+
+        // If no results via jobOrderId, fall back to jobId in connected posts
+        let appDocs = appsByOrderSnap.docs;
+        if (appDocs.length === 0 && jobPostIds.length > 0) {
+          // Firestore 'in' supports up to 10 values; slice if needed
+          const slice = jobPostIds.slice(0, 10);
+          const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
+          const appsByPostSnap = await getDocs(appsByPostQ);
+          appDocs = appsByPostSnap.docs;
+        }
+
+        if (appDocs.length === 0) {
+          console.log('🔍 ApplicantsTable: no application documents found for this job order/post(s)');
           setApplicants([]);
           setLoading(false);
           return;
         }
 
-        // Query users collection for applicants
-        // We need to check if applicationData contains any of our job post IDs
+        // Gather unique userIds and fetch corresponding user docs
+        const applicationItems = appDocs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        const userIds = Array.from(new Set(applicationItems.map(a => a.userId).filter(Boolean)));
+
         const usersRef = collection(db, 'users');
-        const usersSnapshot = await getDocs(usersRef);
-        
-        const applicantsData: Applicant[] = [];
-        
-        usersSnapshot.docs.forEach(doc => {
-          const userData = doc.data();
-          
-        // Check if this user has applied to any of our connected job posts OR to this job order directly
-        if (userData.applicationData) {
-          const applicationEntries = Object.entries(userData.applicationData);
-          
-          for (const [applicationId, application] of applicationEntries) {
-            const appData = application as any;
-            
-            // Check if this application is for one of our connected job posts OR for this job order
-            const matchesJobPost = appData.jobId && jobPostIds.includes(appData.jobId);
-            const matchesJobOrder = appData.jobOrderId === jobOrderId;
-            
-            if (matchesJobPost || matchesJobOrder) {
-              // Calculate Profile Score (instant, free)
-              const profileScore = calculateProfileScore(userData);
-              
-              // Get cached Fit Score from application data (if exists)
-              const fitScore = appData.scores?.fitScore ?? null;
-              
-              applicantsData.push({
-                uid: doc.id,
-                displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
-                firstName: userData.firstName || '',
-                lastName: userData.lastName || '',
-                email: userData.email || '',
-                phone: userData.phone || userData.phoneE164 || '',
-                avatar: userData.avatar,
-                applicationData: appData,
-                city: userData.city || userData.addressInfo?.city || '',
-                state: userData.state || userData.addressInfo?.state || '',
-                workEligibility: userData.workEligibility || false,
-                phoneVerified: userData.phoneVerified || false,
-                appliedAt: appData.appliedAt,
-                applicationStatus: appData.status || 'submitted',
-                profileScore,
-                fitScore,
-                // Shift selection (for Gig jobs)
-                selectedShifts: appData.selectedShifts || [],
-                shiftAssignments: appData.shiftAssignments || {}
-              });
-              break; // Only add each user once, even if they applied to multiple connected posts
-            }
-          }
-        }
+        const usersSnap = await getDocs(usersRef);
+        const userMap = new Map<string, any>();
+        usersSnap.docs.forEach(u => {
+          if (userIds.includes(u.id)) userMap.set(u.id, u.data());
         });
 
-        // Sort by application date (most recent first)
+        // Build applicant rows
+        const applicantsData: Applicant[] = applicationItems.map(app => {
+          const userData = userMap.get(app.userId) || {};
+          const profileScore = calculateProfileScore(userData);
+          const fitScore = app.scores?.fitScore ?? null;
+
+          return {
+            uid: app.userId,
+            displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
+            firstName: userData.firstName || '',
+            lastName: userData.lastName || '',
+            email: userData.email || '',
+            phone: userData.phone || userData.phoneE164 || '',
+            avatar: userData.avatar,
+            applicationData: app, // keep the full application object for actions
+            city: userData.city || userData.addressInfo?.city || '',
+            state: userData.state || userData.addressInfo?.state || '',
+            workEligibility: userData.workEligibility || false,
+            phoneVerified: userData.phoneVerified || false,
+            appliedAt: app.appliedAt,
+            applicationStatus: app.status || 'submitted',
+            profileScore,
+            fitScore,
+            selectedShifts: app.selectedShifts || [],
+            shiftAssignments: app.shiftAssignments || {},
+          };
+        });
+
+        // Sort newest first
         applicantsData.sort((a, b) => {
           const dateA = a.appliedAt?.toDate ? a.appliedAt.toDate() : new Date(0);
           const dateB = b.appliedAt?.toDate ? b.appliedAt.toDate() : new Date(0);
           return dateB.getTime() - dateA.getTime();
         });
 
-        console.log('🔍 Found applicants:', applicantsData.length);
+        console.log('🔍 ApplicantsTable: found', applicantsData.length, 'applicant(s)');
         setApplicants(applicantsData);
       } catch (error) {
         console.error('Error fetching applicants:', error);
+        setApplicants([]);
       } finally {
         setLoading(false);
       }
