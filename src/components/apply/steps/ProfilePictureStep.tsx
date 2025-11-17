@@ -102,6 +102,11 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
       <Typography variant="body2" color="text.secondary" sx={{ mb: isMobile ? 2 : 3 }}>
         Add a professional profile picture to help recruiters recognize you.
       </Typography>
+      {!value.profilePicture && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          A photo is required to continue. If you already have an avatar on your profile, it will appear here automatically.
+        </Alert>
+      )}
 
       {/* Current Profile Picture */}
       {value.profilePicture && (

@@ -1081,6 +1081,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     formData?.personal?.zip?.trim()
   );
 
+  // Require a photo on the Profile Picture step unless one already exists
+  const hasProfilePicture = !!(
+    (formData?.profilePicture?.profilePicture && String(formData.profilePicture.profilePicture).trim()) ||
+    (userProfile?.avatar && String(userProfile.avatar).trim())
+  );
+
   // Debug logging for form validation
   if (activeStep === 0) {
     console.log('🔍 Personal Info Validation Debug:', {
@@ -1230,6 +1236,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 )) ||
                 (activeStep === 0 && !personalValid) ||
                 (activeStep === 1 && formData?.eligibility?.workAuthorized !== true) ||
+                (activeStep === 2 && !hasProfilePicture) ||
                 (activeStep === 4 && posting?.showExperience === true && !formData?.qualifications?.experienceSummary) ||
                 saving
               }
