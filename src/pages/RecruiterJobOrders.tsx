@@ -204,7 +204,31 @@ const RecruiterJobOrders: React.FC = () => {
             console.log('🔍 RecruiterJobOrders: No worksiteId or worksiteName found in job order data');
           }
           
-          // TODO: Fetch recruiter names
+          // Fetch recruiter names from assignedRecruiters array
+          let recruiterName = 'Unassigned';
+          const assignedRecruiters = (data as any).assignedRecruiters || [];
+          if (Array.isArray(assignedRecruiters) && assignedRecruiters.length > 0) {
+            try {
+              // Fetch the first recruiter's name
+              const recruiterId = assignedRecruiters[0];
+              const recruiterRef = doc(db, 'users', recruiterId);
+              const recruiterSnap = await getDoc(recruiterRef);
+              if (recruiterSnap.exists()) {
+                const recruiterData = recruiterSnap.data();
+                recruiterName = `${recruiterData.firstName || ''} ${recruiterData.lastName || ''}`.trim() || recruiterData.displayName || recruiterId;
+                // If there are multiple recruiters, append count
+                if (assignedRecruiters.length > 1) {
+                  recruiterName += ` (+${assignedRecruiters.length - 1})`;
+                }
+              }
+            } catch (error) {
+              console.warn('Failed to fetch recruiter name:', error);
+              recruiterName = assignedRecruiters.length > 1 
+                ? `${assignedRecruiters.length} recruiters`
+                : 'Unassigned';
+            }
+          }
+          
           return {
             ...data,
             id: jobOrderDoc.id,
@@ -212,7 +236,7 @@ const RecruiterJobOrders: React.FC = () => {
             locationName,
             worksiteCity,
             jobTitle: derivedJobTitle,
-            recruiterName: data.recruiterId // TODO: Fetch actual recruiter name
+            recruiterName
           };
         })
       );
@@ -657,9 +681,7 @@ const RecruiterJobOrders: React.FC = () => {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                         <Typography variant="body2">
-                          {jobOrder.deal?.associations?.recruiter?.[0]?.snapshot?.displayName || 
-                           jobOrder.deal?.associations?.recruiter?.[0]?.snapshot?.name || 
-                           'Unassigned'}
+                          {jobOrder.recruiterName || 'Unassigned'}
                         </Typography>
                       </Box>
                     </TableCell>

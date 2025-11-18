@@ -18,6 +18,7 @@ import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 
 import { storage, db } from '../../../firebase'; // adjust path
 import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
+import { formatPhoneNumber } from '../../../utils/formatPhone';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 
@@ -33,6 +34,7 @@ interface UserProfileHeaderProps {
   jobTitle?: string;
   phone?: string;
   email?: string;
+  createdAt?: any;
   city?: string;
   state?: string;
   workStatus?: string;
@@ -64,6 +66,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   jobTitle,
   phone,
   email,
+  createdAt,
   city,
   state,
   workStatus,
@@ -235,6 +238,29 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       default:
         return { bgcolor: 'grey.100', color: 'text.primary' };
     }
+  };
+
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'N/A';
+    let date: Date;
+    if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'number') {
+      date = new Date(timestamp);
+    } else if (timestamp?.toDate) {
+      date = timestamp.toDate();
+    } else if (timestamp?._seconds) {
+      date = new Date(timestamp._seconds * 1000);
+    } else {
+      return 'N/A';
+    }
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   };
 
   return (
@@ -425,9 +451,16 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               {phone && (
                 <Stack direction="row" spacing={1} alignItems="center">
                   <PhoneOutlinedIcon fontSize="small" color="primary" />
-                  <Link href={`tel:${phone}`} underline="hover" color="inherit">
-                    <Typography variant="body2">{phone}</Typography>
+                  <Link href={`tel:${phone.replace(/\D/g, '')}`} underline="hover" color="inherit">
+                    <Typography variant="body2">{formatPhoneNumber(phone)}</Typography>
                   </Link>
+                </Stack>
+              )}
+              {createdAt && (
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Joined: {formatDate(createdAt)}
+                  </Typography>
                 </Stack>
               )}
             </Stack>

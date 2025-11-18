@@ -61,6 +61,7 @@ import { Autocomplete } from '@react-google-maps/api';
 import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { geocodeAddress } from '../../utils/geocodeAddress';
+import { formatPhoneNumber } from '../../utils/formatPhone';
 import IndustrySelector from '../../components/IndustrySelector';
 
 interface Contact {
@@ -696,7 +697,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <PhoneIcon fontSize="small" color="action" />
-                        <Typography variant="body2">{contact.phone || '-'}</Typography>
+                        <Typography variant="body2">{contact.phone ? formatPhoneNumber(contact.phone) : '-'}</Typography>
                       </Box>
                     </TableCell>
                     <TableCell>

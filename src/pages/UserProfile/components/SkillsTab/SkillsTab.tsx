@@ -236,6 +236,29 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Live sync languages from Firestore onSnapshot (real-time updates)
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    const userRef = doc(db, 'users', currentUser.uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      const data = snap.data() as any;
+      const dbLanguages = Array.isArray(data?.languages) ? data.languages : [];
+      if (dbLanguages.length > 0) {
+        setLanguages(normalizeLanguages(dbLanguages));
+      }
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Also sync languages when user prop changes (for admin viewing other users)
+  useEffect(() => {
+    if (user?.languages) {
+      setLanguages(normalizeLanguages(user.languages));
+    }
+  }, [user?.languages]);
   // Removed inline custom skill input; users add via main Autocomplete
   // Removed skill level selection per design request
 
@@ -257,12 +280,34 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
   }>>(user.certifications || []);
   const [certInput, setCertInput] = useState({ name: '', issuer: '', dateObtained: '', expiryDate: '', credentialId: '' });
 
+  // Helper to normalize languages from Firestore (handles both string[] and object[] formats)
+  const normalizeLanguages = (langs: any[]): Array<{
+    language: string;
+    proficiency: string;
+    isNative: boolean;
+  }> => {
+    if (!Array.isArray(langs)) return [];
+    return langs.map((lang) => {
+      if (typeof lang === 'string') {
+        return { language: lang, proficiency: 'Conversational', isNative: false };
+      }
+      if (lang && typeof lang === 'object') {
+        return {
+          language: lang.language || String(lang),
+          proficiency: lang.proficiency || 'Conversational',
+          isNative: lang.isNative || false,
+        };
+      }
+      return { language: String(lang), proficiency: 'Conversational', isNative: false };
+    }).filter(l => l.language);
+  };
+
   // Languages
   const [languages, setLanguages] = useState<Array<{
     language: string;
     proficiency: string;
     isNative: boolean;
-  }>>(user.languages || []);
+  }>>(normalizeLanguages(user.languages || []));
   const [langInput, setLangInput] = useState({ language: '', proficiency: 'Conversational', isNative: false });
 
   // References & Recommendations

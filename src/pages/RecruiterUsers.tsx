@@ -37,6 +37,7 @@ import { useFavorites } from '../hooks/useFavorites';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
+import { formatPhoneNumber } from '../utils/formatPhone';
 
 type SecurityLevel =
   | '0'
@@ -471,7 +472,7 @@ const RecruiterUsers: React.FC = () => {
       </Box>
 
       <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
-        <TableContainer>
+        <TableContainer sx={{ overflowX: 'auto' }}>
           <Table size="small">
             <TableHead>
               <TableRow>
@@ -538,6 +539,11 @@ const RecruiterUsers: React.FC = () => {
                         <Typography variant="caption" color="text.secondary">
                           #{user.id.slice(-6)}
                         </Typography>
+                        {user.createdAt && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                            {formatDate(user.createdAt)}
+                          </Typography>
+                        )}
                       </Box>
                     </Box>
                   </TableCell>
@@ -553,7 +559,7 @@ const RecruiterUsers: React.FC = () => {
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                           <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                            {user.phone}
+                            {formatPhoneNumber(user.phone)}
                           </Typography>
                         </Box>
                       )}

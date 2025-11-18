@@ -79,6 +79,7 @@ const UserProfilePage = () => {
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
+  const [createdAt, setCreatedAt] = useState<any>(null);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -327,6 +328,9 @@ const UserProfilePage = () => {
           // Calculate profile score
           const score = calculateProfileScore(data);
           setProfileScore(score);
+          
+          // Set createdAt
+          setCreatedAt(data.createdAt || null);
         }
       }
     };
@@ -508,6 +512,7 @@ const UserProfilePage = () => {
           jobTitle={jobTitle}
           phone={phone}
           email={email}
+          createdAt={createdAt}
           city={city}
           state={state}
           linkedinUrl={linkedinUrl}
