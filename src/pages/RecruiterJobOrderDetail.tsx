@@ -73,6 +73,7 @@ import {
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
@@ -710,6 +711,20 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
       
       // TODO: Log activity
       console.log('✅ Applicant added manually');
+
+      try {
+        const functions = getFunctions();
+        const enqueueApplicantScore = httpsCallable(functions as any, 'enqueueApplicantScore');
+        await enqueueApplicantScore({
+          userId: selectedUserId,
+          applicationId,
+          tenantId,
+          source: 'recruiter_manual_add'
+        });
+        console.log('🧠 Applicant score queued for manual add');
+      } catch (queueErr) {
+        console.warn('Failed to enqueue applicant score for manual add:', queueErr);
+      }
       
       // Refresh applicants list - re-fetch to get Firestore Timestamp
       const userDoc = await getDoc(userRef);

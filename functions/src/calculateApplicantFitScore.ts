@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
 
@@ -23,6 +23,21 @@ const db = admin.firestore();
 
 // Rate limiting storage
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+type ScoreOptions = {
+  force?: boolean;
+  tenantId?: string | null;
+  requestedBy?: string | null;
+  source?: string | null;
+};
+
+type ScoreResult = {
+  success: boolean;
+  reason?: string;
+  profileScore?: number;
+  fitScore?: number | null;
+  skipped?: boolean;
+};
 
 /**
  * Check if we're within rate limits for a tenant
@@ -213,210 +228,208 @@ Output JSON only: {"score": 0-100, "reasoning": "1 sentence max"}`;
   }
 }
 
-/**
- * Main trigger: Calculate scores when user document is updated
- * Only processes new/updated applications
- */
-export const calculateApplicantScores = onDocumentWritten(
-  'users/{userId}',
-  async (event) => {
-    const userId = event.params.userId;
-    const beforeData = event.data?.before?.data();
-    const afterData = event.data?.after?.data();
+async function processApplicationScore(
+  userId: string,
+  applicationId: string,
+  options: ScoreOptions = {}
+): Promise<ScoreResult> {
+  const userRef = db.collection('users').doc(userId);
+  const userDoc = await userRef.get();
 
-    // Skip if document was deleted
-    if (!afterData) {
-      console.log(`User ${userId} deleted, skipping`);
+  if (!userDoc.exists) {
+    return { success: false, reason: 'user_not_found' };
+  }
+
+  const userData = userDoc.data() as any;
+  const applicationData = userData.applicationData?.[applicationId];
+
+  if (!applicationData) {
+    return { success: false, reason: 'application_not_found' };
+  }
+
+  const profileScore = calculateProfileScore(userData);
+  const profileUpdatePayload: Record<string, any> = {
+    [`applicationData.${applicationId}.scores.profileScore`]: profileScore,
+    [`applicationData.${applicationId}.scores.profileScoreCalculatedAt`]: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const updateScores = async (payload: Record<string, any>) => {
+    await userRef.update(payload);
+  };
+
+  const tenantId =
+    applicationData.jobOrderId?.split('_')[0] ||
+    options.tenantId ||
+    userData.activeTenantId ||
+    userData.tenantId ||
+    null;
+
+  // Always persist the latest profile score snapshot
+  await updateScores(profileUpdatePayload);
+
+  if (profileScore < 40 && !options.force) {
+    return {
+      success: true,
+      reason: 'profile_score_below_threshold',
+      profileScore,
+      fitScore: null,
+      skipped: true,
+    };
+  }
+
+  const jobOrderId = applicationData.jobOrderId;
+  if (!jobOrderId) {
+    return { success: false, reason: 'missing_job_order_id', profileScore };
+  }
+
+  if (!tenantId) {
+    return { success: false, reason: 'missing_tenant_id', profileScore };
+  }
+
+  if (!(await checkRateLimit(tenantId))) {
+    return { success: false, reason: 'rate_limited', profileScore };
+  }
+
+  const jobOrderDoc = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('job_orders')
+    .doc(jobOrderId)
+    .get();
+
+  if (!jobOrderDoc.exists) {
+    return { success: false, reason: 'job_order_not_found', profileScore };
+  }
+
+  const jobOrder = jobOrderDoc.data();
+  const jobRequirementsHash = hashJobRequirements(jobOrder);
+
+  if (!options.force && isFitScoreCacheValid(applicationData, jobRequirementsHash)) {
+    return {
+      success: true,
+      reason: 'cache_valid',
+      profileScore,
+      fitScore: applicationData.scores?.fitScore ?? null,
+      skipped: true,
+    };
+  }
+
+  const { score: fitScore, reasoning } = await calculateFitScoreWithAI(userData, jobOrder);
+
+  const fitUpdatePayload: Record<string, any> = {
+    ...profileUpdatePayload,
+    [`applicationData.${applicationId}.scores.fitScore`]: fitScore,
+    [`applicationData.${applicationId}.scores.fitScoreCalculatedAt`]: admin.firestore.FieldValue.serverTimestamp(),
+    [`applicationData.${applicationId}.scores.fitScoreReasoning`]: reasoning,
+    [`applicationData.${applicationId}.scores.jobRequirementsHash`]: jobRequirementsHash,
+    [`applicationData.${applicationId}.scores.version`]: 'v1',
+  };
+
+  await updateScores(fitUpdatePayload);
+
+  return {
+    success: true,
+    profileScore,
+    fitScore,
+  };
+}
+
+export const processApplicantScoreQueue = onDocumentCreated(
+  'applicantScoreQueue/{queueId}',
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      console.warn('processApplicantScoreQueue: missing snapshot data');
       return null;
     }
 
-    // Early exit: Skip if only non-scoring fields changed (e.g., comfort flags, transport method, etc.)
-    // These fields don't affect applicant fit scores
-    const nonScoringFields = [
-      'comfortablePassDrug', 'passDrugExplanation',
-      'comfortablePassBackground', 'passBackgroundExplanation',
-      'comfortableEVerify', 'comfortableWithLanguages',
-      'comfortableWithPhysicalRequirements', 'comfortableWithUniformRequirements',
-      'comfortableWithCustomUniformRequirements', 'comfortableWithRequiredPpe',
-      'transportMethod', 'availableToStartDate', 'preferences.availabilityNotes',
-      'lastActiveAt', 'lastActiveRoute', 'lastVisibility', 'updatedAt'
-    ];
-    
-    // Check if ONLY non-scoring fields changed
-    if (beforeData) {
-      const allChangedFields = Object.keys(afterData).filter(key => {
-        return JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key]);
+    const queueRef = snapshot.ref;
+    const payload = snapshot.data() as any;
+    const userId = payload.userId;
+    const applicationId = payload.applicationId;
+    const force = payload.force === true;
+
+    if (!userId || !applicationId) {
+      await queueRef.update({
+        status: 'error',
+        errorMessage: 'Missing userId or applicationId',
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-      
-      const onlyNonScoringChanged = allChangedFields.every(field => {
-        // Check if field or any parent path is in nonScoringFields
-        return nonScoringFields.some(nonScoring => 
-          field === nonScoring || field.startsWith(nonScoring + '.')
-        );
-      });
-      
-      if (onlyNonScoringChanged && allChangedFields.length > 0) {
-        console.log(`User ${userId}: Only non-scoring fields changed, skipping score calculation`);
-        return null;
-      }
+      return null;
     }
 
-    // Check if applicationData changed OR if profile data changed (affects scores)
-    const beforeAppData = beforeData?.applicationData || {};
-    const afterAppData = afterData?.applicationData || {};
-    
-    const beforeKeys = Object.keys(beforeAppData);
-    const afterKeys = Object.keys(afterAppData);
-    
-    // Check if profile data changed (skills, work history, certifications, etc.)
-    const profileDataChanged = 
-      JSON.stringify(beforeData?.skills) !== JSON.stringify(afterData?.skills) ||
-      JSON.stringify(beforeData?.workHistory) !== JSON.stringify(afterData?.workHistory) ||
-      JSON.stringify(beforeData?.certifications) !== JSON.stringify(afterData?.certifications) ||
-      JSON.stringify(beforeData?.education) !== JSON.stringify(afterData?.education) ||
-      beforeData?.phoneVerified !== afterData?.phoneVerified ||
-      beforeData?.workEligibility !== afterData?.workEligibility;
-    
-    // Check if manual fit score trigger was fired
-    const manualTrigger = beforeData?._fitScoreTrigger !== afterData?._fitScoreTrigger;
-    
-    // Find new or updated applications
-    let newOrUpdatedApps = afterKeys.filter(appId => {
-      if (!beforeKeys.includes(appId)) return true; // New application
-      
-      // Check if status or job changed
-      const before = beforeAppData[appId];
-      const after = afterAppData[appId];
-      
-      return before.status !== after.status || 
-             before.jobOrderId !== after.jobOrderId;
+    await queueRef.update({
+      status: 'processing',
+      startedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // If profile data changed OR manual trigger, re-score ALL active applications
-    if ((profileDataChanged || manualTrigger) && newOrUpdatedApps.length === 0) {
-      if (manualTrigger) {
-        console.log(`Manual trigger for user ${userId}, re-scoring all applications`);
-      } else {
-        console.log(`Profile data changed for user ${userId}, re-scoring all applications`);
-      }
-      newOrUpdatedApps = afterKeys.filter(appId => {
-        const app = afterAppData[appId];
-        return app.status === 'submitted' || app.status === 'accepted';
+    try {
+      const result = await processApplicationScore(userId, applicationId, {
+        force,
+        tenantId: payload.tenantId || null,
+        requestedBy: payload.requestedBy || null,
+        source: payload.source || null,
       });
-    }
 
-    if (newOrUpdatedApps.length === 0) {
-      // No applications to process
-      return null;
-    }
+      const status = result.success
+        ? result.skipped
+          ? 'skipped'
+          : 'completed'
+        : result.reason === 'rate_limited'
+          ? 'rate_limited'
+          : 'error';
 
-    console.log(`Processing ${newOrUpdatedApps.length} applications for user ${userId}`);
-
-    // Calculate Profile Score (always, it's free)
-    const profileScore = calculateProfileScore(afterData);
-    
-    // Process each new/updated application
-    for (const applicationId of newOrUpdatedApps) {
-      const appData = afterAppData[applicationId];
-      
-      console.log(`Processing application ${applicationId}:`, {
-        status: appData?.status,
-        jobOrderId: appData?.jobOrderId,
-        hasStatus: !!appData?.status
+      await queueRef.update({
+        status,
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        profileScore: result.profileScore ?? null,
+        fitScore: result.fitScore ?? null,
+        resultReason: result.reason || null,
+        skipped: !!result.skipped,
       });
-      
-      // Skip malformed application entries (e.g., entries without proper structure)
-      if (!appData || typeof appData !== 'object') {
-        console.log(`Application ${applicationId} is malformed, skipping`);
-        continue;
-      }
-      
-      // Only process submitted or accepted applications
-      if (appData.status !== 'submitted' && appData.status !== 'accepted') {
-        console.log(`Application ${applicationId} has status ${appData.status}, skipping`);
-        continue;
-      }
-
-      // Only calculate Fit Score if profile is >= 40% complete
-      if (profileScore < 40) {
-        console.log(`Profile score ${profileScore} below threshold for ${userId}`);
-        
-        // Save Profile Score only
-        await db.collection('users').doc(userId).update({
-          [`applicationData.${applicationId}.scores.profileScore`]: profileScore,
-          [`applicationData.${applicationId}.scores.profileScoreCalculatedAt`]: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
-        continue;
-      }
-
-      // Get job order details
-      if (!appData.jobOrderId) {
-        console.log(`No jobOrderId for application ${applicationId}`);
-        continue;
-      }
-
-      const tenantId = appData.jobOrderId.split('_')[0] || afterData.activeTenantId;
-      if (!tenantId) {
-        console.log(`Cannot determine tenantId for application ${applicationId}`);
-        continue;
-      }
-
-      // Check rate limit
-      if (!await checkRateLimit(tenantId)) {
-        console.log(`Rate limit exceeded for tenant ${tenantId}, queueing for later`);
-        // TODO: Add to queue for batch processing
-        continue;
-      }
-
-      try {
-        const jobOrderDoc = await db
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('job_orders')
-          .doc(appData.jobOrderId)
-          .get();
-
-        if (!jobOrderDoc.exists) {
-          console.log(`Job order ${appData.jobOrderId} not found`);
-          continue;
-        }
-
-        const jobOrder = jobOrderDoc.data();
-        const jobRequirementsHash = hashJobRequirements(jobOrder);
-
-        // Check if cached Fit Score is still valid
-        if (isFitScoreCacheValid(appData, jobRequirementsHash)) {
-          console.log(`Using cached Fit Score for ${applicationId}`);
-          continue;
-        }
-
-        // Calculate Fit Score with AI
-        console.log(`Calculating Fit Score for ${applicationId} (Profile Score: ${profileScore})`);
-        const { score: fitScore, reasoning } = await calculateFitScoreWithAI(afterData, jobOrder);
-
-        // Save both scores
-        await db.collection('users').doc(userId).update({
-          [`applicationData.${applicationId}.scores`]: {
-            profileScore,
-            profileScoreCalculatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            fitScore,
-            fitScoreCalculatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            fitScoreReasoning: reasoning,
-            jobRequirementsHash,
-            version: 'v1'
-          }
-        });
-
-        console.log(`✅ Scores calculated for ${applicationId}: Profile=${profileScore}, Fit=${fitScore}`);
-      } catch (error) {
-        console.error(`Error processing application ${applicationId}:`, error);
-      }
+    } catch (error) {
+      console.error('processApplicantScoreQueue error:', error);
+      await queueRef.update({
+        status: 'error',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
     }
 
     return null;
   }
 );
+
+export const enqueueApplicantScore = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be authenticated');
+  }
+
+  const {
+    userId,
+    applicationId,
+    tenantId = null,
+    force = false,
+    source = 'unknown',
+  } = request.data || {};
+
+  if (!userId || !applicationId) {
+    throw new HttpsError('invalid-argument', 'userId and applicationId are required');
+  }
+
+  await db.collection('applicantScoreQueue').add({
+    userId,
+    applicationId,
+    tenantId,
+    source,
+    force: !!force,
+    requestedBy: request.auth.uid,
+    status: 'queued',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { success: true };
+});
 
 /**
  * Callable function to manually trigger scoring for a specific application
@@ -435,67 +448,18 @@ export const recalculateApplicantScore = onCall(async (request) => {
   }
 
   try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    
-    if (!userDoc.exists) {
-      throw new HttpsError('not-found', 'User not found');
-    }
-
-    const userData = userDoc.data()!;
-    const appData = userData.applicationData?.[applicationId];
-
-    if (!appData) {
-      throw new HttpsError('not-found', 'Application not found');
-    }
-
-    // Calculate Profile Score
-    const profileScore = calculateProfileScore(userData);
-
-    // Only calculate Fit Score if profile >= 40%
-    if (profileScore < 40) {
-      return {
-        success: true,
-        profileScore,
-        fitScore: null,
-        message: 'Profile score below threshold for fit scoring'
-      };
-    }
-
-    // Get job order
-    const tenantId = appData.jobOrderId?.split('_')[0] || userData.activeTenantId;
-    const jobOrderDoc = await db
-      .collection('tenants')
-      .doc(tenantId)
-      .collection('job_orders')
-      .doc(appData.jobOrderId)
-      .get();
-
-    if (!jobOrderDoc.exists) {
-      throw new HttpsError('not-found', 'Job order not found');
-    }
-
-    const jobOrder = jobOrderDoc.data()!;
-    const { score: fitScore, reasoning } = await calculateFitScoreWithAI(userData, jobOrder);
-    const jobRequirementsHash = hashJobRequirements(jobOrder);
-
-    // Save scores
-    await db.collection('users').doc(userId).update({
-      [`applicationData.${applicationId}.scores`]: {
-        profileScore,
-        profileScoreCalculatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        fitScore,
-        fitScoreCalculatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        fitScoreReasoning: reasoning,
-        jobRequirementsHash,
-        version: 'v1'
-      }
+    const result = await processApplicationScore(userId, applicationId, {
+      force: true,
+      requestedBy: request.auth.uid,
+      source: 'manual_recalculate',
     });
 
     return {
-      success: true,
-      profileScore,
-      fitScore,
-      reasoning
+      success: result.success,
+      profileScore: result.profileScore ?? null,
+      fitScore: result.fitScore ?? null,
+      reasoning: result.reason,
+      skipped: result.skipped ?? false,
     };
   } catch (error: any) {
     console.error('Error recalculating score:', error);

@@ -21,6 +21,7 @@ import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
 import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
+import { geocodeAddress } from '../../utils/geocodeAddress';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from '../../utils/gigShiftApplicationLimits';
 
 type WizardProps = {
@@ -433,6 +434,40 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const missing = computeMissing();
 
+  const ensurePersonalCoordinates = async (personalData: any) => {
+    if (!personalData) return personalData;
+    if (personalData.homeLat !== undefined && personalData.homeLng !== undefined) {
+      return personalData;
+    }
+    const street = personalData.street?.trim();
+    const city = personalData.city?.trim();
+    const state = personalData.state?.trim();
+    if (!street || !city || !state) {
+      return personalData;
+    }
+    try {
+      const coords = await geocodeAddress(
+        `${street}, ${city}, ${state} ${personalData.zip ? String(personalData.zip).trim() : ''}`.trim()
+      );
+      setFormData((prev: any) => ({
+        ...prev,
+        personal: {
+          ...(prev.personal || {}),
+          homeLat: coords.lat,
+          homeLng: coords.lng,
+        },
+      }));
+      return {
+        ...personalData,
+        homeLat: coords.lat,
+        homeLng: coords.lng,
+      };
+    } catch (error) {
+      console.warn('Failed to geocode address while ensuring coordinates:', error);
+      return personalData;
+    }
+  };
+
   const persist = async (partial: any) => {
     setSaving(true);
     try {
@@ -529,7 +564,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         const userRef = doc(db, 'users', effectiveUid);
         if (activeStep === 0) {
           // Personal Info → save name/email/phone/dob/address
-          const p = formData.personal || {};
+          const p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
           const update: any = { updatedAt: serverTimestamp() };
           if (p.firstName) update.firstName = String(p.firstName).trim();
           if (p.lastName) update.lastName = String(p.lastName).trim();
@@ -552,6 +587,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (p.city) addr.city = String(p.city).trim();
           if (p.state) addr.state = String(p.state).trim();
           if (p.zip) addr.zipCode = String(p.zip).trim();
+          if (p.homeLat !== undefined && p.homeLng !== undefined) {
+            addr.coordinates = {
+              lat: Number(p.homeLat),
+              lng: Number(p.homeLng),
+            };
+          }
           if (Object.keys(addr).length > 0) {
             update.address = addr;
             if (addr.city) update.city = addr.city;
@@ -568,6 +609,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             
             // Save coordinates for location-based job matching and candidate proximity searches
             if (p.homeLat !== undefined && p.homeLng !== undefined) {
+              update.homeLat = Number(p.homeLat);
+              update.homeLng = Number(p.homeLng);
               update['addressInfo.homeLat'] = Number(p.homeLat);
               update['addressInfo.homeLng'] = Number(p.homeLng);
             }
@@ -633,7 +676,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
         } else if (activeStep === 1) {
           // Address → save address data with coordinates
-          const p = formData.personal || {};
+          const p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
           const update: any = { updatedAt: serverTimestamp() };
           
           const addr: any = {};
@@ -642,6 +685,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (p.city) addr.city = String(p.city).trim();
           if (p.state) addr.state = String(p.state).trim();
           if (p.zip) addr.zipCode = String(p.zip).trim();
+          if (p.homeLat !== undefined && p.homeLng !== undefined) {
+            addr.coordinates = {
+              lat: Number(p.homeLat),
+              lng: Number(p.homeLng),
+            };
+          }
           if (Object.keys(addr).length > 0) {
             update.address = addr;
             if (addr.city) update.city = addr.city;
@@ -657,6 +706,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             
             // Save coordinates for location-based job matching
             if (p.homeLat !== undefined && p.homeLng !== undefined) {
+              update.homeLat = Number(p.homeLat);
+              update.homeLng = Number(p.homeLng);
               update['addressInfo.homeLat'] = Number(p.homeLat);
               update['addressInfo.homeLng'] = Number(p.homeLng);
             }
@@ -691,7 +742,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 const update: any = { updatedAt: serverTimestamp() };
                 if (Array.isArray(q.skills)) update.skills = q.skills;
                 if (Array.isArray(q.certifications)) update.certifications = q.certifications;
-                if (Array.isArray(q.languages)) update.languages = q.languages;
+                if (Array.isArray(q.languages)) update.languages = normalizeLanguageList(q.languages);
                 if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
               } else if (activeStep === 6) {
                 // Education → save education and certifications to profile
@@ -904,7 +955,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       // Merge selected profile fields into users/{uid}
       const userRef = doc(db, 'users', effectiveUid!);
-      const personal = formData.personal || {};
+      const personal = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
       
       // Debug logging for address data
       console.log('🔍 handleSubmit - formData.personal:', personal);
@@ -920,9 +971,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const eligibility = formData.eligibility || {};
       const profilePicture = formData.profilePicture || {};
       const quals = formData.qualifications || {};
-      const languages = Array.isArray(quals.languages)
-        ? quals.languages
-        : [];
+      const normalizedLanguages = normalizeLanguageList(quals.languages || []);
       const certifications = Array.isArray(quals.certifications)
         ? quals.certifications
         : [];
@@ -946,6 +995,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         if (personal.city) addr.city = String(personal.city).trim();
         if (personal.state) addr.state = String(personal.state).trim();
         if (personal.zip) addr.zipCode = String(personal.zip).trim();
+        if (personal.homeLat !== undefined && personal.homeLng !== undefined) {
+          addr.coordinates = {
+            lat: Number(personal.homeLat),
+            lng: Number(personal.homeLng),
+          };
+        }
         if (Object.keys(addr).length > 0) {
           profileUpdate.address = addr;
           if (addr.city) profileUpdate.city = addr.city;
@@ -965,6 +1020,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               homeLng: Number(personal.homeLng)
             } : {})
           };
+
+          if (personal.homeLat !== undefined && personal.homeLng !== undefined) {
+            profileUpdate.homeLat = Number(personal.homeLat);
+            profileUpdate.homeLng = Number(personal.homeLng);
+          }
           
           console.log('✅ Address data being saved:', {
             address: profileUpdate.address,
@@ -978,7 +1038,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         console.warn('⚠️ No address data found in personal object');
       }
       
-      if (languages.length) profileUpdate.languages = languages;
+      if (normalizedLanguages.length) profileUpdate.languages = normalizedLanguages;
       if (certifications.length) profileUpdate.certifications = certifications;
       if (skills.length) profileUpdate.skills = skills;
       
@@ -1158,6 +1218,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }, { merge: true });
             
             console.log('Successfully updated user document with application data');
+
+            try {
+              const functions = getFunctions();
+              const enqueueApplicantScore = httpsCallable(functions as any, 'enqueueApplicantScore');
+              await enqueueApplicantScore({
+                userId: effectiveUid,
+                applicationId,
+                tenantId,
+                source: 'wizard_submit'
+              });
+              console.log('🧠 Applicant score queued for processing');
+            } catch (queueErr) {
+              console.warn('Failed to enqueue applicant score:', queueErr);
+            }
           } catch (userUpdateError) {
             console.error('Failed to update user document with application data:', userUpdateError);
             // Don't throw here - we still want the application to be created
@@ -1377,6 +1451,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     formData?.personal?.homeLat !== undefined && // Coordinates must be present
     formData?.personal?.homeLng !== undefined // Coordinates must be present
   );
+
+  const normalizeLanguageList = (languages: any): string[] => {
+    if (!Array.isArray(languages)) return [];
+    return languages
+      .map((lang) => {
+        if (typeof lang === 'string') return lang.trim();
+        if (lang && typeof lang === 'object') {
+          const text = typeof lang.language === 'string' ? lang.language : '';
+          return text.trim();
+        }
+        return '';
+      })
+      .filter(Boolean);
+  };
 
   // Require a photo on the Profile Picture step unless one already exists
   const hasProfilePicture = !!(

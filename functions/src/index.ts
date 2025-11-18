@@ -10985,8 +10985,9 @@ export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';
 
 // Applicant AI Scoring System
-export { 
-  calculateApplicantScores,
+export {
+  enqueueApplicantScore,
+  processApplicantScoreQueue,
   recalculateApplicantScore
 } from './calculateApplicantFitScore';
 

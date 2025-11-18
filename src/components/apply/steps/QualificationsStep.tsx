@@ -21,11 +21,21 @@ type Props = {
   tenantId?: string;
   jobId?: string;
   jobPosting?: any;
+  profileUid?: string;
 };
 
-const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
+const QualificationsStep: React.FC<Props> = ({
+  value,
+  onChange,
+  context = 'application',
+  tenantId,
+  jobId,
+  jobPosting,
+  profileUid
+}) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const effectiveUid = profileUid || auth.currentUser?.uid || null;
   
   const job = jobPosting; // job-driven gating comes from parent (Wizard)
   // Use batched updates instead of immediate writes (imported at top)
@@ -68,20 +78,45 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     }
   }, [value?.experienceSummary]);
 
-  const [userLanguages, setUserLanguages] = React.useState<string[]>(value?.languages || []);
+  // Helper to normalize languages to strings
+  const normalizeLanguages = (languages: any[]): string[] => {
+    if (!Array.isArray(languages)) return [];
+    return languages.map((lang) => {
+      if (typeof lang === 'string') return lang;
+      if (lang && typeof lang === 'object') {
+        return lang.language || String(lang);
+      }
+      return String(lang);
+    }).filter(Boolean);
+  };
+
+  const queueUserUpdate = (data: Record<string, any>) => {
+    if (!effectiveUid) return;
+    debouncedUpdate(doc(db, 'users', effectiveUid), data);
+  };
+
+  const immediateUserUpdate = async (data: Record<string, any>) => {
+    if (!effectiveUid) return;
+    try {
+      await updateDoc(doc(db, 'users', effectiveUid), data);
+    } catch (error) {
+      console.error('Failed to update user doc:', error);
+    }
+  };
+
+  const [userLanguages, setUserLanguages] = React.useState<string[]>(normalizeLanguages(value?.languages || []));
   // Only adopt incoming prop value when it is defined to avoid clearing local edits
   React.useEffect(() => {
     if (Array.isArray(value?.languages)) {
-      setUserLanguages(value.languages);
+      setUserLanguages(normalizeLanguages(value.languages));
     }
   }, [value?.languages]);
 
   const [workRows, setWorkRows] = React.useState<Array<{ id: string; employer: string; title: string; startDate?: string; endDate?: string }>>(value?.workHistory || []);
   // Hydrate from Firestore directly to avoid draft state overwriting persisted rows
   React.useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    const ref = doc(db, 'users', uid);
+    if (!effectiveUid) return;
+    const ref = doc(db, 'users', effectiveUid);
     const unsub = onSnapshot(ref, (snap) => {
       const data = snap.data() as any;
       const rows = Array.isArray(data?.workHistory) ? data.workHistory : [];
@@ -94,15 +129,14 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
       });
     });
     return () => unsub();
-  }, []);
+  }, [effectiveUid]);
 
   const addWorkRow = () => {
     const row = { id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`, employer: '', title: '', startDate: '', endDate: '' };
     setWorkRows((prev) => {
       const next = [...prev, row];
       onChange({ ...value, workHistory: next });
-      const uid = auth.currentUser?.uid;
-      if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+      queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
       return next;
     });
   };
@@ -110,16 +144,14 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     const next = workRows.filter(r => r.id !== id);
     setWorkRows(next);
     onChange({ ...value, workHistory: next });
-    const uid = auth.currentUser?.uid;
-    if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+    queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
   };
 
   const updateRow = (id: string, field: string, v: string) => {
     setWorkRows((prev) => {
       const next = prev.map(r => r.id === id ? { ...r, [field]: v } : r);
       onChange({ ...value, workHistory: next });
-      const uid = auth.currentUser?.uid;
-      if (uid) debouncedUpdate(doc(db, 'users', uid), { workHistory: next, updatedAt: serverTimestamp() });
+      queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
       return next;
     });
   };
@@ -127,9 +159,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
   const saveExpSummary = async () => {
     // Persist both summary and latest rows to avoid losing in-progress rows on re-render
     onChange({ ...value, experienceSummary: expSummary, workHistory: workRows });
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-    try { await updateDoc(doc(db, 'users', uid), { experienceSummary: expSummary, workHistory: workRows, updatedAt: serverTimestamp() }); } catch {}
+    await immediateUserUpdate({ experienceSummary: expSummary, workHistory: workRows, updatedAt: serverTimestamp() });
   };
 
   // Helpers to convert between display MM/yyyy and input type=month (YYYY-MM)
@@ -160,15 +190,14 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     const run = async () => {
       if (context !== 'application') return;
       if (!showExperience) return;
-      const uid = auth.currentUser?.uid;
-      if (!uid) return;
+      if (!effectiveUid) return;
       if ((workRows || []).length > 0) return;
       // Avoid repeated autofills within this session
       if ((value && value._workHistoryPrefilled) === true) return;
       try {
         const q = query(
           collection(db, 'parsedResumes'),
-          where('userId', '==', uid),
+          where('userId', '==', effectiveUid),
           orderBy('uploadDate', 'desc'),
           limit(1)
         );
@@ -179,12 +208,12 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
         if (rows.length === 0) return;
         setWorkRows(rows);
         onChange({ ...value, workHistory: rows, _workHistoryPrefilled: true });
-        await updateDoc(doc(db, 'users', uid), { workHistory: rows, workHistoryAutoFilledAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        await immediateUserUpdate({ workHistory: rows, workHistoryAutoFilledAt: serverTimestamp(), updatedAt: serverTimestamp() });
       } catch {}
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context, showExperience]);
+  }, [context, showExperience, effectiveUid]);
 
   return (
     <Box>
@@ -262,8 +291,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
             value={value?.education || []}
             onChange={(education) => {
               onChange({ ...value, education });
-              const uid = auth.currentUser?.uid;
-              if (uid) debouncedUpdate(doc(db, 'users', uid), { education, updatedAt: serverTimestamp() });
+              queueUserUpdate({ education, updatedAt: serverTimestamp() });
             }}
           />
         </CardContent>
@@ -281,8 +309,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
             onChange={(workExperience) => {
               // Save to both field names for compatibility
               onChange({ ...value, workExperience, workHistory: workExperience });
-              const uid = auth.currentUser?.uid;
-              if (uid) debouncedUpdate(doc(db, 'users', uid), { workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
+              queueUserUpdate({ workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
             }}
             onetSkills={onetSkills as any}
             onetJobTitles={onetJobTitles as any}
@@ -324,25 +351,31 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
                   Selected languages
                 </Typography>
                 <Box display="flex" flexWrap="wrap" gap={1}>
-                  {userLanguages.map((lang) => (
-                    <Chip
-                      key={lang}
-                      label={lang}
-                      onDelete={() => {
-                        const newLanguages = userLanguages.filter(l => l !== lang);
-                        setUserLanguages(newLanguages);
-                        onChange({ ...value, languages: newLanguages });
-                        const uid = auth.currentUser?.uid;
-                        if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
-                      }}
-                      color="primary"
-                      variant="filled"
-                      icon={<CheckCircle fontSize="small" />}
-                      sx={{
-                        '& .MuiChip-icon': { color: 'inherit' },
-                      }}
-                    />
-                  ))}
+                  {userLanguages.map((lang) => {
+                    // Safety check: ensure we always have a string (should already be normalized)
+                    const langString = typeof lang === 'string' ? lang : String(lang);
+                    return (
+                      <Chip
+                        key={langString}
+                        label={langString}
+                        onDelete={() => {
+                          const newLanguages = userLanguages.filter(l => {
+                            const lString = typeof l === 'string' ? l : String(l);
+                            return lString !== langString;
+                          });
+                          setUserLanguages(newLanguages);
+                          onChange({ ...value, languages: newLanguages });
+                        queueUserUpdate({ languages: newLanguages, updatedAt: serverTimestamp() });
+                        }}
+                        color="primary"
+                        variant="filled"
+                        icon={<CheckCircle fontSize="small" />}
+                        sx={{
+                          '& .MuiChip-icon': { color: 'inherit' },
+                        }}
+                      />
+                    );
+                  })}
                 </Box>
               </Grid>
               
@@ -363,8 +396,7 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
                         const newLanguages = [...userLanguages, lang];
                         setUserLanguages(newLanguages);
                         onChange({ ...value, languages: newLanguages });
-                        const uid = auth.currentUser?.uid;
-                        if (uid) debouncedUpdate(doc(db, 'users', uid), { languages: newLanguages, updatedAt: serverTimestamp() });
+                        queueUserUpdate({ languages: newLanguages, updatedAt: serverTimestamp() });
                       }}
                       size="small"
                       variant="outlined"

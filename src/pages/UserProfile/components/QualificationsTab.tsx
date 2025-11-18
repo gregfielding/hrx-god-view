@@ -63,6 +63,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
         value={qualificationsData} 
         onChange={handleChange}
         context="profile"
+        profileUid={uid}
       />
     </Box>
   );

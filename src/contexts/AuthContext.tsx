@@ -183,6 +183,41 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const lastActivitySentAtRef = useRef<number>(0);
   const isCreatingUserProfileRef = useRef<boolean>(false);
 
+  const LOGIN_PING_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+  const shouldReportLoginPing = (uid: string) => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const key = `hrx:lastLoginPing:${uid}`;
+      const now = Date.now();
+      const lastPing = Number(localStorage.getItem(key) || '0');
+      const dueToAge = now - lastPing > LOGIN_PING_INTERVAL_MS;
+
+      const monthKey = new Date().toISOString().slice(0, 7); // YYYY-MM
+      let hash = 0;
+      const sampleKey = `${uid}:${monthKey}`;
+      for (let i = 0; i < sampleKey.length; i++) {
+        hash = (hash * 33 + sampleKey.charCodeAt(i)) % 1000;
+      }
+      const sampleHit = hash % 100 === 0; // Roughly 1% sample per month
+
+      return dueToAge || sampleHit;
+    } catch (error) {
+      console.warn('Login ping sampling failed:', error);
+      return false;
+    }
+  };
+
+  const recordLoginPing = (uid: string) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `hrx:lastLoginPing:${uid}`;
+      localStorage.setItem(key, Date.now().toString());
+    } catch {
+      // Ignore storage errors (private browsing, etc.)
+    }
+  };
+
   const setCreatingUserProfile = (creating: boolean) => {
     isCreatingUserProfileRef.current = creating;
   };
@@ -421,27 +456,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (user) {
         // Report login once per session to update lastLoginAt and loginCount
         if (!hasReportedLoginRef.current) {
-          try {
-            const functions = getFunctions();
-            const updateUserLoginInfo = httpsCallable(functions as any, 'updateUserLoginInfo');
-            const onC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
-            await updateUserLoginInfo({
-              userId: user.uid,
-              loginData: {
-                deviceInfo: {
-                  userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-                  platform: typeof navigator !== 'undefined' ? (navigator as any).platform : 'unknown',
-                  language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
-                },
-              },
-              // Context for first-time creation on public jobs board
-              initializeIfMissing: true,
-              source: onC1Route ? 'public_jobs_board' : undefined,
-              tenantId: onC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : undefined,
-            });
+          const shouldReportLogin = shouldReportLoginPing(user.uid);
+          if (!shouldReportLogin) {
             hasReportedLoginRef.current = true;
-          } catch (err) {
-            console.warn('Failed to update user login info:', err);
+          } else {
+            try {
+              const functions = getFunctions();
+              const updateUserLoginInfo = httpsCallable(functions as any, 'updateUserLoginInfo');
+              const onC1Route = typeof window !== 'undefined' && window.location.pathname.startsWith('/c1/');
+              await updateUserLoginInfo({
+                userId: user.uid,
+                loginData: {
+                  deviceInfo: {
+                    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+                    platform: typeof navigator !== 'undefined' ? (navigator as any).platform : 'unknown',
+                    language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
+                  },
+                },
+                // Context for first-time creation on public jobs board
+                initializeIfMissing: true,
+                source: onC1Route ? 'public_jobs_board' : undefined,
+                tenantId: onC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : undefined,
+              });
+              recordLoginPing(user.uid);
+              hasReportedLoginRef.current = true;
+            } catch (err) {
+              hasReportedLoginRef.current = true;
+              console.warn('Failed to update user login info:', err);
+            }
           }
         }
 
