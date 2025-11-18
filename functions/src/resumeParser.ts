@@ -1601,9 +1601,12 @@ async function updateUserProfile(userId: string, parsedData: any) {
       try {
         const coordinates = await geocodeAddress(parsedData.contact.address);
         if (coordinates) {
-          updates['addressInfo.streetAddress'] = parsedData.contact.address;
-          updates['addressInfo.homeLat'] = coordinates.lat;
-          updates['addressInfo.homeLng'] = coordinates.lng;
+          updates.addressInfo = {
+            ...(updates.addressInfo || {}),
+            streetAddress: parsedData.contact.address,
+            homeLat: coordinates.lat,
+            homeLng: coordinates.lng,
+          };
         }
       } catch (error) {
         console.warn('Failed to geocode address from resume:', error);

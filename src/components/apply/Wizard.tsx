@@ -601,18 +601,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
             // Keep Profile page Home Address (AddressFormFields) in sync
             // That component reads/writes users/{uid}.addressInfo.{streetAddress,unitNumber,city,state,zip}
-            if (p.street) update['addressInfo.streetAddress'] = String(p.street).trim();
-            if (p.unit) update['addressInfo.unitNumber'] = String(p.unit).trim();
-            if (p.city) update['addressInfo.city'] = String(p.city).trim();
-            if (p.state) update['addressInfo.state'] = String(p.state).trim();
-            if (p.zip) update['addressInfo.zip'] = String(p.zip).trim();
+            const addressInfoUpdate: any = {};
+            if (p.street) addressInfoUpdate.streetAddress = String(p.street).trim();
+            if (p.unit) addressInfoUpdate.unitNumber = String(p.unit).trim();
+            if (p.city) addressInfoUpdate.city = String(p.city).trim();
+            if (p.state) addressInfoUpdate.state = String(p.state).trim();
+            if (p.zip) addressInfoUpdate.zip = String(p.zip).trim();
             
-            // Save coordinates for location-based job matching and candidate proximity searches
             if (p.homeLat !== undefined && p.homeLng !== undefined) {
               update.homeLat = Number(p.homeLat);
               update.homeLng = Number(p.homeLng);
-              update['addressInfo.homeLat'] = Number(p.homeLat);
-              update['addressInfo.homeLng'] = Number(p.homeLng);
+              addressInfoUpdate.homeLat = Number(p.homeLat);
+              addressInfoUpdate.homeLng = Number(p.homeLng);
+            }
+
+            if (Object.keys(addressInfoUpdate).length > 0) {
+              update.addressInfo = {
+                ...(update.addressInfo || {}),
+                ...addressInfoUpdate
+              };
             }
           }
           
@@ -698,18 +705,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             if (addr.zipCode) update.zipCode = addr.zipCode;
 
             // Keep Profile page Home Address (AddressFormFields) in sync
-            if (p.street) update['addressInfo.streetAddress'] = String(p.street).trim();
-            if (p.unit) update['addressInfo.unitNumber'] = String(p.unit).trim();
-            if (p.city) update['addressInfo.city'] = String(p.city).trim();
-            if (p.state) update['addressInfo.state'] = String(p.state).trim();
-            if (p.zip) update['addressInfo.zip'] = String(p.zip).trim();
+            const addressInfoUpdate: any = {};
+            if (p.street) addressInfoUpdate.streetAddress = String(p.street).trim();
+            if (p.unit) addressInfoUpdate.unitNumber = String(p.unit).trim();
+            if (p.city) addressInfoUpdate.city = String(p.city).trim();
+            if (p.state) addressInfoUpdate.state = String(p.state).trim();
+            if (p.zip) addressInfoUpdate.zip = String(p.zip).trim();
             
-            // Save coordinates for location-based job matching
             if (p.homeLat !== undefined && p.homeLng !== undefined) {
               update.homeLat = Number(p.homeLat);
               update.homeLng = Number(p.homeLng);
-              update['addressInfo.homeLat'] = Number(p.homeLat);
-              update['addressInfo.homeLng'] = Number(p.homeLng);
+              addressInfoUpdate.homeLat = Number(p.homeLat);
+              addressInfoUpdate.homeLng = Number(p.homeLng);
+            }
+
+            if (Object.keys(addressInfoUpdate).length > 0) {
+              update.addressInfo = {
+                ...(update.addressInfo || {}),
+                ...addressInfoUpdate
+              };
             }
           }
           
