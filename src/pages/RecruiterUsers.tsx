@@ -82,7 +82,7 @@ const RecruiterUsers: React.FC = () => {
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore'>('recentlyUpdated');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>('accountCreated');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
@@ -304,35 +304,13 @@ const RecruiterUsers: React.FC = () => {
       .sort((a, b) => {
         switch (sortBy) {
           case 'recentlyUpdated': {
-            const aTime =
-              a.updatedAt instanceof Date
-                ? a.updatedAt.getTime()
-                : typeof a.updatedAt === 'number'
-                ? a.updatedAt
-                : 0;
-            const bTime =
-              b.updatedAt instanceof Date
-                ? b.updatedAt.getTime()
-                : typeof b.updatedAt === 'number'
-                ? b.updatedAt
-                : 0;
-            return bTime - aTime;
+            return getUpdatedMillis(b) - getUpdatedMillis(a);
           }
           case 'lastLogin': {
-            const aTime =
-              a.lastLoginAt instanceof Date
-                ? a.lastLoginAt.getTime()
-                : typeof a.lastLoginAt === 'number'
-                ? a.lastLoginAt
-                : 0;
-            const bTime =
-              b.lastLoginAt instanceof Date
-                ? b.lastLoginAt.getTime()
-                : typeof b.lastLoginAt === 'number'
-                ? b.lastLoginAt
-                : 0;
-            return bTime - aTime;
+            return getLoginMillis(b) - getLoginMillis(a);
           }
+          case 'accountCreated':
+            return getCreatedMillis(b) - getCreatedMillis(a);
           case 'name':
             return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
           case 'aiScore': {
@@ -483,6 +461,7 @@ const RecruiterUsers: React.FC = () => {
             value={sortBy}
             onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
           >
+            <MenuItem value="accountCreated">Account Creation (Newest)</MenuItem>
             <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
             <MenuItem value="lastLogin">Last Login</MenuItem>
             <MenuItem value="aiScore">AI Score</MenuItem>
@@ -515,7 +494,7 @@ const RecruiterUsers: React.FC = () => {
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Skills
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200 }}>
                   Last Login
                 </TableCell>
               </TableRow>
@@ -637,7 +616,7 @@ const RecruiterUsers: React.FC = () => {
                       )}
                     </Box>
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ minWidth: 200 }}>
                     <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
                   </TableCell>
                 </TableRow>
@@ -655,6 +634,29 @@ const RecruiterUsers: React.FC = () => {
     </Box>
   );
 };
+
+const toMillis = (input: any): number => {
+  if (!input) return 0;
+  if (input instanceof Date) return input.getTime();
+  if (typeof input === 'number') return input;
+  if (typeof input === 'string') {
+    const parsed = Date.parse(input);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof input === 'object') {
+    if (typeof input.toDate === 'function') {
+      return input.toDate().getTime();
+    }
+    if (typeof input._seconds === 'number') {
+      return input._seconds * 1000;
+    }
+  }
+  return 0;
+};
+
+const getUpdatedMillis = (user: RecruiterUser) => toMillis(user.updatedAt) || toMillis(user.createdAt);
+const getLoginMillis = (user: RecruiterUser) => toMillis(user.lastLoginAt) || toMillis(user.createdAt);
+const getCreatedMillis = (user: RecruiterUser) => toMillis(user.createdAt);
 
 export default RecruiterUsers;
 
