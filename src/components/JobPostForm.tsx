@@ -17,7 +17,7 @@ import {
   Alert,
   Stack,
 } from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { useAuth } from '../contexts/AuthContext';
@@ -29,6 +29,7 @@ import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOption
 import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 export interface JobPostFormProps {
   initialData?: Partial<JobsBoardPost>;
@@ -36,6 +37,8 @@ export interface JobPostFormProps {
   onCancel: () => void;
   loading?: boolean;
   mode?: 'create' | 'edit';
+  hideJobOrderConnection?: boolean; // Hide the "Connect with Job Order" section when used from Job Order detail page
+  jobOrderData?: any; // Full job order data for AI generation
 }
 
 const JobPostForm: React.FC<JobPostFormProps> = ({
@@ -43,10 +46,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   onSave,
   onCancel,
   loading = false,
-  mode = 'create'
+  mode = 'create',
+  hideJobOrderConnection = false,
+  jobOrderData
 }) => {
   const { tenantId, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   const normalizeGroupIds = (value?: string | string[] | null): string[] => {
     if (Array.isArray(value)) {
@@ -108,6 +114,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     showPhysicalRequirements: false,
     uniformRequirements: [] as string[],
     showUniformRequirements: false,
+    customUniformRequirements: '',
+    showCustomUniformRequirements: false,
     requiredPpe: [] as string[],
     showRequiredPpe: false,
     shift: [] as string[],
@@ -194,6 +202,12 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
   useEffect(() => {
     if (initialData) {
+      console.log('🔍 JobPostForm - Processing initialData:', {
+        skills: initialData.skills,
+        uniformRequirements: initialData.uniformRequirements,
+        showSkills: initialData.showSkills,
+        showUniformRequirements: initialData.showUniformRequirements,
+      });
       // Extract worksiteAddress fields to top-level form fields
       const worksiteAddress = initialData.worksiteAddress || {} as any;
       
@@ -218,6 +232,32 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           zipCode: worksiteAddress.zipCode || '',
         },
         autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
+        // Ensure skills and other arrays are properly set
+        skills: Array.isArray(initialData.skills) ? initialData.skills : (initialData.skills ? [initialData.skills] : (prev.skills || [])),
+        showSkills: initialData.showSkills !== undefined ? initialData.showSkills : (Array.isArray(initialData.skills) && initialData.skills.length > 0),
+        // Ensure uniform requirements are properly set (handle both string and array formats)
+        uniformRequirements: (() => {
+          const uniform = initialData.uniformRequirements;
+          if (Array.isArray(uniform)) {
+            return uniform;
+          } else if (typeof uniform === 'string' && uniform) {
+            return [uniform];
+          }
+          return prev.uniformRequirements || [];
+        })(),
+        showUniformRequirements: initialData.showUniformRequirements !== undefined 
+          ? initialData.showUniformRequirements 
+          : (() => {
+            const uniform: any = initialData.uniformRequirements;
+            if (Array.isArray(uniform)) {
+              return uniform.length > 0;
+            } else if (typeof uniform === 'string') {
+              return uniform.length > 0;
+            }
+            return false;
+          })(),
+        customUniformRequirements: initialData.customUniformRequirements !== undefined ? initialData.customUniformRequirements : (prev.customUniformRequirements || ''),
+        showCustomUniformRequirements: initialData.showCustomUniformRequirements !== undefined ? initialData.showCustomUniformRequirements : (!!initialData.customUniformRequirements),
       }));
       // Set company/location if initial data has them
       if (initialData.companyId) {
@@ -272,6 +312,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         setSelectedLocationId(initialData.worksiteId);
       }
     }
+  }, [initialData, tenantId]);
+
+  // Separate useEffect for loading companies, job orders, and user groups (only on mount)
+  useEffect(() => {
     loadCompanies();
     loadJobOrders();
     loadUserGroups();
@@ -655,6 +699,86 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     return true;
   };
 
+  const handleGenerateDescription = async () => {
+    setGeneratingDescription(true);
+    setError(null);
+    
+    try {
+      // Prepare job order data for AI generation
+      // Use jobOrderData prop if available, otherwise extract from formData and initialData
+      const scoping = jobOrderData?.deal?.stageData?.scoping || {};
+      const compliance = scoping.compliance || {};
+      
+      const dataForAI = {
+        jobTitle: formData.jobTitle || jobOrderData?.jobTitle,
+        jobOrderName: formData.postTitle || jobOrderData?.jobOrderName,
+        jobDescriptionFromClient: jobOrderData?.jobDescriptionFromClient || '',
+        payRate: formData.payRate || jobOrderData?.payRate,
+        // Never send company/worksite names - only zip code
+        zipCode: formData.zipCode || jobOrderData?.worksiteAddress?.zipCode,
+        city: formData.city || jobOrderData?.worksiteAddress?.city,
+        state: formData.state || jobOrderData?.worksiteAddress?.state,
+        skills: formData.skills && formData.skills.length > 0 ? formData.skills : (scoping.skills || []),
+        uniformRequirements: formData.uniformRequirements && formData.uniformRequirements.length > 0 ? formData.uniformRequirements : (scoping.uniformRequirements || []),
+        customUniformRequirements: formData.customUniformRequirements || scoping.customUniformRequirements || jobOrderData?.customUniformRequirements || '',
+        experienceRequired: scoping.experience || compliance.experience || jobOrderData?.experienceRequired || '',
+        educationRequired: scoping.education || jobOrderData?.educationRequired || '',
+        languages: formData.languages && formData.languages.length > 0 ? formData.languages : (scoping.languages || []),
+        physicalRequirements: formData.physicalRequirements && formData.physicalRequirements.length > 0 ? formData.physicalRequirements : (scoping.physicalRequirements || []),
+        ppeRequirements: formData.requiredPpe && formData.requiredPpe.length > 0 ? formData.requiredPpe : (scoping.ppe || []),
+        backgroundCheckPackages: formData.backgroundCheckPackages && formData.backgroundCheckPackages.length > 0 ? formData.backgroundCheckPackages : (compliance.backgroundCheckPackages || []),
+        drugScreeningPanels: formData.drugScreeningPanels && formData.drugScreeningPanels.length > 0 ? formData.drugScreeningPanels : (compliance.drugScreeningPanels || []),
+        additionalScreenings: formData.additionalScreenings && formData.additionalScreenings.length > 0 ? formData.additionalScreenings : (compliance.additionalScreenings || []),
+        licensesCerts: formData.licensesCerts && formData.licensesCerts.length > 0 ? formData.licensesCerts : (scoping.licensesCerts || []),
+        eVerifyRequired: formData.eVerifyRequired || compliance.eVerify || jobOrderData?.eVerifyRequired || false,
+        shiftType: formData.shift && formData.shift.length > 0 ? formData.shift : (jobOrderData?.shiftType || []),
+        startDate: formData.startDate || '',
+        endDate: formData.endDate || '',
+        workersNeeded: formData.workersNeeded || jobOrderData?.workersNeeded || 1
+      };
+
+      // Pass toggle states so AI knows what to include/exclude
+      const toggleStates = {
+        showPayRate: formData.showPayRate,
+        showWorkersNeeded: formData.showWorkersNeeded,
+        showStart: formData.showStart,
+        showEnd: formData.showEnd,
+        showSkills: formData.showSkills,
+        showUniformRequirements: formData.showUniformRequirements,
+        showPhysicalRequirements: formData.showPhysicalRequirements,
+        showRequiredPpe: formData.showRequiredPpe,
+        showLicensesCerts: formData.showLicensesCerts,
+        showBackgroundChecks: formData.showBackgroundChecks,
+        showDrugScreening: formData.showDrugScreening,
+        showAdditionalScreenings: formData.showAdditionalScreenings,
+        showLanguages: formData.showLanguages,
+        showShift: formData.showShift,
+        showExperience: formData.showExperience,
+        showEducation: formData.showEducation
+      };
+
+      const functions = getFunctions(undefined, 'us-central1');
+      const generateFn = httpsCallable(functions, 'generateJobDescription');
+      
+      const result = await generateFn({ jobOrderData: dataForAI, toggleStates });
+      const response = result.data as any;
+      
+      if (response?.jobDescription || response?.description) {
+        setFormData({
+          ...formData,
+          jobDescription: response.jobDescription || response.description
+        });
+      } else {
+        setError('Failed to generate job description');
+      }
+    } catch (err: any) {
+      console.error('Error generating job description:', err);
+      setError(err.message || 'Failed to generate job description');
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setError(null);
 
@@ -807,62 +931,76 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Grid>
         </Box>
 
-        <Box sx={{ mt: 2 }}>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={8}>
-              <FormControl fullWidth>
-                <InputLabel>Connect with Job Order</InputLabel>
-                <Select
-                  value={formData.jobOrderId}
-                  label="Connect with Job Order"
-                  onChange={(e) => handleJobOrderChange(e.target.value)}
-                  disabled={loadingJobOrders}
+        {!hideJobOrderConnection && (
+          <Box sx={{ mt: 2 }}>
+            <Grid container spacing={2} alignItems="center">
+              <Grid item xs={12} sm={8}>
+                <FormControl fullWidth>
+                  <InputLabel>Connect with Job Order</InputLabel>
+                  <Select
+                    value={formData.jobOrderId}
+                    label="Connect with Job Order"
+                    onChange={(e) => handleJobOrderChange(e.target.value)}
+                    disabled={loadingJobOrders}
+                  >
+                    <MenuItem value="">
+                      <em>No Job Order Connection</em>
+                    </MenuItem>
+                    {loadingJobOrders ? (
+                      <MenuItem value="" disabled>Loading job orders...</MenuItem>
+                    ) : jobOrders.length === 0 ? (
+                      <MenuItem value="" disabled>No available job orders to connect</MenuItem>
+                    ) : (
+                      jobOrders.map((jobOrder) => (
+                        <MenuItem key={jobOrder.id} value={jobOrder.id}>
+                          {jobOrder.jobOrderName}
+                        </MenuItem>
+                      ))
+                    )}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  size="small"
+                  onClick={() => {
+                    if (originalFormValues) {
+                      setFormData({
+                        ...formData,
+                        jobOrderId: '',
+                        ...originalFormValues
+                      });
+                    } else {
+                      setFormData({ ...formData, jobOrderId: '' });
+                    }
+                    setSelectedCompanyId('');
+                    setSelectedLocationId('');
+                    setLocations([]);
+                    setOriginalFormValues(null);
+                  }}
+                  disabled={!formData.jobOrderId}
+                  startIcon={<CloseIcon />}
+                  fullWidth
                 >
-                  <MenuItem value="">
-                    <em>No Job Order Connection</em>
-                  </MenuItem>
-                  {loadingJobOrders ? (
-                    <MenuItem value="" disabled>Loading job orders...</MenuItem>
-                  ) : jobOrders.length === 0 ? (
-                    <MenuItem value="" disabled>No available job orders to connect</MenuItem>
-                  ) : (
-                    jobOrders.map((jobOrder) => (
-                      <MenuItem key={jobOrder.id} value={jobOrder.id}>
-                        {jobOrder.jobOrderName}
-                      </MenuItem>
-                    ))
-                  )}
-                </Select>
-              </FormControl>
+                  Clear Connection
+                </Button>
+              </Grid>
             </Grid>
-            <Grid item xs={12} sm={4}>
-              <Button
-                variant="outlined"
-                color="error"
-                size="small"
-                onClick={() => {
-                  if (originalFormValues) {
-                    setFormData({
-                      ...formData,
-                      jobOrderId: '',
-                      ...originalFormValues
-                    });
-                  } else {
-                    setFormData({ ...formData, jobOrderId: '' });
-                  }
-                  setSelectedCompanyId('');
-                  setSelectedLocationId('');
-                  setLocations([]);
-                  setOriginalFormValues(null);
-                }}
-                disabled={!formData.jobOrderId}
-                startIcon={<CloseIcon />}
-                fullWidth
-              >
-                Clear Connection
-              </Button>
-            </Grid>
-          </Grid>
+          </Box>
+        )}
+
+        <Box sx={{ mb: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+            onClick={handleGenerateDescription}
+            disabled={generatingDescription}
+            size="small"
+          >
+            {generatingDescription ? 'Generating...' : 'Generate Job Description'}
+          </Button>
         </Box>
 
         <TextField
@@ -1059,6 +1197,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 });
               }
             }}
+            disabled={hideJobOrderConnection}
           />
         </Box>
 
@@ -1093,7 +1232,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       }
                     }}
                     loading={loadingCompanies}
-                    disabled={loadingCompanies}
+                    disabled={hideJobOrderConnection || loadingCompanies}
                     renderInput={(params) => (
                       <TextField
                         {...params}
@@ -1112,13 +1251,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth required disabled={!selectedCompanyId}>
+                  <FormControl fullWidth required disabled={hideJobOrderConnection || !selectedCompanyId}>
                     <InputLabel>Worksite</InputLabel>
                     <Select
                       value={selectedLocationId}
                       label="Worksite"
                       onChange={(e) => handleLocationChange(e.target.value)}
-                      disabled={loadingLocations || !selectedCompanyId}
+                      disabled={hideJobOrderConnection || loadingLocations || !selectedCompanyId}
                     >
                       {loadingLocations ? (
                         <MenuItem value="">Loading locations...</MenuItem>
@@ -1183,7 +1322,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                         }
                       }}
                       loading={loadingCompanies}
-                      disabled={loadingCompanies}
+                      disabled={hideJobOrderConnection || loadingCompanies}
                       renderInput={(params) => (
                         <TextField
                           {...params}
@@ -1813,6 +1952,33 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Switch
                   checked={formData.showUniformRequirements}
                   onChange={(e) => setFormData({ ...formData, showUniformRequirements: e.target.checked })}
+                />
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* Custom Uniform Requirements Section */}
+        <Box sx={{ mt: 2 }}>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Custom Uniform Requirements"
+                multiline
+                rows={3}
+                value={formData.customUniformRequirements}
+                onChange={(e) => setFormData({ ...formData, customUniformRequirements: e.target.value })}
+                placeholder="Enter custom uniform requirements text..."
+                helperText="Enter any additional or custom uniform requirements"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                <Typography variant="body1">Show Custom Uniform Requirements on Post</Typography>
+                <Switch
+                  checked={formData.showCustomUniformRequirements}
+                  onChange={(e) => setFormData({ ...formData, showCustomUniformRequirements: e.target.checked })}
                 />
               </Box>
             </Grid>

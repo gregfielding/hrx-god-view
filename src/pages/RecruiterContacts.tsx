@@ -40,6 +40,7 @@ import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 interface Contact {
   id: string;
@@ -385,6 +386,15 @@ const RecruiterContacts: React.FC = () => {
 
   return (
     <Box>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Contacts' }
+          ]}
+        />
+      </Box>
       {/* Filter & Toolbar Area */}
       <Box sx={{ 
         mb: 2,

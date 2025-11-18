@@ -3038,5 +3038,333 @@
   {
     "name": "Graph Commons",
     "category": "Technical Skills"
+  },
+  {
+    "name": "Cooking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Preparation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Kitchen Operations",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Safety",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Sanitation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cleaning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Housekeeping",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Dishwashing",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Laundry",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Table Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Wait Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Bar Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Bartending",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Handling",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Meal Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Menu Knowledge",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Guest Services",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Customer Service",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Room Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Concierge Services",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Front Desk Operations",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Reservation Management",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Event Planning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Catering",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Banquet Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Baking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pastry Making",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Grill Cooking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Sauté Cooking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Presentation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Inventory Management",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Food Cost Control",
+    "category": "Resource Management Skills"
+  },
+  {
+    "name": "Kitchen Equipment Operation",
+    "category": "Equipment Use/Maintenance Skills"
+  },
+  {
+    "name": "Point of Sale Systems",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "POS Systems",
+    "category": "Technical Skills"
+  },
+  {
+    "name": "Cash Handling",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Order Taking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Upselling",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Allergen Awareness",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Dietary Restrictions Knowledge",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Wine Knowledge",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Beverage Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Coffee Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Barista",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Line Cooking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Prep Cooking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Knife Skills",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Food Storage",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Temperature Control",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "HACCP",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "ServSafe",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Kitchen Sanitation",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cooking Level 1",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cooking Level 2",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Cooking Level 3",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Sous Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Head Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Executive Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pastry Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Saucier",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Grill Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pantry Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Butcher Chef",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Baking",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Pastry Making",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Sauce Making",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Butchery",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Deep Cleaning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Window Cleaning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Floor Care",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Carpet Cleaning",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Restroom Maintenance",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Linen Service",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Bed Making",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Vacuuming",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Dusting",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Trash Removal",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Recycling",
+    "category": "Industry-Specific Skills"
+  },
+  {
+    "name": "Guest Relations",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Conflict Resolution",
+    "category": "Social Skills"
+  },
+  {
+    "name": "Multilingual Communication",
+    "category": "Social Skills"
   }
 ]

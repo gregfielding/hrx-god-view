@@ -134,6 +134,8 @@ export interface JobsBoardPost {
   showPhysicalRequirements?: boolean; // Whether to show physical requirements on public posting
   uniformRequirements?: string[]; // Uniform/dress code requirements
   showUniformRequirements?: boolean; // Whether to show uniform requirements on public posting
+  customUniformRequirements?: string; // Custom uniform requirements text
+  showCustomUniformRequirements?: boolean; // Whether to show custom uniform requirements on public posting
   requiredPpe?: string[]; // Required PPE
   showRequiredPpe?: boolean; // Whether to show PPE requirements on public posting
   autoAddToUserGroups?: string[]; // Optional: auto-add applicants to these user groups

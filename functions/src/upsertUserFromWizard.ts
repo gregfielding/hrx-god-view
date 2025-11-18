@@ -53,10 +53,9 @@ export const upsertUserFromWizard = onCall(
             addedAt: now,
           },
         };
-        // Set active tenant on creation or if missing
-        if (!snap.exists || !snap.data()?.activeTenantId) {
-          merged.activeTenantId = tenantId;
-        }
+        // Always set activeTenantId to current tenant when applying through wizard
+        // This ensures the user's active tenant matches the tenant they're applying to
+        merged.activeTenantId = tenantId;
       }
       // Remove legacy root securityLevel (ensure tenant-scoped storage only)
       merged.securityLevel = admin.firestore.FieldValue.delete();

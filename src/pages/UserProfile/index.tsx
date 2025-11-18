@@ -8,10 +8,14 @@ import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore } from '../../utils/applicantScoring';
+import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
+import SkillsOnlyTab from './components/SkillsOnlyTab';
+import EducationTab from './components/EducationTab';
+import WorkExperienceTab from './components/WorkExperienceTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
 import ResumeTab from './components/ResumeTab';
 import QualificationsTab from './components/QualificationsTab';
@@ -31,6 +35,16 @@ const UserProfilePage = () => {
   const { user, securityLevel, role } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  // Initialize profile batcher and flush on navigation
+  useEffect(() => {
+    userProfileBatcher.initialize();
+    
+    // Flush on component unmount (navigation away)
+    return () => {
+      flushProfileUpdates(true);
+    };
+  }, []);
   
   // Debug logging
   console.log('UserProfile Debug:', {
@@ -136,6 +150,9 @@ const UserProfilePage = () => {
       { label: 'Overview', available: true },
       { label: 'Work Eligibility', available: !isWorkforceInternalTeamView },
       { label: 'Resumé', available: !isWorkforceInternalTeamView },
+      { label: 'Skills', available: !isWorkforceInternalTeamView },
+      { label: 'Education', available: !isWorkforceInternalTeamView },
+      { label: 'Work Experience', available: !isWorkforceInternalTeamView },
       { label: 'Qualifications', available: !isWorkforceInternalTeamView },
       { label: 'Preferences', available: !isWorkforceInternalTeamView },
       { label: 'Licenses & Certs', available: !isWorkforceInternalTeamView },
@@ -542,6 +559,12 @@ const UserProfilePage = () => {
                 );
               case 'Resumé':
                 return <ResumeTab uid={uid} />;
+              case 'Skills':
+                return <SkillsOnlyTab uid={uid} />;
+              case 'Education':
+                return <EducationTab uid={uid} />;
+              case 'Work Experience':
+                return <WorkExperienceTab uid={uid} />;
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
               case 'Preferences':

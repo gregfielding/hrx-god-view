@@ -1,8 +1,11 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { Box, Stack, Typography, Button, Card, CardContent, CardHeader, TextField, MenuItem, useTheme, useMediaQuery } from '@mui/material';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { Box, Stack, Typography, Button, TextField, MenuItem, useTheme, useMediaQuery, Chip, Select, FormControl, InputLabel } from '@mui/material';
+import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { DirectionsCar, DirectionsTransit, DirectionsBike, DirectionsWalk, MoreHoriz } from '@mui/icons-material';
 import { storage, db } from '../../../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { arrayUnion, doc, serverTimestamp, updateDoc, getDoc } from 'firebase/firestore';
+import { arrayUnion, doc, serverTimestamp, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
+import { auth } from '../../../firebase';
 
 type Props = {
   requirements: {
@@ -12,15 +15,63 @@ type Props = {
     ppe?: string[];
     physical?: string[];
     education?: string[];
+    languages?: string[];
   };
   profile?: any;
   uid: string;
   value: any;
   onChange: (v: any) => void;
   jobPosting?: any;
+  preferences?: any;
 };
 
-const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profile, uid, value, onChange, jobPosting }) => {
+// Reusable Yes/No/Maybe button group component
+const YesNoMaybeButtons: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+}> = ({ value, onChange, label }) => {
+  const options = ['Yes', 'No', 'Maybe'];
+  
+  const getColor = (option: string, selected: boolean) => {
+    if (!selected) return 'default';
+    if (option === 'Yes') return 'success';
+    if (option === 'No') return 'error';
+    if (option === 'Maybe') return 'warning';
+    return 'default';
+  };
+
+  return (
+    <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+      {options.map((option) => {
+        const isSelected = value === option;
+        return (
+          <Chip
+            key={option}
+            label={option}
+            onClick={() => onChange(isSelected ? '' : option)}
+            color={getColor(option, isSelected) as any}
+            variant={isSelected ? 'filled' : 'outlined'}
+            sx={{
+              minWidth: 80,
+              height: 40,
+              fontSize: '0.95rem',
+              fontWeight: isSelected ? 600 : 500,
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+              '&:hover': {
+                transform: 'scale(1.05)',
+                boxShadow: 2
+              }
+            }}
+          />
+        );
+      })}
+    </Stack>
+  );
+};
+
+const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profile, uid, value, onChange, jobPosting, preferences }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const setUploaded = (name: string) => onChange({ ...value, uploaded: { ...(value?.uploaded || {}), [name]: true } });
@@ -32,22 +83,116 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingCert, setPendingCert] = useState<string | null>(null);
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
-  const showLicensesCerts = jobPosting?.showLicensesCerts === true;
-  const showDrugScreening = jobPosting?.showDrugScreening === true;
-  const showBackgroundScreening = jobPosting?.showBackgroundChecks === true;
-  const showAdditionalScreenings = jobPosting?.showAdditionalScreenings === true;
-  const showEVerify = jobPosting?.eVerifyRequired === true;
+  
+  // Get languages, physical requirements, uniform requirements, and PPE arrays
+  // Check both jobPosting and requirements prop as fallback
+  const requiredLanguages = (Array.isArray(jobPosting?.languages) && jobPosting.languages.length > 0)
+    ? jobPosting.languages.filter(Boolean)
+    : Array.isArray(requirements?.languages) && requirements.languages.length > 0
+    ? requirements.languages.filter(Boolean)
+    : [];
+  const requiredPhysical = (Array.isArray(jobPosting?.physicalRequirements) && jobPosting.physicalRequirements.length > 0)
+    ? jobPosting.physicalRequirements.filter(Boolean)
+    : Array.isArray(requirements?.physical) && requirements.physical.length > 0
+    ? requirements.physical.filter(Boolean)
+    : [];
+  const requiredUniform = Array.isArray(jobPosting?.uniformRequirements) ? jobPosting.uniformRequirements.filter(Boolean) : [];
+  // Check both requiredPpe and ppeRequirements (ppeRequirements is what's saved in job postings)
+  const requiredPpe = (Array.isArray(jobPosting?.requiredPpe) && jobPosting.requiredPpe.length > 0)
+    ? jobPosting.requiredPpe.filter(Boolean)
+    : (Array.isArray(jobPosting?.ppeRequirements) && jobPosting.ppeRequirements.length > 0)
+    ? jobPosting.ppeRequirements.filter(Boolean)
+    : Array.isArray(requirements?.ppe) && requirements.ppe.length > 0
+    ? requirements.ppe.filter(Boolean)
+    : [];
+  const customUniformText = typeof jobPosting?.customUniformRequirements === 'string' && jobPosting.customUniformRequirements.trim() 
+    ? jobPosting.customUniformRequirements.trim() 
+    : '';
 
-  // Debounced write to users/{uid}
-  const userWriteDebounceRef = useRef<any>(null);
+  // Show flags control visibility on public job posting, but on application form
+  // we should always ask about requirements that exist
+  const showLicensesCerts = jobPosting?.showLicensesCerts === true;
+  // Always show drug screening if it's required (check both show flag and existence)
+  const showDrugScreening = jobPosting?.showDrugScreening === true || jobPosting?.drugScreeningRequired === true;
+  // Always show background screening if it's required
+  const showBackgroundScreening = jobPosting?.showBackgroundChecks === true || jobPosting?.backgroundCheckRequired === true;
+  const showAdditionalScreenings = jobPosting?.showAdditionalScreenings === true;
+  // Always show E-Verify if it's required
+  const showEVerify = jobPosting?.eVerifyRequired === true;
+  // Show language/physical/uniform/PPE questions if they exist (not just if show flag is true)
+  const showLanguages = (jobPosting?.showLanguages === true || requiredLanguages.length > 0);
+  const showPhysicalRequirements = (jobPosting?.showPhysicalRequirements === true || requiredPhysical.length > 0);
+  const showUniformRequirements = (jobPosting?.showUniformRequirements === true || requiredUniform.length > 0);
+  const showCustomUniformRequirements = (jobPosting?.showCustomUniformRequirements === true || customUniformText.length > 0);
+  const showRequiredPpe = (jobPosting?.showRequiredPpe === true || requiredPpe.length > 0);
+
+  // Debug logging
+  useEffect(() => {
+    if (jobPosting) {
+      console.log('🔍 Requirements Step - Full Job Posting:', jobPosting);
+      console.log('🔍 Requirements Step - Extracted Values:', {
+        showLanguages,
+        requiredLanguages,
+        requiredLanguagesLength: requiredLanguages.length,
+        showPhysicalRequirements,
+        requiredPhysical,
+        requiredPhysicalLength: requiredPhysical.length,
+        showRequiredPpe,
+        requiredPpe,
+        requiredPpeLength: requiredPpe.length,
+        'jobPosting.languages': jobPosting.languages,
+        'jobPosting.showLanguages': jobPosting.showLanguages,
+        'jobPosting.physicalRequirements': jobPosting.physicalRequirements,
+        'jobPosting.showPhysicalRequirements': jobPosting.showPhysicalRequirements,
+        'jobPosting.requiredPpe': jobPosting.requiredPpe,
+        'jobPosting.ppeRequirements': jobPosting.ppeRequirements,
+        'jobPosting.showRequiredPpe': jobPosting.showRequiredPpe,
+      });
+    }
+  }, [jobPosting, showLanguages, requiredLanguages, showPhysicalRequirements, requiredPhysical, showRequiredPpe, requiredPpe]);
+  
+  // Format languages for question (e.g., "English and Spanish" or "English, Spanish, and French")
+  const languagesText = requiredLanguages.length > 0 
+    ? requiredLanguages.length === 1 
+      ? requiredLanguages[0]
+      : requiredLanguages.length === 2
+      ? requiredLanguages.join(' and ')
+      : requiredLanguages.slice(0, -1).join(', ') + ', and ' + requiredLanguages[requiredLanguages.length - 1]
+    : '';
+  
+  // Format physical requirements for question (e.g., "Standing, Lifting 25lbs, and Carrying 25lbs")
+  const physicalText = requiredPhysical.length > 0
+    ? requiredPhysical.length === 1
+      ? requiredPhysical[0]
+      : requiredPhysical.length === 2
+      ? requiredPhysical.join(' and ')
+      : requiredPhysical.slice(0, -1).join(', ') + ', and ' + requiredPhysical[requiredPhysical.length - 1]
+    : '';
+  
+  // Format uniform requirements for question (e.g., "Non-Slip Shoes and Black Pants")
+  const uniformText = requiredUniform.length > 0
+    ? requiredUniform.length === 1
+      ? requiredUniform[0]
+      : requiredUniform.length === 2
+      ? requiredUniform.join(' and ')
+      : requiredUniform.slice(0, -1).join(', ') + ', and ' + requiredUniform[requiredUniform.length - 1]
+    : '';
+  
+  // Format PPE for question (e.g., "Safety Glasses" or "Safety Glasses, Hard Hat, and Safety Vest")
+  const ppeText = requiredPpe.length > 0
+    ? requiredPpe.length === 1
+      ? requiredPpe[0]
+      : requiredPpe.length === 2
+      ? requiredPpe.join(' and ')
+      : requiredPpe.slice(0, -1).join(', ') + ', and ' + requiredPpe[requiredPpe.length - 1]
+    : '';
+
+  // Use batched updates instead of immediate writes (imported at top)
   const debouncedWriteUser = (partial: any) => {
-    if (userWriteDebounceRef.current) clearTimeout(userWriteDebounceRef.current);
-    userWriteDebounceRef.current = setTimeout(async () => {
-      try {
-        const userRef = doc(db, 'users', uid);
-        await updateDoc(userRef, { ...partial, updatedAt: serverTimestamp() });
-      } catch {}
-    }, 350);
+    // Queue each field for batched save
+    Object.keys(partial).forEach(key => {
+      queueProfileUpdate(key, partial[key]);
+    });
   };
 
   const profileCerts: string[] = Array.isArray(profile?.certifications)
@@ -148,190 +293,274 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
   };
 
   return (
-    <Box>
-      <Stack spacing={2} sx={{ mb: 2 }}>
+    <Box sx={{ pb: 5 }}>
+      <Stack spacing={3}>
         {showEVerify && (
-          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-            <CardHeader
-              title={<Typography variant="h6" sx={{ fontWeight: 700 }}>E-Verify</Typography>}
-              action={<Box component="img" src="/img/everify.png" alt="E-Verify" sx={{ height: 28, width: 'auto' }} />}
-              sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
+          <Box>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>E-Verify</Typography>
+              <Box component="img" src="/img/everify.png" alt="E-Verify" sx={{ height: 28, width: 'auto' }} />
+            </Stack>
+            <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+              This position requires that employees be E-Verified. This process involves matching your social security number with tax records and other government documents to confirm your identity. Are you comfortable with us running you through E-Verify?
+            </Typography>
+            <YesNoMaybeButtons
+              value={value?.eVerifyComfort || ''}
+              onChange={(val) => {
+                onChange({ ...value, eVerifyComfort: val });
+                debouncedWriteUser({ comfortableEVerify: val });
+              }}
             />
-            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-              <Stack spacing={2}>
-                <Typography color="text.secondary">
-                  This position requires that employees be E-Verified. This process involves matching your social security number with tax records and other government documents to confirm your identity. Are you comfortable with us running you through E-Verify?
-                </Typography>
-                <TextField
-                  select
-                  size="small"
-                  label="Are you comfortable with E-Verify?"
-                  value={value?.eVerifyComfort || ''}
-                  onChange={(e) => { onChange({ ...value, eVerifyComfort: e.target.value }); debouncedWriteUser({ comfortableEVerify: e.target.value }); }}
-                  sx={{ maxWidth: 360 }}
-                >
-                  <MenuItem value="">Select an option</MenuItem>
-                  <MenuItem value="Yes">Yes</MenuItem>
-                  <MenuItem value="No">No</MenuItem>
-                  <MenuItem value="Maybe">Maybe</MenuItem>
-                </TextField>
-              </Stack>
-            </CardContent>
-          </Card>
+          </Box>
         )}
-        {/* Drug Screening summary card */}
+        {/* Drug Screening */}
         {showDrugScreening && (
-          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Drug Screening</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
-            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-              <Stack spacing={2}>
-                <Typography color="text.secondary">
-                  This position requires a drug screening. Are you comfortable that you would pass a drug screening?
-                </Typography>
-                <TextField
-                  select
-                  size="small"
-                  label="Would you pass a drug screening?"
-                  value={value?.drugScreeningComfort || ''}
-                  onChange={(e) => { onChange({ ...value, drugScreeningComfort: e.target.value }); debouncedWriteUser({ comfortablePassDrug: e.target.value }); }}
-                  sx={{ maxWidth: 360 }}
-                >
-                  <MenuItem value="">Select an option</MenuItem>
-                  <MenuItem value="Yes">Yes</MenuItem>
-                  <MenuItem value="No">No</MenuItem>
-                  <MenuItem value="Maybe">Maybe</MenuItem>
-                </TextField>
-                {value?.drugScreeningComfort === 'Maybe' && (
-                  <TextField
-                    fullWidth
-                    multiline
-                    minRows={3}
-                    label="Please explain why you might not pass a drug test"
-                    value={value?.drugExplanation || ''}
-                    onChange={(e) => { onChange({ ...value, drugExplanation: e.target.value }); debouncedWriteUser({ passDrugExplanation: e.target.value }); }}
-                    onBlur={(e) => debouncedWriteUser({ passDrugExplanation: (e.target as HTMLInputElement).value })}
-                  />
-                )}
-              </Stack>
-            </CardContent>
-          </Card>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              Drug Screening
+            </Typography>
+            <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+              This position requires a drug screening. Are you comfortable that you would pass a drug screening?
+            </Typography>
+            <YesNoMaybeButtons
+              value={value?.drugScreeningComfort || ''}
+              onChange={(val) => {
+                onChange({ ...value, drugScreeningComfort: val });
+                debouncedWriteUser({ comfortablePassDrug: val });
+              }}
+            />
+            {value?.drugScreeningComfort === 'Maybe' && (
+              <TextField
+                fullWidth
+                multiline
+                minRows={3}
+                label="Please explain why you might not pass a drug test"
+                value={value?.drugExplanation || ''}
+                onChange={(e) => { onChange({ ...value, drugExplanation: e.target.value }); debouncedWriteUser({ passDrugExplanation: e.target.value }); }}
+                onBlur={(e) => debouncedWriteUser({ passDrugExplanation: (e.target as HTMLInputElement).value })}
+                sx={{ mt: 2 }}
+              />
+            )}
+          </Box>
         )}
 
-        {/* Removed Physical, PPE, and Uniform requirement cards per request */}
+        {/* Additional Screenings */}
         {showAdditionalScreenings && Array.isArray(jobPosting?.additionalScreenings) && jobPosting.additionalScreenings.length > 0 && (
-          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Additional Screenings</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
-            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-              <Stack spacing={2}>
-                {jobPosting.additionalScreenings.map((screenName: string) => (
-                  <Stack key={`add-screen-${screenName}`} spacing={1}>
-                    <Typography sx={{ fontWeight: 700 }}>{screenName}</Typography>
-                    <Typography color="text.secondary">
-                      Are you comfortable taking a {screenName}?
-                    </Typography>
-                    <TextField
-                      select
-                      size="small"
-                      label={`Comfortable with ${screenName}?`}
-                      value={(value?.additionalScreenings || {})[screenName] || ''}
-                      onChange={(e) => {
-                        const next = { ...(value?.additionalScreenings || {}), [screenName]: e.target.value };
-                        onChange({ ...value, additionalScreenings: next });
-                        const dynamicKey = `comfortableWith${screenName.replace(/[^a-zA-Z0-9]+/g,'')}`;
-                        debouncedWriteUser({ [dynamicKey]: e.target.value });
-                      }}
-                      sx={{ maxWidth: 360 }}
-                    >
-                      <MenuItem value="">Select an option</MenuItem>
-                      <MenuItem value="Yes">Yes</MenuItem>
-                      <MenuItem value="No">No</MenuItem>
-                      <MenuItem value="Maybe">Maybe</MenuItem>
-                    </TextField>
-                  </Stack>
-                ))}
-              </Stack>
-            </CardContent>
-          </Card>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              Additional Screenings
+            </Typography>
+            <Stack spacing={3}>
+              {jobPosting.additionalScreenings.map((screenName: string) => (
+                <Box key={`add-screen-${screenName}`}>
+                  <Typography sx={{ fontWeight: 700, mb: 1 }}>{screenName}</Typography>
+                  <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+                    Are you comfortable taking a {screenName}?
+                  </Typography>
+                  <YesNoMaybeButtons
+                    value={(value?.additionalScreenings || {})[screenName] || ''}
+                    onChange={(val) => {
+                      const next = { ...(value?.additionalScreenings || {}), [screenName]: val };
+                      onChange({ ...value, additionalScreenings: next });
+                      const dynamicKey = `comfortableWith${screenName.replace(/[^a-zA-Z0-9]+/g,'')}`;
+                      debouncedWriteUser({ [dynamicKey]: val });
+                    }}
+                  />
+                </Box>
+              ))}
+            </Stack>
+          </Box>
         )}
 
         {showBackgroundScreening && (
-          <Card variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-            <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Background Screening</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
-            <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-              <Stack spacing={2}>
-                <Typography color="text.secondary">
-                  This position requires a background screening. Are you comfortable that you would pass a background screening?
-                </Typography>
-                <TextField
-                  select
-                  size="small"
-                  label="Would you pass a background screening?"
-                  value={value?.backgroundScreeningComfort || ''}
-                  onChange={(e) => { onChange({ ...value, backgroundScreeningComfort: e.target.value }); debouncedWriteUser({ comfortablePassBackground: e.target.value }); }}
-                  sx={{ maxWidth: 360 }}
-                >
-                  <MenuItem value="">Select an option</MenuItem>
-                  <MenuItem value="Yes">Yes</MenuItem>
-                  <MenuItem value="No">No</MenuItem>
-                  <MenuItem value="Maybe">Maybe</MenuItem>
-                </TextField>
-                {value?.backgroundScreeningComfort === 'Maybe' && (
-                  <TextField
-                    fullWidth
-                    multiline
-                    minRows={3}
-                    label="Please explain why you might not pass a background screening"
-                    value={value?.backgroundExplanation || ''}
-                    onChange={(e) => { onChange({ ...value, backgroundExplanation: e.target.value }); debouncedWriteUser({ passBackgroundExplanation: e.target.value }); }}
-                    onBlur={(e) => debouncedWriteUser({ passBackgroundExplanation: (e.target as HTMLInputElement).value })}
-                  />
-                )}
-              </Stack>
-            </CardContent>
-          </Card>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              Background Screening
+            </Typography>
+            <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+              This position requires a background screening. Are you comfortable that you would pass a background screening?
+            </Typography>
+            <YesNoMaybeButtons
+              value={value?.backgroundScreeningComfort || ''}
+              onChange={(val) => {
+                onChange({ ...value, backgroundScreeningComfort: val });
+                debouncedWriteUser({ comfortablePassBackground: val });
+              }}
+            />
+            {value?.backgroundScreeningComfort === 'Maybe' && (
+              <TextField
+                fullWidth
+                multiline
+                minRows={3}
+                label="Please explain why you might not pass a background screening"
+                value={value?.backgroundExplanation || ''}
+                onChange={(e) => { onChange({ ...value, backgroundExplanation: e.target.value }); debouncedWriteUser({ passBackgroundExplanation: e.target.value }); }}
+                onBlur={(e) => debouncedWriteUser({ passBackgroundExplanation: (e.target as HTMLInputElement).value })}
+                sx={{ mt: 2 }}
+              />
+            )}
+          </Box>
         )}
-
-        {showLicensesCerts && (requirements.certifications || []).map((name, idx) => {
-          const profileUploadsForName: any[] = Array.isArray(profile?.certifications)
-            ? profile.certifications.filter((c: any) => c && typeof c === 'object' && c.name === name && (c.fileUrl || c.downloadUrl))
-            : [];
-          const computedUploads = uploadsByName[name] && uploadsByName[name].length ? uploadsByName[name] : profileUploadsForName;
-          const uploads = computedUploads || [];
-          const onProfile = uploads.length > 0;
-          return (
-            <Card key={`cert-${name}`} variant="outlined" sx={{ boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-              {idx === 0 && (
-                <CardHeader title={<Typography variant="h6" sx={{ fontWeight: 700 }}>Required Licenses & Certifications</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
-              )}
-              <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-                <Stack spacing={1}>
-                  <Typography sx={{ fontWeight: 700 }}>{name}</Typography>
-                  <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-                    {!onProfile && uploads.length === 0 && (
-                      <Button size="small" variant="outlined" onClick={() => handlePickFile(name)} disabled={!!uploading[name]}>
-                        {uploading[name] ? 'Uploading…' : 'Upload'}
-                      </Button>
-                    )}
-                    {uploads.map((u, i) => (
-                      <Stack key={`cert-${name}-${i}`} direction="row" alignItems="center" spacing={1} sx={{ ml: 0 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          {u.fileName || 'File'} • {formatDateTime(u.uploadedAt)}
-                        </Typography>
-                        <Button size="small" variant="text" href={u.fileUrl} target="_blank" rel="noopener noreferrer">View</Button>
-                        <Button size="small" color="error" onClick={() => handleDelete(name, u)}>Delete</Button>
-                        <Button size="small" variant="text" onClick={() => handlePickFile(name)} disabled={!!uploading[name]}>
-                          {uploading[name] ? 'Uploading…' : 'Replace'}
-                        </Button>
-                      </Stack>
-                    ))}
-                  </Stack>
-                </Stack>
-              </CardContent>
-            </Card>
-          );
-        })}
-        {/* Removed legacy checkbox acknowledgement sections */}
       </Stack>
+
+      {/* Language Requirements */}
+      {showLanguages && requiredLanguages.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            Language Requirements
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+            Are you comfortable speaking {languagesText}?
+          </Typography>
+          <YesNoMaybeButtons
+            value={value?.languagesComfort || ''}
+            onChange={(val) => {
+              onChange({ ...value, languagesComfort: val });
+              debouncedWriteUser({ comfortableWithLanguages: val });
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Physical Requirements */}
+      {showPhysicalRequirements && requiredPhysical.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            Physical Requirements
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+            Are you comfortable with {physicalText}?
+          </Typography>
+          <YesNoMaybeButtons
+            value={value?.physicalRequirementsComfort || ''}
+            onChange={(val) => {
+              onChange({ ...value, physicalRequirementsComfort: val });
+              debouncedWriteUser({ comfortableWithPhysicalRequirements: val });
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Uniform Requirements */}
+      {showUniformRequirements && requiredUniform.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            Uniform Requirements
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+            Are you comfortable wearing {uniformText}?
+          </Typography>
+          <YesNoMaybeButtons
+            value={value?.uniformRequirementsComfort || ''}
+            onChange={(val) => {
+              onChange({ ...value, uniformRequirementsComfort: val });
+              debouncedWriteUser({ comfortableWithUniformRequirements: val });
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Custom Uniform Requirements */}
+      {showCustomUniformRequirements && customUniformText && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            Custom Uniform Requirements
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+            Are you comfortable wearing {customUniformText}?
+          </Typography>
+          <YesNoMaybeButtons
+            value={value?.customUniformRequirementsComfort || ''}
+            onChange={(val) => {
+              onChange({ ...value, customUniformRequirementsComfort: val });
+              debouncedWriteUser({ comfortableWithCustomUniformRequirements: val });
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Required PPE */}
+      {showRequiredPpe && requiredPpe.length > 0 && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            Required PPE
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 1.5 }}>
+            Are you comfortable wearing {ppeText}?
+          </Typography>
+          <YesNoMaybeButtons
+            value={value?.requiredPpeComfort || ''}
+            onChange={(val) => {
+              onChange({ ...value, requiredPpeComfort: val });
+              debouncedWriteUser({ comfortableWithRequiredPpe: val });
+            }}
+          />
+        </Box>
+      )}
+
+      {/* Transport Method */}
+      <Box sx={{ mt: 3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+          How will you get to work?
+        </Typography>
+        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+          {[
+            { value: 'Car', label: 'Car', icon: DirectionsCar },
+            { value: 'Public Transit', label: 'Public Transit', icon: DirectionsTransit },
+            { value: 'Bike', label: 'Bike', icon: DirectionsBike },
+            { value: 'Walk', label: 'Walk', icon: DirectionsWalk },
+            { value: 'Other', label: 'Other', icon: MoreHoriz },
+          ].map((option) => {
+            const isSelected = value?.transportMethod === option.value;
+            const Icon = option.icon;
+            return (
+              <Chip
+                key={option.value}
+                icon={<Icon />}
+                label={option.label}
+                onClick={() => {
+                  const newValue = isSelected ? '' : option.value;
+                  onChange({ ...value, transportMethod: newValue });
+                  debouncedWriteUser({ transportMethod: newValue });
+                }}
+                color={isSelected ? 'success' : 'default'}
+                variant={isSelected ? 'filled' : 'outlined'}
+                sx={{
+                  height: 40,
+                  fontSize: '0.95rem',
+                  fontWeight: isSelected ? 600 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    transform: 'scale(1.05)',
+                    boxShadow: 2
+                  }
+                }}
+              />
+            );
+          })}
+        </Stack>
+      </Box>
+
+      {/* When can you start? - Only show for Career jobs, not Gig jobs with specific dates */}
+      {jobPosting?.jobType !== 'gig' && (
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+            When can you start?
+          </Typography>
+          <AvailabilitySection 
+            value={preferences || {}} 
+            onChange={(v) => {
+              // This will be handled by the parent Wizard component
+              // We need to update preferences, not requirements
+              const currentPreferences = preferences || {};
+              const updatedPreferences = { ...currentPreferences, ...v };
+              // Store in a way that Wizard can pick up
+              onChange({ ...value, _preferencesUpdate: updatedPreferences });
+            }} 
+          />
+        </Box>
+      )}
 
       {/* Hidden file input used for uploads */}
       <input
@@ -343,6 +572,52 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         onChange={handleFileSelected}
       />
     </Box>
+  );
+};
+
+// When can you start? component
+const AvailabilitySection: React.FC<{ value: any; onChange: (v: any) => void }> = ({ value, onChange }) => {
+  const [availableToStartDate, setAvailableToStartDate] = React.useState<string>(value?.availableToStartDate || '');
+  
+  // Sync with external value changes
+  React.useEffect(() => {
+    if (value?.availableToStartDate !== undefined) {
+      setAvailableToStartDate(value.availableToStartDate || '');
+    }
+  }, [value?.availableToStartDate]);
+
+  // Debounced Firestore updater - increased debounce to prevent excessive writes
+  const debounceRef = React.useRef<any>(null);
+  const debouncedUpdate = (data: any) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+        const userRef = doc(db, 'users', uid);
+        await updateDoc(userRef, { ...data, updatedAt: serverTimestamp() });
+      } catch {}
+    }, 2000); // Increased from 400ms to 2000ms to reduce Firestore writes
+  };
+
+  // Removed onSnapshot listener to prevent feedback loop - value is synced via props
+
+  return (
+    <TextField
+      label="Start date"
+      type="date"
+      value={availableToStartDate || ''}
+      onChange={(e) => {
+        const v = e.target.value;
+        setAvailableToStartDate(v);
+        onChange({ availableToStartDate: v });
+        debouncedUpdate({ availableToStartDate: v });
+      }}
+      onBlur={(e) => debouncedUpdate({ availableToStartDate: e.target.value })}
+      InputLabelProps={{ shrink: true }}
+      fullWidth
+      sx={{ maxWidth: 360 }}
+    />
   );
 };
 

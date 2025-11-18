@@ -61,8 +61,11 @@ service firebase.storage {
 
     // Profile picture upload access
     match /profile-pictures/{fileName} {
-      // Allow any authenticated user to upload/delete profile pictures
-      allow write, delete: if request.auth != null;
+      // Allow unauthenticated users to upload during application wizard
+      // Validate file size (max 5MB) and type (images only)
+      allow write: if request.resource.size < 5 * 1024 * 1024 && // Max 5MB
+                     request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null; // Only authenticated users can delete
       // Public read access for profile pictures
       allow read: if true;
     }

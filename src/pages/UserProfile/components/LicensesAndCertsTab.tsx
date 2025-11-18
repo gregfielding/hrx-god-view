@@ -24,9 +24,11 @@ type Props = {
 
 interface Certification {
   name: string;
-  fileUrl: string;
-  fileName: string;
-  uploadedAt: Date;
+  fileUrl?: string;
+  fileName?: string;
+  uploadedAt?: Date;
+  issuer?: string;
+  expirationDate?: string;
 }
 
 const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
@@ -51,14 +53,25 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
         const data = snap.data();
         const certs: Certification[] = Array.isArray(data.certifications)
           ? data.certifications
-              .filter((c: any) => c && typeof c === 'object' && c.fileUrl)
-              .map((c: any) => ({
-                name: c.name || 'Unnamed Certificate',
-                fileUrl: c.fileUrl || c.downloadUrl,
-                fileName: c.fileName || 'file',
-                uploadedAt: c.uploadedAt?.toDate?.() || new Date(c.uploadedAt) || new Date(),
-              }))
+              .filter((c: any) => c && (typeof c === 'object' || typeof c === 'string'))
+              .map((c: any) => {
+                // Handle both object format and string format
+                if (typeof c === 'string') {
+                  return {
+                    name: c,
+                  };
+                }
+                return {
+                  name: c.name || 'Unnamed Certificate',
+                  fileUrl: c.fileUrl || c.downloadUrl,
+                  fileName: c.fileName,
+                  uploadedAt: c.uploadedAt?.toDate?.() || (c.uploadedAt ? new Date(c.uploadedAt) : undefined),
+                  issuer: c.issuer,
+                  expirationDate: c.expirationDate,
+                };
+              })
           : [];
+        console.log('📜 LicensesAndCertsTab: Loaded certifications:', certs);
         setCertifications(certs);
       }
     });
@@ -191,7 +204,7 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
             
             {certifications.length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', py: 2 }}>
-                No certifications or licenses uploaded yet.
+                No certifications or licenses added yet.
               </Typography>
             ) : (
               <Stack spacing={2}>
@@ -202,30 +215,59 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
                           {cert.name}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {cert.fileName} • Uploaded {formatDate(cert.uploadedAt)}
-                        </Typography>
-                        <Stack direction="row" spacing={1}>
-                          <Button
-                            size="small"
-                            variant="text"
-                            startIcon={<ViewIcon />}
-                            href={cert.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            View
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="text"
-                            color="error"
-                            startIcon={<DeleteIcon />}
-                            onClick={() => handleDelete(cert)}
-                          >
-                            Delete
-                          </Button>
-                        </Stack>
+                        {cert.fileUrl ? (
+                          <>
+                            <Typography variant="body2" color="text.secondary">
+                              {cert.fileName} • Uploaded {cert.uploadedAt ? formatDate(cert.uploadedAt) : 'Unknown date'}
+                            </Typography>
+                            <Stack direction="row" spacing={1}>
+                              <Button
+                                size="small"
+                                variant="text"
+                                startIcon={<ViewIcon />}
+                                href={cert.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="small"
+                                variant="text"
+                                color="error"
+                                startIcon={<DeleteIcon />}
+                                onClick={() => handleDelete(cert)}
+                              >
+                                Delete
+                              </Button>
+                            </Stack>
+                          </>
+                        ) : (
+                          <>
+                            {cert.issuer && (
+                              <Typography variant="body2" color="text.secondary">
+                                Issuer: {cert.issuer}
+                              </Typography>
+                            )}
+                            {cert.expirationDate && (
+                              <Typography variant="body2" color="text.secondary">
+                                Expires: {cert.expirationDate}
+                              </Typography>
+                            )}
+                            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                              Added from application
+                            </Typography>
+                            <Button
+                              size="small"
+                              variant="text"
+                              color="error"
+                              startIcon={<DeleteIcon />}
+                              onClick={() => handleDelete(cert)}
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        )}
                       </Stack>
                     </CardContent>
                   </Card>

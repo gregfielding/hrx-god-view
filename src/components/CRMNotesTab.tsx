@@ -35,11 +35,14 @@ import {
   Visibility as ViewIcon,
   Delete as DeleteIcon,
   Note as NoteIcon,
+  Add as AddIcon,
+  AttachFile as AttachFileIcon,
 } from '@mui/icons-material';
 import { doc, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 
@@ -55,17 +58,17 @@ interface Note {
     url: string;
     type: string;
   }>;
-  category: 'general' | 'sales' | 'meeting' | 'follow_up' | 'proposal' | 'negotiation' | 'closing' | 'other';
+  category: 'general' | 'sales' | 'meeting' | 'follow_up' | 'proposal' | 'negotiation' | 'closing' | 'other' | 'staffing' | 'compliance' | 'performance' | 'client_feedback';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   aiReviewed: boolean;
   aiInsights?: string;
   tags?: string[];
-  source?: 'location' | 'company' | 'contact' | 'deal';
+  source?: 'location' | 'company' | 'contact' | 'deal' | 'jobOrder';
 }
 
 interface CRMNotesTabProps {
   entityId: string;
-  entityType: 'contact' | 'company' | 'location' | 'deal';
+  entityType: 'contact' | 'company' | 'location' | 'deal' | 'jobOrder';
   entityName: string;
   tenantId: string;
   companyId?: string; // For location notes to filter up to company
@@ -79,6 +82,28 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   const [successMessage, setSuccessMessage] = useState('');
   const [viewNoteDialog, setViewNoteDialog] = useState<{ open: boolean; note: Note | null }>({ open: false, note: null });
   const [userRole, setUserRole] = useState<'hrx' | 'agency' | 'customer'>('customer');
+  
+  // Form state
+  const [newNote, setNewNote] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [noteCategory, setNoteCategory] = useState<Note['category']>('general');
+  const [notePriority, setNotePriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  
+  // Job order specific tags
+  const jobOrderTags = [
+    'Staffing', 'Compliance', 'Performance', 'Client Feedback', 'Scheduling',
+    'Payroll', 'Onboarding', 'Training', 'Safety', 'Quality', 'Attendance'
+  ];
+  
+  // CRM specific tags
+  const crmTags = [
+    'Lead', 'Prospect', 'Customer', 'Meeting', 'Follow-up', 'Proposal',
+    'Negotiation', 'Closing', 'Contract', 'Renewal', 'Issue', 'Opportunity'
+  ];
+  
+  const availableTags = entityType === 'jobOrder' ? jobOrderTags : crmTags;
 
 
 
@@ -143,8 +168,9 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
         );
       } else {
-        // For contacts and companies, load normally
-        const notesRef = collection(db, 'tenants', tenantId, `${entityType}_notes`);
+        // For contacts, companies, deals, and job orders, load normally
+        const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
+        const notesRef = collection(db, 'tenants', tenantId, collectionName);
         const notesQuery = query(
           notesRef,
           where('entityId', '==', entityId),
@@ -169,10 +195,95 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
 
 
 
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files) {
+      const filesArray = Array.from(event.target.files);
+      setSelectedFiles(prev => [...prev, ...filesArray]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmitNote = async () => {
+    if (!newNote.trim() || !currentUser) return;
+
+    setUploading(true);
+    setLoading(true);
+    try {
+      // Upload files if any
+      const uploadedFiles = [];
+      for (const file of selectedFiles) {
+        try {
+          const fileName = `${Date.now()}_${file.name}`;
+          const storagePath = entityType === 'jobOrder' 
+            ? `job_orders/${entityId}/notes/${fileName}`
+            : `${entityType}_notes/${entityId}/${fileName}`;
+          const storageRef = ref(storage, storagePath);
+          await uploadBytes(storageRef, file);
+          const downloadURL = await getDownloadURL(storageRef);
+          uploadedFiles.push({
+            name: file.name,
+            url: downloadURL,
+            type: file.type,
+          });
+        } catch (error) {
+          console.error('Error uploading file:', error);
+          setSuccessMessage('Error uploading file(s)');
+          setShowSuccess(true);
+          return;
+        }
+      }
+
+      // Create note document
+      const noteData = {
+        content: newNote.trim(),
+        authorId: currentUser.uid,
+        authorName: currentUser.displayName || currentUser.email || 'Unknown',
+        authorRole: userRole,
+        timestamp: serverTimestamp(),
+        files: uploadedFiles.length > 0 ? uploadedFiles : undefined,
+        category: noteCategory,
+        priority: notePriority,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        aiReviewed: false,
+        entityId,
+        entityType,
+        tenantId,
+      };
+
+      const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
+      const notesRef = collection(db, 'tenants', tenantId, collectionName);
+      await addDoc(notesRef, noteData);
+
+      // Reset form
+      setNewNote('');
+      setSelectedFiles([]);
+      setNoteCategory('general');
+      setNotePriority('medium');
+      setSelectedTags([]);
+
+      // Reload notes
+      await loadNotes();
+
+      setSuccessMessage('Note added successfully');
+      setShowSuccess(true);
+    } catch (error) {
+      console.error('Error adding note:', error);
+      setSuccessMessage('Error adding note');
+      setShowSuccess(true);
+    } finally {
+      setUploading(false);
+      setLoading(false);
+    }
+  };
+
   const handleDeleteNote = async (noteId: string) => {
     if (window.confirm('Are you sure you want to delete this note?')) {
       try {
-        const noteRef = doc(db, 'tenants', tenantId, `${entityType}_notes`, noteId);
+        const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
+        const noteRef = doc(db, 'tenants', tenantId, collectionName, noteId);
         await deleteDoc(noteRef);
         await loadNotes();
         setSuccessMessage('Note deleted successfully');
@@ -228,7 +339,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
       {/* Header */}
       <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px: 3 }}>
         <Typography variant="h6" fontWeight={700}>
-          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : 'Company'} Notes History ({notes.length})
+          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : entityType === 'jobOrder' ? 'Job Order' : 'Company'} Notes History ({notes.length})
         </Typography>
       </Box>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px: 3 }}>
@@ -236,16 +347,155 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
           ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
           : entityType === 'deal'
           ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
+          : entityType === 'jobOrder'
+          ? 'Add notes, observations, and feedback about this job order. All notes trigger AI review for insights.'
           : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
       </Typography>
       <Divider sx={{ my: 2 }} />
 
-      {/* Add Note Button */}
-      {/* <Box sx={{ mb: 3, textAlign: 'center' }}>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Use the "Add Note" button in the header to add new notes to this {entityType}.
-        </Typography>
-      </Box> */}
+      {/* Add Note Form */}
+      <Box sx={{ px: 3, mb: 3 }}>
+        <Box display="flex" alignItems="center" mb={2}>
+          <NoteIcon color="primary" sx={{ mr: 1 }} />
+          <Typography variant="h6">Add New Note</Typography>
+        </Box>
+        <Grid container spacing={2}>
+          <Grid item xs={12}>
+            <TextField
+              label="Note Content"
+              multiline
+              rows={4}
+              fullWidth
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              placeholder={`Enter your note, observation, or feedback about this ${entityType === 'jobOrder' ? 'job order' : entityType}...`}
+              variant="outlined"
+            />
+          </Grid>
+          
+          <Grid item xs={12} sm={6}>
+            <FormControl fullWidth>
+              <InputLabel>Category</InputLabel>
+              <Select
+                value={noteCategory}
+                onChange={(e) => setNoteCategory(e.target.value as Note['category'])}
+                label="Category"
+              >
+                {entityType === 'jobOrder' ? (
+                  <>
+                    <MenuItem value="general">General</MenuItem>
+                    <MenuItem value="staffing">Staffing</MenuItem>
+                    <MenuItem value="compliance">Compliance</MenuItem>
+                    <MenuItem value="performance">Performance</MenuItem>
+                    <MenuItem value="client_feedback">Client Feedback</MenuItem>
+                    <MenuItem value="other">Other</MenuItem>
+                  </>
+                ) : (
+                  <>
+                    <MenuItem value="general">General</MenuItem>
+                    <MenuItem value="sales">Sales</MenuItem>
+                    <MenuItem value="meeting">Meeting</MenuItem>
+                    <MenuItem value="follow_up">Follow-up</MenuItem>
+                    <MenuItem value="proposal">Proposal</MenuItem>
+                    <MenuItem value="negotiation">Negotiation</MenuItem>
+                    <MenuItem value="closing">Closing</MenuItem>
+                    <MenuItem value="other">Other</MenuItem>
+                  </>
+                )}
+              </Select>
+            </FormControl>
+          </Grid>
+          
+          <Grid item xs={12} sm={6}>
+            <FormControl fullWidth>
+              <InputLabel>Priority</InputLabel>
+              <Select
+                value={notePriority}
+                onChange={(e) => setNotePriority(e.target.value as any)}
+                label="Priority"
+              >
+                <MenuItem value="low">Low</MenuItem>
+                <MenuItem value="medium">Medium</MenuItem>
+                <MenuItem value="high">High</MenuItem>
+                <MenuItem value="urgent">Urgent</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+
+          <Grid item xs={12}>
+            <Typography variant="subtitle2" gutterBottom>
+              Tags (optional)
+            </Typography>
+            <Box display="flex" flexWrap="wrap" gap={1}>
+              {availableTags.map((tag) => (
+                <Chip
+                  key={tag}
+                  label={tag}
+                  onClick={() => {
+                    if (selectedTags.includes(tag)) {
+                      setSelectedTags(selectedTags.filter(t => t !== tag));
+                    } else {
+                      setSelectedTags([...selectedTags, tag]);
+                    }
+                  }}
+                  color={selectedTags.includes(tag) ? 'primary' : 'default'}
+                  variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
+                  size="small"
+                />
+              ))}
+            </Box>
+          </Grid>
+
+          <Grid item xs={12}>
+            <Box display="flex" alignItems="center" gap={2}>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={<AttachFileIcon />}
+              >
+                Attach Files
+                <input
+                  type="file"
+                  hidden
+                  multiple
+                  onChange={handleFileSelect}
+                />
+              </Button>
+              {selectedFiles.length > 0 && (
+                <Typography variant="body2" color="text.secondary">
+                  {selectedFiles.length} file(s) selected
+                </Typography>
+              )}
+            </Box>
+            
+            {selectedFiles.length > 0 && (
+              <Box mt={1}>
+                {selectedFiles.map((file, index) => (
+                  <Chip
+                    key={index}
+                    label={file.name}
+                    onDelete={() => removeFile(index)}
+                    size="small"
+                    sx={{ mr: 1, mb: 1 }}
+                  />
+                ))}
+              </Box>
+            )}
+          </Grid>
+
+          <Grid item xs={12}>
+            <Button
+              variant="contained"
+              onClick={handleSubmitNote}
+              disabled={!newNote.trim() || uploading || loading}
+              startIcon={<AddIcon />}
+              size="large"
+            >
+              {uploading ? 'Uploading...' : loading ? 'Adding Note...' : 'Add Note & Trigger AI Review'}
+            </Button>
+          </Grid>
+        </Grid>
+      </Box>
 
       {/* Notes History */}
       <Card sx={{ p: 0, m: 0 }}>
@@ -306,22 +556,34 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     }}>
                       Date
                     </TableCell>
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid #E5E7EB',
+                      py: 1.5
+                    }}>
+                      Actions
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {notes.map((note) => (
                     <TableRow 
                       key={note.id}
-                      onClick={() => setViewNoteDialog({ open: true, note })}
                       sx={{
                         height: '48px',
-                        cursor: 'pointer',
                         '&:hover': {
                           backgroundColor: '#F9FAFB'
                         }
                       }}
                     >
-                      <TableCell sx={{ py: 1, px: 2 }}>
+                      <TableCell 
+                        sx={{ py: 1, px: 2, cursor: 'pointer' }}
+                        onClick={() => setViewNoteDialog({ open: true, note })}
+                      >
                         <Typography sx={{
                           variant: "body2",
                           color: "#111827",
@@ -414,6 +676,30 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                           {formatDate(note.timestamp)}
                         </Typography>
                       </TableCell>
+                      <TableCell sx={{ py: 1 }}>
+                        <Box display="flex" gap={1}>
+                          <Tooltip title="View Note">
+                            <IconButton
+                              size="small"
+                              onClick={() => setViewNoteDialog({ open: true, note })}
+                            >
+                              <ViewIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Delete Note">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteNote(note.id);
+                              }}
+                              color="error"
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -477,6 +763,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                       key={index}
                       label={file.name}
                       variant="outlined"
+                      component="a"
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      clickable
                       sx={{ mr: 1, mb: 1 }}
                     />
                   ))}

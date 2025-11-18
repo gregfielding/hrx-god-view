@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Box } from '@mui/material';
+import { Box, Divider, Card, CardContent } from '@mui/material';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import QualificationsStep from '../../../components/apply/steps/QualificationsStep';
+import BioStep from '../../../components/apply/steps/BioStep';
 
 type Props = {
   uid: string;
@@ -10,6 +11,7 @@ type Props = {
 
 const QualificationsTab: React.FC<Props> = ({ uid }) => {
   const [qualificationsData, setQualificationsData] = useState<any>({});
+  const [bioData, setBioData] = useState<any>({});
 
   useEffect(() => {
     if (!uid) return;
@@ -26,6 +28,10 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
           experienceSummary: data.experienceSummary || '',
           bio: data.bio || '',
         });
+        setBioData({
+          professionalBio: data.professionalBio || data.bio || '',
+          bio: data.bio || '',
+        });
       }
     });
 
@@ -38,8 +44,21 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
     setQualificationsData((prev: any) => ({ ...prev, ...updated }));
   };
 
+  const handleBioChange = (updated: any) => {
+    setBioData((prev: any) => ({ ...prev, ...updated }));
+  };
+
   return (
     <Box>
+      <Card variant="outlined" sx={{ mb: 4, bgcolor: 'background.paper' }}>
+        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+          <BioStep 
+            value={bioData} 
+            onChange={handleBioChange}
+          />
+        </CardContent>
+      </Card>
+      <Divider sx={{ my: 4 }} />
       <QualificationsStep 
         value={qualificationsData} 
         onChange={handleChange}

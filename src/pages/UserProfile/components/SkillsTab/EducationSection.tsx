@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Accordion,
   AccordionSummary,
@@ -45,6 +45,13 @@ const EducationSection = ({
 }) => {
   const [education, setEducation] = useState(value || []);
 
+  // Sync with external value changes
+  useEffect(() => {
+    if (Array.isArray(value)) {
+      setEducation(value);
+    }
+  }, [value]);
+
   const handleFieldChange = (idx: number, field: string, val: string) => {
     const updated = education.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setEducation(updated);
@@ -65,9 +72,6 @@ const EducationSection = ({
 
   return (
     <div>
-      <Typography variant="h6" gutterBottom>
-        Education
-      </Typography>
       {education.map((entry, idx) => (
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>

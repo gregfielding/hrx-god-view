@@ -114,6 +114,8 @@ interface PublicJobPosting {
   showPhysicalRequirements?: boolean;
   uniformRequirements?: string[];
   showUniformRequirements?: boolean;
+  customUniformRequirements?: string;
+  showCustomUniformRequirements?: boolean;
   requiredPpe?: string[];
   showRequiredPpe?: boolean;
   shift?: string[];
@@ -658,6 +660,8 @@ const PublicJobsBoard: React.FC = () => {
             showPhysicalRequirements: post.showPhysicalRequirements,
             uniformRequirements: post.uniformRequirements,
             showUniformRequirements: post.showUniformRequirements,
+            customUniformRequirements: post.customUniformRequirements,
+            showCustomUniformRequirements: post.showCustomUniformRequirements,
             requiredPpe: post.requiredPpe,
             showRequiredPpe: post.showRequiredPpe,
             shift: post.shift,
@@ -2052,6 +2056,19 @@ const PublicJobsBoard: React.FC = () => {
                           <Chip key={index} label={uniform} size="small" variant="outlined" />
                         ))}
                       </Box>
+                    </Box>
+                  )}
+
+                  {/* Custom Uniform Requirements */}
+                  {selectedJob.customUniformRequirements && selectedJob.customUniformRequirements.trim() && selectedJob.showCustomUniformRequirements && (
+                    <Box>
+                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                        <Checkroom sx={{ fontSize: 20, mr: 1, verticalAlign: 'middle' }} />
+                        Custom Uniform Requirements
+                      </Typography>
+                      <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {selectedJob.customUniformRequirements}
+                      </Typography>
                     </Box>
                   )}
 

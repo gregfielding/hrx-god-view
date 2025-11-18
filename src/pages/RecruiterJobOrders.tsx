@@ -53,10 +53,12 @@ import { JobOrder } from '../types/Phase1Types';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
   locationName?: string;
+  worksiteCity?: string;
   recruiterName?: string;
   deal?: any; // The complete deal data structure
   workersNeeded?: number;
@@ -102,7 +104,7 @@ const RecruiterJobOrders: React.FC = () => {
     console.log('showFavoritesOnly:', showFavoritesOnly);
   }, [favorites, showFavoritesOnly]);
 
-  const fetchJobOrders = useCallback(async (searchQuery = '', startDoc: any = null) => {
+  const fetchJobOrders = useCallback(async (startDoc: any = null) => {
     if (!tenantId) return;
     
     console.log('🔍 RecruiterJobOrders: Fetching job orders for tenant:', tenantId);
@@ -134,6 +136,12 @@ const RecruiterJobOrders: React.FC = () => {
           const data = jobOrderDoc.data() as JobOrder;
           console.log('🔍 RecruiterJobOrders: Raw job order data:', data);
           
+          // Derive job title from flat field or gig position
+          const derivedJobTitle =
+            (data as any).jobTitle ||
+            (Array.isArray((data as any).gigPositions) && (data as any).gigPositions[0]?.jobTitle) ||
+            undefined;
+
           // Fetch company name
           let companyName = 'Unknown Company';
           const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
@@ -163,6 +171,10 @@ const RecruiterJobOrders: React.FC = () => {
           let locationName = 'No Location';
           const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
           const flatWorksiteName = (data as any).worksiteName || (data as any).deal?.locationName;
+          let worksiteCity: string | undefined =
+            (data as any).worksiteAddress?.city ||
+            (data as any).city ||
+            undefined;
           console.log('🔍 RecruiterJobOrders: Job order worksiteId (flat or deal):', flatWorksiteId);
           console.log('🔍 RecruiterJobOrders: Job order worksiteName (flat or deal):', flatWorksiteName);
           
@@ -180,6 +192,7 @@ const RecruiterJobOrders: React.FC = () => {
                 const locationData = locationSnap.data() as any;
                 console.log('🔍 RecruiterJobOrders: Location data:', locationData);
                 locationName = locationData.nickname || locationData.name || 'Unknown Location';
+                worksiteCity = worksiteCity || locationData.city || locationData.address?.city;
                 console.log('🔍 RecruiterJobOrders: Final location name:', locationName);
               } else {
                 console.warn('🔍 RecruiterJobOrders: Location document does not exist for ID:', flatWorksiteId);
@@ -197,27 +210,20 @@ const RecruiterJobOrders: React.FC = () => {
             id: jobOrderDoc.id,
             companyName,
             locationName,
+            worksiteCity,
+            jobTitle: derivedJobTitle,
             recruiterName: data.recruiterId // TODO: Fetch actual recruiter name
           };
         })
       );
 
-      // Filter by search if provided
-      const filteredJobOrders = searchQuery
-        ? newJobOrders.filter(jo => 
-            jo.jobOrderName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            jo.companyName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            jo.description?.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-        : newJobOrders;
-
       if (firstLoadRef.current) {
-        setJobOrders(filteredJobOrders);
+        setJobOrders(newJobOrders);
         firstLoadRef.current = false;
       } else {
         setJobOrders(prev => {
           const existingIds = new Set(prev.map(jo => jo.id));
-          const deduped = filteredJobOrders.filter(jo => !existingIds.has(jo.id));
+          const deduped = newJobOrders.filter(jo => !existingIds.has(jo.id));
           return [...prev, ...deduped];
         });
       }
@@ -241,16 +247,42 @@ const RecruiterJobOrders: React.FC = () => {
     }
   }, [tenantId, fetchJobOrders]);
 
-  const handleSearch = () => {
-    firstLoadRef.current = true;
-    setLastDoc(null);
-    setIsEnd(false);
-    fetchJobOrders(search);
+  const handleLoadMore = () => {
+    fetchJobOrders(lastDoc);
   };
 
-  const handleLoadMore = () => {
-    fetchJobOrders(search, lastDoc);
-  };
+  // Client-side filtering for real-time search and other filters
+  const filteredJobOrders = jobOrders.filter(jo => {
+    // Search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      const matchesSearch = (
+        (jo.jobOrderName && jo.jobOrderName.toLowerCase().includes(searchLower)) ||
+        (jo.companyName && jo.companyName.toLowerCase().includes(searchLower)) ||
+        (jo.locationName && jo.locationName.toLowerCase().includes(searchLower)) ||
+        (jo.worksiteCity && jo.worksiteCity.toLowerCase().includes(searchLower)) ||
+        (jo.jobTitle && jo.jobTitle.toLowerCase().includes(searchLower))
+      );
+      if (!matchesSearch) return false;
+    }
+    
+    // Favorites filter
+    if (showFavoritesOnly && !isFavorite(jo.id)) {
+      return false;
+    }
+    
+    // Status filter
+    if (statusFilter && jo.status?.toLowerCase() !== statusFilter.toLowerCase()) {
+      return false;
+    }
+    
+    // Company filter
+    if (companyFilter !== 'all' && jo.companyName !== companyFilter) {
+      return false;
+    }
+    
+    return true;
+  });
 
   const handleSort = (field: string) => {
     if (field === 'Requested/Filled') return; // Don't sort this column
@@ -320,13 +352,21 @@ const RecruiterJobOrders: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Job Orders' }
+          ]}
+        />
+      </Box>
       {/* Filters and Search */}
       <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
         <TextField
           placeholder="Search job orders..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
           variant="outlined"
           size="small"
           sx={{ 
@@ -465,7 +505,7 @@ const RecruiterJobOrders: React.FC = () => {
             textTransform: 'none',
           }}
         >
-          New Post
+          New Order
         </Button>
       </Box>
 
@@ -474,7 +514,7 @@ const RecruiterJobOrders: React.FC = () => {
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
           <CircularProgress />
         </Box>
-      ) : jobOrders.length === 0 ? (
+      ) : filteredJobOrders.length === 0 ? (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -535,30 +575,7 @@ const RecruiterJobOrders: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {jobOrders
-                  .filter(jobOrder => {
-                    // Favorites filter
-                    if (showFavoritesOnly) {
-                      const isFav = isFavorite(jobOrder.id);
-                      console.log(`Job Order ${jobOrder.id} isFavorite: ${isFav}, showFavoritesOnly: ${showFavoritesOnly}`);
-                      console.log('Current favorites array:', favorites);
-                      console.log('Job order ID type:', typeof jobOrder.id, 'Value:', jobOrder.id);
-                      if (!isFav) return false;
-                    }
-                    
-                    // Status filter
-                    if (statusFilter && jobOrder.status?.toLowerCase() !== statusFilter.toLowerCase()) {
-                      return false;
-                    }
-                    
-                    // Company filter
-                    if (companyFilter !== 'all' && jobOrder.companyName !== companyFilter) {
-                      return false;
-                    }
-                    
-                    return true;
-                  })
-                  .map((jobOrder, index) => (
+                {filteredJobOrders.map((jobOrder, index) => (
                   <TableRow 
                     key={jobOrder.id} 
                     hover 

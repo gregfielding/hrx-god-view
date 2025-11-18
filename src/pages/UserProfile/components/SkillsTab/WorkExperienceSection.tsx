@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Accordion,
   AccordionSummary,
@@ -50,6 +50,13 @@ const WorkExperienceSection = ({
 }) => {
   const [work, setWork] = useState(value || []);
 
+  // Sync with external value changes
+  useEffect(() => {
+    if (Array.isArray(value)) {
+      setWork(value);
+    }
+  }, [value]);
+
   const handleFieldChange = (idx: number, field: string, val: any) => {
     const updated = work.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setWork(updated);
@@ -70,9 +77,6 @@ const WorkExperienceSection = ({
 
   return (
     <div>
-      <Typography variant="h6" gutterBottom>
-        Work Experience
-      </Typography>
       {work.map((entry, idx) => (
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>

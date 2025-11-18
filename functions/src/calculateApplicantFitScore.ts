@@ -230,6 +230,37 @@ export const calculateApplicantScores = onDocumentWritten(
       return null;
     }
 
+    // Early exit: Skip if only non-scoring fields changed (e.g., comfort flags, transport method, etc.)
+    // These fields don't affect applicant fit scores
+    const nonScoringFields = [
+      'comfortablePassDrug', 'passDrugExplanation',
+      'comfortablePassBackground', 'passBackgroundExplanation',
+      'comfortableEVerify', 'comfortableWithLanguages',
+      'comfortableWithPhysicalRequirements', 'comfortableWithUniformRequirements',
+      'comfortableWithCustomUniformRequirements', 'comfortableWithRequiredPpe',
+      'transportMethod', 'availableToStartDate', 'preferences.availabilityNotes',
+      'lastActiveAt', 'lastActiveRoute', 'lastVisibility', 'updatedAt'
+    ];
+    
+    // Check if ONLY non-scoring fields changed
+    if (beforeData) {
+      const allChangedFields = Object.keys(afterData).filter(key => {
+        return JSON.stringify(beforeData[key]) !== JSON.stringify(afterData[key]);
+      });
+      
+      const onlyNonScoringChanged = allChangedFields.every(field => {
+        // Check if field or any parent path is in nonScoringFields
+        return nonScoringFields.some(nonScoring => 
+          field === nonScoring || field.startsWith(nonScoring + '.')
+        );
+      });
+      
+      if (onlyNonScoringChanged && allChangedFields.length > 0) {
+        console.log(`User ${userId}: Only non-scoring fields changed, skipping score calculation`);
+        return null;
+      }
+    }
+
     // Check if applicationData changed OR if profile data changed (affects scores)
     const beforeAppData = beforeData?.applicationData || {};
     const afterAppData = afterData?.applicationData || {};

@@ -21,6 +21,7 @@ import {
   Divider,
   Autocomplete,
   IconButton,
+  Switch,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -41,6 +42,7 @@ import { toNumberSafe, toISODate, coerceSelect } from '../utils/fieldCoercions';
 import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/registryHelpers';
 import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
+import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -173,6 +175,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     jobOrderName: '',
     jobTitle: '',
     description: '',
+    jobDescriptionFromClient: '',
     companyId: '',
     worksiteId: '',
     status: 'draft',
@@ -224,6 +227,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     additionalScreenings: [],
     eVerifyRequired: false,
     dressCode: [],
+    customUniformRequirements: '',
+    showCustomUniformRequirements: false,
     timeclockSystem: '',
     disciplinePolicy: '',
     poRequired: false,
@@ -384,6 +389,84 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         setPhysicalRequirements(data.physicalRequirements || []);
         setLanguages(data.languages || []);
         setSkills(data.skills || []);
+      }
+    } catch (error) {
+      console.error('Error loading company defaults:', error);
+    }
+  };
+
+  const loadAndApplyCompanyDefaults = async (companyId: string, currentFormData: any) => {
+    if (!companyId || !tenantId) return;
+    
+    try {
+      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+      const companySnap = await getDoc(companyRef);
+      
+      if (!companySnap.exists()) return;
+      
+      const companyData = companySnap.data();
+      const defaults = companyData.defaults || {};
+      const rules = defaults.rules || {};
+      const eVerify = defaults.eVerify || {};
+      const billing = defaults.billing || {};
+      
+      // Only apply defaults if fields are empty (don't overwrite existing values)
+      const updates: any = {};
+      
+      if (!currentFormData.replacingExistingAgency && rules.replacingExistingAgency !== undefined) {
+        updates.replacingExistingAgency = rules.replacingExistingAgency;
+      }
+      if (!currentFormData.rolloverExistingStaff && rules.rolloverExistingStaff !== undefined) {
+        updates.rolloverExistingStaff = rules.rolloverExistingStaff;
+      }
+      if (!currentFormData.timeclockSystem && rules.timeclockSystem) {
+        updates.timeclockSystem = rules.timeclockSystem;
+      }
+      if (!currentFormData.attendancePolicy && rules.attendancePolicy) {
+        updates.attendancePolicy = rules.attendancePolicy;
+      }
+      if (!currentFormData.noShowPolicy && rules.noShowPolicy) {
+        updates.noShowPolicy = rules.noShowPolicy;
+      }
+      if (!currentFormData.overtimePolicy && rules.overtimePolicy) {
+        updates.overtimePolicy = rules.overtimePolicy;
+      }
+      if (!currentFormData.callOffPolicy && rules.callOffPolicy) {
+        updates.callOffPolicy = rules.callOffPolicy;
+      }
+      if (!currentFormData.injuryHandlingPolicy && rules.injuryHandlingPolicy) {
+        updates.injuryHandlingPolicy = rules.injuryHandlingPolicy;
+      }
+      if (!currentFormData.disciplinePolicy && rules.disciplinePolicy) {
+        updates.disciplinePolicy = rules.disciplinePolicy;
+      }
+      if (!currentFormData.eVerifyRequired && eVerify.eVerifyRequired !== undefined) {
+        updates.eVerifyRequired = eVerify.eVerifyRequired;
+      }
+      if (!currentFormData.poRequired && billing.poRequired !== undefined) {
+        updates.poRequired = billing.poRequired;
+      }
+      if (!currentFormData.paymentTerms && billing.paymentTerms) {
+        updates.paymentTerms = billing.paymentTerms;
+      }
+      if (!currentFormData.invoiceDeliveryMethod && billing.invoiceDeliveryMethod) {
+        updates.invoiceDeliveryMethod = billing.invoiceDeliveryMethod;
+      }
+      if (!currentFormData.invoiceFrequency && billing.invoiceFrequency) {
+        updates.invoiceFrequency = billing.invoiceFrequency;
+      }
+      
+      // Apply updates to formData if any
+      if (Object.keys(updates).length > 0) {
+        setFormData((prev: any) => ({ ...prev, ...updates }));
+        
+        // If editing, save to Firestore
+        if (isEditing && jobOrderId) {
+          // Save each field individually to Firestore
+          for (const [field, value] of Object.entries(updates)) {
+            await saveFieldToFirestore(field, value, { ...currentFormData, ...updates });
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading company defaults:', error);
@@ -584,6 +667,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           jobOrderName: data.jobOrderName || '',
           jobTitle: (data as any).jobTitle || (stageData.discovery?.jobTitles?.[0] || ''),
           description: data.jobOrderDescription || '',
+          jobDescriptionFromClient: (data as any).jobDescriptionFromClient || '',
           companyId: (data as any).companyId || '',
           worksiteId: (data as any).worksiteId || '',
           status: data.status || 'draft',
@@ -642,6 +726,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           additionalScreenings: stageData.scoping?.compliance?.additionalScreenings || [],
           eVerifyRequired: stageData.scoping?.compliance?.eVerify || false,
           dressCode: stageData.scoping?.uniformRequirements || [],
+          customUniformRequirements: (data as any).customUniformRequirements || stageData.scoping?.customUniformRequirements || '',
+          showCustomUniformRequirements: (data as any).showCustomUniformRequirements || stageData.scoping?.showCustomUniformRequirements || false,
           timeclockSystem: stageData.scoping?.timeclockSystem || '',
           disciplinePolicy: stageData.scoping?.disciplinePolicy || '',
           poRequired: stageData.scoping?.poRequired || false,
@@ -751,6 +837,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     // Load company contacts when company is selected
     if (field === 'companyId' && value) {
       await loadCompanyContacts(value);
+      // Load and apply company defaults
+      await loadAndApplyCompanyDefaults(value, updatedFormData);
     }
     
     setFormData(updatedFormData);
@@ -773,6 +861,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
     // Use the passed form data or fall back to current state
     const dataToUse = currentFormData || formData;
+    
+    // Store previous status before update (for status change detection)
+    const previousStatus = formData.status;
 
 
     try {
@@ -848,6 +939,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             ppeProvidedBy: (dataToUse as any).ppeProvidedBy || undefined,
           },
           uniformRequirements: (dataToUse as any).dressCode || undefined,
+          customUniformRequirements: (dataToUse as any).customUniformRequirements || undefined,
+          showCustomUniformRequirements: (dataToUse as any).showCustomUniformRequirements || undefined,
           timeclockSystem: (dataToUse as any).timeclockSystem || undefined,
           disciplinePolicy: (dataToUse as any).disciplinePolicy || undefined,
           poRequired: (dataToUse as any).poRequired || undefined,
@@ -898,6 +991,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         tenantId,
         jobOrderName: dataToUse.jobOrderName,
         jobOrderDescription: dataToUse.description,
+        jobDescriptionFromClient: dataToUse.jobDescriptionFromClient || undefined,
         status: dataToUse.status,
         jobType: dataToUse.jobType || 'career',
         workersNeeded: toNumberSafe(dataToUse.workersNeeded) ?? 1,
@@ -926,6 +1020,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         billingContactId: dataToUse.billingContactId || '',
         safetyContactId: dataToUse.safetyContactId || '',
         invoiceContactId: dataToUse.invoiceContactId || '',
+        customUniformRequirements: dataToUse.customUniformRequirements || undefined,
         stageData: stageDataUpdate,
         updatedAt: new Date(),
         updatedBy: user.uid,
@@ -938,6 +1033,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
       await updateDoc(jobOrderRef, cleanJobOrderData);
       
+      // If status changed, update connected job posts
+      if (field === 'status') {
+        try {
+          const jobsBoardService = JobsBoardService.getInstance();
+          const connectedPosts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
+          
+          if (connectedPosts.length > 0) {
+            const newStatus = value;
+            
+            // If status changed from 'open' to something else, pause all connected posts
+            if (previousStatus === 'open' && newStatus !== 'open') {
+              console.log(`🔄 Job order status changed from 'open' to '${newStatus}' - pausing ${connectedPosts.length} connected job post(s)`);
+              for (const post of connectedPosts) {
+                await jobsBoardService.updatePostStatus(tenantId, post.id, 'paused');
+              }
+            }
+            // If status changed back to 'open', resume all connected posts (set to 'active')
+            else if (previousStatus !== 'open' && newStatus === 'open') {
+              console.log(`🔄 Job order status changed to 'open' - resuming ${connectedPosts.length} connected job post(s)`);
+              for (const post of connectedPosts) {
+                await jobsBoardService.updatePostStatus(tenantId, post.id, 'active');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error updating connected job posts status:', error);
+          // Don't fail the job order save if this fails
+        }
+      }
       
     } catch (error) {
       console.error('Error auto-saving field:', error);
@@ -1040,6 +1164,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               ppeProvidedBy: formData.ppeProvidedBy,
             },
             uniformRequirements: formData.dressCode || undefined,
+            customUniformRequirements: formData.customUniformRequirements || undefined,
+            showCustomUniformRequirements: formData.showCustomUniformRequirements || undefined,
             timeclockSystem: formData.timeclockSystem || undefined,
             disciplinePolicy: formData.disciplinePolicy || undefined,
             poRequired: formData.poRequired,
@@ -1091,6 +1217,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         jobOrderName: formData.jobOrderName,
         jobTitle: formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle || '') : formData.jobTitle,
         jobOrderDescription: formData.description,
+        jobDescriptionFromClient: formData.jobDescriptionFromClient || undefined,
         status: formData.status,
         jobType: formData.jobType || 'career',
         workersNeeded: formData.jobType === 'gig' 
@@ -1166,6 +1293,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         physicalRequirements: formData.physicalRequirements || [],
         ppeRequirements: formData.ppeRequirements || [],
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
+        customUniformRequirements: formData.customUniformRequirements || undefined,
         
         // Background Check and Drug Screening
         backgroundCheckPackages: formData.backgroundCheckPackages || [],
@@ -1199,6 +1327,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       };
 
       if (isEditing && jobOrderId) {
+        // Store previous status before update (for status change detection)
+        const previousStatus = jobOrder?.status || formData.status;
+        const newStatus = formData.status;
+        
         // Update existing job order
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
         
@@ -1206,6 +1338,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         const cleanJobOrderData = removeUndefinedValues(jobOrderData);
         
         await updateDoc(jobOrderRef, cleanJobOrderData);
+        
+        // If status changed, update connected job posts
+        if (previousStatus !== newStatus) {
+          try {
+            const jobsBoardService = JobsBoardService.getInstance();
+            const connectedPosts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
+            
+            if (connectedPosts.length > 0) {
+              // If status changed from 'open' to something else, pause all connected posts
+              if (previousStatus === 'open' && newStatus !== 'open') {
+                console.log(`🔄 Job order status changed from 'open' to '${newStatus}' - pausing ${connectedPosts.length} connected job post(s)`);
+                for (const post of connectedPosts) {
+                  await jobsBoardService.updatePostStatus(tenantId, post.id, 'paused');
+                }
+              }
+              // If status changed back to 'open', resume all connected posts (set to 'active')
+              else if (previousStatus !== 'open' && newStatus === 'open') {
+                console.log(`🔄 Job order status changed to 'open' - resuming ${connectedPosts.length} connected job post(s)`);
+                for (const post of connectedPosts) {
+                  await jobsBoardService.updatePostStatus(tenantId, post.id, 'active');
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Error updating connected job posts status:', error);
+            // Don't fail the job order save if this fails
+          }
+        }
+        
         setSuccess('Job order updated successfully!');
         console.log('✅ Job order updated successfully');
       } else {
@@ -1335,41 +1496,57 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </Grid>
 
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>{(getFieldDef('companyId')?.label || 'Company') + ' *'}</InputLabel>
-                  <Select
-                    value={formData.companyId}
-                    onChange={(e) => handleInputChange('companyId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('companyId', e.target.value)}
-                    label={(getFieldDef('companyId')?.label || 'Company') + ' *'}
-                    required
-                  >
-                    {companies.map((company) => (
-                      <MenuItem key={company.id} value={company.id}>
-                        {company.companyName || company.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  fullWidth
+                  options={companies}
+                  getOptionLabel={(option) => option.companyName || option.name || ''}
+                  value={companies.find(company => company.id === formData.companyId) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('companyId', newValue?.id || '');
+                    if (newValue?.id) {
+                      handleFieldBlur('companyId', newValue.id);
+                    }
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Company"
+                      required
+                      onBlur={(e) => {
+                        if (formData.companyId) {
+                          handleFieldBlur('companyId', formData.companyId);
+                        }
+                      }}
+                    />
+                  )}
+                />
               </Grid>
             
               <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>{getFieldDef('worksiteId')?.label || 'Worksite Id'}</InputLabel>
-                  <Select
-                    value={formData.worksiteId}
-                    onChange={(e) => handleInputChange('worksiteId', e.target.value)}
-                    onBlur={(e) => handleFieldBlur('worksiteId', e.target.value)}
-                    label={getFieldDef('worksiteId')?.label || 'Worksite Id'}
-                    disabled={!formData.companyId}
-                  >
-                    {filteredLocations.map((location) => (
-                      <MenuItem key={location.id} value={location.id}>
-                        {location.nickname || location.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  fullWidth
+                  options={filteredLocations}
+                  getOptionLabel={(option) => option.nickname || option.name || ''}
+                  value={filteredLocations.find(location => location.id === formData.worksiteId) || null}
+                  onChange={(event, newValue) => {
+                    handleInputChange('worksiteId', newValue?.id || '');
+                    if (newValue?.id) {
+                      handleFieldBlur('worksiteId', newValue.id);
+                    }
+                  }}
+                  disabled={!formData.companyId}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Worksite"
+                      onBlur={(e) => {
+                        if (formData.worksiteId) {
+                          handleFieldBlur('worksiteId', formData.worksiteId);
+                        }
+                      }}
+                    />
+                  )}
+                />
               </Grid>
 
               {/* Only show Start/End Date for Career jobs (not for Gig jobs) */}
@@ -1649,8 +1826,545 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </Grid>
             )}
 
+            {/* Job Description from Client */}
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Job Description from Client"
+                value={formData.jobDescriptionFromClient}
+                onChange={(e) => handleInputChange('jobDescriptionFromClient', e.target.value)}
+                onBlur={(e) => handleFieldBlur('jobDescriptionFromClient', e.target.value)}
+                multiline
+                rows={4}
+                placeholder="Enter the job description provided by the client..."
+              />
             </Grid>
 
+            </Grid>
+
+            {/* Compliance & Requirements Section */}
+            <Grid item xs={12}>
+              <Divider sx={{ my: 3 }} />
+              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
+                Compliance & Requirements
+              </Typography>
+            </Grid>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
+                    value={formData.backgroundCheckPackages}
+                    onChange={(event, newValue) => {
+                      handleInputChange('backgroundCheckPackages', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
+                        helperText="Select required background check types"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
+                    value={formData.drugScreeningPanels}
+                    onChange={(event, newValue) => {
+                      handleInputChange('drugScreeningPanels', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
+                        helperText="Select required drug screening panels"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
+                    value={formData.additionalScreenings}
+                    onChange={(event, newValue) => {
+                      handleInputChange('additionalScreenings', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Additional Screenings"
+                        helperText="Select required additional screening types (healthcare, credentials, etc.)"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
+                    value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
+                    onChange={(_, newValue) => {
+                      const credValues = newValue.map(option => option.value);
+                      handleInputChange('licensesCerts', credValues);
+                    }}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return (
+                          <Chip
+                            key={key}
+                            label={typeof option === 'string' ? option : option.label}
+                            size="small"
+                            {...chipProps}
+                          />
+                        );
+                      })
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
+                        placeholder="Type to search licenses and certifications..."
+                        helperText="Start typing to search from 100+ standard credentials"
+                      />
+                    )}
+                    filterSelectedOptions
+                    freeSolo={false}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Experience Required</InputLabel>
+                    <Select
+                      value={formData.experienceRequired}
+                      onChange={(e) => handleInputChange('experienceRequired', e.target.value)}
+                      label="Experience Required"
+                    >
+                      {experienceOptions.map((option, index) => (
+                        <MenuItem key={index} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Education Required</InputLabel>
+                    <Select
+                      value={formData.educationRequired}
+                      onChange={(e) => handleInputChange('educationRequired', e.target.value)}
+                      label="Education Required"
+                    >
+                      {educationOptions.map((option, index) => (
+                        <MenuItem key={index} value={option.value}>
+                          {option.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  multiple
+                  fullWidth
+                  options={Array.isArray(getOptionsForField('languages', companyDefaultsForOptions)) ? getOptionsForField('languages', companyDefaultsForOptions).map(opt => opt.value) : []}
+                  value={formData.languagesRequired}
+                  onChange={(event, newValue) => {
+                    handleInputChange('languagesRequired', newValue);
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={getFieldDef('languages')?.label || 'Languages Required'}
+                      helperText="Select required languages"
+                    />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        variant="outlined"
+                        label={option}
+                        {...getTagProps({ index })}
+                        key={option}
+                      />
+                    ))
+                  }
+                />
+              </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
+                    value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
+                    onChange={(_, newValue) => {
+                      const skillValues = newValue.map(option => option.value);
+                      handleInputChange('skillsRequired', skillValues);
+                    }}
+                    getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => {
+                        const { key, ...chipProps } = getTagProps({ index });
+                        return (
+                          <Chip
+                            key={key}
+                            label={typeof option === 'string' ? option : option.label}
+                            size="small"
+                            {...chipProps}
+                          />
+                        );
+                      })
+                    }
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('skills')?.label || 'Skills Required'}
+                        placeholder="Type to search skills..."
+                        helperText="Start typing to search from 500+ O*NET skills"
+                      />
+                    )}
+                    filterSelectedOptions
+                    freeSolo={false}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Standing',
+                      'Walking',
+                      'Sitting',
+                      'Lifting 25 lbs',
+                      'Lifting 50 lbs',
+                      'Lifting 75 lbs',
+                      'Lifting 100+ lbs',
+                      'Carrying 25 lbs',
+                      'Carrying 50 lbs',
+                      'Carrying 75 lbs',
+                      'Carrying 100+ lbs',
+                      'Pushing',
+                      'Pulling',
+                      'Climbing',
+                      'Balancing',
+                      'Stooping',
+                      'Kneeling',
+                      'Crouching',
+                      'Crawling',
+                      'Reaching',
+                      'Handling',
+                      'Fingering',
+                      'Feeling',
+                      'Talking',
+                      'Hearing',
+                      'Seeing',
+                      'Color Vision',
+                      'Depth Perception',
+                      'Field of Vision',
+                      'Driving',
+                      'Operating Machinery',
+                      'Working at Heights',
+                      'Confined Spaces',
+                      'Outdoor Work',
+                      'Indoor Work',
+                      'Temperature Extremes',
+                      'Noise',
+                      'Vibration',
+                      'Fumes/Odors',
+                      'Dust',
+                      'Chemicals',
+                      'Radiation',
+                      'Other'
+                    ]}
+                    value={formData.physicalRequirements}
+                    onChange={(event, newValue) => {
+                      handleInputChange('physicalRequirements', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Physical Requirements"
+                        helperText="Select physical requirements for this position"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Hard Hat',
+                      'Safety Glasses',
+                      'Safety Goggles',
+                      'Face Shield',
+                      'Respirator',
+                      'Dust Mask',
+                      'N95 Mask',
+                      'Hearing Protection',
+                      'Ear Plugs',
+                      'Ear Muffs',
+                      'High-Visibility Vest',
+                      'Reflective Clothing',
+                      'Safety Boots',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Cut-Resistant Gloves',
+                      'Chemical-Resistant Gloves',
+                      'Heat-Resistant Gloves',
+                      'Fall Protection Harness',
+                      'Safety Lanyard',
+                      'Lifeline',
+                      'Confined Space Equipment',
+                      'Gas Monitor',
+                      'Air Purifying Respirator',
+                      'Self-Contained Breathing Apparatus',
+                      'First Aid Kit',
+                      'Emergency Shower',
+                      'Eye Wash Station',
+                      'Fire Extinguisher',
+                      'Safety Data Sheets',
+                      'Lockout/Tagout Devices',
+                      'Barricades',
+                      'Warning Signs',
+                      'Personal Alarm',
+                      'Two-Way Radio',
+                      'Flashlight',
+                      'Headlamp',
+                      'Protective Coveralls',
+                      'Disposable Suits',
+                      'Chemical Apron',
+                      'Lab Coat',
+                      'Hair Net',
+                      'Beard Cover',
+                      'Disposable Gloves',
+                      'Nitrile Gloves',
+                      'Latex Gloves',
+                      'Vinyl Gloves',
+                      'Insulated Gloves',
+                      'Electrical Gloves',
+                      'Welding Helmet',
+                      'Welding Gloves',
+                      'Welding Apron',
+                      'Welding Boots',
+                      'Welding Jacket',
+                      'Chainsaw Chaps',
+                      'Cutting Gloves',
+                      'Abrasion-Resistant Clothing',
+                      'Flame-Resistant Clothing',
+                      'Arc Flash Protection',
+                      'Voltage-Rated Gloves',
+                      'Rubber Insulating Gloves',
+                      'Leather Protectors',
+                      'Insulating Blankets',
+                      'Insulating Covers',
+                      'Hot Sticks',
+                      'Voltage Detectors',
+                      'Ground Fault Circuit Interrupters',
+                      'Other'
+                    ]}
+                    value={formData.ppeRequirements}
+                    onChange={(event, newValue) => {
+                      handleInputChange('ppeRequirements', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label={getFieldDef('ppe')?.label || 'PPE Requirements'}
+                        helperText="Select required personal protective equipment"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
+                    <Select
+                      value={formData.ppeProvidedBy}
+                      onChange={(e) => handleInputChange('ppeProvidedBy', e.target.value)}
+                      label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
+                    >
+                      <MenuItem value="company">Company</MenuItem>
+                      <MenuItem value="worker">Worker</MenuItem>
+                      <MenuItem value="both">Both</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+            </Grid>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <Autocomplete
+                    multiple
+                    fullWidth
+                    options={[
+                      'Business Casual',
+                      'Business Professional',
+                      'Casual',
+                      'Scrubs',
+                      'Uniform Provided',
+                      'Black Pants',
+                      'White Shirt',
+                      'Polo Shirt',
+                      'Button-Down Shirt',
+                      'Dress Shirt',
+                      'Khaki Pants',
+                      'Dress Pants',
+                      'Jeans (Dark)',
+                      'Jeans (No Holes)',
+                      'Slacks',
+                      'Skirt/Dress',
+                      'Blouse',
+                      'Sweater',
+                      'Cardigan',
+                      'Blazer',
+                      'Suit',
+                      'Tie Required',
+                      'No Tie',
+                      'Closed-Toe Shoes',
+                      'Steel-Toe Boots',
+                      'Non-Slip Shoes',
+                      'Dress Shoes',
+                      'Sneakers',
+                      'Boots',
+                      'Sandals Allowed',
+                      'No Sandals',
+                      'No Flip-Flops',
+                      'No Shorts',
+                      'No Tank Tops',
+                      'No Graphic Tees',
+                      'No Hoodies',
+                      'No Sweatpants',
+                      'No Leggings',
+                      'No Yoga Pants',
+                      'No Athletic Wear',
+                      'No Ripped Clothing',
+                      'No Visible Tattoos',
+                      'No Facial Piercings',
+                      'Minimal Jewelry',
+                      'No Jewelry',
+                      'Hair Tied Back',
+                      'Clean Shaven',
+                      'Facial Hair Allowed',
+                      'Hair Color Restrictions',
+                      'No Hair Color Restrictions',
+                      'Coveralls',
+                      'Safety Vest',
+                      'Hard Hat',
+                      'Reflective Clothing',
+                      'Weather-Appropriate',
+                      'Seasonal Attire',
+                      'Formal Occasions',
+                      'Customer-Facing',
+                      'Back Office',
+                      'Laboratory',
+                      'Kitchen',
+                      'Warehouse',
+                      'Construction',
+                      'Healthcare',
+                      'Food Service',
+                      'Retail',
+                      'Office',
+                      'Other'
+                    ]}
+                    value={formData.dressCode}
+                    onChange={(event, newValue) => {
+                      handleInputChange('dressCode', newValue);
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Uniform Requirements"
+                        helperText="Select dress code and uniform requirements"
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          variant="outlined"
+                          label={option}
+                          {...getTagProps({ index })}
+                          key={option}
+                        />
+                      ))
+                    }
+                  />
+                </Grid>
+            </Grid>
+
+            {/* Custom Uniform Requirements Section */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Custom Uniform Requirements"
+                  multiline
+                  rows={3}
+                  value={formData.customUniformRequirements}
+                  onChange={(e) => handleInputChange('customUniformRequirements', e.target.value)}
+                  placeholder="Enter custom uniform requirements text..."
+                  helperText="Enter any additional or custom uniform requirements"
+                />
+              </Grid>
+            </Grid>
 
             <Grid item xs={12} md={6}>
               <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>
@@ -1762,1172 +2476,142 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               </Grid>
             </Grid>
 
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                fullWidth
-                options={loadedContacts}
-                getOptionLabel={(option) => option.fullName || option.name || ''}
-                value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
-                onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Procurement Contact"
-                    placeholder="Select Procurement Contact"
-                  />
-                )}
-                renderOption={(props, option) => (
-                  <li {...props}>
-                    {option.fullName || option.name} {option.title && `(${option.title})`}
-                  </li>
-                )}
-                disabled={loadedContacts.length === 0}
-              />
-              {loadedContacts.length === 0 && formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  No contacts found for this company. Add contacts to the company first.
-                </Typography>
-              )}
-              {!formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  Select a company to load contacts.
-                </Typography>
-              )}
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                fullWidth
-                options={loadedContacts}
-                getOptionLabel={(option) => option.fullName || option.name || ''}
-                value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
-                onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Billing Contact"
-                    placeholder="Select Billing Contact"
-                  />
-                )}
-                renderOption={(props, option) => (
-                  <li {...props}>
-                    {option.fullName || option.name} {option.title && `(${option.title})`}
-                  </li>
-                )}
-                disabled={loadedContacts.length === 0}
-              />
-              {loadedContacts.length === 0 && formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  No contacts found for this company. Add contacts to the company first.
-                </Typography>
-              )}
-              {!formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  Select a company to load contacts.
-                </Typography>
-              )}
-            </Grid>
-          </Grid>
-
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                fullWidth
-                options={loadedContacts}
-                getOptionLabel={(option) => option.fullName || option.name || ''}
-                value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
-                onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Safety Contact"
-                    placeholder="Select Safety Contact"
-                  />
-                )}
-                renderOption={(props, option) => (
-                  <li {...props}>
-                    {option.fullName || option.name} {option.title && `(${option.title})`}
-                  </li>
-                )}
-                disabled={loadedContacts.length === 0}
-              />
-              {loadedContacts.length === 0 && formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  No contacts found for this company. Add contacts to the company first.
-                </Typography>
-              )}
-              {!formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  Select a company to load contacts.
-                </Typography>
-              )}
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                fullWidth
-                options={loadedContacts}
-                getOptionLabel={(option) => option.fullName || option.name || ''}
-                value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
-                onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Invoice Contact"
-                    placeholder="Select Invoice Contact"
-                  />
-                )}
-                renderOption={(props, option) => (
-                  <li {...props}>
-                    {option.fullName || option.name} {option.title && `(${option.title})`}
-                  </li>
-                )}
-                disabled={loadedContacts.length === 0}
-              />
-              {loadedContacts.length === 0 && formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  No contacts found for this company. Add contacts to the company first.
-                </Typography>
-              )}
-              {!formData.companyId && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
-                  Select a company to load contacts.
-                </Typography>
-              )}
-            </Grid>
-          </Grid>
-
-
-           <Grid item xs={12}>
-               <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 3, color: 'primary.main' }}>
-                 Company Background
-               </Typography>
-             </Grid>
-
-             <Grid container spacing={2} sx={{ mb: 3 }}>
-
-             <Grid item xs={12}>
-               <FormControl component="fieldset" sx={{ mb: 3 }}>
-                 <Typography variant="subtitle2" sx={{ mb: 2 }}>
-                   Do they currently use staffing agencies?
-                 </Typography>
-                 <Box sx={{ display: 'flex', gap: 2 }}>
-                   <Button
-                     variant={formData.currentAgencyCount && parseInt(formData.currentAgencyCount) > 0 ? 'contained' : 'outlined'}
-                     onClick={() => {
-                       if (!formData.currentAgencyCount || parseInt(formData.currentAgencyCount) === 0) {
-                         handleInputChange('currentAgencyCount', '1');
-                       }
-                     }}
-                   >
-                     Yes
-                   </Button>
-                   <Button
-                     variant={!formData.currentAgencyCount || parseInt(formData.currentAgencyCount) === 0 ? 'contained' : 'outlined'}
-                     onClick={() => handleInputChange('currentAgencyCount', '0')}
-                   >
-                     No
-                   </Button>
-                 </Box>
-               </FormControl>
-             </Grid>
-             </Grid>
-             <Grid container spacing={2} sx={{ mb: 3 }}>
-      
-                 <Grid item xs={12} md={6}>
-                   <TextField
-                     fullWidth
-                     label={getFieldDef('currentStaffCount')?.label || 'Current Staff Count'}
-                     type="number"
-                     value={formData.currentStaffCount}
-                     onChange={(e) => handleInputChange('currentStaffCount', e.target.value)}
-                     onBlur={(e) => handleFieldBlur('currentStaffCount', e.target.value)}
-                   />
-                 </Grid>
-                 <Grid item xs={12} md={6}>
-                   <TextField
-                     fullWidth
-                     label={getFieldDef('currentAgencyCount')?.label || 'Current Agency Count'}
-                     type="number"
-                     value={formData.currentAgencyCount}
-                     onChange={(e) => handleInputChange('currentAgencyCount', e.target.value)}
-                     onBlur={(e) => handleFieldBlur('currentAgencyCount', e.target.value)}
-                   />
-                 </Grid>
-                 <Grid item xs={12}>
-                   <FormControl fullWidth>
-                     <InputLabel>Satisfaction Level With Current Staffing Agencies</InputLabel>
-                     <Select
-                       value={formData.currentSatisfactionLevel || ''}
-                       onChange={(e) => handleInputChange('currentSatisfactionLevel', e.target.value)}
-                       onBlur={(e) => handleFieldBlur('currentSatisfactionLevel', e.target.value)}
-                       label="Satisfaction Level With Current Staffing Agencies"
-                     >
-                       <MenuItem value="very_happy">Very Happy</MenuItem>
-                       <MenuItem value="somewhat">Somewhat Satisfied</MenuItem>
-                       <MenuItem value="frustrated">Frustrated</MenuItem>
-                     </Select>
-                   </FormControl>
-                 </Grid>
-                 </Grid>
-
-                 <Grid container spacing={2} sx={{ mb: 3 }}>  
-  
-                 <Grid item xs={12}>
-                   <FormControl component="fieldset" sx={{ mb: 2 }}>
-                     <Typography variant="subtitle2" sx={{ mb: 2 }}>
-                       Have they used staffing agencies before?
-                     </Typography>
-                     <Box sx={{ display: 'flex', gap: 2 }}>
-                       <Button
-                         variant={formData.hasUsedAgenciesBefore ? 'contained' : 'outlined'}
-                         onClick={() => handleInputChange('hasUsedAgenciesBefore', true)}
-                       >
-                         Yes
-                       </Button>
-                       <Button
-                         variant={!formData.hasUsedAgenciesBefore ? 'contained' : 'outlined'}
-                         onClick={() => handleInputChange('hasUsedAgenciesBefore', false)}
-                       >
-                         No
-                       </Button>
-                     </Box>
-                   </FormControl>
-                 </Grid>
-                 </Grid>
-
-
-            {/* Job Details Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Job Details
-              </Typography>
-            </Grid>
-            
-            
-
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('estimatedRevenue')?.label || 'Estimated Annual Revenue'}
-                value={(() => {
-                  // Calculate: Bill Rate × 2080 hours × Workers Needed
-                  const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
-                  const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
-                  const annualHours = 2080; // Standard full-time annual hours
-                  const calculatedRevenue = billRate * annualHours * workersNeeded;
-                  return calculatedRevenue > 0 ? `$${calculatedRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$0.00';
-                })()}
-                InputProps={{
-                  readOnly: true,
-                }}
-                helperText="Calculated: Bill Rate × 2,080 hours × Workers Needed"
-              />
-            </Grid>
-
-
-            {/* Qualification Information Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Qualification Information
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('mustHave')?.label || 'Must Have Requirements'}
-                value={formData.mustHaveRequirements}
-                onChange={(e) => handleInputChange('mustHaveRequirements', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('mustAvoid')?.label || 'Must Avoid Requirements'}
-                value={formData.mustAvoidRequirements}
-                onChange={(e) => handleInputChange('mustAvoidRequirements', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('potentialObstacles')?.label || 'Potential Obstacles'}
-                value={formData.potentialObstacles}
-                onChange={(e) => handleInputChange('potentialObstacles', e.target.value)}
-                placeholder="Comma-separated list of potential obstacles"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedStartDate')?.label || 'Expected Start Date'}
-                type="date"
-                value={formData.expectedStartDate}
-                onChange={(e) => handleInputChange('expectedStartDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedAveragePayRate')?.label || 'Expected Pay Rate'}
-                value={formData.expectedPayRate}
-                onChange={(e) => handleInputChange('expectedPayRate', e.target.value)}
-                placeholder="e.g., 15.00"
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="Initial Headcount"
-                type="number"
-                value={formData.initialHeadcount}
-                onChange={(e) => handleInputChange('initialHeadcount', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 30 Days"
-                type="number"
-                value={formData.headcountAfter30Days}
-                onChange={(e) => handleInputChange('headcountAfter30Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 90 Days"
-                type="number"
-                value={formData.headcountAfter90Days}
-                onChange={(e) => handleInputChange('headcountAfter90Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <TextField
-                fullWidth
-                label="After 180 Days"
-                type="number"
-                value={formData.headcountAfter180Days}
-                onChange={(e) => handleInputChange('headcountAfter180Days', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label={getFieldDef('expectedAverageMarkup')?.label || 'Expected Markup (%)'}
-                value={formData.expectedMarkup}
-                onChange={(e) => handleInputChange('expectedMarkup', e.target.value)}
-                placeholder="e.g., 25"
-              />
-            </Grid>
-
-            {/* Compliance & Requirements Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Compliance & Requirements
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.eVerifyRequired}
-                    onChange={(e) => handleInputChange('eVerifyRequired', e.target.checked)}
-                  />
-                }
-                label="E-Verify Required"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}</InputLabel>
-                <Select
-                  value={formData.ppeProvidedBy}
-                  onChange={(e) => handleInputChange('ppeProvidedBy', e.target.value)}
-                  label={getFieldDef('ppeProvidedBy')?.label || 'PPE Provided By'}
-                >
-                  <MenuItem value="company">Company</MenuItem>
-                  <MenuItem value="worker">Worker</MenuItem>
-                  <MenuItem value="both">Both</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={Array.isArray(backgroundCheckOptions) ? backgroundCheckOptions.map(option => option.label) : []}
-                value={formData.backgroundCheckPackages}
-                onChange={(event, newValue) => {
-                  handleInputChange('backgroundCheckPackages', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('backgroundCheckPackages')?.label || 'Background Check Packages'}
-                    helperText="Select required background check types"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Procurement Contact"
+                      placeholder="Select Procurement Contact"
                     />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={Array.isArray(drugScreeningOptions) ? drugScreeningOptions.map(option => option.label) : []}
-                value={formData.drugScreeningPanels}
-                onChange={(event, newValue) => {
-                  handleInputChange('drugScreeningPanels', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('drugScreeningPanels')?.label || 'Drug Screening Panels'}
-                    helperText="Select required drug screening panels"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={Array.isArray(additionalScreeningOptions) ? additionalScreeningOptions.map(option => option.label) : []}
-                value={formData.additionalScreenings}
-                onChange={(event, newValue) => {
-                  handleInputChange('additionalScreenings', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Additional Screenings"
-                    helperText="Select required additional screening types (healthcare, credentials, etc.)"
-                  />
-                )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                options={Array.isArray(getOptionsForField('licensesCerts', companyDefaultsForOptions)) ? getOptionsForField('licensesCerts', companyDefaultsForOptions) : []}
-                value={formData.licensesCerts.map(cred => ({ value: cred, label: cred }))}
-                onChange={(_, newValue) => {
-                  const credValues = newValue.map(option => option.value);
-                  handleInputChange('licensesCerts', credValues);
-                }}
-                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => {
-                    const { key, ...chipProps } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={key}
-                        label={typeof option === 'string' ? option : option.label}
-                        size="small"
-                        {...chipProps}
-                      />
-                    );
-                  })
-                }
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('licensesCerts')?.label || 'Licenses & Certifications'}
-                    placeholder="Type to search licenses and certifications..."
-                    helperText="Start typing to search from 100+ standard credentials"
-                  />
-                )}
-                filterSelectedOptions
-                freeSolo={false}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Experience Required</InputLabel>
-                <Select
-                  value={formData.experienceRequired}
-                  onChange={(e) => handleInputChange('experienceRequired', e.target.value)}
-                  label="Experience Required"
-                >
-                  {experienceOptions.map((option, index) => (
-                    <MenuItem key={index} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Education Required</InputLabel>
-                <Select
-                  value={formData.educationRequired}
-                  onChange={(e) => handleInputChange('educationRequired', e.target.value)}
-                  label="Education Required"
-                >
-                  {educationOptions.map((option, index) => (
-                    <MenuItem key={index} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>{getFieldDef('languages')?.label || 'Languages Required'}</InputLabel>
-                <Select
-                  multiple
-                  value={formData.languagesRequired}
-                  onChange={(e) => handleInputChange('languagesRequired', e.target.value)}
-                  input={<OutlinedInput label={getFieldDef('languages')?.label || 'Languages Required'} />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
                   )}
-                >
-                  {getOptionsForField('languages', companyDefaultsForOptions).map((opt, index) => (
-                    <MenuItem key={index} value={opt.value}>
-                      {opt.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                options={Array.isArray(getOptionsForField('skills', companyDefaultsForOptions)) ? getOptionsForField('skills', companyDefaultsForOptions) : []}
-                value={formData.skillsRequired.map(skill => ({ value: skill, label: skill }))}
-                onChange={(_, newValue) => {
-                  const skillValues = newValue.map(option => option.value);
-                  handleInputChange('skillsRequired', skillValues);
-                }}
-                getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => {
-                    const { key, ...chipProps } = getTagProps({ index });
-                    return (
-                      <Chip
-                        key={key}
-                        label={typeof option === 'string' ? option : option.label}
-                        size="small"
-                        {...chipProps}
-                      />
-                    );
-                  })
-                }
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('skills')?.label || 'Skills Required'}
-                    placeholder="Type to search skills..."
-                    helperText="Start typing to search from 500+ O*NET skills"
-                  />
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
                 )}
-                filterSelectedOptions
-                freeSolo={false}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Standing',
-                  'Walking',
-                  'Sitting',
-                  'Lifting 25 lbs',
-                  'Lifting 50 lbs',
-                  'Lifting 75 lbs',
-                  'Lifting 100+ lbs',
-                  'Carrying 25 lbs',
-                  'Carrying 50 lbs',
-                  'Carrying 75 lbs',
-                  'Carrying 100+ lbs',
-                  'Pushing',
-                  'Pulling',
-                  'Climbing',
-                  'Balancing',
-                  'Stooping',
-                  'Kneeling',
-                  'Crouching',
-                  'Crawling',
-                  'Reaching',
-                  'Handling',
-                  'Fingering',
-                  'Feeling',
-                  'Talking',
-                  'Hearing',
-                  'Seeing',
-                  'Color Vision',
-                  'Depth Perception',
-                  'Field of Vision',
-                  'Driving',
-                  'Operating Machinery',
-                  'Working at Heights',
-                  'Confined Spaces',
-                  'Outdoor Work',
-                  'Indoor Work',
-                  'Temperature Extremes',
-                  'Noise',
-                  'Vibration',
-                  'Fumes/Odors',
-                  'Dust',
-                  'Chemicals',
-                  'Radiation',
-                  'Other'
-                ]}
-                value={formData.physicalRequirements}
-                onChange={(event, newValue) => {
-                  handleInputChange('physicalRequirements', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Physical Requirements"
-                    helperText="Select physical requirements for this position"
-                  />
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Billing Contact"
+                      placeholder="Select Billing Contact"
                     />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Hard Hat',
-                  'Safety Glasses',
-                  'Safety Goggles',
-                  'Face Shield',
-                  'Respirator',
-                  'Dust Mask',
-                  'N95 Mask',
-                  'Hearing Protection',
-                  'Ear Plugs',
-                  'Ear Muffs',
-                  'High-Visibility Vest',
-                  'Reflective Clothing',
-                  'Safety Boots',
-                  'Steel-Toe Boots',
-                  'Non-Slip Shoes',
-                  'Cut-Resistant Gloves',
-                  'Chemical-Resistant Gloves',
-                  'Heat-Resistant Gloves',
-                  'Fall Protection Harness',
-                  'Safety Lanyard',
-                  'Lifeline',
-                  'Confined Space Equipment',
-                  'Gas Monitor',
-                  'Air Purifying Respirator',
-                  'Self-Contained Breathing Apparatus',
-                  'First Aid Kit',
-                  'Emergency Shower',
-                  'Eye Wash Station',
-                  'Fire Extinguisher',
-                  'Safety Data Sheets',
-                  'Lockout/Tagout Devices',
-                  'Barricades',
-                  'Warning Signs',
-                  'Personal Alarm',
-                  'Two-Way Radio',
-                  'Flashlight',
-                  'Headlamp',
-                  'Protective Coveralls',
-                  'Disposable Suits',
-                  'Chemical Apron',
-                  'Lab Coat',
-                  'Hair Net',
-                  'Beard Cover',
-                  'Disposable Gloves',
-                  'Nitrile Gloves',
-                  'Latex Gloves',
-                  'Vinyl Gloves',
-                  'Insulated Gloves',
-                  'Electrical Gloves',
-                  'Welding Helmet',
-                  'Welding Gloves',
-                  'Welding Apron',
-                  'Welding Boots',
-                  'Welding Jacket',
-                  'Chainsaw Chaps',
-                  'Cutting Gloves',
-                  'Abrasion-Resistant Clothing',
-                  'Flame-Resistant Clothing',
-                  'Arc Flash Protection',
-                  'Voltage-Rated Gloves',
-                  'Rubber Insulating Gloves',
-                  'Leather Protectors',
-                  'Insulating Blankets',
-                  'Insulating Covers',
-                  'Hot Sticks',
-                  'Voltage Detectors',
-                  'Ground Fault Circuit Interrupters',
-                  'Other'
-                ]}
-                value={formData.ppeRequirements}
-                onChange={(event, newValue) => {
-                  handleInputChange('ppeRequirements', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={getFieldDef('ppe')?.label || 'PPE Requirements'}
-                    helperText="Select required personal protective equipment"
-                  />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
-                    />
-                  ))
-                }
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Autocomplete
-                multiple
-                fullWidth
-                options={[
-                  'Business Casual',
-                  'Business Professional',
-                  'Casual',
-                  'Scrubs',
-                  'Uniform Provided',
-                  'Black Pants',
-                  'White Shirt',
-                  'Polo Shirt',
-                  'Button-Down Shirt',
-                  'Dress Shirt',
-                  'Khaki Pants',
-                  'Dress Pants',
-                  'Jeans (Dark)',
-                  'Jeans (No Holes)',
-                  'Slacks',
-                  'Skirt/Dress',
-                  'Blouse',
-                  'Sweater',
-                  'Cardigan',
-                  'Blazer',
-                  'Suit',
-                  'Tie Required',
-                  'No Tie',
-                  'Closed-Toe Shoes',
-                  'Steel-Toe Boots',
-                  'Non-Slip Shoes',
-                  'Dress Shoes',
-                  'Sneakers',
-                  'Boots',
-                  'Sandals Allowed',
-                  'No Sandals',
-                  'No Flip-Flops',
-                  'No Shorts',
-                  'No Tank Tops',
-                  'No Graphic Tees',
-                  'No Hoodies',
-                  'No Sweatpants',
-                  'No Leggings',
-                  'No Yoga Pants',
-                  'No Athletic Wear',
-                  'No Ripped Clothing',
-                  'No Visible Tattoos',
-                  'No Facial Piercings',
-                  'Minimal Jewelry',
-                  'No Jewelry',
-                  'Hair Tied Back',
-                  'Clean Shaven',
-                  'Facial Hair Allowed',
-                  'Hair Color Restrictions',
-                  'No Hair Color Restrictions',
-                  'Coveralls',
-                  'Safety Vest',
-                  'Hard Hat',
-                  'Reflective Clothing',
-                  'Weather-Appropriate',
-                  'Seasonal Attire',
-                  'Formal Occasions',
-                  'Customer-Facing',
-                  'Back Office',
-                  'Laboratory',
-                  'Kitchen',
-                  'Warehouse',
-                  'Construction',
-                  'Healthcare',
-                  'Food Service',
-                  'Retail',
-                  'Office',
-                  'Other'
-                ]}
-                value={formData.dressCode}
-                onChange={(event, newValue) => {
-                  handleInputChange('dressCode', newValue);
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Uniform Requirements"
-                    helperText="Select dress code and uniform requirements"
-                  />
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
                 )}
-                renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip
-                      variant="outlined"
-                      label={option}
-                      {...getTagProps({ index })}
-                      key={option}
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Safety Contact"
+                      placeholder="Select Safety Contact"
                     />
-                  ))
-                }
-              />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  options={loadedContacts}
+                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
+                  onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Invoice Contact"
+                      placeholder="Select Invoice Contact"
+                    />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      {option.fullName || option.name} {option.title && `(${option.title})`}
+                    </li>
+                  )}
+                  disabled={loadedContacts.length === 0}
+                />
+                {loadedContacts.length === 0 && formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    No contacts found for this company. Add contacts to the company first.
+                  </Typography>
+                )}
+                {!formData.companyId && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    Select a company to load contacts.
+                  </Typography>
+                )}
+              </Grid>
             </Grid>
 
-            {/* Customer Rules & Policies Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Customer Rules & Policies
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.replacingExistingAgency}
-                    onChange={(e) => handleInputChange('replacingExistingAgency', e.target.checked)}
-                  />
-                }
-                label="Replacing Existing Agency"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.rolloverExistingStaff}
-                    onChange={(e) => handleInputChange('rolloverExistingStaff', e.target.checked)}
-                  />
-                }
-                label="Rollover Existing Staff"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Timeclock System"
-                value={formData.timeclockSystem}
-                onChange={(e) => handleInputChange('timeclockSystem', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Attendance Policy"
-                value={formData.attendancePolicy}
-                onChange={(e) => handleInputChange('attendancePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="No-Show Policy"
-                value={formData.noShowPolicy}
-                onChange={(e) => handleInputChange('noShowPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Overtime Policy"
-                value={formData.overtimePolicy}
-                onChange={(e) => handleInputChange('overtimePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Call-Off Policy"
-                value={formData.callOffPolicy}
-                onChange={(e) => handleInputChange('callOffPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Injury Handling Policy"
-                value={formData.injuryHandlingPolicy}
-                onChange={(e) => handleInputChange('injuryHandlingPolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Discipline Policy"
-                value={formData.disciplinePolicy}
-                onChange={(e) => handleInputChange('disciplinePolicy', e.target.value)}
-                multiline
-                rows={2}
-              />
-            </Grid>
-
-            {/* Billing & Invoicing Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Billing & Invoicing
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.poRequired}
-                    onChange={(e) => handleInputChange('poRequired', e.target.checked)}
-                  />
-                }
-                label="PO Required"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Payment Terms"
-                value={formData.paymentTerms}
-                onChange={(e) => handleInputChange('paymentTerms', e.target.value)}
-                placeholder="e.g., Net 30"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Invoice Delivery Method</InputLabel>
-                <Select
-                  value={formData.invoiceDeliveryMethod}
-                  onChange={(e) => handleInputChange('invoiceDeliveryMethod', e.target.value)}
-                  label="Invoice Delivery Method"
-                >
-                  <MenuItem value="email">Email</MenuItem>
-                  <MenuItem value="portal">Portal</MenuItem>
-                  <MenuItem value="mail">Mail</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Invoice Frequency</InputLabel>
-                <Select
-                  value={formData.invoiceFrequency}
-                  onChange={(e) => handleInputChange('invoiceFrequency', e.target.value)}
-                  label="Invoice Frequency"
-                >
-                  <MenuItem value="weekly">Weekly</MenuItem>
-                  <MenuItem value="biweekly">Bi-weekly</MenuItem>
-                  <MenuItem value="monthly">Monthly</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Agreement & Contract Information Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Agreement & Contract Information
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Verbal Agreement Contact"
-                value={formData.verbalAgreementContact}
-                onChange={(e) => handleInputChange('verbalAgreementContact', e.target.value)}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Verbal Agreement Date"
-                type="date"
-                value={formData.verbalAgreementDate}
-                onChange={(e) => handleInputChange('verbalAgreementDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Verbal Agreement Method</InputLabel>
-                <Select
-                  value={formData.verbalAgreementMethod}
-                  onChange={(e) => handleInputChange('verbalAgreementMethod', e.target.value)}
-                  label="Verbal Agreement Method"
-                >
-                  <MenuItem value="phone">Phone</MenuItem>
-                  <MenuItem value="email">Email</MenuItem>
-                  <MenuItem value="in_person">In Person</MenuItem>
-                  <MenuItem value="other">Other</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.insuranceSubmitted}
-                    onChange={(e) => handleInputChange('insuranceSubmitted', e.target.checked)}
-                  />
-                }
-                label="Insurance Submitted"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Conditions to Fulfill"
-                value={formData.conditionsToFulfill}
-                onChange={(e) => handleInputChange('conditionsToFulfill', e.target.value)}
-                placeholder="Comma-separated list of conditions"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Approvals Needed"
-                value={formData.approvalsNeeded}
-                onChange={(e) => handleInputChange('approvalsNeeded', e.target.value)}
-                placeholder="Comma-separated list of approvals needed"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Contract Signed Date"
-                type="date"
-                value={formData.contractSignedDate}
-                onChange={(e) => handleInputChange('contractSignedDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Contract Expiration Date"
-                type="date"
-                value={formData.contractExpirationDate}
-                onChange={(e) => handleInputChange('contractExpirationDate', e.target.value)}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.rateSheetOnFile}
-                    onChange={(e) => handleInputChange('rateSheetOnFile', e.target.checked)}
-                  />
-                }
-                label="Rate Sheet On File"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={formData.msaSigned}
-                    onChange={(e) => handleInputChange('msaSigned', e.target.checked)}
-                  />
-                }
-                label="MSA Signed"
-              />
-            </Grid>
-
-            {/* Notes Section */}
-            <Grid item xs={12}>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
-                Notes
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label={getFieldDef('notes')?.label || 'Internal Notes'}
-                value={formData.notes}
-                onChange={(e) => handleInputChange('notes', e.target.value)}
-                multiline
-                rows={4}
-                placeholder="Additional notes or special instructions..."
-              />
-            </Grid>
 
             {/* Action Buttons */}
             <Grid item xs={12}>

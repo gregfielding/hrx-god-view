@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box } from '@mui/material';
+import { Box, Card, CardContent } from '@mui/material';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import JobPreferencesStep from '../../../components/apply/steps/JobPreferencesStep';
@@ -40,12 +40,14 @@ const PreferencesTab: React.FC<Props> = ({ uid }) => {
   };
 
   return (
-    <Box>
-      <JobPreferencesStep 
-        value={preferencesData} 
-        onChange={handleChange}
-      />
-    </Box>
+    <Card variant="outlined" sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
+      <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <JobPreferencesStep 
+          value={preferencesData} 
+          onChange={handleChange}
+        />
+      </CardContent>
+    </Card>
   );
 };
 

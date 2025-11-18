@@ -84,6 +84,7 @@ import {
   Clear as ClearIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  Save as SaveIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import {
@@ -173,7 +174,7 @@ const RecruiterCompanyDetails: React.FC = () => {
     const activeTab = urlParams.get('tab');
     if (activeTab !== null) {
       const tabIndex = parseInt(activeTab);
-      if (tabIndex >= 0 && tabIndex <= 8) {
+      if (tabIndex >= 0 && tabIndex <= 9) {
         setTabValue(tabIndex);
       }
     }
@@ -533,6 +534,14 @@ const RecruiterCompanyDetails: React.FC = () => {
               </Box>
             }
           />
+          <Tab
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BillingIcon fontSize="small" />
+                Defaults
+              </Box>
+            }
+          />
         </Tabs>
       </Paper>
 
@@ -570,6 +579,10 @@ const RecruiterCompanyDetails: React.FC = () => {
           jobsLoading={jobsLoading} 
           setJobsLoading={setJobsLoading} 
         />
+      </TabPanel>
+      
+      <TabPanel value={tabValue} index={6}>
+        <DefaultsTab company={company} tenantId={tenantId} onSaved={() => setSuccess('Defaults saved')} />
       </TabPanel>
 
       {/* Success Snackbar */}
@@ -896,3 +909,237 @@ const IndeedJobsTab: React.FC<{
 };
 
 export default RecruiterCompanyDetails;
+
+// Defaults Tab - store company-level default Rules and Billing settings
+const DefaultsTab: React.FC<{
+  company: any;
+  tenantId: string;
+  onSaved?: () => void;
+}> = ({ company, tenantId, onSaved }) => {
+  const [saving, setSaving] = useState(false);
+  
+  const initialRules = {
+    replacingExistingAgency: !!company?.defaults?.rules?.replacingExistingAgency,
+    rolloverExistingStaff: !!company?.defaults?.rules?.rolloverExistingStaff,
+    timeclockSystem: company?.defaults?.rules?.timeclockSystem || '',
+    attendancePolicy: company?.defaults?.rules?.attendancePolicy || '',
+    noShowPolicy: company?.defaults?.rules?.noShowPolicy || '',
+    overtimePolicy: company?.defaults?.rules?.overtimePolicy || '',
+    callOffPolicy: company?.defaults?.rules?.callOffPolicy || '',
+    injuryHandlingPolicy: company?.defaults?.rules?.injuryHandlingPolicy || '',
+    disciplinePolicy: company?.defaults?.rules?.disciplinePolicy || '',
+  };
+  const initialBilling = {
+    poRequired: !!company?.defaults?.billing?.poRequired,
+    paymentTerms: company?.defaults?.billing?.paymentTerms || '',
+    invoiceDeliveryMethod: company?.defaults?.billing?.invoiceDeliveryMethod || '',
+    invoiceFrequency: company?.defaults?.billing?.invoiceFrequency || '',
+  };
+  const initialEVerify = {
+    eVerifyRequired: !!company?.defaults?.eVerify?.eVerifyRequired,
+  };
+  
+  const [rules, setRules] = useState(initialRules);
+  const [billing, setBilling] = useState(initialBilling);
+  const [eVerify, setEVerify] = useState(initialEVerify);
+  
+  const handleSave = async () => {
+    if (!tenantId || !company?.id) return;
+    try {
+      setSaving(true);
+      const refDoc = doc(db, 'tenants', tenantId, 'crm_companies', company.id);
+      await setDoc(refDoc, {
+        defaults: {
+          rules: { ...rules },
+          eVerify: { ...eVerify },
+          billing: { ...billing },
+        },
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      onSaved?.();
+    } catch (e) {
+      console.error('Failed to save Defaults:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  return (
+    <Grid container spacing={3}>
+      <Grid item xs={12} md={7}>
+        <Card>
+          <CardHeader title="Customer Rules & Policies (Defaults)" />
+          <CardContent>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={rules.replacingExistingAgency}
+                      onChange={(e) => setRules({ ...rules, replacingExistingAgency: e.target.checked })}
+                    />
+                  }
+                  label="Replacing Existing Agency"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={rules.rolloverExistingStaff}
+                      onChange={(e) => setRules({ ...rules, rolloverExistingStaff: e.target.checked })}
+                    />
+                  }
+                  label="Rollover Existing Staff"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Timeclock System"
+                  value={rules.timeclockSystem}
+                  onChange={(e) => setRules({ ...rules, timeclockSystem: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Attendance Policy"
+                  value={rules.attendancePolicy}
+                  onChange={(e) => setRules({ ...rules, attendancePolicy: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="No-Show Policy"
+                  value={rules.noShowPolicy}
+                  onChange={(e) => setRules({ ...rules, noShowPolicy: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Overtime Policy"
+                  value={rules.overtimePolicy}
+                  onChange={(e) => setRules({ ...rules, overtimePolicy: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Call-Off Policy"
+                  value={rules.callOffPolicy}
+                  onChange={(e) => setRules({ ...rules, callOffPolicy: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Injury Handling Policy"
+                  value={rules.injuryHandlingPolicy}
+                  onChange={(e) => setRules({ ...rules, injuryHandlingPolicy: e.target.value })}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Discipline Policy"
+                  value={rules.disciplinePolicy}
+                  onChange={(e) => setRules({ ...rules, disciplinePolicy: e.target.value })}
+                />
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      </Grid>
+      
+      <Grid item xs={12} md={5}>
+        <Card sx={{ mb: 3 }}>
+          <CardHeader title="E-Verify (Defaults)" />
+          <CardContent>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={eVerify.eVerifyRequired}
+                      onChange={(e) => setEVerify({ ...eVerify, eVerifyRequired: e.target.checked })}
+                    />
+                  }
+                  label="E-Verify Required"
+                />
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader title="Billing & Invoicing (Defaults)" />
+          <CardContent>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={billing.poRequired}
+                      onChange={(e) => setBilling({ ...billing, poRequired: e.target.checked })}
+                    />
+                  }
+                  label="PO Required"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Payment Terms"
+                  value={billing.paymentTerms}
+                  onChange={(e) => setBilling({ ...billing, paymentTerms: e.target.value })}
+                  placeholder="e.g., Net 30"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Invoice Delivery Method</InputLabel>
+                  <Select
+                    value={billing.invoiceDeliveryMethod}
+                    label="Invoice Delivery Method"
+                    onChange={(e) => setBilling({ ...billing, invoiceDeliveryMethod: e.target.value as string })}
+                  >
+                    <MenuItem value="">—</MenuItem>
+                    <MenuItem value="email">Email</MenuItem>
+                    <MenuItem value="portal">Portal</MenuItem>
+                    <MenuItem value="mail">Mail</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <FormControl fullWidth>
+                  <InputLabel>Invoice Frequency</InputLabel>
+                  <Select
+                    value={billing.invoiceFrequency}
+                    label="Invoice Frequency"
+                    onChange={(e) => setBilling({ ...billing, invoiceFrequency: e.target.value as string })}
+                  >
+                    <MenuItem value="">—</MenuItem>
+                    <MenuItem value="weekly">Weekly</MenuItem>
+                    <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                    <MenuItem value="monthly">Monthly</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      </Grid>
+      
+      <Grid item xs={12}>
+        <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+          <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={saving}>
+            {saving ? <CircularProgress size={20} /> : 'Save Defaults'}
+          </Button>
+        </Box>
+      </Grid>
+    </Grid>
+  );
+};

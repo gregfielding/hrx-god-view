@@ -1211,6 +1211,17 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
 
+                  {posting.showCustomUniformRequirements && posting.customUniformRequirements && posting.customUniformRequirements.trim() && (
+                    <Box>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        Custom Uniform Requirements
+                      </Typography>
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {posting.customUniformRequirements}
+                      </Typography>
+                    </Box>
+                  )}
+
                   {posting.showRequiredPpe && posting.requiredPpe?.length > 0 && (
                     <Box>
                       <Typography variant="subtitle2" color="text.secondary" gutterBottom>

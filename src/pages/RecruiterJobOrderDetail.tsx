@@ -38,7 +38,10 @@ import {
   Select,
   Stack,
   Tooltip,
-  Autocomplete
+  Autocomplete,
+  Checkbox,
+  FormControlLabel,
+  Snackbar
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
@@ -63,11 +66,13 @@ import {
   Notes as NotesIcon,
   Add as AddIcon,
   CalendarMonth as CalendarIcon,
-  Visibility as VisibilityIcon
+  Visibility as VisibilityIcon,
+  Settings as SettingsIcon,
+  Save as SaveIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
@@ -85,6 +90,9 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
+import JobPostForm from '../components/JobPostForm';
+import { experienceOptions, educationOptions } from '../data/experienceOptions';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -1128,6 +1136,602 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
   );
 };
 
+// Job Order Defaults Tab - mirrors Company Defaults but saves to job order
+const JobOrderDefaultsTab: React.FC<{
+  jobOrder: JobOrder | null;
+  tenantId: string;
+  onSaved?: () => void;
+}> = ({ jobOrder, tenantId, onSaved }) => {
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Get values from job order's deal.stageData.scoping structure
+  const scoping = jobOrder?.deal?.stageData?.scoping || {};
+  const compliance = scoping.compliance || {};
+  const customerRules = scoping.customerRules || {};
+  
+  const initialRules = {
+    timeclockSystem: scoping.timeclockSystem || '',
+    attendancePolicy: customerRules.attendance || '',
+    noShowPolicy: customerRules.noShows || '',
+    overtimePolicy: customerRules.overtime || '',
+    callOffPolicy: customerRules.callOffs || '',
+    injuryHandlingPolicy: customerRules.injuryHandling || '',
+    disciplinePolicy: scoping.disciplinePolicy || '',
+  };
+  const initialBilling = {
+    poRequired: !!scoping.poRequired,
+    paymentTerms: scoping.paymentTerms || '',
+    invoiceDeliveryMethod: scoping.invoiceDeliveryMethod || '',
+    invoiceFrequency: scoping.invoiceFrequency || '',
+  };
+  const initialEVerify = {
+    eVerifyRequired: !!compliance.eVerify,
+  };
+  
+  const [rules, setRules] = useState(initialRules);
+  const [billing, setBilling] = useState(initialBilling);
+  const [eVerify, setEVerify] = useState(initialEVerify);
+  
+  // Update state when jobOrder changes
+  useEffect(() => {
+    const scoping = jobOrder?.deal?.stageData?.scoping || {};
+    const compliance = scoping.compliance || {};
+    const customerRules = scoping.customerRules || {};
+    
+    setRules({
+      timeclockSystem: scoping.timeclockSystem || '',
+      attendancePolicy: customerRules.attendance || '',
+      noShowPolicy: customerRules.noShows || '',
+      overtimePolicy: customerRules.overtime || '',
+      callOffPolicy: customerRules.callOffs || '',
+      injuryHandlingPolicy: customerRules.injuryHandling || '',
+      disciplinePolicy: scoping.disciplinePolicy || '',
+    });
+    setBilling({
+      poRequired: !!scoping.poRequired,
+      paymentTerms: scoping.paymentTerms || '',
+      invoiceDeliveryMethod: scoping.invoiceDeliveryMethod || '',
+      invoiceFrequency: scoping.invoiceFrequency || '',
+    });
+    setEVerify({
+      eVerifyRequired: !!compliance.eVerify,
+    });
+  }, [jobOrder]);
+  
+  const handleSave = async () => {
+    if (!tenantId || !jobOrder?.id) return;
+    try {
+      setSaving(true);
+      setError(null);
+      
+      // Get current job order to preserve existing structure
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrder.id);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      const currentData = jobOrderSnap.data();
+      
+      // Update the deal.stageData.scoping structure
+      const updatedStageData = {
+        ...(currentData?.deal?.stageData || {}),
+        scoping: {
+          ...(currentData?.deal?.stageData?.scoping || {}),
+          timeclockSystem: rules.timeclockSystem || undefined,
+          disciplinePolicy: rules.disciplinePolicy || undefined,
+          poRequired: billing.poRequired || undefined,
+          paymentTerms: billing.paymentTerms || undefined,
+          invoiceDeliveryMethod: billing.invoiceDeliveryMethod || undefined,
+          invoiceFrequency: billing.invoiceFrequency || undefined,
+          customerRules: {
+            attendance: rules.attendancePolicy || undefined,
+            noShows: rules.noShowPolicy || undefined,
+            overtime: rules.overtimePolicy || undefined,
+            callOffs: rules.callOffPolicy || undefined,
+            injuryHandling: rules.injuryHandlingPolicy || undefined,
+          },
+          compliance: {
+            ...(currentData?.deal?.stageData?.scoping?.compliance || {}),
+            eVerify: eVerify.eVerifyRequired, // Explicitly save true or false (not undefined)
+          },
+        },
+      };
+      
+      await updateDoc(jobOrderRef, {
+        'deal.stageData': updatedStageData,
+        updatedAt: serverTimestamp(),
+      });
+      
+      setSuccess('Defaults saved successfully');
+      onSaved?.();
+    } catch (e: any) {
+      console.error('Failed to save Job Order Defaults:', e);
+      setError('Failed to save defaults');
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  return (
+    <Box>
+      {success && (
+        <Snackbar open={!!success} autoHideDuration={4000} onClose={() => setSuccess(null)}>
+          <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>
+        </Snackbar>
+      )}
+      {error && (
+        <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError(null)}>
+          <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>
+        </Snackbar>
+      )}
+      
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={7}>
+          <Card>
+            <CardHeader title="Customer Rules & Policies" />
+            <CardContent>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Timeclock System"
+                    value={rules.timeclockSystem}
+                    onChange={(e) => setRules({ ...rules, timeclockSystem: e.target.value })}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Attendance Policy"
+                    value={rules.attendancePolicy}
+                    onChange={(e) => setRules({ ...rules, attendancePolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="No-Show Policy"
+                    value={rules.noShowPolicy}
+                    onChange={(e) => setRules({ ...rules, noShowPolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Overtime Policy"
+                    value={rules.overtimePolicy}
+                    onChange={(e) => setRules({ ...rules, overtimePolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Call-Off Policy"
+                    value={rules.callOffPolicy}
+                    onChange={(e) => setRules({ ...rules, callOffPolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Injury Handling Policy"
+                    value={rules.injuryHandlingPolicy}
+                    onChange={(e) => setRules({ ...rules, injuryHandlingPolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Discipline Policy"
+                    value={rules.disciplinePolicy}
+                    onChange={(e) => setRules({ ...rules, disciplinePolicy: e.target.value })}
+                    multiline
+                    rows={2}
+                  />
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        <Grid item xs={12} md={5}>
+          <Card sx={{ mb: 3 }}>
+            <CardHeader title="E-Verify" />
+            <CardContent>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={eVerify.eVerifyRequired}
+                        onChange={(e) => setEVerify({ ...eVerify, eVerifyRequired: e.target.checked })}
+                      />
+                    }
+                    label="E-Verify Required"
+                  />
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader title="Billing & Invoicing" />
+            <CardContent>
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={billing.poRequired}
+                        onChange={(e) => setBilling({ ...billing, poRequired: e.target.checked })}
+                      />
+                    }
+                    label="PO Required"
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    label="Payment Terms"
+                    value={billing.paymentTerms}
+                    onChange={(e) => setBilling({ ...billing, paymentTerms: e.target.value })}
+                    placeholder="e.g., Net 30"
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControl fullWidth>
+                    <InputLabel>Invoice Delivery Method</InputLabel>
+                    <Select
+                      value={billing.invoiceDeliveryMethod}
+                      label="Invoice Delivery Method"
+                      onChange={(e) => setBilling({ ...billing, invoiceDeliveryMethod: e.target.value as string })}
+                    >
+                      <MenuItem value="">—</MenuItem>
+                      <MenuItem value="email">Email</MenuItem>
+                      <MenuItem value="portal">Portal</MenuItem>
+                      <MenuItem value="mail">Mail</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControl fullWidth>
+                    <InputLabel>Invoice Frequency</InputLabel>
+                    <Select
+                      value={billing.invoiceFrequency}
+                      label="Invoice Frequency"
+                      onChange={(e) => setBilling({ ...billing, invoiceFrequency: e.target.value as string })}
+                    >
+                      <MenuItem value="">—</MenuItem>
+                      <MenuItem value="weekly">Weekly</MenuItem>
+                      <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                      <MenuItem value="monthly">Monthly</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>
+        
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
+            <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave} disabled={saving}>
+              {saving ? <CircularProgress size={20} /> : 'Save Defaults'}
+            </Button>
+          </Box>
+        </Grid>
+      </Grid>
+    </Box>
+  );
+};
+
+// Job Order Jobs Board Tab - uses JobPostForm with job order data pre-populated
+const JobOrderJobsBoardTab: React.FC<{
+  jobOrder: JobOrder;
+  tenantId: string;
+  userId: string;
+  onPostSaved?: () => void;
+}> = ({ jobOrder, tenantId, userId, onPostSaved }) => {
+  const [loading, setLoading] = useState(false);
+  const [existingPost, setExistingPost] = useState<JobsBoardPost | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const jobsBoardService = JobsBoardService.getInstance();
+
+  // Format date for input
+  const formatDateForInput = (dateValue: any): string => {
+    if (!dateValue) return '';
+    try {
+      if (typeof dateValue === 'string') {
+        if (dateValue.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          return dateValue;
+        }
+        const date = new Date(dateValue);
+        return isNaN(date.getTime()) ? '' : date.toISOString().split('T')[0];
+      } else if (dateValue && typeof dateValue.toDate === 'function') {
+        return dateValue.toDate().toISOString().split('T')[0];
+      } else if (dateValue && typeof dateValue.toISOString === 'function') {
+        return dateValue.toISOString().split('T')[0];
+      } else {
+        const date = new Date(dateValue);
+        return isNaN(date.getTime()) ? '' : date.toISOString().split('T')[0];
+      }
+    } catch (error) {
+      console.warn('Error formatting date:', dateValue, error);
+      return '';
+    }
+  };
+
+  // Load existing connected post
+  useEffect(() => {
+    const loadExistingPost = async () => {
+      if (!jobOrder?.id) return;
+      try {
+        const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
+        if (posts.length > 0) {
+          setExistingPost(posts[0]); // Use first connected post
+        }
+      } catch (err) {
+        console.error('Error loading existing post:', err);
+      }
+    };
+    loadExistingPost();
+  }, [jobOrder?.id, tenantId]);
+
+  // Convert job order data to JobPostForm initialData format
+  const getInitialData = (): any => {
+    if (existingPost) {
+      // If editing existing post, use its data
+      return {
+        ...existingPost,
+        startDate: formatDateForInput(existingPost.startDate),
+        endDate: formatDateForInput(existingPost.endDate),
+        expDate: formatDateForInput(existingPost.expDate),
+        payRate: existingPost.payRate?.toString() || '',
+        showWorkersNeeded: existingPost.showWorkersNeeded !== undefined ? existingPost.showWorkersNeeded : false,
+        // Ensure skills is an array
+        skills: Array.isArray(existingPost.skills) ? existingPost.skills : (existingPost.skills ? [existingPost.skills] : []),
+        // Ensure uniform requirements are arrays
+        uniformRequirements: Array.isArray(existingPost.uniformRequirements) ? existingPost.uniformRequirements : (existingPost.uniformRequirements ? [existingPost.uniformRequirements] : []),
+      };
+    }
+
+    // Otherwise, pre-populate from job order
+    const scoping = jobOrder?.deal?.stageData?.scoping || {};
+    const compliance = scoping.compliance || {};
+    
+    // For Gig jobs, check if gigPositions exist
+    const gigPositions = (jobOrder as any).gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
+    const isGigJob = jobOrder.jobType === 'gig';
+    const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+
+    // Combine requiredLicenses and requiredCertifications
+    // Check both top-level and scoping structure, deduplicated
+    const topLevelLicenses = jobOrder.requiredLicenses || [];
+    const topLevelCerts = jobOrder.requiredCertifications || [];
+    const scopingLicensesCerts = scoping.licensesCerts || [];
+    const allLicensesCerts = Array.from(new Set([
+      ...topLevelLicenses,
+      ...topLevelCerts,
+      ...scopingLicensesCerts
+    ])); // Remove duplicates
+
+    // Skills are stored in deal.stageData.scoping.skills, not top-level
+    // Prefer scoping, but merge and deduplicate
+    const skillsFromScoping = Array.isArray(scoping.skills) ? scoping.skills : [];
+    const skillsFromTopLevel = Array.isArray(jobOrder.skillsRequired) ? jobOrder.skillsRequired : [];
+    const allSkills = Array.from(new Set([...skillsFromScoping, ...skillsFromTopLevel])); // Remove duplicates
+
+    // Uniform requirements are stored in deal.stageData.scoping.uniformRequirements
+    // Prefer scoping, but merge and deduplicate
+    const uniformFromScoping = Array.isArray(scoping.uniformRequirements) ? scoping.uniformRequirements : [];
+    const uniformFromTopLevel = typeof jobOrder.uniformRequirements === 'string' 
+      ? [jobOrder.uniformRequirements] 
+      : (Array.isArray(jobOrder.uniformRequirements) ? jobOrder.uniformRequirements : []);
+    const allUniformRequirements = Array.from(new Set([...uniformFromScoping, ...uniformFromTopLevel])); // Remove duplicates
+
+    return {
+      jobOrderId: jobOrder.id,
+      postTitle: jobOrder.jobOrderName || '',
+      jobType: jobOrder.jobType || 'career',
+      jobTitle: isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle || '',
+      jobDescription: jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
+      companyId: jobOrder.companyId || '',
+      companyName: jobOrder.companyName || '',
+      worksiteId: jobOrder.worksiteId || '',
+      worksiteName: jobOrder.worksiteName || '',
+      worksiteAddress: jobOrder.worksiteAddress || {
+        street: '',
+        city: '',
+        state: '',
+        zipCode: '',
+      },
+      startDate: formatDateForInput(jobOrder.startDate),
+      endDate: formatDateForInput(jobOrder.endDate),
+      payRate: isGigJob && firstPosition && firstPosition.payRate 
+        ? firstPosition.payRate 
+        : jobOrder.payRate?.toString() || '',
+      workersNeeded: jobOrder.workersNeeded || 1,
+      showWorkersNeeded: false, // Default to false when first loading
+      eVerifyRequired: compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false,
+      // Background check packages from scoping (preferred) or top-level, deduplicated
+      backgroundCheckPackages: (() => {
+        const scopingBg = Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages : [];
+        const topLevelBg = Array.isArray((jobOrder as any).backgroundCheckPackages) ? (jobOrder as any).backgroundCheckPackages : [];
+        // Prefer scoping, but merge and deduplicate
+        const combined = [...scopingBg, ...topLevelBg];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      // Drug screening panels from scoping (preferred) or top-level, deduplicated
+      drugScreeningPanels: (() => {
+        const scopingDrug = Array.isArray(compliance.drugScreeningPanels) ? compliance.drugScreeningPanels : [];
+        const topLevelDrug = Array.isArray((jobOrder as any).drugScreeningPanels) ? (jobOrder as any).drugScreeningPanels : [];
+        // Prefer scoping, but merge and deduplicate
+        const combined = [...scopingDrug, ...topLevelDrug];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      // Additional screenings from scoping (preferred) or top-level, deduplicated
+      additionalScreenings: (() => {
+        const scopingAdditional = Array.isArray(compliance.additionalScreenings) ? compliance.additionalScreenings : [];
+        const topLevelAdditional = Array.isArray((jobOrder as any).additionalScreenings) ? (jobOrder as any).additionalScreenings : [];
+        // Prefer scoping, but merge and deduplicate
+        const combined = [...scopingAdditional, ...topLevelAdditional];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      licensesCerts: allLicensesCerts,
+      showLicensesCerts: allLicensesCerts.length > 0,
+      skills: allSkills,
+      showSkills: allSkills.length > 0,
+      // Languages from scoping (preferred) or top-level, deduplicated
+      languages: (() => {
+        const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
+        const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
+        const combined = [...scopingLanguages, ...topLevelLanguages];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      showLanguages: (() => {
+        const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
+        const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
+        return scopingLanguages.length > 0 || topLevelLanguages.length > 0;
+      })(),
+      // Experience from scoping or top-level
+      experienceLevels: (() => {
+        const expValue = scoping.experience || compliance.experience || jobOrder.experienceRequired;
+        if (!expValue) return [];
+        const expOption = experienceOptions.find(opt => opt.value === expValue);
+        return expOption ? [expOption.label] : [expValue];
+      })(),
+      showExperience: !!(scoping.experience || compliance.experience || jobOrder.experienceRequired),
+      educationLevels: jobOrder.educationRequired ? (() => {
+        // Map education value to full label
+        const eduOption = educationOptions.find(opt => opt.value === jobOrder.educationRequired);
+        return eduOption ? [eduOption.label] : [jobOrder.educationRequired];
+      })() : [],
+      showEducation: !!jobOrder.educationRequired,
+      // Physical requirements from scoping (preferred) or top-level, deduplicated
+      physicalRequirements: (() => {
+        const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
+        const topLevelPhysical = jobOrder.physicalRequirements 
+          ? (Array.isArray(jobOrder.physicalRequirements) ? jobOrder.physicalRequirements : [jobOrder.physicalRequirements])
+          : [];
+        const combined = [...scopingPhysical, ...topLevelPhysical];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      showPhysicalRequirements: (() => {
+        const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
+        const topLevelPhysical = jobOrder.physicalRequirements 
+          ? (Array.isArray(jobOrder.physicalRequirements) ? jobOrder.physicalRequirements : [jobOrder.physicalRequirements])
+          : [];
+        return scopingPhysical.length > 0 || topLevelPhysical.length > 0;
+      })(),
+      // Uniform requirements from scoping (preferred) or top-level
+      uniformRequirements: allUniformRequirements,
+      showUniformRequirements: allUniformRequirements.length > 0,
+      // Custom uniform requirements from scoping or top-level
+      customUniformRequirements: scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements || '',
+      showCustomUniformRequirements: !!(scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements),
+      // PPE requirements from scoping (preferred) or top-level, deduplicated
+      requiredPpe: (() => {
+        const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
+        const topLevelPpe = jobOrder.ppeRequirements 
+          ? (Array.isArray(jobOrder.ppeRequirements) ? jobOrder.ppeRequirements : [jobOrder.ppeRequirements])
+          : [];
+        const combined = [...scopingPpe, ...topLevelPpe];
+        return Array.from(new Set(combined)); // Remove duplicates
+      })(),
+      showRequiredPpe: (() => {
+        const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
+        const topLevelPpe = jobOrder.ppeRequirements 
+          ? (Array.isArray(jobOrder.ppeRequirements) ? jobOrder.ppeRequirements : [jobOrder.ppeRequirements])
+          : [];
+        return scopingPpe.length > 0 || topLevelPpe.length > 0;
+      })(),
+      // Map shiftType from job order to shift array for job post
+      shift: (jobOrder as any).shiftType ? (Array.isArray((jobOrder as any).shiftType) ? (jobOrder as any).shiftType : [(jobOrder as any).shiftType]) : [],
+      showShift: !!(jobOrder as any).shiftType,
+      status: 'draft' as const,
+      visibility: 'public' as const,
+    };
+  };
+
+  const handleSave = async (data: Partial<JobsBoardPost>) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (existingPost) {
+        // Update existing post
+        await jobsBoardService.updatePost(tenantId, existingPost.id, {
+          ...data,
+          jobOrderId: jobOrder.id, // Ensure connection is maintained
+        });
+      } else {
+        // Create new post
+        await jobsBoardService.createPost(tenantId, {
+          ...data,
+          jobOrderId: jobOrder.id,
+        } as any, userId);
+      }
+      
+      onPostSaved?.();
+    } catch (err: any) {
+      console.error('Error saving job post:', err);
+      setError(err.message || 'Failed to save job post');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancel = () => {
+    // No-op for now, could navigate away or reset form
+  };
+
+  // Memoize initial data to avoid recalculating on every render
+  const initialData = React.useMemo(() => {
+    const data = getInitialData();
+    console.log('🔍 JobOrderJobsBoardTab - Initial Data:', {
+      skills: data.skills,
+      showSkills: data.showSkills,
+      uniformRequirements: data.uniformRequirements,
+      showUniformRequirements: data.showUniformRequirements,
+      jobOrderSkills: jobOrder?.skillsRequired,
+      jobOrderUniform: jobOrder?.uniformRequirements,
+    });
+    return data;
+  }, [existingPost, jobOrder]);
+
+  return (
+    <Box>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+      <Card sx={{ bgcolor: 'background.paper' }}>
+        <CardContent>
+      <JobPostForm
+        initialData={initialData}
+        onSave={handleSave}
+        onCancel={handleCancel}
+        loading={loading}
+        mode={existingPost ? 'edit' : 'create'}
+        hideJobOrderConnection={true}
+        jobOrderData={jobOrder}
+      />
+        </CardContent>
+      </Card>
+    </Box>
+  );
+};
+
 const RecruiterJobOrderDetail: React.FC = () => {
   const { jobOrderId } = useParams<{ jobOrderId: string }>();
   const navigate = useNavigate();
@@ -1875,6 +2479,16 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
+      {/* Breadcrumbs */}
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Job Orders', href: '/recruiter/job-orders' },
+            { label: jobOrder.jobOrderName || 'Job Order' }
+          ]}
+        />
+      </Box>
       {/* Enhanced Header - Matching Deal Details Layout */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -1898,10 +2512,33 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
             {/* Job Order Information */}
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
                 <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
                   {jobOrder.jobOrderName}
                 </Typography>
+                {/* E-Verify Image */}
+                {(() => {
+                  // Check if job order has explicit eVerify setting
+                  const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
+                  // If explicitly set (true or false), use that value
+                  // Otherwise, fall back to company defaults
+                  const shouldShowEVerify = jobOrderEVerify !== undefined 
+                    ? jobOrderEVerify === true
+                    : (company?.defaults?.eVerify?.eVerifyRequired || false);
+                  
+                  return shouldShowEVerify ? (
+                    <Box
+                      component="img"
+                      src="/img/everify.png"
+                      alt="E-Verify"
+                      sx={{
+                        height: 30,
+                        width: 'auto',
+                        objectFit: 'contain'
+                      }}
+                    />
+                  ) : null;
+                })()}
               </Box>
         
               {/* Job Order ID / Number */}
@@ -2193,8 +2830,24 @@ const RecruiterJobOrderDetail: React.FC = () => {
           <Tab 
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <SettingsIcon fontSize="small" />
+                Defaults
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DescriptionIcon fontSize="small" />
                 Staff Instructions
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BriefcaseIcon fontSize="small" />
+                Jobs Board
               </Box>
             } 
           />
@@ -2575,6 +3228,16 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={activeTab} index={1}>
+        <JobOrderDefaultsTab 
+          jobOrder={jobOrder}
+          tenantId={tenantId || ''}
+          onSaved={() => {
+            fetchJobOrder();
+          }}
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={2}>
         {/* Staff Instructions Tab */}
         <Grid container spacing={3}>
           {/* First Day Instructions */}
@@ -2684,7 +3347,22 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Grid>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={2}>
+      <TabPanel value={activeTab} index={3}>
+        {/* Jobs Board Tab */}
+        {jobOrder && (
+          <JobOrderJobsBoardTab
+            jobOrder={jobOrder}
+            tenantId={tenantId || ''}
+            userId={user?.uid || ''}
+            onPostSaved={() => {
+              loadConnectedJobPosts(jobOrder.id);
+              fetchJobOrder();
+            }}
+          />
+        )}
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={4}>
         {/* Shift Setup Tab */}
         <ShiftSetupTab 
           tenantId={tenantId}
@@ -2695,7 +3373,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
       {/* Job Board Visibility Tab - Only for Gig jobs */}
       {jobOrder?.jobType === 'gig' && (
-        <TabPanel value={activeTab} index={3}>
+        <TabPanel value={activeTab} index={5}>
           <Box sx={{ maxWidth: 800, mx: 'auto', mt: 3 }}>
             <GigJobsBoardToggle
               jobOrder={jobOrder}
@@ -2709,7 +3387,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </TabPanel>
       )}
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 4 : 3}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 6 : 5}>
         {/* Applications Tab */}
         <ApplicantsTable 
           jobOrderId={jobOrderId || ''} 
@@ -2719,7 +3397,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 5 : 4}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 7 : 6}>
         {/* Placements Tab */}
         <PlacementsTab
           tenantId={tenantId || ''}
@@ -2728,7 +3406,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 6 : 5}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 8 : 7}>
         {/* Notes Tab */}
         <CRMNotesTab
           entityId={jobOrderId || ''}
@@ -2738,7 +3416,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 7 : 6}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 9 : 8}>
         {/* Activity Tab */}
         <Card>
           <CardContent>

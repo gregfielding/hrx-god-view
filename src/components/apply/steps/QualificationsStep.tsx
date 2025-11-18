@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip, Grid, useTheme, useMediaQuery } from '@mui/material';
+import { queueProfileUpdate } from '../../../utils/userProfileBatching';
 import { CheckCircle } from '@mui/icons-material';
 import Autocomplete from '@mui/material/Autocomplete';
 import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
@@ -8,6 +9,7 @@ import { logger } from '../../../utils/logger';
 import onetSkills from '../../../data/onetSkills.json';
 import onetJobTitles from '../../../data/onetJobTitles.json';
 import SkillsTab from '../../../pages/UserProfile/components/SkillsTab/SkillsTab';
+import { EducationSection, WorkExperienceSection } from '../../../pages/UserProfile/components/SkillsTab/index';
 import { mapParsedExperienceToRows } from '../../../utils/resumeToWorkHistory';
 // Local debounce for onChange/onBlur saves (keeps dependencies minimal)
 // Using native month inputs for broad compatibility without extra dependencies
@@ -26,12 +28,14 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   const job = jobPosting; // job-driven gating comes from parent (Wizard)
-  const debounceRef = React.useRef<any>(null);
+  // Use batched updates instead of immediate writes (imported at top)
   const debouncedUpdate = (ref: any, data: any) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      try { await updateDoc(ref, data); } catch {}
-    }, 500);
+    // Queue each field for batched save
+    Object.keys(data).forEach(key => {
+      if (key !== 'updatedAt') {
+        queueProfileUpdate(key, data[key]);
+      }
+    });
   };
   
   // Transform the qualifications data into user-like format for SkillsTab
@@ -42,64 +46,18 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
     languages: value?.languages || [],
     education: value?.education || [],
     workHistory: value?.workHistory || [],
+    workExperience: value?.workExperience || value?.workHistory || [], // Support both field names
     salaryExpectations: value?.salaryExpectations || {}
   };
   
   
   
-  const [tempBio, setTempBio] = React.useState<string>(value?.bio || '');
-  React.useEffect(() => {
-    setTempBio(value?.bio || '');
-  }, [value?.bio]);
-
-  // Live-read user bio from Firestore (simple onSnapshot). If the local value is empty, hydrate from DB.
-  React.useEffect(() => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) return;
-    const userRef = doc(db, 'users', currentUser.uid);
-    const unsub = onSnapshot(userRef, (snap) => {
-      const bioFromDb = (snap.data() as any)?.bio || '';
-      const resumeFromDb = (snap.data() as any)?.resume || null;
-      const expFromDb = (snap.data() as any)?.experienceSummary || '';
-      if (!value?.bio && !tempBio && bioFromDb) {
-        setTempBio(bioFromDb);
-        onChange({ ...value, bio: bioFromDb });
-      }
-      // Determine resume presence for gating Professional Bio
-      try {
-        const has = !!(resumeFromDb?.downloadUrl || resumeFromDb?.storagePath);
-        setHasResume(has);
-      } catch {}
-      // Keep expSummary synced with DB value to avoid clearing on save
-      if (typeof expFromDb === 'string' && expFromDb !== expSummary) {
-        setExpSummary(expFromDb);
-      }
-    });
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleBioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setTempBio(e.target.value);
-  };
-
-  const handleSaveBio = () => {
-    onChange({ ...value, bio: tempBio });
-    try {
-      const uid = auth.currentUser?.uid;
-      if (uid) {
-        const userRef = doc(db, 'users', uid);
-        updateDoc(userRef, { bio: tempBio });
-      }
-    } catch {}
-  };
-
-  const [hasResume, setHasResume] = React.useState<boolean>(false);
-  const showBio = context === 'profile' ? true : hasResume;
+  // Bio section removed - now handled by BioStep component in profile context
 
   // Show Experience immediately while posting loads; then respect explicit flag when available
   // Default to showing while posting loads (null/undefined), then respect flag
-  const showExperience = context === 'profile' || (job == null ? true : !!job.showExperience);
+  // Hide Experience & Work History section in profile context (work experience is handled separately)
+  const showExperience = context !== 'profile' && (job == null ? true : !!job.showExperience);
   const showLanguages = context === 'profile' || (job == null ? true : !!job.showLanguages);
 
   const [expSummary, setExpSummary] = React.useState<string>(value?.experienceSummary || '');
@@ -230,30 +188,6 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
 
   return (
     <Box>
-      {showBio && (
-        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-          <CardHeader
-            title={<Typography variant="h6">Professional Bio</Typography>}
-            action={
-              <Button variant="contained" size="small" onClick={handleSaveBio} disabled={(tempBio || '') === (value?.bio || '')}>
-                Save
-              </Button>
-            }
-            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
-          />
-          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-            <TextField
-              fullWidth
-              multiline
-              minRows={6}
-              placeholder="Write a short bio about yourself. You can edit the one we generated from your resume."
-              value={tempBio}
-              onChange={handleBioChange}
-            />
-          </CardContent>
-        </Card>
-      )}
-
       {showExperience && (
         <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
           <CardHeader title={<Typography variant="h6">Experience & Work History</Typography>} action={<></>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
@@ -316,6 +250,45 @@ const QualificationsStep: React.FC<Props> = ({ value, onChange, context = 'appli
           </CardContent>
         </Card>
       )}
+
+      {/* Education Section */}
+      <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+        <CardHeader 
+          title={<Typography variant="h6">Education</Typography>} 
+          sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
+        />
+        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+          <EducationSection
+            value={value?.education || []}
+            onChange={(education) => {
+              onChange({ ...value, education });
+              const uid = auth.currentUser?.uid;
+              if (uid) debouncedUpdate(doc(db, 'users', uid), { education, updatedAt: serverTimestamp() });
+            }}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Work Experience Section */}
+      <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+        <CardHeader 
+          title={<Typography variant="h6">Work Experience</Typography>} 
+          sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
+        />
+        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+          <WorkExperienceSection
+            value={value?.workExperience || value?.workHistory || []}
+            onChange={(workExperience) => {
+              // Save to both field names for compatibility
+              onChange({ ...value, workExperience, workHistory: workExperience });
+              const uid = auth.currentUser?.uid;
+              if (uid) debouncedUpdate(doc(db, 'users', uid), { workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
+            }}
+            onetSkills={onetSkills as any}
+            onetJobTitles={onetJobTitles as any}
+          />
+        </CardContent>
+      </Card>
 
       {/* Skills 
          - Keep only core skills here

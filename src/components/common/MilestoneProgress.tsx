@@ -58,11 +58,16 @@ export default function MilestoneProgress({
         </Typography>
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 1 }}>
+      <Box sx={{ display: 'flex', gap: 0.5 }}>
         {Array.from({ length: total }).map((_, i) => {
           const isDone = i < completed;
           const isCurrent = i === completed && completed < total;
           const label = labels?.[i] ?? `Step ${i + 1}`;
+          
+          // Only show labels for previous, current, and next steps
+          const isPrevious = i === completed - 1 && completed > 0;
+          const isNext = i === completed + 1 && completed < total - 1;
+          const shouldShowLabel = isPrevious || isCurrent || isNext;
 
           const segment = (
             <Box
@@ -74,7 +79,7 @@ export default function MilestoneProgress({
                 if ((e.key === 'Enter' || e.key === ' ') && isDone && onJump) onJump(i);
               }}
               sx={{
-                height: 12,
+                height: 8,
                 flex: 1,
                 borderRadius: 999,
                 bgcolor: isDone ? fg : track,
@@ -89,7 +94,7 @@ export default function MilestoneProgress({
           );
 
           const labelRow = (
-            <Box sx={{ mt: 0.75, textAlign: 'center', width: '100%', display: { xs: 'none', lg: 'block' } }}>
+            <Box sx={{ mt: 0.5, textAlign: 'center', width: '100%', display: { xs: 'none', lg: shouldShowLabel ? 'block' : 'none' } }}>
               <Typography variant="caption" color={isDone ? 'text.primary' : 'text.secondary'} sx={{ whiteSpace: 'nowrap' }}>
                 {isDone ? (
                   <>

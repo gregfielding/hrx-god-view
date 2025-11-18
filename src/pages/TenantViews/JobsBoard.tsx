@@ -162,6 +162,8 @@ const JobsBoard: React.FC = () => {
     showPhysicalRequirements: boolean;
     uniformRequirements: string[];
     showUniformRequirements: boolean;
+    customUniformRequirements: string;
+    showCustomUniformRequirements: boolean;
     requiredPpe: string[];
     showRequiredPpe: boolean;
     shift: string[];
@@ -333,6 +335,8 @@ const JobsBoard: React.FC = () => {
     showPhysicalRequirements: false,
     uniformRequirements: [] as string[],
     showUniformRequirements: false,
+    customUniformRequirements: '',
+    showCustomUniformRequirements: false,
     requiredPpe: [] as string[],
     showRequiredPpe: false,
     shift: [] as string[],
@@ -748,6 +752,8 @@ const JobsBoard: React.FC = () => {
         showPhysicalRequirements: newPost.showPhysicalRequirements,
         uniformRequirements: newPost.uniformRequirements,
         showUniformRequirements: newPost.showUniformRequirements,
+        customUniformRequirements: newPost.customUniformRequirements,
+        showCustomUniformRequirements: newPost.showCustomUniformRequirements,
         requiredPpe: newPost.requiredPpe,
         showRequiredPpe: newPost.showRequiredPpe,
         shift: newPost.shift,
@@ -978,6 +984,8 @@ const JobsBoard: React.FC = () => {
       showPhysicalRequirements: false,
       uniformRequirements: [],
       showUniformRequirements: false,
+      customUniformRequirements: '',
+      showCustomUniformRequirements: false,
       requiredPpe: [],
       showRequiredPpe: false,
       shift: [],
@@ -1644,6 +1652,8 @@ const JobsBoard: React.FC = () => {
                           showPhysicalRequirements: originalFormValues.showPhysicalRequirements,
                           uniformRequirements: originalFormValues.uniformRequirements,
                           showUniformRequirements: originalFormValues.showUniformRequirements,
+                          customUniformRequirements: originalFormValues.customUniformRequirements,
+                          showCustomUniformRequirements: originalFormValues.showCustomUniformRequirements,
                           requiredPpe: originalFormValues.requiredPpe,
                           showRequiredPpe: originalFormValues.showRequiredPpe,
                           shift: originalFormValues.shift,
@@ -2592,6 +2602,33 @@ const JobsBoard: React.FC = () => {
                     <Switch
                       checked={newPost.showUniformRequirements}
                       onChange={(e) => setNewPost({ ...newPost, showUniformRequirements: e.target.checked })}
+                    />
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+
+            {/* Custom Uniform Requirements Section */}
+            <Box sx={{ mt: 2 }}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    fullWidth
+                    label="Custom Uniform Requirements"
+                    multiline
+                    rows={3}
+                    value={newPost.customUniformRequirements}
+                    onChange={(e) => setNewPost({ ...newPost, customUniformRequirements: e.target.value })}
+                    placeholder="Enter custom uniform requirements text..."
+                    helperText="Enter any additional or custom uniform requirements"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '100%' }}>
+                    <Typography variant="body1">Show Custom Uniform Requirements on Post</Typography>
+                    <Switch
+                      checked={newPost.showCustomUniformRequirements}
+                      onChange={(e) => setNewPost({ ...newPost, showCustomUniformRequirements: e.target.checked })}
                     />
                   </Box>
                 </Grid>
