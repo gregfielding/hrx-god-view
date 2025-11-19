@@ -131,6 +131,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   }>({});
   const [posting, setPosting] = useState<any>(null);
   const prefilledRef = useRef(false);
+  const personalPrefilledRef = useRef(false);
   const [tenantAppId, setTenantAppId] = useState<string | null>(null);
   const [stepRestored, setStepRestored] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -414,20 +415,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       
       // Only persist prefill if we don't have existing personal data
       // This ensures user input is preserved after account creation
-      if (!hasExistingPersonalData) {
-        persist({ personal, eligibility, profilePicture, qualifications, preferences, requirements: requirementsPrefill });
-        prefilledRef.current = true;
-      } else {
-        // Merge personal data instead of replacing it
-        persist({ 
-          personal: { ...personal, ...currentFormData.personal },
-          eligibility, 
-          profilePicture, 
-          qualifications, 
-          preferences, 
-          requirements: requirementsPrefill 
-        });
-        prefilledRef.current = true;
+      const shouldPrefillPersonal = !personalPrefilledRef.current;
+      const persistPayload: Record<string, any> = {
+        eligibility,
+        profilePicture,
+        qualifications,
+        preferences,
+        requirements: requirementsPrefill,
+      };
+
+      if (shouldPrefillPersonal) {
+        persistPayload.personal = !hasExistingPersonalData
+          ? personal
+          : { ...personal, ...currentFormData.personal };
+      }
+
+      persist(persistPayload);
+      prefilledRef.current = true;
+      if (shouldPrefillPersonal) {
+        personalPrefilledRef.current = true;
       }
     }
   }, [userProfile, posting]);
@@ -679,7 +685,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               console.log('✅ Initial user document created with base fields');
             } catch (createErr) {
               console.error('❌ Failed to create initial user document:', createErr);
-              // Continue anyway - upsertUserFromWizard will create it
             }
           }
           // Continue with next step
@@ -760,44 +765,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           
-          // Use upsertUserFromWizard to save personal info AND set tenantIds/activeTenantId
-          // This ensures proper nested structure: tenantIds.{tenantId}.{securityLevel, role}
-          // and always sets activeTenantId to current tenant when applying through wizard
           if (tenantId) {
             try {
-              const functions = getFunctions();
-              const upsertUserFromWizard = httpsCallable(functions as any, 'upsertUserFromWizard');
-              await upsertUserFromWizard({
-                tenantId,
-                profileUpdate: update
-              });
-              console.log('✅ upsertUserFromWizard succeeded - tenantIds and activeTenantId set');
-            } catch (err) {
-              console.warn('upsertUserFromWizard callable failed, falling back to direct write:', err);
-              // Fallback: set tenantIds and activeTenantId directly
               const userSnap = await getDoc(userRef);
               const existingData = userSnap.exists() ? userSnap.data() : {};
+              const existingTenantMeta = existingData?.tenantIds?.[tenantId] || {};
               update.tenantIds = {
                 ...(existingData?.tenantIds || {}),
                 [tenantId]: {
-                  ...(existingData?.tenantIds?.[tenantId] || {}),
+                  ...existingTenantMeta,
                   role: 'Applicant',
                   securityLevel: '2',
-                  addedAt: serverTimestamp(),
+                  addedAt: existingTenantMeta?.addedAt || serverTimestamp(),
                 },
               };
-              // Always set activeTenantId to current tenant
               update.activeTenantId = tenantId;
-              if (Object.keys(update).length > 1) {
-                await setDoc(userRef, update, { merge: true });
-                console.log('✅ Fallback direct write succeeded - tenantIds and activeTenantId set');
-              }
+            } catch (err) {
+              console.warn('Failed to read user doc for tenant metadata:', err);
             }
-          } else {
-            // No tenantId, just save personal info directly
-            if (Object.keys(update).length > 1) {
-              await setDoc(userRef, update, { merge: true });
-            }
+          }
+
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, update, { merge: true });
           }
 
           // Reload userProfile immediately after saving to ensure Address step has the latest data
@@ -900,28 +889,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           
-          // Use upsertUserFromWizard to ensure tenantIds are set
-          if (tenantId) {
-            try {
-              const functions = getFunctions();
-              const upsertUserFromWizard = httpsCallable(functions as any, 'upsertUserFromWizard');
-              await upsertUserFromWizard({
-                tenantId,
-                profileUpdate: update
-              });
-              console.log('✅ Address saved via upsertUserFromWizard');
-            } catch (err) {
-              console.warn('upsertUserFromWizard failed for address, using fallback:', err);
-              // Fallback: direct write
-              if (Object.keys(update).length > 1) {
-                await setDoc(userRef, update, { merge: true });
-                console.log('✅ Address saved via fallback');
-              }
-            }
-          } else {
-            if (Object.keys(update).length > 1) {
-              await setDoc(userRef, update, { merge: true });
-            }
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, update, { merge: true });
           }
         } else if (activeStep === 2) {
           // Work Eligibility → save EEO fields
@@ -1305,21 +1274,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         });
       }
       
-      // Upsert via callable function for server-side creation, then merge on client as fallback
-      try {
-        const functions = getFunctions();
-        const upsertUserFromWizard = httpsCallable(functions as any, 'upsertUserFromWizard');
-        await upsertUserFromWizard({
-          tenantId,
-          profileUpdate: {
-            ...profileUpdate,
-            ...(tenantId ? { [`tenantIds.${tenantId}.securityLevel`]: '2', [`tenantIds.${tenantId}.role`]: 'Applicant' } : {}),
-            // Keep security level scoped to tenant map; do not override root securityLevel
-          }
-        });
-      } catch (err) {
-        console.warn('upsertUserFromWizard callable failed, falling back to client merge:', err);
+      if (tenantId) {
+        try {
+          const userSnap = await getDoc(userRef);
+          const existingData = userSnap.exists() ? userSnap.data() : {};
+          const existingTenantMeta = existingData?.tenantIds?.[tenantId] || {};
+          profileUpdate.tenantIds = {
+            ...(existingData?.tenantIds || {}),
+            [tenantId]: {
+              ...existingTenantMeta,
+              role: 'Applicant',
+              securityLevel: '2',
+              addedAt: existingTenantMeta?.addedAt || serverTimestamp(),
+            },
+          };
+          profileUpdate.activeTenantId = tenantId;
+        } catch (err) {
+          console.warn('Failed to merge tenant metadata during submit:', err);
+        }
       }
+
       await setDoc(userRef, profileUpdate, { merge: true });
 
       // Create final submitted application in tenants/{tenantId}/applications
@@ -1445,20 +1419,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }, { merge: true });
             
             console.log('Successfully updated user document with application data');
-
-            try {
-              const functions = getFunctions();
-              const enqueueApplicantScore = httpsCallable(functions as any, 'enqueueApplicantScore');
-              await enqueueApplicantScore({
-                userId: effectiveUid,
-                applicationId,
-                tenantId,
-                source: 'wizard_submit'
-              });
-              console.log('🧠 Applicant score queued for processing');
-            } catch (queueErr) {
-              console.warn('Failed to enqueue applicant score:', queueErr);
-            }
           } catch (userUpdateError) {
             console.error('Failed to update user document with application data:', userUpdateError);
             // Don't throw here - we still want the application to be created

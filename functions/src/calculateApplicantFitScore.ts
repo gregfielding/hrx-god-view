@@ -431,6 +431,12 @@ export const enqueueApplicantScore = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'userId and applicationId are required');
   }
 
+  const ALLOWED_SOURCES = new Set(['manual_recalculate', 'recruiter_manual_add']);
+  if (!force && !ALLOWED_SOURCES.has(source)) {
+    console.log('enqueueApplicantScore: auto scoring disabled for source', source);
+    return { success: true, skipped: true, reason: 'auto_scoring_disabled' };
+  }
+
   await db.collection('applicantScoreQueue').add({
     userId,
     applicationId,
