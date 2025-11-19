@@ -9,6 +9,7 @@ type Props = {
   value: any;
   onChange: (v: any) => void;
   onPasswordChange?: (password: string, confirmPassword: string) => void;
+  showAddressFields?: boolean;
 };
 
 const formatPhone = (raw: string) => {
@@ -88,7 +89,7 @@ const formatDateForStorage = (dateString: string) => {
   return '';
 };
 
-const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }) => {
+const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const isAuthenticated = auth.currentUser !== null;
@@ -129,6 +130,158 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
   const [geocodingAddress, setGeocodingAddress] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
 
+  const renderAddressSection = () => (
+    <React.Fragment>
+      {/* Address fields */}
+      <Grid item xs={12}>
+        {isGoogleMapsLoaded ? (
+          <Autocomplete
+            onLoad={handleAutocompleteLoad}
+            onPlaceChanged={handlePlaceChanged}
+            options={{
+              componentRestrictions: { country: 'us' },
+              fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+              types: ['address'],
+            }}
+          >
+            <TextField
+              fullWidth
+              required
+              label="Street Address"
+              value={value.street || ''}
+              onChange={(e) => {
+                handle('street', e.target.value);
+                if (value.homeLat || value.homeLng) {
+                  onChange({ ...value, street: e.target.value, homeLat: undefined, homeLng: undefined });
+                }
+              }}
+              onBlur={async (e) => {
+                const street = e.target.value.trim();
+                const city = value.city?.trim();
+                const state = value.state?.trim();
+                const zip = value.zip?.trim();
+                if (street && city && state && (!value.homeLat || !value.homeLng)) {
+                  setGeocodingAddress(true);
+                  setAddressError(null);
+                  try {
+                    const fullAddress = `${street}, ${city}, ${state} ${zip || ''}`.trim();
+                    const coords = await geocodeAddress(fullAddress);
+                    onChange({
+                      ...value,
+                      homeLat: coords.lat,
+                      homeLng: coords.lng,
+                    });
+                  } catch (error) {
+                    console.error('Geocoding error:', error);
+                    setAddressError('Could not validate address. Please select from the dropdown suggestions.');
+                  } finally {
+                    setGeocodingAddress(false);
+                  }
+                }
+              }}
+              id="apply-street-address"
+              name="street-address"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Please select an address from the dropdown suggestions')}
+              error={!!addressError}
+              inputProps={{
+                autoComplete: 'off',
+                autoCorrect: 'off',
+                autoCapitalize: 'off',
+                spellCheck: 'false',
+              }}
+            />
+          </Autocomplete>
+        ) : (
+          <TextField
+            fullWidth
+            required
+            label="Street Address"
+            value={value.street || ''}
+            onChange={(e) => {
+              handle('street', e.target.value);
+              if (value.homeLat || value.homeLng) {
+                onChange({ ...value, street: e.target.value, homeLat: undefined, homeLng: undefined });
+              }
+            }}
+            onBlur={async (e) => {
+              const street = e.target.value.trim();
+              const city = value.city?.trim();
+              const state = value.state?.trim();
+              const zip = value.zip?.trim();
+              if (street && city && state && (!value.homeLat || !value.homeLng)) {
+                setGeocodingAddress(true);
+                setAddressError(null);
+                try {
+                  const fullAddress = `${street}, ${city}, ${state} ${zip || ''}`.trim();
+                  const coords = await geocodeAddress(fullAddress);
+                  onChange({
+                    ...value,
+                    homeLat: coords.lat,
+                    homeLng: coords.lng,
+                  });
+                } catch (error) {
+                  console.error('Geocoding error:', error);
+                  setAddressError('Could not validate address. Please enter a valid address.');
+                } finally {
+                  setGeocodingAddress(false);
+                }
+              }
+            }}
+            id="apply-street-address"
+            name="street-address"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Enter a valid street address')}
+            error={!!addressError}
+            inputProps={{
+              autoComplete: 'off',
+              autoCorrect: 'off',
+              autoCapitalize: 'off',
+              spellCheck: 'false',
+            }}
+          />
+        )}
+      </Grid>
+      <Grid item xs={12} md={6}>
+        <ResumeSuggestionField isFromResume={isFieldFromResume('unit')} confidence={getFieldConfidence('unit')}>
+          <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
+        </ResumeSuggestionField>
+      </Grid>
+      {value.homeLat !== undefined && value.homeLng !== undefined && (
+        <>
+          <Grid item xs={12} md={6}>
+            <ResumeSuggestionField isFromResume={isFieldFromResume('city')} confidence={getFieldConfidence('city')}>
+              <TextField fullWidth required label="City" value={value.city || ''} disabled />
+            </ResumeSuggestionField>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <ResumeSuggestionField isFromResume={isFieldFromResume('state')} confidence={getFieldConfidence('state')}>
+              <TextField fullWidth required label="State" value={value.state || ''} disabled />
+            </ResumeSuggestionField>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <ResumeSuggestionField isFromResume={isFieldFromResume('zip')} confidence={getFieldConfidence('zip')}>
+              <TextField fullWidth required label="Zip Code" value={value.zip || ''} disabled />
+            </ResumeSuggestionField>
+          </Grid>
+        </>
+      )}
+      {addressError && (
+        <Grid item xs={12}>
+          <Alert severity="error" sx={{ mt: 1 }}>
+            {addressError}
+          </Alert>
+        </Grid>
+      )}
+    </React.Fragment>
+  );
+
   // Check if Google Maps is loaded with retry logic
   const checkGoogleMapsLoaded = useCallback(() => {
     const isLoaded = !!(window as any).google?.maps?.places;
@@ -153,6 +306,15 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
 
   // Initialize Google Maps check on mount
   useEffect(() => {
+    if (!showAddressFields) {
+      setIsGoogleMapsLoaded(false);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = undefined;
+      }
+      return;
+    }
+
     checkGoogleMapsLoaded();
     
     // Cleanup timeout on unmount
@@ -161,7 +323,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
         clearTimeout(retryTimeoutRef.current);
       }
     };
-  }, [checkGoogleMapsLoaded]);
+  }, [checkGoogleMapsLoaded, showAddressFields]);
 
   const handlePlaceChanged = useCallback(() => {
     if (!autocompleteRef.current?.getPlace) {
@@ -383,190 +545,8 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
           />
         </Grid>
         
-        <Grid item xs={12}>
-          {isGoogleMapsLoaded ? (
-                  <Autocomplete 
-                    onLoad={handleAutocompleteLoad} 
-                    onPlaceChanged={handlePlaceChanged}
-                    options={{
-                      componentRestrictions: { country: 'us' },
-                      // Request only the fields we need (best practice: reduces costs and improves performance)
-                      fields: [
-                        'address_components',
-                        'formatted_address',
-                        'geometry',
-                        'place_id'
-                      ],
-                      // Types restriction for better results (best practice: limit to addresses only)
-                      types: ['address'],
-                    }}
-                  >
-              <TextField 
-                fullWidth 
-                required
-                label="Street Address" 
-                value={value.street || ''} 
-                onChange={(e) => {
-                  handle('street', e.target.value);
-                  // Clear coordinates when address is manually changed
-                  if (value.homeLat || value.homeLng) {
-                    onChange({ ...value, street: e.target.value, homeLat: undefined, homeLng: undefined });
-                  }
-                }}
-                onBlur={async (e) => {
-                  // If address was manually entered and coordinates are missing, try to geocode
-                  const street = e.target.value.trim();
-                  const city = value.city?.trim();
-                  const state = value.state?.trim();
-                  const zip = value.zip?.trim();
-                  
-                  if (street && city && state && (!value.homeLat || !value.homeLng)) {
-                    setGeocodingAddress(true);
-                    setAddressError(null);
-                    try {
-                      const fullAddress = `${street}, ${city}, ${state} ${zip || ''}`.trim();
-                      const coords = await geocodeAddress(fullAddress);
-                      onChange({
-                        ...value,
-                        homeLat: coords.lat,
-                        homeLng: coords.lng
-                      });
-                    } catch (error) {
-                      console.error('Geocoding error:', error);
-                      setAddressError('Could not validate address. Please select from the dropdown suggestions.');
-                    } finally {
-                      setGeocodingAddress(false);
-                    }
-                  }
-                }}
-                id="apply-street-address"
-                name="street-address"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck="false"
-                helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Please select an address from the dropdown suggestions')}
-                error={!!addressError}
-                inputProps={{
-                  autoComplete: 'off',
-                  autoCorrect: 'off',
-                  autoCapitalize: 'off',
-                  spellCheck: 'false',
-                }}
-              />
-            </Autocomplete>
-          ) : (
-            <TextField 
-              fullWidth 
-              required
-              label="Street Address" 
-              value={value.street || ''} 
-              onChange={(e) => {
-                handle('street', e.target.value);
-                // Clear coordinates when address is manually changed
-                if (value.homeLat || value.homeLng) {
-                  onChange({ ...value, street: e.target.value, homeLat: undefined, homeLng: undefined });
-                }
-              }}
-              onBlur={async (e) => {
-                // If address was manually entered and coordinates are missing, try to geocode
-                const street = e.target.value.trim();
-                const city = value.city?.trim();
-                const state = value.state?.trim();
-                const zip = value.zip?.trim();
-                
-                if (street && city && state && (!value.homeLat || !value.homeLng)) {
-                  setGeocodingAddress(true);
-                  setAddressError(null);
-                  try {
-                    const fullAddress = `${street}, ${city}, ${state} ${zip || ''}`.trim();
-                    const coords = await geocodeAddress(fullAddress);
-                    onChange({
-                      ...value,
-                      homeLat: coords.lat,
-                      homeLng: coords.lng
-                    });
-                  } catch (error) {
-                    console.error('Geocoding error:', error);
-                    setAddressError('Could not validate address. Please enter a valid address.');
-                  } finally {
-                    setGeocodingAddress(false);
-                  }
-                }
-              }}
-              id="apply-street-address"
-              name="street-address"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck="false"
-              helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Enter a valid street address')}
-              error={!!addressError}
-              inputProps={{
-                autoComplete: 'off',
-                autoCorrect: 'off',
-                autoCapitalize: 'off',
-                spellCheck: 'false',
-              }}
-            />
-          )}
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <ResumeSuggestionField 
-            isFromResume={isFieldFromResume('unit')} 
-            confidence={getFieldConfidence('unit')}
-          >
-            <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
-          </ResumeSuggestionField>
-        </Grid>
-        {/* Only show city, state, and zip after address is validated (coordinates exist) */}
-        {value.homeLat !== undefined && value.homeLng !== undefined && (
-          <>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('city')} 
-                confidence={getFieldConfidence('city')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="City" 
-                  value={value.city || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('state')} 
-                confidence={getFieldConfidence('state')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="State" 
-                  value={value.state || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('zip')} 
-                confidence={getFieldConfidence('zip')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="Zip Code" 
-                  value={value.zip || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-          </>
-        )}
-      </Grid>
+        {showAddressFields && renderAddressSection()}
+          </Grid>
         </Box>
       ) : (
         <Card variant="outlined" sx={{ mb: 3 }}>
@@ -660,128 +640,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
                 />
               </Grid>
               
-              <Grid item xs={12}>
-                {isGoogleMapsLoaded ? (
-                  <Autocomplete 
-                    onLoad={handleAutocompleteLoad} 
-                    onPlaceChanged={handlePlaceChanged}
-                    options={{
-                      componentRestrictions: { country: 'us' },
-                      // Request only the fields we need (best practice: reduces costs and improves performance)
-                      fields: [
-                        'address_components',
-                        'formatted_address',
-                        'geometry',
-                        'place_id'
-                      ],
-                      // Types restriction for better results (best practice: limit to addresses only)
-                      types: ['address'],
-                    }}
-                  >
-                    <TextField 
-                      fullWidth 
-                      required
-                      label="Street Address" 
-                      value={value.street || ''} 
-                      onChange={(e) => handle('street', e.target.value)} 
-                      id="apply-street-address"
-                      name="street-address"
-                      autoComplete="off"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck="false"
-                      inputProps={{
-                        autoComplete: 'off',
-                        autoCorrect: 'off',
-                        autoCapitalize: 'off',
-                        spellCheck: 'false',
-                      }}
-                    />
-                  </Autocomplete>
-                ) : (
-                  <TextField 
-                    fullWidth 
-                    required
-                    label="Street Address" 
-                    value={value.street || ''} 
-                    onChange={(e) => handle('street', e.target.value)} 
-                    id="apply-street-address"
-                    name="street-address"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck="false"
-                    inputProps={{
-                      autoComplete: 'off',
-                      autoCorrect: 'off',
-                      autoCapitalize: 'off',
-                      spellCheck: 'false',
-                    }}
-                  />
-                )}
-              </Grid>
-        <Grid item xs={12} md={6}>
-          <ResumeSuggestionField 
-            isFromResume={isFieldFromResume('unit')} 
-            confidence={getFieldConfidence('unit')}
-          >
-            <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
-          </ResumeSuggestionField>
-        </Grid>
-        {/* Only show city, state, and zip after address is validated (coordinates exist) */}
-        {value.homeLat !== undefined && value.homeLng !== undefined && (
-          <>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('city')} 
-                confidence={getFieldConfidence('city')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="City" 
-                  value={value.city || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('state')} 
-                confidence={getFieldConfidence('state')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="State" 
-                  value={value.state || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <ResumeSuggestionField 
-                isFromResume={isFieldFromResume('zip')} 
-                confidence={getFieldConfidence('zip')}
-              >
-                <TextField 
-                  fullWidth 
-                  required 
-                  label="Zip Code" 
-                  value={value.zip || ''} 
-                  disabled
-                />
-              </ResumeSuggestionField>
-            </Grid>
-          </>
-        )}
-        {addressError && (
-          <Grid item xs={12}>
-            <Alert severity="error" sx={{ mt: 1 }}>
-              {addressError}
-            </Alert>
-          </Grid>
-        )}
+              {showAddressFields && renderAddressSection()}
             </Grid>
           </CardContent>
         </Card>
@@ -789,38 +648,69 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange }
 
       {/* Password Fields - Only show if not authenticated */}
       {!isAuthenticated && (
-        <Card variant="outlined" sx={{ mt: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-          <CardHeader 
-            title={<Typography variant="h6">Create Your Account</Typography>}
-            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
-          />
-          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Create a password to save your progress and submit your application.
-            </Typography>
-            <Stack spacing={2}>
-              <TextField
-                fullWidth
-                type="password"
-                label="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                helperText="At least 6 characters"
-                required
+        <Box sx={{ mt: isMobile ? 2 : 3 }}>
+          {isMobile ? (
+            <>
+              <Typography variant="h6" sx={{ mb: 1.5, fontSize: '1rem', fontWeight: 500 }}>
+                Create Your Account
+              </Typography>
+              <Stack spacing={1.5}>
+                <TextField
+                  fullWidth
+                  type="password"
+                  label="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  helperText="At least 6 characters"
+                  required
+                />
+                <TextField
+                  fullWidth
+                  type="password"
+                  label="Confirm Password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  error={confirmPassword.length > 0 && password !== confirmPassword}
+                  helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
+                  required
+                />
+              </Stack>
+            </>
+          ) : (
+              <Card variant="outlined">
+              <CardHeader 
+                title={<Typography variant="h6">Create Your Account</Typography>}
+                sx={{ px: 2, py: 1.5 }}
               />
-              <TextField
-                fullWidth
-                type="password"
-                label="Confirm Password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                error={confirmPassword.length > 0 && password !== confirmPassword}
-                helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
-                required
-              />
-            </Stack>
-          </CardContent>
-        </Card>
+              <CardContent sx={{ px: 2, py: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Create a password to save your progress and submit your application.
+                </Typography>
+                <Stack spacing={1.5}>
+                  <TextField
+                    fullWidth
+                    type="password"
+                    label="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    helperText="At least 6 characters"
+                    required
+                  />
+                  <TextField
+                    fullWidth
+                    type="password"
+                    label="Confirm Password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    error={confirmPassword.length > 0 && password !== confirmPassword}
+                    helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
+                    required
+                  />
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
+        </Box>
       )}
     </Box>
   );

@@ -11,10 +11,11 @@ const openaiApiKey = defineString('OPENAI_API_KEY');
  * 
  * Calculates AI-powered job fit scores for applicants with aggressive cost hardening:
  * 1. Only triggers on new/updated applications
- * 2. Threshold gating: Only scores profiles with Profile Score >= 40
- * 3. Aggressive caching: 7-day cache with job requirements hash
- * 4. Rate limiting: Max 100 AI calls per hour per tenant
- * 5. Lightweight prompts: ~150 tokens per applicant
+ * 2. Threshold gating: Only scores profiles with Profile Score >= 70 (unless force=true)
+ * 3. Random sampling: Processes ~10% of eligible applicants to keep costs predictable
+ * 4. Aggressive caching: 7-day cache with job requirements hash
+ * 5. Rate limiting: Max 100 AI calls per hour per tenant
+ * 6. Lightweight prompts: ~150 tokens per applicant
  * 
  * Estimated cost: ~$0.02 per 1000 applicants with hardening
  */
@@ -267,7 +268,7 @@ async function processApplicationScore(
   // Always persist the latest profile score snapshot
   await updateScores(profileUpdatePayload);
 
-  if (profileScore < 40 && !options.force) {
+  if (profileScore < 70 && !options.force) {
     return {
       success: true,
       reason: 'profile_score_below_threshold',
@@ -275,6 +276,19 @@ async function processApplicationScore(
       fitScore: null,
       skipped: true,
     };
+  }
+
+  if (!options.force) {
+    const SAMPLE_RATE = 0.1; // Process roughly 10% of applicants
+    if (Math.random() > SAMPLE_RATE) {
+      return {
+        success: true,
+        reason: 'sampling_skip',
+        profileScore,
+        fitScore: null,
+        skipped: true,
+      };
+    }
   }
 
   const jobOrderId = applicationData.jobOrderId;

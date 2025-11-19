@@ -85,7 +85,10 @@ import {
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
   Save as SaveIcon,
+  BusinessCenter as BusinessCenterIcon,
+  Handshake as HandshakeIcon,
 } from '@mui/icons-material';
+import MUILink from '@mui/material/Link';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import {
   collection,
@@ -123,6 +126,7 @@ import HealthBadge from '../components/HealthBadge';
 import { calculateDealHealth, calculateDealAge } from '../utils/dealHealthCalculator';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 
 interface TabPanelProps {
@@ -150,6 +154,26 @@ function TabPanel(props: TabPanelProps) {
     </div>
   );
 }
+
+const AngelListIcon = ({ hasUrl }: { hasUrl: boolean }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <img
+      src={hasUrl ? '/img/angellist-icon-blue.svg' : '/img/angellist-icon-grey.svg'}
+      alt="AngelList"
+      style={{ width: '16px', height: '16px' }}
+    />
+  </Box>
+);
+
+const CrunchbaseIcon = ({ hasUrl }: { hasUrl: boolean }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <img
+      src={hasUrl ? '/img/crunchbase-icon-blue.svg' : '/img/crunchbase-icon-grey.svg'}
+      alt="Crunchbase"
+      style={{ width: '18px', height: '18px' }}
+    />
+  </Box>
+);
 
 const RecruiterCompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
@@ -192,6 +216,7 @@ const RecruiterCompanyDetails: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [companyContextOpen, setCompanyContextOpen] = useState(false);
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
 
   // Load company data
   useEffect(() => {
@@ -376,6 +401,28 @@ const RecruiterCompanyDetails: React.FC = () => {
     window.history.replaceState({}, '', url.toString());
   };
 
+  // Memoize related company items - must be before early returns
+  const relatedCompanyItems = React.useMemo(() => {
+    if (!company) return [];
+    const items: Array<{ id: string; relation: 'parent' | 'child' | 'msp' }> = [];
+    const parent = company.parentCompany || null;
+    if (parent) {
+      const id = typeof parent === 'string' ? parent : parent?.id;
+      if (id) items.push({ id, relation: 'parent' });
+    }
+    const children: any[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
+    children.forEach((child) => {
+      const id = typeof child === 'string' ? child : child?.id;
+      if (id) items.push({ id, relation: 'child' });
+    });
+    const msp = company.msp || null;
+    if (msp) {
+      const id = typeof msp === 'string' ? msp : msp?.id;
+      if (id) items.push({ id, relation: 'msp' });
+    }
+    return items;
+  }, [company]);
+
   if (loading) {
     return (
       <Box sx={{ p: 0 }}>
@@ -406,8 +453,23 @@ const RecruiterCompanyDetails: React.FC = () => {
     );
   }
 
+  const ensureUrlProtocol = (url?: string) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `https://${url}`;
+  };
+
   return (
     <Box sx={{ p: 0 }}>
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Companies', href: '/recruiter/companies' },
+            { label: company?.companyName || company?.name || 'Company' },
+          ]}
+        />
+      </Box>
       {/* Enhanced Header - Persistent Company Information */}
       <Box sx={{ mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -429,40 +491,341 @@ const RecruiterCompanyDetails: React.FC = () => {
               </Avatar>
             </Box>
             
-            {/* Company Info */}
-            <Box sx={{ flex: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                <Typography variant="h4" sx={{ fontWeight: 600 }}>
-                  {company.companyName || company.name || 'Unnamed Company'}
+            {/* Company Information */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+                  {company.companyName || company.name}
                 </Typography>
-                <FavoriteButton
-                  itemId={company.id}
-                  favoriteType="companies"
-                  isFavorite={isFavorite}
-                  toggleFavorite={toggleFavorite}
+              </Box>
+              {company?.pipelineValue && typeof company.pipelineValue.low === 'number' && typeof company.pipelineValue.high === 'number' && (
+                <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    ${Number(company.pipelineValue.low || 0).toLocaleString()} – ${Number(company.pipelineValue.high || 0).toLocaleString()}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* Company Stats */}
+              {(company.foundedYear || company.estimatedEmployees || company.annualRevenue) && (
+                <Box 
+                  className="company-stats-box"
+                  sx={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 2, 
+                    mt: 0, 
+                    marginTop: 0,
+                    '&.company-stats-box': {
+                      marginTop: '0 !important'
+                    }
+                  }}
+                >
+                  {company.foundedYear && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Founded:</Typography>
+                      <Typography variant="body2" color="text.primary">{company.foundedYear}</Typography>
+                    </Box>
+                  )}
+                  {company.estimatedEmployees && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Employees:</Typography>
+                      <Typography variant="body2" color="text.primary">{company.estimatedEmployees.toLocaleString()}</Typography>
+                    </Box>
+                  )}
+                  {company.annualRevenue && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Revenue:</Typography>
+                      <Typography variant="body2" color="text.primary">${company.annualRevenue.toLocaleString()}</Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+
+              {/* Industry Information */}
+              {(company.industry || company.subIndustry) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0 }}>
+                  {company.industry && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Industry:</Typography>
+                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+                        {getIndustryByCode(company.industry)?.name || company.industry}
+                      </Typography>
+                    </Box>
+                  )}
+                  {company.subIndustry && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Sub-Industry:</Typography>
+                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+                        {getIndustryByCode(company.subIndustry)?.name || company.subIndustry}
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+              {/* Address */}
+              {(company.address || company.city || company.state) && (
+                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationIcon sx={{ fontSize: 16 }} />
+                  {[
+                    company.address,
+                    company.city,
+                    company.state,
+                    company.zip
+                  ].filter(Boolean).join(', ')}
+                </Typography>
+              )}
+              
+              {/* Related Companies */}
+              {relatedCompanyItems.length > 0 && tenantId && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0 }}>
+                  <AccountTreeIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                    {relatedCompanyItems.map((rel, index) => (
+                      <React.Fragment key={`${rel.relation}-${rel.id}`}>
+                        <MUILink
+                          component="button"
+                          variant="body2"
+                          color="primary"
+                          sx={{ 
+                            textDecoration: 'none', 
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            '&:hover': { textDecoration: 'underline' }
+                          }}
+                          onClick={() => navigate(`/recruiter/companies/${rel.id}`)}
+                        >
+                          <CompanyNameDisplay tenantId={tenantId} companyId={rel.id} />
+                        </MUILink>
+                        {index < relatedCompanyItems.length - 1 && (
+                          <Typography variant="body2" color="text.secondary">•</Typography>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </Box>
+                </Box>
+              )}
+              
+              {/* Social Media Icons */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
+                <IconButton
                   size="small"
-                  tooltipText={{
-                    favorited: 'Remove from favorites',
-                    notFavorited: 'Add to favorites'
+                  sx={{ 
+                    p: 0.5,
+                    color: company.website ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.website ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.website ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.website ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.website) {
+                      let url = company.website;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.website ? 'Visit Website' : 'Add Website URL'}
+                >
+                  <LanguageIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company.linkedin ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.linkedin ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.linkedin ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.linkedin ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.linkedin) {
+                      let url = company.linkedin;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.linkedin ? 'Open LinkedIn' : 'Add LinkedIn URL'}
+                >
+                  <LinkedInIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company.indeed ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.indeed ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.indeed ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.indeed ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.indeed) {
+                      let url = company.indeed;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.indeed ? 'View Jobs on Indeed' : 'Add Indeed URL'}
+                >
+                  <WorkIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+                
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company.facebook ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.facebook ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.facebook ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.facebook ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.facebook) {
+                      let url = company.facebook;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.facebook ? 'View Facebook Page' : 'Add Facebook URL'}
+                >
+                  <FacebookIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+
+                {/* AngelList Icon */}
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company.angellist ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.angellist ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.angellist ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.angellist ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.angellist) {
+                      let url = company.angellist;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.angellist ? 'View AngelList Profile' : 'Add AngelList URL'}
+                >
+                  <AngelListIcon hasUrl={!!company.angellist} />
+                </IconButton>
+
+                {/* Crunchbase Icon */}
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 0.5,
+                    color: company.crunchbase ? 'primary.main' : 'text.disabled',
+                    bgcolor: company.crunchbase ? 'primary.50' : 'transparent',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: company.crunchbase ? 'primary.dark' : 'text.disabled',
+                      bgcolor: company.crunchbase ? 'primary.100' : 'transparent'
+                    }
+                  }}
+                  onClick={() => {
+                    if (company.crunchbase) {
+                      let url = company.crunchbase;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }
+                  }}
+                  title={company.crunchbase ? 'View Crunchbase Profile' : 'Add Crunchbase URL'}
+                >
+                  <CrunchbaseIcon hasUrl={!!company.crunchbase} />
+                </IconButton>
+              </Box>
+
+              {/* Relationship and Pipeline Status */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
+                {/* Relationship Strength */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Relationship:</Typography>
+                  <Chip
+                    label={contacts.length > 5 ? 'Strong' : contacts.length > 2 ? 'Medium' : 'Weak'}
+                    size="small"
+                    sx={{
+                      bgcolor: contacts.length > 5 ? 'success.light' : contacts.length > 2 ? 'warning.light' : 'error.light',
+                      color: contacts.length > 5 ? 'success.dark' : contacts.length > 2 ? 'warning.dark' : 'error.dark',
+                      fontWeight: 500,
+                      fontSize: '0.75rem'
                   }}
                 />
               </Box>
-              <Typography variant="body1" color="text.secondary">
-                {company.industry && getIndustryByCode(company.industry)?.name}
-                {company.industry && company.city && ' • '}
-                {company.city && company.state && `${company.city}, ${company.state}`}
-              </Typography>
+                
+                {/* Pipeline Health */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Pipeline:</Typography>
+                  <Chip
+                    label={deals.length > 3 ? 'Excellent' : deals.length > 1 ? 'Good' : 'Needs Attention'}
+                    size="small"
+                    sx={{
+                      bgcolor: deals.length > 3 ? 'success.light' : deals.length > 1 ? 'warning.light' : 'error.light',
+                      color: deals.length > 3 ? 'success.dark' : deals.length > 1 ? 'warning.dark' : 'error.dark',
+                      fontWeight: 500,
+                      fontSize: '0.75rem'
+                    }}
+                  />
             </Box>
           </Box>
           
-          {/* Action Button */}
+
+            </Box>
+          </Box>
+
+          {/* Action Buttons */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
           <Button
             variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddNoteDialog(true)}
+                size="small"
+              >
+                Add Note
+              </Button>
+              <Button
+                variant="contained"
             startIcon={<EditIcon />}
             onClick={() => navigate(`/crm/companies/${companyId}`)}
+                size="small"
           >
-            Edit in CRM
+                View in CRM
           </Button>
+            </Box>
+          </Box>
         </Box>
       </Box>
 
@@ -595,8 +958,47 @@ const RecruiterCompanyDetails: React.FC = () => {
           {success}
         </Alert>
       </Snackbar>
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={company?.id || ''}
+        entityType="company"
+        entityName={company?.companyName || company?.name || ''}
+        tenantId={tenantId || ''}
+        contacts={contacts}
+        onNoteAdded={() => setSuccess('Note added')}
+      />
     </Box>
   );
+};
+
+const CompanyNameDisplay: React.FC<{ tenantId: string; companyId: string }> = ({ tenantId, companyId }) => {
+  const [name, setName] = useState<string>('');
+
+  useEffect(() => {
+    if (!tenantId || !companyId || typeof companyId !== 'string') {
+      setName('');
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+        const data: any = snap.data() || {};
+        const display = data.companyName || data.name || '';
+        if (isMounted) setName(String(display || ''));
+      } catch {
+        if (isMounted) setName('');
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tenantId, companyId]);
+
+  return <>{name || companyId}</>;
 };
 
 // Tab Components (simplified versions for recruiter context)

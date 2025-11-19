@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip } from '@mui/material';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -88,6 +90,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
   const { isFavorite, toggleFavorite } = useFavorites('users');
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const handleAvatarClick = () => {
     if (!canEditAvatar) return;
@@ -303,8 +307,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           ))}
         </Breadcrumbs>
       )}
-      <Box display="flex" alignItems="center" justifyContent="space-between">
-        <Box display="flex" alignItems="flex-start" gap={3}>
+      <Box display="flex" alignItems={isMobile ? 'flex-start' : 'center'} justifyContent="space-between" flexDirection={isMobile ? 'column' : 'row'} gap={isMobile ? 2 : 0}>
+        <Box display="flex" alignItems="flex-start" gap={isMobile ? 2 : 3} width="100%">
         <Box
           position="relative"
           onMouseEnter={() => setHover(true)}
@@ -312,7 +316,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         >
           <Avatar 
             src={avatarUrl || undefined} 
-            sx={{ width: 128, height: 128, fontSize: '2rem' }}
+            sx={{ width: isMobile ? 96 : 128, height: isMobile ? 96 : 128, fontSize: isMobile ? '1.5rem' : '2rem' }}
             onError={(e) => {
               // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
               console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
@@ -363,13 +367,13 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           )}
         </Box>
 
-        <Box>
+        <Box flex={1}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
               {`${firstName} ${lastName}`}
               {preferredName && preferredName !== firstName && ` (${preferredName})`}
             </Typography>
-            {securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+            {isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
               <FavoriteButton
                 itemId={uid}
                 favoriteType="users"

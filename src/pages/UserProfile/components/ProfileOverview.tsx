@@ -23,7 +23,10 @@ import {
   Card,
   CardContent,
   InputAdornment,
+  Stack,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import {
   Person as PersonIcon,
   Work as WorkIcon,
@@ -32,7 +35,13 @@ import {
   Security as SecurityIcon,
   LocationOnOutlined as LocationOnOutlinedIcon,
   CheckCircle as CheckCircleIcon,
+  DirectionsCar,
+  DirectionsTransit,
+  DirectionsBike,
+  DirectionsWalk,
+  MoreHoriz,
 } from '@mui/icons-material';
+import type { SvgIconComponent } from '@mui/icons-material';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 
@@ -50,6 +59,10 @@ type Props = {
 };
 
 const ProfileOverview: React.FC<Props> = ({ uid }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const sectionSpacing = isMobile ? 2 : 3;
+  const cardPadding = isMobile ? 2 : 3;
   const coerceToDate = (value: any): Date | null => {
     if (!value) return null;
     try {
@@ -149,6 +162,18 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     'Arabic', 'Hindi', 'Bengali', 'Urdu', 'Turkish', 'Dutch', 'Swedish', 'Norwegian', 'Danish', 'Finnish',
     'Polish', 'Czech', 'Hungarian', 'Romanian', 'Bulgarian', 'Greek', 'Hebrew', 'Thai', 'Vietnamese', 'Tagalog'
   ];
+
+const transportOptions: Array<{
+  value: NonNullable<UserProfileForm['transportMethod']>;
+  label: string;
+  icon: SvgIconComponent;
+}> = [
+  { value: 'Car', label: 'Car', icon: DirectionsCar },
+  { value: 'Public Transit', label: 'Public Transit', icon: DirectionsTransit },
+  { value: 'Bike', label: 'Bike', icon: DirectionsBike },
+  { value: 'Walk', label: 'Walk', icon: DirectionsWalk },
+  { value: 'Other', label: 'Other', icon: MoreHoriz },
+];
 
   // Check if user can edit this profile
   const canEditProfile = () => {
@@ -507,6 +532,14 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     }
   };
 
+  const handleTransportMethodToggle = (optionValue: NonNullable<UserProfileForm['transportMethod']>) => {
+    setForm((prev) => {
+      const nextValue = prev.transportMethod === optionValue ? undefined : optionValue;
+      persistEmploymentField('transportMethod', nextValue || '');
+      return { ...prev, transportMethod: nextValue };
+    });
+  };
+
   // Generic alias for non-employment fields
   const persistProfileField = async (field: string, value: any) => {
     // Special handling for phone field changes
@@ -664,11 +697,11 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
   return (
     <Box sx={{ p: 0 }}>
       <Box component="form" onSubmit={handleSubmit} noValidate>
-        <Grid container spacing={3}>
+        <Grid container spacing={sectionSpacing}>
           {/* 🧍 Basic Identity Section */}
           <Grid item xs={12}>
-            <Card variant="outlined">
-              <CardContent>
+            <Card variant="outlined" sx={{ p: cardPadding }}>
+              <CardContent sx={{ p: 0 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                   <PersonIcon sx={{ mr: 1 }} color="primary" />
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
@@ -818,20 +851,34 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
                         />
                       </Grid>
                       <Grid item xs={12}>
-                        <FormControl fullWidth>
-                          <InputLabel>Transport Method</InputLabel>
-                          <Select
-                            name="transportMethod"
-                            value={form.transportMethod || ''}
-                            onChange={handleSelectChange}
-                            label="Transport Method"
-                          >
-                            <MenuItem value="Car">Car</MenuItem>
-                            <MenuItem value="Public Transit">Public Transit</MenuItem>
-                            <MenuItem value="Bike">Bike</MenuItem>
-                            <MenuItem value="Walk">Walk</MenuItem>
-                          </Select>
-                        </FormControl>
+                        <Box>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                            How will you get to work?
+                          </Typography>
+                          <Stack direction="row" spacing={1} flexWrap="wrap">
+                            {transportOptions.map((option) => {
+                              const Icon = option.icon;
+                              const isSelected = form.transportMethod === option.value;
+                              return (
+                                <Chip
+                                  key={option.value}
+                                  icon={<Icon fontSize="small" />}
+                                  label={option.label}
+                                  onClick={() => handleTransportMethodToggle(option.value)}
+                                  color={isSelected ? 'primary' : 'default'}
+                                  variant={isSelected ? 'filled' : 'outlined'}
+                                  sx={{
+                                    borderRadius: '999px',
+                                    px: 1.5,
+                                    height: 36,
+                                    fontWeight: isSelected ? 600 : 500,
+                                    mt: 0.5
+                                  }}
+                                />
+                              );
+                            })}
+                          </Stack>
+                        </Box>
                       </Grid>
                     </Grid>
                   </Grid>
@@ -843,8 +890,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
           {/* 📍 Employment Classification Section */}
           {canSeeSensitiveSections() && (
             <Grid item xs={12}>
-              <Card variant="outlined">
-                <CardContent>
+              <Card variant="outlined" sx={{ p: cardPadding }}>
+                <CardContent sx={{ p: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <WorkIcon sx={{ mr: 1 }} color="primary" />
                     <Typography variant="h6" sx={{ fontWeight: 700 }}>Employment Details</Typography>
@@ -1087,8 +1134,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
 
           {/* Address Section */}
           <Grid item xs={12}>
-            <Card variant="outlined">
-              <CardContent>
+            <Card variant="outlined" sx={{ p: cardPadding }}>
+              <CardContent sx={{ p: 0 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                   <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
                   <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>

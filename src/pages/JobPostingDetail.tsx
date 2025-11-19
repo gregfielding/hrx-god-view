@@ -737,6 +737,16 @@ const JobPostingDetail: React.FC = () => {
     return JSON.parse(JSON.stringify(schema));
   };
 
+  const cardPadding = isMobile ? 2 : 3;
+  const cardBaseSx = {
+    width: '100%',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    p: cardPadding,
+    borderRadius: 3,
+    overflow: 'hidden',
+  } as const;
+
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: isMobile ? 2 : 3 }}>
       {/* Google Jobs Structured Data */}
@@ -759,7 +769,7 @@ const JobPostingDetail: React.FC = () => {
       </Button>
 
       {/* Header */}
-      <Paper elevation={2} sx={{ p: isMobile ? 2 : 4, mb: 3 }}>
+      <Paper elevation={2} sx={{ ...cardBaseSx, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
           <Box sx={{ flex: 1 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
@@ -1015,16 +1025,21 @@ const JobPostingDetail: React.FC = () => {
         </Box>
       </Paper>
 
-      <Box sx={{ 
-        display: 'grid', 
-        gridTemplateColumns: { xs: '1fr', md: posting.jobType === 'gig' && dynamicShifts.length > 0 ? '1fr' : '2fr 1fr' }, 
-        gap: 3
-      }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            md: posting.jobType === 'gig' && dynamicShifts.length > 0 ? '1fr' : '2fr 1fr',
+          },
+          gap: 3,
+        }}
+      >
         {/* Main Content */}
-        <Box>
+        <Box sx={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
           {/* Job Description */}
-          <Card sx={{ mb: 3 }} elevation={2}>
-            <CardContent>
+          <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+            <CardContent sx={{ p: 0 }}>
               <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                 Job Description
               </Typography>
@@ -1036,8 +1051,8 @@ const JobPostingDetail: React.FC = () => {
 
           {/* Shift Selector (for Gig jobs only) */}
           {posting.jobType === 'gig' && (
-            <Card sx={{ mb: 3 }} elevation={2}>
-              <CardContent>
+            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+              <CardContent sx={{ p: 0 }}>
                 {loadingShifts ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
                     <CircularProgress size={24} />
@@ -1074,8 +1089,8 @@ const JobPostingDetail: React.FC = () => {
           (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
           (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
           posting.eVerifyRequired) && (
-            <Card elevation={2}>
-              <CardContent>
+            <Card sx={{ ...cardBaseSx }} elevation={2}>
+              <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Requirements
                 </Typography>
@@ -1257,13 +1272,26 @@ const JobPostingDetail: React.FC = () => {
 
         {/* Sidebar - Only show for non-gig jobs or gig jobs without shifts */}
         {!(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-          <Box sx={{ position: 'sticky', top: 80, alignSelf: 'flex-start' }}>
+          <Box
+            sx={{
+              position: 'sticky',
+              top: 80,
+              alignSelf: 'flex-start',
+              width: '100%',
+              maxWidth: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
             {/* Quick Apply Card */}
-            <Card sx={{ 
-              mb: 3, 
-              bgcolor: 'white'
-            }} elevation={2}>
-              <CardContent>
+            <Card
+              sx={{
+                ...cardBaseSx,
+                mb: 3,
+                bgcolor: 'white',
+              }}
+              elevation={2}
+            >
+              <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Apply for this Position
                 </Typography>

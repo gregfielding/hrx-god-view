@@ -490,7 +490,7 @@ const UserProfilePage = () => {
   const isAdminView = parseInt(securityLevel) >= 5;
 
   return (
-    <>
+    <Box className="user-profile-page">
       <Box sx={{ p: 0 }}>
         <UserProfileHeader
           uid={uid}
@@ -548,7 +548,7 @@ const UserProfilePage = () => {
           </Tabs>
         </Paper>
 
-        <Box sx={{ mt: 2 }}>
+        <Box sx={{ mt: 2 }} className="profile-tab-content">
           {(() => {
             const label = currentLabel;
             if (!label || !availableTabs.includes(label)) return null;
@@ -601,7 +601,7 @@ const UserProfilePage = () => {
         </Box>
       </Box>
       {/* <ChatUI workerId={uid} tenantId={tenantId || undefined} showFAQ={true} /> */}
-    </>
+    </Box>
   );
 };
 

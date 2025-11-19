@@ -8,6 +8,8 @@ import { Autocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../utils/geocodeAddress';
 import { auth, db } from '../firebase';
 
+const PHONE_VERIFICATION_ENABLED = false;
+
 // Allow recaptchaVerifier on the window object
 declare global {
   interface Window {
@@ -48,6 +50,8 @@ const UserOnboarding = () => {
   const autocompleteRef = useRef<any>(null);
 
   useEffect(() => {
+    if (!PHONE_VERIFICATION_ENABLED) return;
+
     if (!window.recaptchaVerifier) {
       window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
         size: 'invisible',
@@ -64,6 +68,7 @@ const UserOnboarding = () => {
   }, []);
 
   const resetRecaptcha = () => {
+    if (!PHONE_VERIFICATION_ENABLED) return;
     if (window.recaptchaVerifier && window.recaptchaWidgetId !== undefined) {
       (window as any).grecaptcha?.reset(window.recaptchaWidgetId);
       console.log('reCAPTCHA reset.');
@@ -71,6 +76,11 @@ const UserOnboarding = () => {
   };
 
   const handleSendCode = async () => {
+    if (!PHONE_VERIFICATION_ENABLED) {
+      setError('Phone verification is currently disabled.');
+      return;
+    }
+
     setError('');
     setLoading(true);
     try {
@@ -247,7 +257,7 @@ const UserOnboarding = () => {
         </Box>
       </Box>
 
-      <div id="recaptcha-container" style={{ zIndex: 9999 }} />
+      {PHONE_VERIFICATION_ENABLED && <div id="recaptcha-container" style={{ zIndex: 9999 }} />}
     </>
   );
 };

@@ -107,7 +107,7 @@ export interface UserProfile {
 
   // 🧪 Enrichments
   emergencyContact?: EmergencyContact;
-  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk';
+  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
 
   // 🔒 Privacy & Notifications
   notificationSettings?: NotificationSettings;
@@ -176,7 +176,7 @@ export interface UserProfileForm {
   
   // Enrichments
   emergencyContact?: EmergencyContact;
-  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk';
+  transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
   
   // Legacy fields
   role?: string;

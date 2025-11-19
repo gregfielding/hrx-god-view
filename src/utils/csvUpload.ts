@@ -67,7 +67,7 @@ export const VALID_SECURITY_LEVELS = ['Applicant', 'Worker', 'Flex'];
 export const VALID_EMPLOYMENT_TYPES = ['Full-Time', 'Part-Time', 'Contract', 'Flex'];
 export const VALID_WORK_STATUSES = ['Active', 'On Leave', 'Terminated', 'Suspended', 'Pending'];
 export const VALID_GENDERS = ['Male', 'Female', 'Nonbinary', 'Other', 'Prefer not to say'];
-export const VALID_TRANSPORT_METHODS = ['Car', 'Public Transit', 'Bike', 'Walk'];
+export const VALID_TRANSPORT_METHODS = ['Car', 'Public Transit', 'Bike', 'Walk', 'Other'];
 
 export function generateSampleCSV(): string {
   const sampleData = [

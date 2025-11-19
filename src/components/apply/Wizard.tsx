@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme, Paper, TextField } from '@mui/material';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme, Paper, TextField, Backdrop, CircularProgress } from '@mui/material';
 import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -73,13 +73,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   }, [searchParams]);
   
   
-  // Create a unique key for this application session
-  const sessionKey = `app-wizard-${tenantId}-${jobId}-${uid}`;
+  const baseSessionKey = `${tenantId || 'na'}-${jobId || 'na'}`;
+  const sessionIdStorageKey = `app-wizard-session-id:${baseSessionKey}`;
+  const [clientSessionId] = useState(() => {
+    try {
+      const existing = localStorage.getItem(sessionIdStorageKey);
+      if (existing) return existing;
+      const newId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      localStorage.setItem(sessionIdStorageKey, newId);
+      return newId;
+    } catch {
+      return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+  });
+  const stepStorageKey = `app-wizard-step:${baseSessionKey}:${clientSessionId}`;
+  const formStorageKey = `app-wizard-data:${baseSessionKey}:${clientSessionId}`;
+
+  // Create a unique key for this application session (used for draft ids later)
   
   // Initialize activeStep from localStorage if available
   const [activeStep, setActiveStep] = useState(() => {
     try {
-      const saved = localStorage.getItem(`${sessionKey}-step`);
+      const saved = localStorage.getItem(stepStorageKey);
       return saved ? parseInt(saved, 10) : 0;
     } catch {
       return 0;
@@ -87,7 +102,24 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   });
   const [saving, setSaving] = useState(false);
   const [appId, setAppId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState<any>(() => {
+    try {
+      const saved = localStorage.getItem(formStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load saved wizard data:', error);
+    }
+    return {};
+  });
+  const formDataRef = useRef(formData);
+  useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [requirements, setRequirements] = useState<{
     licenses?: string[];
@@ -103,20 +135,30 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const [stepRestored, setStepRestored] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [verifyOpen, setVerifyOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
   // Check if step was restored from localStorage
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(`${sessionKey}-step`);
+      const saved = localStorage.getItem(stepStorageKey);
       if (saved && parseInt(saved, 10) > 0) {
         setStepRestored(true);
       }
     } catch (error) {
       console.warn('Failed to check saved step:', error);
     }
-  }, [sessionKey]);
+  }, [stepStorageKey]);
+
+  // Persist form data locally for resilience across reloads/unmounts
+  useEffect(() => {
+    try {
+      localStorage.setItem(formStorageKey, JSON.stringify(formDataRef.current || {}));
+    } catch (error) {
+      console.warn('Failed to persist wizard form data:', error);
+    }
+  }, [formStorageKey]);
 
   // Create draft doc on first load (user-owned path; fallback to localStorage if rules block)
   useEffect(() => {
@@ -246,9 +288,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   useEffect(() => {
     if (!userProfile) return;
 
+    const currentFormData = formDataRef.current || {};
     const addressInfo = userProfile.addressInfo || {};
     // Merge with existing formData.personal to preserve user input
-    const existingPersonal = formData.personal || {};
+    const existingPersonal = currentFormData.personal || {};
     const personal = {
       firstName: existingPersonal.firstName || userProfile.firstName || '',
       lastName: existingPersonal.lastName || userProfile.lastName || '',
@@ -289,7 +332,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     // Preferences: prefer existing profile preferences if available; otherwise fall back to posting and defaults
     const preferencesBase = (userProfile && userProfile.preferences) ? { ...(userProfile.preferences || {}) } : {};
-    const existingPrefs = formData.preferences || {};
+    const existingPrefs = currentFormData.preferences || {};
     const prefDefaults = {
       targetPay: '',
       shift: '',
@@ -310,7 +353,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
     // Requirements prefill from user profile - only prefill once on initial load
     // This prevents overwriting user input when they're actively editing
-    const existingRequirements = formData.requirements || {};
+    const existingRequirements = currentFormData.requirements || {};
     const hasExistingRequirements = Object.keys(existingRequirements).length > 0 && (
       existingRequirements.drugScreeningComfort ||
       existingRequirements.backgroundScreeningComfort ||
@@ -362,11 +405,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       // Only prefill if formData doesn't already have meaningful data
       // This prevents overwriting user input after account creation
-      const hasExistingPersonalData = formData.personal && (
-        formData.personal.firstName || 
-        formData.personal.lastName || 
-        formData.personal.email ||
-        formData.personal.phone
+      const hasExistingPersonalData = currentFormData.personal && (
+        currentFormData.personal.firstName ||
+        currentFormData.personal.lastName ||
+        currentFormData.personal.email ||
+        currentFormData.personal.phone
       );
       
       // Only persist prefill if we don't have existing personal data
@@ -377,7 +420,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       } else {
         // Merge personal data instead of replacing it
         persist({ 
-          personal: { ...personal, ...formData.personal },
+          personal: { ...personal, ...currentFormData.personal },
           eligibility, 
           profilePicture, 
           qualifications, 
@@ -434,6 +477,30 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const missing = computeMissing();
 
+  const advanceStep = useCallback(() => {
+    setActiveStep((prev) => {
+      const newStep = Math.min(prev + 1, steps.length - 1);
+      try {
+        localStorage.setItem(stepStorageKey, newStep.toString());
+      } catch (error) {
+        console.warn('Failed to save step to localStorage:', error);
+      }
+      return newStep;
+    });
+  }, [stepStorageKey]);
+
+  const retreatStep = useCallback(() => {
+    setActiveStep((prev) => {
+      const newStep = Math.max(prev - 1, 0);
+      try {
+        localStorage.setItem(stepStorageKey, newStep.toString());
+      } catch (error) {
+        console.warn('Failed to save step to localStorage:', error);
+      }
+      return newStep;
+    });
+  }, [stepStorageKey]);
+
   const ensurePersonalCoordinates = async (personalData: any) => {
     if (!personalData) return personalData;
     if (personalData.homeLat !== undefined && personalData.homeLng !== undefined) {
@@ -470,6 +537,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const persist = async (partial: any) => {
     setSaving(true);
+    setSubmitting(true);
     try {
       setFormData((prev: any) => {
         const updated = { ...prev, ...partial };
@@ -491,10 +559,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (appId.startsWith('appDraft:')) {
         const existing = localStorage.getItem(appId);
         const parsed = existing ? JSON.parse(existing) : {};
-        try { localStorage.setItem(appId, JSON.stringify({ ...parsed, data: { ...formData, ...partial }, updatedAt: Date.now() })); } catch {}
+        try {
+          localStorage.setItem(
+            appId,
+            JSON.stringify({
+              ...parsed,
+              data: { ...formDataRef.current, ...partial },
+              updatedAt: Date.now(),
+            })
+          );
+        } catch {}
       } else {
         const appRef = doc(db, 'tenants', tenantId, 'applicationDrafts', appId);
-        await updateDoc(appRef, { data: { ...formData, ...partial }, updatedAt: serverTimestamp() });
+        await updateDoc(appRef, { data: { ...formDataRef.current, ...partial }, updatedAt: serverTimestamp() });
       }
 
       // Best-effort mirror to tenant application
@@ -518,6 +595,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       } catch {}
     } finally {
       setSaving(false);
+      setSubmitting(false);
     }
   };
 
@@ -845,26 +923,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
     } finally {
       setSaving(false);
-      const newStep = Math.min(activeStep + 1, steps.length - 1);
-      setActiveStep(newStep);
-      // Save current step to localStorage
-      try {
-        localStorage.setItem(`${sessionKey}-step`, newStep.toString());
-      } catch (error) {
-        console.warn('Failed to save step to localStorage:', error);
-      }
+      advanceStep();
     }
   };
   
   const handleBack = () => {
-    const newStep = Math.max(activeStep - 1, 0);
-    setActiveStep(newStep);
-    // Save current step to localStorage
-    try {
-      localStorage.setItem(`${sessionKey}-step`, newStep.toString());
-    } catch (error) {
-      console.warn('Failed to save step to localStorage:', error);
-    }
+    retreatStep();
   };
 
   const handleSubmit = async () => {
@@ -1304,6 +1368,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       } catch (e) {
         console.error('Error saving application:', e);
       }
+
+      try {
+        localStorage.removeItem(formStorageKey);
+        localStorage.removeItem(stepStorageKey);
+        localStorage.removeItem(sessionIdStorageKey);
+      } catch (cleanupError) {
+        console.warn('Failed to clear wizard storage keys:', cleanupError);
+      }
       
       // Redirect immediately (no flicker back to step 1). Prefer explicit returnTo.
       const redirectPath = returnTo || (tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board');
@@ -1335,6 +1407,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               setPassword(pwd);
               setConfirmPassword(confirmPwd);
             }}
+            showAddressFields={false}
           />
         );
       case 1:
@@ -1640,7 +1713,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         onComplete={() => {
           setVerifyOpen(false);
           // advance to next step after successful verification
-          setActiveStep((s) => Math.min(s + 1, steps.length - 1));
+          advanceStep();
         }}
         needDOB={false}
         needPhone={true}
@@ -1676,6 +1749,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           Thanks — your application has been submitted!
         </Alert>
       </Snackbar>
+      <Backdrop
+        open={submitting}
+        sx={{
+          color: '#fff',
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}
+      >
+        <CircularProgress color="inherit" />
+        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+          Submitting your application…
+        </Typography>
+      </Backdrop>
     </Box>
   );
 };

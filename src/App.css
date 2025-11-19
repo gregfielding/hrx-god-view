@@ -66,3 +66,49 @@
 .MuiPaper-root[style*="border-radius"] {
   border-radius: 12px !important;
 }
+
+/* Hide/shrink reCAPTCHA badge to prevent blocking buttons */
+.grecaptcha-badge,
+div[class*="grecaptcha-badge"],
+div[style*="grecaptcha-badge"],
+iframe[title="reCAPTCHA"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  transform: scale(0) !important;
+  transform-origin: bottom right !important;
+  z-index: -1 !important;
+}
+
+/* Alternative: shrink instead of hide (uncomment if preferred) */
+/* .grecaptcha-badge {
+  transform: scale(0.5) !important;
+  transform-origin: bottom right !important;
+  bottom: 0 !important;
+  right: 0 !important;
+} */
+
+/* User profile mobile spacing */
+.user-profile-page .MuiCard-root {
+  border-radius: 16px;
+}
+
+@media (max-width: 600px) {
+  .user-profile-page .MuiCard-root {
+    padding: 16px !important;
+  }
+
+  .user-profile-page .MuiCardContent-root {
+    padding: 0 !important;
+  }
+
+  .user-profile-page .MuiCardHeader-root {
+    padding: 0 0 12px 0 !important;
+  }
+}

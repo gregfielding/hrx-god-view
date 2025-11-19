@@ -227,6 +227,7 @@ const getTheme = (mode: 'light' | 'dark') => {
             boxShadow: 'none',
             backgroundColor: '#FFFFFF',
             padding: '24px',
+            boxSizing: 'border-box',
             '&.MuiCard-tonal': {
               backgroundColor: '#F7F9FC',
               border: 'none',

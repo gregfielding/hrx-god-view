@@ -286,7 +286,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
 
   const handleViewApplicant = (uid: string) => {
     // Open in new tab
-    window.open(`/c1/users/${uid}`, '_blank');
+    window.open(`/recruiter/users/${uid}`, '_blank');
   };
 
   const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
