@@ -623,7 +623,66 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
         try {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
-          // Account created successfully - continue with next step
+          // Account created successfully - immediately create user document with base fields
+          const newUid = cred.user.uid;
+          const userRef = doc(db, 'users', newUid);
+          const userSnap = await getDoc(userRef);
+          
+          // Only create if document doesn't exist
+          if (!userSnap.exists()) {
+            const baseProfile = {
+              uid: newUid,
+              email: String(email).trim(),
+              displayName: '',
+              firstName: '',
+              lastName: '',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              source: 'public_jobs_board',
+              profileComplete: false,
+              onboarded: false,
+              role: 'Tenant',
+              orgType: 'Tenant',
+              isActive: true,
+              skills: [],
+              certifications: [],
+              languages: [],
+              education: [],
+              workHistory: [],
+              applications: [],
+              favorites: [],
+              crm_sales: false,
+              recruiter: false,
+              jobsBoard: false,
+              userGroupIds: [],
+              userAgreements: {
+                termsOfUse: {
+                  agreed: true,
+                  version: "2025-10-21",
+                  timestamp: new Date().toISOString()
+                },
+                smsConsent: {
+                  agreed: true,
+                  version: "2025-10-21",
+                  timestamp: new Date().toISOString()
+                },
+                privacyPolicy: {
+                  acknowledged: true,
+                  version: "2025-10-21",
+                  timestamp: new Date().toISOString()
+                }
+              }
+            };
+            
+            try {
+              await setDoc(userRef, baseProfile);
+              console.log('✅ Initial user document created with base fields');
+            } catch (createErr) {
+              console.error('❌ Failed to create initial user document:', createErr);
+              // Continue anyway - upsertUserFromWizard will create it
+            }
+          }
+          // Continue with next step
           // The uid will be available via auth.currentUser.uid in subsequent steps
         } catch (e: any) {
           const errorMessage = e?.message || 'unknown error';
@@ -761,7 +820,43 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
         } else if (activeStep === 1) {
           // Address → save address data with coordinates
-          const p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+          // CRITICAL: Ensure coordinates are present before proceeding
+          let p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+          
+          // If coordinates are still missing after geocoding attempt, block progression
+          if (!p.homeLat || !p.homeLng) {
+            const street = p.street || formData.personal?.street || '';
+            const city = p.city || formData.personal?.city || '';
+            const state = p.state || formData.personal?.state || '';
+            const zip = p.zip || formData.personal?.zip || '';
+            
+            if (street && city && state) {
+              try {
+                const fullAddress = `${street}, ${city}, ${state} ${zip}`.trim();
+                console.log('📍 Geocoding address on Address step:', fullAddress);
+                const coords = await geocodeAddress(fullAddress);
+                p = { ...p, homeLat: coords.lat, homeLng: coords.lng };
+                // Update formData with coordinates directly
+                setFormData((prev: any) => ({
+                  ...prev,
+                  personal: {
+                    ...(prev.personal || {}),
+                    ...p
+                  }
+                }));
+              } catch (geoErr) {
+                console.error('❌ Failed to geocode address:', geoErr);
+                alert('Could not validate your address. Please select an address from the dropdown suggestions to continue.');
+                setSaving(false);
+                return;
+              }
+            } else {
+              alert('Please enter a complete address and select from the dropdown suggestions to continue.');
+              setSaving(false);
+              return;
+            }
+          }
+          
           const update: any = { updatedAt: serverTimestamp() };
           
           const addr: any = {};
@@ -805,8 +900,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           
-          if (Object.keys(update).length > 1) {
-            await setDoc(userRef, update, { merge: true });
+          // Use upsertUserFromWizard to ensure tenantIds are set
+          if (tenantId) {
+            try {
+              const functions = getFunctions();
+              const upsertUserFromWizard = httpsCallable(functions as any, 'upsertUserFromWizard');
+              await upsertUserFromWizard({
+                tenantId,
+                profileUpdate: update
+              });
+              console.log('✅ Address saved via upsertUserFromWizard');
+            } catch (err) {
+              console.warn('upsertUserFromWizard failed for address, using fallback:', err);
+              // Fallback: direct write
+              if (Object.keys(update).length > 1) {
+                await setDoc(userRef, update, { merge: true });
+                console.log('✅ Address saved via fallback');
+              }
+            }
+          } else {
+            if (Object.keys(update).length > 1) {
+              await setDoc(userRef, update, { merge: true });
+            }
           }
         } else if (activeStep === 2) {
           // Work Eligibility → save EEO fields
@@ -1033,7 +1148,35 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       // Merge selected profile fields into users/{uid}
       const userRef = doc(db, 'users', effectiveUid!);
-      const personal = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+      let personal = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+      
+      // CRITICAL: Ensure address has coordinates before final submission
+      if ((personal.street || personal.city || personal.state) && (!personal.homeLat || !personal.homeLng)) {
+        const street = personal.street || formData.personal?.street || '';
+        const city = personal.city || formData.personal?.city || '';
+        const state = personal.state || formData.personal?.state || '';
+        const zip = personal.zip || formData.personal?.zip || '';
+        
+        if (street && city && state) {
+          try {
+            const fullAddress = `${street}, ${city}, ${state} ${zip}`.trim();
+            console.log('📍 Final geocoding in handleSubmit:', fullAddress);
+            const coords = await geocodeAddress(fullAddress);
+            personal = { ...personal, homeLat: coords.lat, homeLng: coords.lng };
+            // Update formData with coordinates
+            setFormData((prev: any) => ({
+              ...prev,
+              personal: {
+                ...(prev.personal || {}),
+                ...personal
+              }
+            }));
+          } catch (geoErr) {
+            console.error('❌ Failed to geocode address in handleSubmit:', geoErr);
+            // Don't block submission, but log the error
+          }
+        }
+      }
       
       // Debug logging for address data
       console.log('🔍 handleSubmit - formData.personal:', personal);
@@ -1136,7 +1279,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus) profileUpdate.veteranStatus = String(eligibility.veteranStatus);
       if (eligibility.disabilityStatus) profileUpdate.disabilityStatus = String(eligibility.disabilityStatus);
-      if (profilePicture.profilePicture) profileUpdate.avatar = String(profilePicture.profilePicture);
+      // Save profile picture - use formData value or existing userProfile avatar
+      if (profilePicture.profilePicture) {
+        profileUpdate.avatar = String(profilePicture.profilePicture);
+      } else if (userProfile?.avatar) {
+        // If no new picture uploaded but user already has one, preserve it
+        profileUpdate.avatar = String(userProfile.avatar);
+      }
       
       // Save requirements data (screenings)
       const requirements = formData.requirements || {};
