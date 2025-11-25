@@ -26,6 +26,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 import { db } from '../../../../firebase';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { logger } from '../../../../utils/logger';
 
 interface ConversationSettingsProps {
   tenantId: string;
@@ -100,18 +101,13 @@ const ConversationSettings: React.FC<ConversationSettingsProps> = ({ tenantId })
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'conversation');
       await setDoc(ref, settings, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ConversationSettings_${Date.now()}`), {
-        tenantId,
-        section: 'ConversationSettings',
-        changed: 'conversation_settings',
-        oldValue: originalSettings,
-        newValue: settings,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['ConversationEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'ConversationSettings',
+      await logger.info('Conversation settings updated', {
+        context: 'ConversationSettings',
+        extra: {
+          tenantId,
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalSettings({ ...settings });
       setSuccess(true);

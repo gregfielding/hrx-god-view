@@ -124,7 +124,9 @@ import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
-logger.debug('Google Maps API key available:', !!googleMapsApiKey);
+logger.debug('Google Maps API key available', {
+  extra: { available: !!googleMapsApiKey },
+});
 
 // Static libraries array to prevent performance warnings (shared across app)
 const googleMapsLibraries: Libraries = ['places', 'maps'];

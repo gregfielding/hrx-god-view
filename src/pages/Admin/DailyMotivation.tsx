@@ -1344,7 +1344,7 @@ const DailyMotivation: React.FC = () => {
             </Button>
           </Box>
           <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-            💡 These events are logged to ai_logs and trigger AI profile updates for the worker
+            💡 Feedback events are processed in real time via the new logging service; no data is stored in Firestore.
           </Typography>
         </CardContent>
       </Card>

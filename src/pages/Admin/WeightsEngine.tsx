@@ -10,6 +10,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../../contexts/AuthContext';
 import { LoggableSlider } from '../../components/LoggableField';
 import { db } from '../../firebase';
+import { logger } from '../../utils/logger';
 
 const ADMIN_SLIDERS = [
   {
@@ -128,16 +129,12 @@ const WeightsEngine: React.FC = () => {
       const functions = getFunctions();
       const setWeightsConfig = httpsCallable(functions, 'setWeightsConfig');
       await setWeightsConfig({ weights, userId: currentUser?.uid || null });
-      await setDoc(doc(db, 'ai_logs', `admin_WeightsEngine_${Date.now()}`), {
-        section: 'WeightsEngine',
-        changed: 'weights',
-        oldValue: weights,
-        newValue: weights,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['WeightsEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'WeightsEngine',
+      await logger.info('Weights engine updated', {
+        context: 'WeightsEngine',
+        extra: {
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setSaveSuccess(true);
     } catch (err: any) {

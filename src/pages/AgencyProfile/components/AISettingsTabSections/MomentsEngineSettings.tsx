@@ -24,6 +24,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { logger } from '../../../../utils/logger';
 
 interface Moment {
   id: string;
@@ -233,18 +234,13 @@ const MomentsEngineSettings: React.FC<MomentsEngineSettingsProps> = ({ tenantId 
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'moments');
       await setDoc(ref, { moments }, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_MomentsEngine_${Date.now()}`), {
-        tenantId,
-        section: 'MomentsEngine',
-        changed: 'moments',
-        oldValue: originalMoments,
-        newValue: moments,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['MomentsEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'MomentsEngine',
+      await logger.info('Moments settings updated', {
+        context: 'MomentsEngine',
+        extra: {
+          tenantId,
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalMoments([...moments]);
       setSuccess(true);

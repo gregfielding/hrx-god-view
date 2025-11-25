@@ -64,7 +64,7 @@ const AI_FIELD_PATTERNS = {
 // Enhanced error handling with fallback
 const logFieldChange = async (fieldName, contextId, contextType, oldValue, newValue) => {
   try {
-    await logAIAction({ /* log data */ });
+    await logger.aiEvent({ /* log data */ });
   } catch (error) {
     if (error.code === 'functions/unavailable' || error.message.includes('CORS')) {
       // Store locally for retry

@@ -22,6 +22,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect, LoggableSwitch } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { logger } from '../../../../utils/logger';
 
 interface VectorCollection {
   id: string;
@@ -159,15 +160,13 @@ const VectorSettings: React.FC<VectorSettingsProps> = ({ tenantId }) => {
       // Update last indexed timestamp
       handleCollectionChange(collectionId, 'lastIndexed', new Date().toISOString());
 
-      // Log the reindex action
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_VectorReindex_${Date.now()}`), {
-        tenantId,
-        section: 'VectorSettings',
-        changed: 'reindex',
-        collectionId,
-        timestamp: new Date().toISOString(),
-        eventType: 'vector_reindex',
-        engineTouched: ['VectorEngine'],
+      await logger.info('Vector collection reindexed', {
+        context: 'VectorSettings',
+        extra: {
+          tenantId,
+          collectionId,
+          eventType: 'vector_reindex',
+        },
       });
     } catch (err) {
       setError('Failed to reindex collection');
@@ -180,18 +179,13 @@ const VectorSettings: React.FC<VectorSettingsProps> = ({ tenantId }) => {
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'vectors');
       await setDoc(ref, { collections, globalSettings }, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_VectorSettings_${Date.now()}`), {
-        tenantId,
-        section: 'VectorSettings',
-        changed: 'vector_settings',
-        oldValue: { collections: originalCollections, globalSettings: originalGlobalSettings },
-        newValue: { collections, globalSettings },
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['VectorEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'VectorSettings',
+      await logger.info('Vector settings updated', {
+        context: 'VectorSettings',
+        extra: {
+          tenantId,
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalCollections([...collections]);
       setOriginalGlobalSettings({ ...globalSettings });

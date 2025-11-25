@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { OpenAI } from 'openai';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -50,7 +51,7 @@ export const createFeedbackCampaign = onCall(async (request) => {
   } finally {
     const latencyMs = Date.now() - start;
     // AI LOG: Feedback campaign creation event
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'feedback_campaign_create',
       sourceModule: 'FeedbackEngine',
@@ -131,7 +132,7 @@ export const submitFeedbackResponse = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'feedback_response_submit',
       sourceModule: 'FeedbackEngine',
@@ -197,7 +198,7 @@ export const generateFeedbackPrompts = onCall({
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'feedback_prompts_generate',
       sourceModule: 'FeedbackEngine',
@@ -390,7 +391,7 @@ export const getFeedbackAISummary = onCall(async (request) => {
     throw new Error('Failed to generate AI summary');
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'feedback_ai_summary',
       sourceModule: 'FeedbackEngine',
@@ -493,7 +494,7 @@ export const setCustomerTone = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'customer_tone_set',
       sourceModule: 'CustomerToneOverrides',
@@ -539,7 +540,7 @@ export const resetCustomerTone = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'customer_tone_reset',
       sourceModule: 'CustomerToneOverrides',
@@ -603,7 +604,7 @@ export const setGlobalContext = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'unknown',
       actionType: 'global_context_set',
       sourceModule: 'ContextEngine',
@@ -675,7 +676,7 @@ export const setScenario = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'unknown',
       actionType: 'scenario_set',
       sourceModule: 'ContextEngine',
@@ -727,7 +728,7 @@ export const deleteScenario = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'unknown',
       actionType: 'scenario_delete',
       sourceModule: 'ContextEngine',
@@ -794,7 +795,7 @@ export const restoreContextVersion = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'unknown',
       actionType: 'context_version_restore',
       sourceModule: 'ContextEngine',
@@ -844,7 +845,7 @@ export const setWeightsConfig = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || 'test-admin',
       actionType: 'weights_config_set',
       sourceModule: 'WeightsEngine',
@@ -878,178 +879,52 @@ export const setWeightsConfig = onCall(async (request) => {
  * Accepts a superset of all possible fields for any AI activity.
  * Backward compatible: old usages with {workerId, module, ...} still work.
  */
-export async function logAIAction(log: {
-  // Core fields
-  timestamp?: any,
-  userId?: string,
-  workerId?: string, // alias for userId
-  actionType?: string,
-  sourceModule?: string,
-  module?: string, // alias for sourceModule
-  trigger?: string,
-  action?: string,
-  scenarioContext?: string,
-  customerId?: string,
-  tenantId?: string,
-  inputPrompt?: string,
-  composedPrompt?: string,
-  aiResponse?: string,
-  success?: boolean,
-  outcome?: string, // alias for success
-  reason?: string,
-  errorMessage?: string,
-  // Advanced context fields
-  globalContextUsed?: any,
-  scenarioContextUsed?: any,
-  customerContextUsed?: any,
-  weightsApplied?: any,
-  traitsActive?: any,
-  vectorChunksUsed?: any,
-  vectorSimilarityScores?: any,
-  // Optional/QA fields
-  latencyMs?: number,
-  versionTag?: string,
-  dryRun?: boolean,
-  manualOverride?: boolean,
-  feedbackGiven?: any,
-  // New schema fields
-  eventType?: string,
-  targetType?: string,
-  targetId?: string,
-  aiRelevant?: boolean,
-  contextType?: string,
-  traitsAffected?: any,
-  aiTags?: any,
-  urgencyScore?: any,
-  [key: string]: any
-}) {
-  // Temporary block for noisy scheduled events (24h from cold start)
-  const TEMP_BLOCKED_EVENT_TYPES = new Set([
-    'growth.weekly_prompts',
-    'learning.weekly_delivery',
-    'balance.weekly_checkins',
-    'birthday.daily_check',
-    'campaign.scheduled_execution'
-  ]);
-  const TEMP_BLOCKED_SOURCE_MODULES = new Set([
-    'BirthdayManager',
-    'MiniLearningBoosts',
-    'ProfessionalGrowth',
-    'WorkLifeBalance',
-    'CampaignsEngine'
-  ]);
-  const TEMP_BLOCK_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
-  // Cache the expiry across invocations within the same instance
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const g: any = global as any;
-  if (!g.__aiLogTempBlockExpiresAt) {
-    g.__aiLogTempBlockExpiresAt = Date.now() + TEMP_BLOCK_WINDOW_MS;
-  }
-  const tempBlockActive = Date.now() < g.__aiLogTempBlockExpiresAt;
-  if (tempBlockActive) {
-    if ((log.eventType && TEMP_BLOCKED_EVENT_TYPES.has(log.eventType)) ||
-        (log.sourceModule && TEMP_BLOCKED_SOURCE_MODULES.has(log.sourceModule))) {
-      console.log('AI Logging temporarily blocked for scheduled event/sourceModule');
-      return;
+const SAFE_EXTRA_FIELDS = [
+  'tenantId',
+  'customerId',
+  'scenarioContext',
+  'eventType',
+  'targetType',
+  'targetId',
+  'contextType',
+  'aiRelevant',
+  'urgencyScore',
+  'versionTag',
+];
+
+export async function logger.aiEvent(log: Record<string, any>) {
+  if (!log) return;
+  const summaryParts = [
+    log.actionType || log.eventType || log.sourceModule || 'AI action',
+    log.reason,
+  ].filter(Boolean);
+  const message = summaryParts.join(' - ').slice(0, 200);
+  const level: 'debug' | 'info' | 'warn' | 'error' =
+    log.success === false ? 'error' : log.success === true ? 'info' : 'debug';
+
+  const extra: Record<string, any> = {};
+  SAFE_EXTRA_FIELDS.forEach((field) => {
+    if (log[field] !== undefined && log[field] !== null) {
+      extra[field] = log[field];
     }
-  }
+  });
+  if (log.latencyMs !== undefined) extra.latencyMs = log.latencyMs;
+  if (log.success !== undefined) extra.success = log.success;
 
-  // EMERGENCY: AI Logging temporarily disabled for cost containment
-  if (process.env.AI_LOGGING_DISABLED === 'true') {
-    console.log('AI Logging disabled - skipping log entry');
-    return;
-  }
-
-  // EMERGENCY: Extremely aggressive sampling - only log 0.1% of events (1 in 1000)
-  if (Math.random() > 0.001) {
-    console.log('AI Logging sampled out - skipping log entry');
-    return;
-  }
-  
-  // Additional filter: only log high-urgency events (urgencyScore >= 8)
-  if (log.urgencyScore && log.urgencyScore < 8) {
-    console.log('AI Logging filtered out - low urgency score');
-    return;
-  }
-  // Backward compatibility: map old fields to new schema
-  const data: any = {
-    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-    timestampIso: new Date().toISOString(),
-    userId: log.userId || log.workerId || null,
-    actionType: log.actionType || log.action || null,
-    sourceModule: log.sourceModule || log.module || null,
-    trigger: log.trigger || null,
-    scenarioContext: log.scenarioContext || null,
-    customerId: log.customerId || null,
-    tenantId: log.tenantId || null,
-    inputPrompt: log.inputPrompt || null,
-    composedPrompt: log.composedPrompt || null,
-    aiResponse: log.aiResponse || null,
-    success: typeof log.success === 'boolean' ? log.success : (log.outcome ? log.outcome === 'Success' : null),
-    reason: log.reason || null,
-    errorMessage: log.errorMessage || null,
-    globalContextUsed: log.globalContextUsed || null,
-    scenarioContextUsed: log.scenarioContextUsed || null,
-    customerContextUsed: log.customerContextUsed || null,
-    weightsApplied: log.weightsApplied || null,
-    traitsActive: log.traitsActive || null,
-    vectorChunksUsed: log.vectorChunksUsed || null,
-    vectorSimilarityScores: log.vectorSimilarityScores || null,
-    latencyMs: log.latencyMs || null,
-    versionTag: log.versionTag || null,
-    dryRun: typeof log.dryRun === 'boolean' ? log.dryRun : null,
-    manualOverride: typeof log.manualOverride === 'boolean' ? log.manualOverride : null,
-    feedbackGiven: log.feedbackGiven || null,
-    eventType: log.eventType || null,
-    targetType: log.targetType || null,
-    targetId: log.targetId || null,
-    aiRelevant: typeof log.aiRelevant === 'boolean' ? log.aiRelevant : null,
-    contextType: log.contextType || null,
-    traitsAffected: log.traitsAffected || null,
-    aiTags: log.aiTags || null,
-    urgencyScore: log.urgencyScore || null
-  };
-  // Include any extra fields
-  for (const key in log) {
-    if (!(key in data)) data[key] = log[key];
-  }
-  // Debug: print the log data
-  console.log('AI LOG ENTRY:', JSON.stringify(data, null, 2));
-  const ref = await db.collection('ai_logs').add(data);
-  console.log('AI LOG WRITTEN, DOC ID:', ref.id);
+  await logger[level](message || 'AI action recorded', {
+    context: log.sourceModule || log.contextType || 'AI',
+    extra: Object.keys(extra).length ? extra : undefined,
+    error: log.errorMessage,
+  });
 }
 
-// Cache for AI logs queries
-const aiLogsCache = new Map<string, { data: any; timestamp: number }>();
-const AI_LOGS_CACHE_DURATION = 60 * 1000; // 1 minute cache
-
-export const listAILogs = onCall(async (request) => {
-  const { module, outcome, workerId, startDate, endDate, limit = 50 } = request.data || {};
-  
-  // Create cache key based on query parameters
-  const cacheKey = `ai_logs_${module || 'all'}_${outcome || 'all'}_${workerId || 'all'}_${startDate || 'all'}_${endDate || 'all'}_${limit}`;
-  
-  // Check cache first
-  const cached = aiLogsCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && (now - cached.timestamp) < AI_LOGS_CACHE_DURATION) {
-    console.log('AI logs served from cache for query:', cacheKey);
-    return cached.data;
-  }
-  
-  let query = db.collection('ai_logs').orderBy('timestamp', 'desc');
-  if (module) query = query.where('module', '==', module);
-  if (outcome) query = query.where('outcome', '==', outcome);
-  if (workerId) query = query.where('workerId', '==', workerId);
-  if (startDate) query = query.where('timestamp', '>=', new Date(startDate));
-  if (endDate) query = query.where('timestamp', '<=', new Date(endDate));
-  const snap = await query.limit(limit).get();
-  const logs = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  
-  const result = { logs };
-  
-  // Cache the result
-  aiLogsCache.set(cacheKey, { data: result, timestamp: now });
-  
-  return result;
-}); 
+export const listAILogs = onCall(async () => {
+  await logger.warn('listAILogs callable invoked but Firestore logging is disabled', {
+    context: 'LoggingRefactor',
+  });
+  return {
+    logs: [],
+    disabled: true,
+    message: 'Firestore logging has been removed; use Cloud Logging exports instead.',
+  };
+});

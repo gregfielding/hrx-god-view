@@ -1,7 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logAIAction } from '../feedbackEngine';
+import { logger } from '../utils/logger';
 
 const db = getFirestore();
 
@@ -158,7 +158,7 @@ export const activateResetMode = onCall(async (request) => {
     await db.collection('resetModeTriggers').doc(trigger.id).set(trigger);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_activated',
       sourceModule: 'ResetMode',
@@ -186,7 +186,7 @@ export const activateResetMode = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_activated',
       sourceModule: 'ResetMode',
@@ -239,7 +239,7 @@ export const deactivateResetMode = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_deactivated',
       sourceModule: 'ResetMode',
@@ -266,7 +266,7 @@ export const deactivateResetMode = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_deactivated',
       sourceModule: 'ResetMode',
@@ -338,7 +338,7 @@ export const submitResetModeCheckIn = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'reset_mode_checkin',
       sourceModule: 'ResetMode',
@@ -363,7 +363,7 @@ export const submitResetModeCheckIn = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'reset_mode_checkin',
       sourceModule: 'ResetMode',
@@ -489,7 +489,7 @@ export const getResetModeDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_dashboard_viewed',
       sourceModule: 'ResetMode',
@@ -522,7 +522,7 @@ export const getResetModeDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'reset_mode_dashboard_viewed',
       sourceModule: 'ResetMode',
@@ -611,7 +611,7 @@ export const detectResetModeTrigger = onCall(async (request) => {
     await db.collection('resetModeTriggers').doc(triggerId).set(trigger);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'reset_mode_trigger_detected',
       sourceModule: 'ResetMode',
@@ -637,7 +637,7 @@ export const detectResetModeTrigger = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'reset_mode_trigger_detected',
       sourceModule: 'ResetMode',
@@ -696,7 +696,7 @@ export const checkResetModeExpiration = onSchedule({
       await sendResetModeExpirationMessage(reset.userId, reset);
 
       // Log AI action
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'system',
         actionType: 'reset_mode_expired',
         sourceModule: 'ResetMode',
@@ -720,7 +720,7 @@ export const checkResetModeExpiration = onSchedule({
   } catch (error: any) {
     console.error('Reset mode expiration check failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'reset_mode_expiration_check',
       sourceModule: 'ResetMode',

@@ -22,6 +22,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../../firebase';
 import { LoggableSlider, LoggableTextField, LoggableSelect } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { logger } from '../../../../utils/logger';
 
 interface Trait {
   id: string;
@@ -321,18 +322,13 @@ const TraitsEngineSettings: React.FC<TraitsEngineSettingsProps> = ({ tenantId })
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'traits');
       await setDoc(ref, { traits, masterRules }, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_TraitsEngine_${Date.now()}`), {
-        tenantId,
-        section: 'TraitsEngine',
-        changed: 'traits_masterRules',
-        oldValue: { traits: originalTraits, masterRules: originalMasterRules },
-        newValue: { traits, masterRules },
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['TraitsEngine'],
-        userId: currentUser?.uid || null,
-        sourceModule: 'TraitsEngine',
+      await logger.info('Traits engine configuration updated', {
+        context: 'TraitsEngine',
+        extra: {
+          tenantId,
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalTraits([...traits]);
       setOriginalMasterRules({ ...masterRules });

@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -50,7 +50,7 @@ export const processWithTaskContentAIEngine = async (logData: any, logId: string
     results.nextSteps = timingAnalysis.nextSteps;
 
     // Log the AI processing
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'task_content_ai_engine.processed',
       targetType: 'task_content',
       targetId: taskId,
@@ -80,7 +80,7 @@ export const processWithTaskContentAIEngine = async (logData: any, logId: string
   } catch (error) {
     console.error('Error in TaskContentAIEngine:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'task_content_ai_engine.error',
       targetType: 'task_content',
       targetId: logData.targetId || 'unknown',

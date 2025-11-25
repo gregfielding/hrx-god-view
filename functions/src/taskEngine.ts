@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
-import { logAIAction, createTaskAILog, createDealAILog } from './utils/aiLogging';
+import { logger } from './utils/logger';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 const db = admin.firestore();
 
@@ -173,9 +174,9 @@ export const createTask = onCall({ cors: true, region: 'us-central1', timeoutSec
       }
     }
 
-    // Log AI action if this is an AI-suggested task
+    // Log AI event if this is an AI-suggested task
     if (aiSuggested) {
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'ai_task.created',
         targetType: 'task',
         targetId: taskRef.id,
@@ -313,15 +314,19 @@ export const updateTask = onCall({
     await taskRef.update(updateData);
 
     // Create AI log for task update
-    await createTaskAILog(
-      'task.updated',
-      taskId,
-      `Task "${taskDoc.data()?.title}" updated with ${Object.keys(updates).length} changes`,
+    await logger.aiEvent({
+      eventType: 'task.updated',
+      targetType: 'task',
+      targetId: taskId,
+      reason: `Task "${taskDoc.data()?.title}" updated with ${Object.keys(updates).length} changes`,
+      contextType: 'tasks',
+      aiTags: ['task', 'updated'],
+      urgencyScore: 5,
       tenantId,
-      updates.assignedTo || taskDoc.data()?.assignedTo,
-      taskDoc.data()?.associations,
-      JSON.stringify(updates)
-    );
+      userId: updates.assignedTo || taskDoc.data()?.assignedTo,
+      associations: taskDoc.data()?.associations,
+      aiResponse: JSON.stringify(updates)
+    });
 
     console.log(`✅ Task updated: ${taskId}`);
 
@@ -373,21 +378,25 @@ export const completeTask = onCall({
     await taskRef.update(updateData);
 
     // Create AI log for task completion
-    await createTaskAILog(
-      'task.completed',
-      taskId,
-      `Task "${taskData?.title}" completed by ${taskData?.assignedTo}`,
+    await logger.aiEvent({
+      eventType: 'task.completed',
+      targetType: 'task',
+      targetId: taskId,
+      reason: `Task "${taskData?.title}" completed by ${taskData?.assignedTo}`,
+      contextType: 'tasks',
+      aiTags: ['task', 'completed'],
+      urgencyScore: 5,
       tenantId,
-      taskData?.assignedTo,
-      taskData?.associations,
-      JSON.stringify({
+      userId: taskData?.assignedTo,
+      associations: taskData?.associations,
+      aiResponse: JSON.stringify({
         actionResult,
         followUpTask,
         originalType: taskData?.type,
         originalPriority: taskData?.priority,
         quotaCategory: taskData?.quotaCategory
       })
-    );
+    });
 
     // Create follow-up task if specified
     if (followUpTask) {
@@ -429,15 +438,19 @@ export const completeTask = onCall({
         const followUpRef = await db.collection('tenants').doc(tenantId).collection('tasks').add(followUpData);
         
         // Create AI log for follow-up task
-        await createTaskAILog(
-          'task.follow_up_created',
-          followUpRef.id,
-          `Follow-up task "${followUpTask.title}" created after completing "${taskData?.title}"`,
+        await logger.aiEvent({
+          eventType: 'task.follow_up_created',
+          targetType: 'task',
+          targetId: followUpRef.id,
+          reason: `Follow-up task "${followUpTask.title}" created after completing "${taskData?.title}"`,
+          contextType: 'tasks',
+          aiTags: ['task', 'follow_up_created'],
+          urgencyScore: 5,
           tenantId,
-          taskData?.assignedTo,
-          taskData?.associations,
-          JSON.stringify(followUpTask)
-        );
+          userId: taskData?.assignedTo,
+          associations: taskData?.associations,
+          aiResponse: JSON.stringify(followUpTask)
+        });
 
         console.log(`✅ Follow-up task created: ${followUpRef.id}`);
       } catch (followUpError) {
@@ -513,20 +526,24 @@ export const quickCompleteTask = onCall({
     await taskRef.update(updateData);
 
     // Create AI log for quick task completion
-    await createTaskAILog(
-      'task.quick_completed',
-      taskId,
-      `Task "${taskData?.title}" quickly completed`,
+    await logger.aiEvent({
+      eventType: 'task.quick_completed',
+      targetType: 'task',
+      targetId: taskId,
+      reason: `Task "${taskData?.title}" quickly completed`,
+      contextType: 'tasks',
+      aiTags: ['task', 'quick_completed'],
+      urgencyScore: 5,
       tenantId,
-      taskData?.assignedTo,
-      taskData?.associations,
-      JSON.stringify({
+      userId: taskData?.assignedTo,
+      associations: taskData?.associations,
+      aiResponse: JSON.stringify({
         quickComplete: true,
         originalType: taskData?.type,
         originalPriority: taskData?.priority,
         quotaCategory: taskData?.quotaCategory
       })
-    );
+    });
 
     console.log(`✅ Task quickly completed: ${taskId}`);
 
@@ -589,23 +606,27 @@ export const deleteTask = onCall({
 
     // Create AI log for task deletion (with comprehensive error handling)
     try {
-      await createTaskAILog(
-        'task.deleted',
-        taskId,
-        `Task "${taskData?.title}" deleted`,
+      await logger.aiEvent({
+        eventType: 'task.deleted',
+        targetType: 'task',
+        targetId: taskId,
+        reason: `Task "${taskData?.title}" deleted`,
+        contextType: 'tasks',
+        aiTags: ['task', 'deleted'],
+        urgencyScore: 5,
         tenantId,
-        taskData?.assignedTo,
-        taskData?.associations,
-        JSON.stringify({
+        userId: taskData?.assignedTo,
+        associations: taskData?.associations,
+        aiResponse: JSON.stringify({
           originalStatus: taskData?.status,
           originalType: taskData?.type,
           originalPriority: taskData?.priority
         })
-      );
+      });
       console.log(`✅ AI log created for task deletion: ${taskId}`);
     } catch (aiLogError) {
       console.warn('⚠️ Failed to create AI log for task deletion:', aiLogError);
-      console.warn('⚠️ This is likely due to permission restrictions on ai_logs collection');
+      console.warn('⚠️ Task Engine warning: legacy ai_logs collection is gone, so this warning can be ignored.');
       console.warn('⚠️ Task deletion completed successfully despite AI log failure');
       // Continue with task deletion even if AI log fails - don't throw the error
     }
@@ -1726,8 +1747,8 @@ export const acceptAITaskSuggestion = onCall({
       classification: suggestedClassification // Store the classification used
     });
 
-    // Log AI action
-    await logAIAction({
+    // Log AI event
+    await logger.aiEvent({
       eventType: 'ai_suggestion.accepted',
       targetType: 'ai_suggestion',
       targetId: taskResult.id,
@@ -1784,9 +1805,9 @@ export const rejectAITaskSuggestion = onCall({
       rejectionReason: reason
     });
 
-    // Log AI action
+    // Log AI event
     if (userId) {
-      await logAIAction({
+      await logger.aiEvent({
         eventType: 'ai_suggestion.rejected',
         targetType: 'ai_suggestion',
         targetId: suggestionId,
@@ -1841,18 +1862,22 @@ export const getDealStageAISuggestions = onCall({
 
     // Create AI log for tracking (but don't wait for processing)
     try {
-      await createDealAILog(
-        'deal.stage_analysis_requested',
-        dealId,
-        `AI suggestions requested for ${currentStage} stage`,
+      await logger.aiEvent({
+        eventType: 'deal.stage_analysis_requested',
+        targetType: 'deal',
+        targetId: dealId,
+        reason: `AI suggestions requested for ${currentStage} stage`,
+        contextType: 'deals',
+        aiTags: ['deal', 'stage_analysis'],
+        urgencyScore: 5,
         tenantId,
         userId,
-        {},
-        JSON.stringify({
+        associations: {},
+        aiResponse: JSON.stringify({
           currentStage,
           requestType: 'ai_suggestions'
         })
-      );
+      });
     } catch (logError) {
       console.warn('Failed to create AI log for deal stage suggestions:', logError);
       // Continue without logging - this is not critical
@@ -1889,7 +1914,7 @@ export const generateTaskContent = onCall({
 
     // 🚨 EMERGENCY COST CONTAINMENT: Check cache first
     const cacheKey = `task_content_${taskId}_${tenantId}`;
-    const cacheRef = db.collection('ai_cache').doc(cacheKey);
+    const cacheRef = getAiCacheDoc(cacheKey);
     
     // Check cache with 4-hour TTL for task content
     const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -1910,7 +1935,7 @@ export const generateTaskContent = onCall({
 
     // 🚨 EMERGENCY COST CONTAINMENT: Rate limiting per task
     const rateLimitKey = `task_content_ratelimit_${taskId}`;
-    const rateLimitRef = db.collection('ai_cache').doc(rateLimitKey);
+    const rateLimitRef = getAiCacheDoc(rateLimitKey);
     const rateLimitCached = await rateLimitRef.get();
     
     if (rateLimitCached.exists) {
@@ -1946,10 +1971,12 @@ export const generateTaskContent = onCall({
       const basicContent = generateBasicContentOnly(taskData);
       
       // Cache the basic content
-      await cacheRef.set({ 
-        payload: basicContent, 
-        updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-      }, { merge: true });
+      await cacheRef.set(
+        {
+          payload: basicContent,
+        },
+        { merge: true }
+      );
       
       return {
         success: true,
@@ -1994,29 +2021,33 @@ export const generateTaskContent = onCall({
     const generatedContent = generateSimplifiedContent(taskData, companyData, contactData, dealData);
 
     // 🚨 EMERGENCY COST CONTAINMENT: Skip AI logging to prevent feedback loops
-    // await logAIAction(...) - DISABLED for cost containment
+    // logger.aiEvent(...) intentionally disabled for now
 
     // Cache the result with rate limiting
-    await cacheRef.set({ 
-      payload: {
-        success: true,
-        content: generatedContent,
-        suggestions: generateBasicSuggestions(taskData, generatedContent),
-        insights: generateBasicInsights(taskData, companyData, contactData, dealData)
-      }, 
-      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-    }, { merge: true });
-    
+    await cacheRef.set(
+      {
+        payload: {
+          success: true,
+          content: generatedContent,
+          suggestions: generateBasicSuggestions(taskData, generatedContent),
+          insights: generateBasicInsights(taskData, companyData, contactData, dealData),
+        },
+      },
+      { merge: true }
+    );
+
     // Set rate limit cache
-    await rateLimitRef.set({ 
-      payload: {
-        success: true,
-        content: generatedContent,
-        suggestions: generateBasicSuggestions(taskData, generatedContent),
-        insights: generateBasicInsights(taskData, companyData, contactData, dealData)
-      }, 
-      updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-    }, { merge: true });
+    await rateLimitRef.set(
+      {
+        payload: {
+          success: true,
+          content: generatedContent,
+          suggestions: generateBasicSuggestions(taskData, generatedContent),
+          insights: generateBasicInsights(taskData, companyData, contactData, dealData),
+        },
+      },
+      { merge: true }
+    );
 
     console.log('✅ Task content generated and cached for:', cacheKey);
     
@@ -2602,7 +2633,7 @@ async function createNextRepeatingTaskInternal(taskId: string, tenantId: string,
     await newTaskRef.set(nextTaskData);
 
     // Log the creation of the next repeating task
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'repeating_task.next_created',
       targetType: 'task',
       targetId: newTaskRef.id,

@@ -1,5 +1,6 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -55,7 +56,7 @@ async function checkRateLimiting(companyId: string): Promise<boolean> {
     
     // Check global rate limiting
     const globalKey = `fanout_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
     const globalSnap = await globalRef.get();
     
     if (globalSnap.exists) {
@@ -68,7 +69,7 @@ async function checkRateLimiting(companyId: string): Promise<boolean> {
     
     // Check company-specific rate limiting
     const companyKey = `fanout_rate_limit:company:${companyId}:${hourKey}`;
-    const companyRef = db.collection('ai_cache').doc(companyKey);
+    const companyRef = getAiCacheDoc(companyKey);
     const companySnap = await companyRef.get();
     
     if (companySnap.exists) {
@@ -96,18 +97,20 @@ async function updateRateLimiting(companyId: string): Promise<void> {
     
     // Update global counter
     const globalKey = `fanout_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
+    const globalSnap = await globalRef.get();
+    const globalData = globalSnap.exists ? (globalSnap.data() as any) : {};
     await globalRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (globalData.count || 0) + 1,
     }, { merge: true });
     
     // Update company counter
     const companyKey = `fanout_rate_limit:company:${companyId}:${hourKey}`;
-    const companyRef = db.collection('ai_cache').doc(companyKey);
+    const companyRef = getAiCacheDoc(companyKey);
+    const companySnap = await companyRef.get();
+    const companyData = companySnap.exists ? (companySnap.data() as any) : {};
     await companyRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (companyData.count || 0) + 1,
     }, { merge: true });
   } catch (error) {
     console.error('Error updating rate limiting:', error);

@@ -54,7 +54,7 @@ This guide combines the original AI field logging approach with ChatGPT's recomm
 │  Backend Integration                                        │
 │  ├── updateCustomerAISettings (Universal save function)    │
 │  ├── updateAgencyAISettings (Universal save function)      │
-│  └── logAIAction (Core logging function)                   │
+│  └── logger.aiEvent(Core logging function)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

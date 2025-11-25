@@ -21,6 +21,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 import { db } from '../../../../firebase';
+import { logger } from '../../../../utils/logger';
 
 const promptFrequencies = ['Low', 'Medium', 'High'];
 const goalOptions = ['Engagement', 'Retention', 'Wellness', 'Training'];
@@ -71,16 +72,12 @@ const PromptFrequencyGoalSettings: React.FC<PromptFrequencyGoalSettingsProps> = 
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'settings');
       await setDoc(ref, { promptFrequency, goalOrder }, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_PromptFrequencyGoal_${Date.now()}`), {
-        tenantId,
-        section: 'PromptFrequencyGoal',
-        changed: 'promptFrequency_goalOrder',
-        oldValue: { promptFrequency: originalPromptFrequency, goalOrder: originalGoalOrder },
-        newValue: { promptFrequency, goalOrder },
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['PromptEngine'],
+      await logger.info('Prompt frequency/goal order updated', {
+        context: 'PromptFrequencyGoal',
+        extra: {
+          tenantId,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalPromptFrequency(promptFrequency);
       setOriginalGoalOrder([...goalOrder]);

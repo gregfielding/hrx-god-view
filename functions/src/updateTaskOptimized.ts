@@ -475,8 +475,7 @@ export const updateTaskOptimized = onCall({
 
       // Create AI log for task update (with rate limiting)
       try {
-        const { logAIAction } = require('./aiLoggingOptimization');
-        await logAIAction({
+        await logger.aiEvent({
           userId: userId,
           actionType: 'task_updated',
           sourceModule: 'updateTaskOptimized',

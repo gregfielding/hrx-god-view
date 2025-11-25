@@ -31,7 +31,7 @@ export const COST_CONTAINMENT_CONFIG = {
   },
   
   // Core Logging Function - AGGRESSIVE SAMPLING
-  logAIAction: {
+  aiEvent: {
     status: 'EMERGENCY_SAMPLING',
     sampling_rate: 0.01, // 1% of events logged (99% blocked)
     urgency_threshold: 7, // Only log events with urgency >= 7
@@ -98,7 +98,7 @@ export const COST_CONTAINMENT_CONFIG = {
     metrics_to_track: [
       'firestoreLogAILogCreated_calls_per_minute',
       'processAILog_calls_per_minute',
-      'logAIAction_calls_per_minute',
+      'aiEvent_calls_per_minute',
       'total_ai_logs_created_per_minute'
     ]
   },
@@ -136,7 +136,7 @@ export function shouldLogEvent(eventType: string, urgencyScore: number, sourceMo
   }
   
   // Block low urgency events
-  if (urgencyScore < COST_CONTAINMENT_CONFIG.logAIAction.urgency_threshold) {
+  if (urgencyScore < COST_CONTAINMENT_CONFIG.aiEvent.urgency_threshold) {
     return false;
   }
   
@@ -151,7 +151,7 @@ export function shouldLogEvent(eventType: string, urgencyScore: number, sourceMo
   }
   
   // Apply sampling
-  if (Math.random() > COST_CONTAINMENT_CONFIG.logAIAction.sampling_rate) {
+  if (Math.random() > COST_CONTAINMENT_CONFIG.aiEvent.sampling_rate) {
     return false;
   }
   
@@ -167,7 +167,7 @@ export function getCostContainmentStatus() {
     activatedAt: COST_CONTAINMENT_CONFIG.ACTIVATED_AT,
     targetReduction: COST_CONTAINMENT_CONFIG.TARGET_REDUCTION,
     disabledFunctions: Object.keys(COST_CONTAINMENT_CONFIG.DISABLED_FUNCTIONS),
-    samplingRate: COST_CONTAINMENT_CONFIG.logAIAction.sampling_rate,
-    urgencyThreshold: COST_CONTAINMENT_CONFIG.logAIAction.urgency_threshold
+    samplingRate: COST_CONTAINMENT_CONFIG.aiEvent.sampling_rate,
+    urgencyThreshold: COST_CONTAINMENT_CONFIG.aiEvent.urgency_threshold
   };
 }

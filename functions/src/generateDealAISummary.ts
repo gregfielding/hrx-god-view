@@ -51,30 +51,8 @@ export const generateDealAISummary = onCall({
     const dealData = dealDoc.data();
     console.log(`📄 Deal data:`, dealData);
 
-    // Get AI logs for this deal
-    let aiLogs: any[] = [];
-    try {
-      const aiLogsRef = db.collection('tenants').doc(tenantId).collection('ai_logs');
-      const aiLogsQuery = aiLogsRef.where('dealId', '==', dealId).limit(50);
-      const aiLogsSnap = await aiLogsQuery.get();
-      
-      aiLogs = aiLogsSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      // Sort by timestamp in memory to avoid composite index requirement
-      aiLogs.sort((a, b) => {
-        const aTime = a.timestamp?.toMillis?.() || a.timestamp?._seconds || 0;
-        const bTime = b.timestamp?.toMillis?.() || b.timestamp?._seconds || 0;
-        return bTime - aTime; // Descending order
-      });
-      
-      console.log(`📊 Found ${aiLogs.length} AI logs for deal`);
-    } catch (error) {
-      console.log(`⚠️ No AI logs found or error accessing logs:`, error);
-      aiLogs = [];
-    }
+    // AI logs were removed as part of the logging refactor.
+    const aiLogs: any[] = [];
 
     // Get emails for this deal (if Gmail integration is available)
     let emails: any[] = [];

@@ -279,7 +279,7 @@ async function processApplicationScore(
   }
 
   if (!options.force) {
-    const SAMPLE_RATE = 0.1; // Process roughly 10% of applicants
+    const SAMPLE_RATE = 0.01; // Process roughly 1% of applicants
     if (Math.random() > SAMPLE_RATE) {
       return {
         success: true,

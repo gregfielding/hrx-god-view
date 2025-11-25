@@ -1,4 +1,4 @@
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 /**
  * Auto Activity Logger - Automatically logs activities for AI-worthy events
@@ -26,7 +26,7 @@ export const autoLogActivity = async (logData: AutoActivityLogData): Promise<str
     console.log(`🔄 Auto-logging activity: ${logData.eventType} for ${logData.targetType}:${logData.targetId}`);
     
     // Create AI log entry
-    const aiLogId = await logAIAction({
+    const aiLogId = await logger.aiEvent({
       eventType: logData.eventType,
       targetType: logData.targetType,
       targetId: logData.targetId,

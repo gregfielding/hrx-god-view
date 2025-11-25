@@ -1,7 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logAIAction } from '../feedbackEngine';
+import { logger } from '../utils/logger';
 
 const db = getFirestore();
 
@@ -158,7 +158,7 @@ export const submitBalanceCheckIn = onCall(async (request) => {
     await updateBalanceTrends(userId, checkIn);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_checkin_submitted',
       sourceModule: 'WorkLifeBalance',
@@ -184,7 +184,7 @@ export const submitBalanceCheckIn = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_checkin_submitted',
       sourceModule: 'WorkLifeBalance',
@@ -249,7 +249,7 @@ export const submitWellbeingReflection = onCall(async (request) => {
     await db.collection('wellbeingReflections').doc(reflectionId).set(reflection);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'wellbeing_reflection_submitted',
       sourceModule: 'WorkLifeBalance',
@@ -275,7 +275,7 @@ export const submitWellbeingReflection = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'wellbeing_reflection_submitted',
       sourceModule: 'WorkLifeBalance',
@@ -374,7 +374,7 @@ export const calculateBurnoutRiskIndex = onCall(async (request) => {
     await db.collection('burnoutRiskIndex').doc(riskIndexId).set(riskIndex);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'burnout_risk_calculated',
       sourceModule: 'WorkLifeBalance',
@@ -399,7 +399,7 @@ export const calculateBurnoutRiskIndex = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'burnout_risk_calculated',
       sourceModule: 'WorkLifeBalance',
@@ -494,7 +494,7 @@ export const getUserBalanceDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_dashboard_viewed',
       sourceModule: 'WorkLifeBalance',
@@ -523,7 +523,7 @@ export const getUserBalanceDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_dashboard_viewed',
       sourceModule: 'WorkLifeBalance',
@@ -660,7 +660,7 @@ export const getAdminBalanceDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_balance_dashboard_viewed',
       sourceModule: 'WorkLifeBalance',
@@ -686,7 +686,7 @@ export const getAdminBalanceDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_balance_dashboard_viewed',
       sourceModule: 'WorkLifeBalance',
@@ -734,7 +734,7 @@ export const acknowledgeBalanceAlert = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_alert_acknowledged',
       sourceModule: 'WorkLifeBalance',
@@ -755,7 +755,7 @@ export const acknowledgeBalanceAlert = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'balance_alert_acknowledged',
       sourceModule: 'WorkLifeBalance',
@@ -816,7 +816,7 @@ export const sendWeeklyBalanceCheckIns = onSchedule({
     console.log(`Weekly balance check-ins completed: ${sentCount} sent, ${errorCount} errors`);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_balance_checkins_sent',
       sourceModule: 'WorkLifeBalance',
@@ -837,7 +837,7 @@ export const sendWeeklyBalanceCheckIns = onSchedule({
   } catch (error: any) {
     console.error('Weekly balance check-ins failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_balance_checkins_sent',
       sourceModule: 'WorkLifeBalance',

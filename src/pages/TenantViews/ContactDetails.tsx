@@ -85,6 +85,7 @@ import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { TaskService } from '../../utils/taskService';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
+import { logger } from '../../utils/logger';
 
 interface ContactData {
   id: string;
@@ -660,27 +661,24 @@ const ContactDetails: React.FC = () => {
         associations: updatedAssociations
       } : null);
       
-      // Log the activity (client-side filtered/sampled)
-      try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        await logAIActionClient({
-          eventType: 'contact.company_associated',
-          action: 'contact_company_associated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Associated with company: ${selectedCompany?.companyName || selectedCompany?.name || companyId}`,
-          tenantId,
-          userId: user.uid,
-          metadata: { 
-            companyId, 
-            companyName: selectedCompany?.companyName || selectedCompany?.name || '',
-            previousCompanyId: contact?.companyId || null
-          },
-          urgencyScore: 7
-        });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-      }
+      // Log the activity locally for diagnostics
+      await logger.aiEvent({
+        eventType: 'contact.company_associated',
+        actionType: 'contact_company_associated',
+        targetType: 'contact',
+        targetId: contactId,
+        tenantId,
+        userId: user.uid,
+        contextType: 'contact_management',
+        aiRelevant: true,
+        urgencyScore: 7,
+        reason: `Associated with company: ${selectedCompany?.companyName || selectedCompany?.name || companyId}`,
+        metadata: {
+          companyId,
+          companyName: selectedCompany?.companyName || selectedCompany?.name || '',
+          previousCompanyId: contact?.companyId || null
+        }
+      });
       
       showToast(`Contact associated with ${selectedCompany?.companyName || selectedCompany?.name || 'company'}`, 'success');
       
@@ -783,30 +781,26 @@ const ContactDetails: React.FC = () => {
       // Update selected locations state
       setSelectedLocations(selectedLocations);
       
-      // Log the activity (client-side filtered/sampled)
-      try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
-        await logAIActionClient({
-          eventType: 'contact.location_updated',
-          action: 'contact_location_updated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Updated work locations to: ${locationNames}`,
-          tenantId,
-          userId: user.uid,
-          metadata: { 
-            locationIds, 
-            locationNames,
-            locationCount: selectedLocations.length
-          },
-          urgencyScore: 7
-        });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-      }
-
+      // Log the activity locally for diagnostics
       const locationNames = selectedLocations.map(loc => loc.name || loc.nickname || 'Unknown Location').join(', ');
+      await logger.aiEvent({
+        eventType: 'contact.location_updated',
+        actionType: 'contact_location_updated',
+        targetType: 'contact',
+        targetId: contactId,
+        tenantId,
+        userId: user.uid,
+        contextType: 'contact_management',
+        aiRelevant: true,
+        urgencyScore: 7,
+        reason: `Updated work locations to: ${locationNames}`,
+        metadata: {
+          locationIds,
+          locationNames,
+          locationCount: selectedLocations.length
+        }
+      });
+
       showToast(`Work locations updated to: ${locationNames}`, 'success');
     } catch (err) {
       console.error('Error updating location association:', err);
@@ -952,24 +946,20 @@ const ContactDetails: React.FC = () => {
         updatedAt: new Date()
       });
       
-      // Log the activity (client-side filtered/sampled)
-      try {
-        const { logAIActionClient } = await import('../../utils/loggingClient');
-        await logAIActionClient({
-          eventType: 'contact.field_updated',
-          action: 'contact_updated',
-          entityId: contactId,
-          entityType: 'contact',
-          reason: `Updated ${field}: ${processedValue}`,
-          tenantId,
-          userId: user.uid,
-          metadata: { field, value: processedValue },
-          urgencyScore: 6
-        });
-      } catch (logError) {
-        console.warn('Failed to log activity:', logError);
-        // Don't fail the main operation if logging fails
-      }
+      // Log the activity locally for diagnostics
+      await logger.aiEvent({
+        eventType: 'contact.field_updated',
+        actionType: 'contact_updated',
+        targetType: 'contact',
+        targetId: contactId,
+        tenantId,
+        userId: user.uid,
+        contextType: 'contact_management',
+        aiRelevant: true,
+        urgencyScore: 6,
+        reason: `Updated ${field}: ${processedValue}`,
+        metadata: { field, value: processedValue }
+      });
       
       // Update local state
       setContact(prev => prev ? { ...prev, [field]: processedValue } : null);

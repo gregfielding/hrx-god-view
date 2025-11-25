@@ -62,7 +62,6 @@ import {
   Delete as DeleteIcon
 } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -72,6 +71,7 @@ import jobTitlesList from '../data/onetJobTitles.json';
 import { getFieldDef } from '../fields/useFieldDef';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
+import { logger } from '../utils/logger';
 
 
 interface Contact {
@@ -568,13 +568,10 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
     };
     onStageDataChange(updatedData);
 
-    // TODO: Re-enable AI logging once Cloud Function is properly configured
     // Log field change for AI analysis (fire-and-forget)
     (async () => {
       try {
-        const functions = getFunctions();
-        const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-        await logAIAction({
+        await logger.aiEvent({
           userId: user?.uid,
           actionType: 'deal_field_changed',
           sourceModule: 'DealStageForms',
@@ -628,9 +625,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
       
       // Log stage data save for AI analysis
       try {
-        const functions = getFunctions();
-        const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-        await logAIAction({
+        await logger.aiEvent({
           userId: user?.uid,
           actionType: 'deal_stage_saved',
           sourceModule: 'DealStageForms',
@@ -720,9 +715,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         // Log stage advancement for AI analysis (fire-and-forget)
         (async () => {
           try {
-            const functions = getFunctions();
-            const logAIAction = httpsCallable(functions, 'logAIActionCallable');
-            await logAIAction({
+            await logger.aiEvent({
               userId: user?.uid,
               actionType: 'deal_stage_advanced',
               sourceModule: 'DealStageForms',

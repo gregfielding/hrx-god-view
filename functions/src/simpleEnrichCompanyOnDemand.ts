@@ -3,7 +3,7 @@ import { onCall } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { fetchAndNormalize, fetchBestGuessUrls } from './utils/serp';
 import { logEnrichmentEvent } from './utils/logging';
-import { createCompanyAILog } from './utils/aiLogging';
+import { logger } from './utils/logger';
 import { CompanyEnrichmentSchema, CompanyEnrichmentVersionMetaSchema, CompanyEnrichment } from './schemas/companyEnrichment';
 import OpenAI from 'openai';
 import { getOpenAIKey, getClearbitKey, getApolloKey } from './utils/secrets';
@@ -280,7 +280,17 @@ export async function runCompanyEnrichment(
         ...(linkedinUrl && { linkedin: linkedinUrl }),
         ...(indeedUrl && { indeed: indeedUrl })
       }, signalStrength: hasSignal ? 'low' : 'none' } }, { merge: true });
-      await createCompanyAILog('companyEnrichment.metadata', companyId, 'Metadata refresh', tenantId, 'system', undefined, undefined);
+      await logger.aiEvent({
+        eventType: 'companyEnrichment.metadata',
+        targetType: 'company',
+        targetId: companyId,
+        reason: 'Metadata refresh',
+        contextType: 'company_enrichment',
+        aiTags: ['company', 'enrichment'],
+        urgencyScore: 4,
+        tenantId,
+        userId: 'system'
+      });
       return;
     }
   }
@@ -601,15 +611,22 @@ export async function runCompanyEnrichment(
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   }
-  await createCompanyAILog(
-    'companyEnrichment.success',
-    companyId,
-    'Company enrichment completed',
+  await logger.aiEvent({
+    eventType: 'companyEnrichment.success',
+    targetType: 'company',
+    targetId: companyId,
+    reason: 'Company enrichment completed',
+    contextType: 'company_enrichment',
+    aiTags: ['company', 'enrichment'],
+    urgencyScore: 4,
     tenantId,
-    'system',
-    { websiteHash: versionMeta.websiteHash, linkedinHash: versionMeta.linkedinHash, jobHash: versionMeta.jobHash },
-    undefined
-  );
+    userId: 'system',
+    metadata: {
+      websiteHash: versionMeta.websiteHash,
+      linkedinHash: versionMeta.linkedinHash,
+      jobHash: versionMeta.jobHash
+    }
+  });
 }
 
 export const enrichCompanyOnDemand = onCall({ 

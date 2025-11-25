@@ -33,6 +33,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 import { db } from '../../../../firebase';
+import { logger } from '../../../../utils/logger';
 
 interface FilterRule {
   field: string;
@@ -217,17 +218,14 @@ const RetrievalFilters: React.FC<RetrievalFiltersProps> = ({ tenantId }) => {
       handleFilterChange(filterId, 'testResults', newTestResults);
       handleFilterChange(filterId, 'lastTested', new Date().toISOString());
 
-      // Log the test action
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_FilterTest_${Date.now()}`), {
-        tenantId,
-        section: 'RetrievalFilters',
-        changed: 'test_filter',
-        filterId,
-        testResults: newTestResults,
-        effectiveness: newEffectiveness,
-        timestamp: new Date().toISOString(),
-        eventType: 'filter_test',
-        engineTouched: ['RetrievalEngine'],
+      await logger.info('Retrieval filter tested', {
+        context: 'RetrievalFilters',
+        extra: {
+          tenantId,
+          filterId,
+          eventType: 'filter_test',
+          effectiveness: newEffectiveness,
+        },
       });
     } catch (err) {
       setError('Failed to test filter');
@@ -240,16 +238,12 @@ const RetrievalFilters: React.FC<RetrievalFiltersProps> = ({ tenantId }) => {
     try {
       const ref = doc(db, 'tenants', tenantId, 'aiSettings', 'retrievalFilters');
       await setDoc(ref, { filters }, { merge: true });
-      // Logging hook
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_RetrievalFilters_${Date.now()}`), {
-        tenantId,
-        section: 'RetrievalFilters',
-        changed: 'retrieval_filters',
-        oldValue: originalFilters,
-        newValue: filters,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        engineTouched: ['RetrievalEngine'],
+      await logger.info('Retrieval filters updated', {
+        context: 'RetrievalFilters',
+        extra: {
+          tenantId,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalFilters([...filters]);
       setSuccess(true);

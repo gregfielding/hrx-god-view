@@ -1,7 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { logAIAction, createTaskAILog, createDealAILog } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -442,7 +442,7 @@ export const createTaskOptimized = onCall({
       // Log AI action if this is an AI-suggested task
       if (aiSuggested) {
         try {
-          await logAIAction({
+          await logger.aiEvent({
             eventType: 'task.created.ai_suggested',
             targetType: 'task',
             targetId: taskRef.id,
@@ -459,36 +459,7 @@ export const createTaskOptimized = onCall({
         }
       }
 
-      // Create AI log for the task
-      try {
-        await createTaskAILog(
-          taskRef.id,
-          title,
-          type || 'unknown',
-          classification,
-          tenantId,
-          createdBy,
-          associations
-        );
-      } catch (aiLogError) {
-        console.warn('Failed to create AI log for task:', aiLogError);
-      }
-
-      // Create deal AI log if associated with a deal
-      if (associations?.deals && associations.deals.length > 0) {
-        try {
-          await createDealAILog(
-            associations.deals[0],
-            'task_created',
-            `Task created: ${title}`,
-            tenantId,
-            createdBy,
-            { taskId: taskRef.id, taskType: type, classification }
-          );
-        } catch (dealLogError) {
-          console.warn('Failed to create deal AI log for task:', dealLogError);
-        }
-      }
+      // Firestore-based AI logging removed (cost containment)
 
       console.log('✅ Task created successfully:', {
         taskId: taskRef.id,
@@ -732,7 +703,7 @@ export const batchCreateTasksOptimized = onCall({
           // Log AI action if this is an AI-suggested task
           if (aiSuggested) {
             try {
-              await logAIAction({
+              await logger.aiEvent({
                 eventType: 'task.created.ai_suggested',
                 targetType: 'task',
                 targetId: taskRef.id,
@@ -749,36 +720,7 @@ export const batchCreateTasksOptimized = onCall({
             }
           }
 
-          // Create AI log for the task
-          try {
-            await createTaskAILog(
-              taskRef.id,
-              title,
-              type || 'unknown',
-              classification,
-              tenantId,
-              createdBy,
-              associations
-            );
-          } catch (aiLogError) {
-            console.warn('Failed to create AI log for task:', aiLogError);
-          }
-
-          // Create deal AI log if associated with a deal
-          if (associations?.deals && associations.deals.length > 0) {
-            try {
-              await createDealAILog(
-                associations.deals[0],
-                'task_created',
-                `Task created: ${title}`,
-                tenantId,
-                createdBy,
-                { taskId: taskRef.id, taskType: type, classification }
-              );
-            } catch (dealLogError) {
-              console.warn('Failed to create deal AI log for task:', dealLogError);
-            }
-          }
+          // Firestore-based AI logging removed (cost containment)
           
           return {
             index,

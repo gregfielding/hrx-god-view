@@ -2,7 +2,7 @@ import { onCall } from 'firebase-functions/v2/https';
 import { defineString } from 'firebase-functions/params';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 const db = getFirestore();
 
@@ -288,7 +288,7 @@ export const syncGmailAndCreateTasks = onCall({
         }
 
         // Log AI action
-        await logAIAction({
+        await logger.aiEvent({
           eventType: 'email.analyzed',
           targetType: 'email',
           targetId: message.id || '',
@@ -520,7 +520,7 @@ export const sendEmailTaskViaGmail = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'task.email_sent',
       targetType: 'task',
       targetId: taskId,

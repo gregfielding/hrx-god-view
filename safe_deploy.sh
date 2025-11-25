@@ -6,7 +6,6 @@ echo "📦 This will deploy only the functions you actually need with built-in s
 # Essential functions that are safe to deploy
 ESSENTIAL_FUNCTIONS=(
   # Core CRM functions
-  "logAIActionCallable"
   "analyzeAITraining"
   "generateJobDescription"
   "getCompanyLocations"

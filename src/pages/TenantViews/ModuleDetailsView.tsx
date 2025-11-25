@@ -41,6 +41,7 @@ import { doc, setDoc } from 'firebase/firestore';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 
 interface ModuleDetailsViewProps {
   module: any;
@@ -115,18 +116,15 @@ const ModuleDetailsView: React.FC<ModuleDetailsViewProps> = ({
         lastUpdated: new Date().toISOString(),
       }, { merge: true });
       
-      // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleSettings_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'ModuleDetailsView',
-        changed: 'module_settings',
-        moduleId: localModule.id,
-        oldValue: module,
-        newValue: localModule,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_settings_update',
-        userId: currentUser?.uid || null,
-        sourceModule: 'ModuleDetailsView',
+      // Log the change (console/optional TTL Firestore via central logger)
+      await logger.info('Module settings updated', {
+        context: 'ModuleDetailsView',
+        extra: {
+          tenantId,
+          moduleId: localModule.id,
+          userId: currentUser?.uid || null,
+          eventType: 'module_settings_update',
+        },
       });
       
       onModuleUpdate(localModule);
@@ -157,16 +155,15 @@ const ModuleDetailsView: React.FC<ModuleDetailsViewProps> = ({
       }, { merge: true });
       
       // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleToggle_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'ModuleDetailsView',
-        changed: 'module_toggle',
-        moduleId: localModule.id,
-        newEnabled: updatedModule.isEnabled,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_toggle',
-        userId: currentUser?.uid || null,
-        sourceModule: 'ModuleDetailsView',
+      await logger.info('Module toggled', {
+        context: 'ModuleDetailsView',
+        extra: {
+          tenantId,
+          moduleId: localModule.id,
+          newEnabled: updatedModule.isEnabled,
+          userId: currentUser?.uid || null,
+          eventType: 'module_toggle',
+        },
       });
       
       onModuleUpdate(updatedModule);
@@ -297,16 +294,15 @@ const ModuleDetailsView: React.FC<ModuleDetailsViewProps> = ({
                           }, { merge: true });
                           
                           // Log the change
-                          await setDoc(doc(db, 'ai_logs', `${tenantId}_TimesheetsToggle_${Date.now()}`), {
-                            tenantId: tenantId,
-                            section: 'ModuleDetailsView',
-                            changed: 'timesheets_setting',
-                            moduleId: localModule.id,
-                            newValue: newValue,
-                            timestamp: new Date().toISOString(),
-                            eventType: 'timesheets_toggle',
-                            userId: currentUser?.uid || null,
-                            sourceModule: 'ModuleDetailsView',
+                          await logger.info('Timesheets setting updated', {
+                            context: 'ModuleDetailsView',
+                            extra: {
+                              tenantId,
+                              moduleId: localModule.id,
+                              newValue,
+                              userId: currentUser?.uid || null,
+                              eventType: 'timesheets_toggle',
+                            },
                           });
                           
                           setSuccess(true);

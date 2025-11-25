@@ -55,6 +55,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 
 interface Campaign {
   id?: string;
@@ -472,9 +473,7 @@ const AICampaigns: React.FC = () => {
         success = true;
       }
 
-      // Log the campaign save action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_save',
         sourceModule: 'CampaignsEngine',
@@ -513,9 +512,7 @@ const AICampaigns: React.FC = () => {
       await deleteDoc(doc(db, 'campaigns', campaignId));
       setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
 
-      // Log the campaign deletion action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_delete',
         sourceModule: 'CampaignsEngine',
@@ -573,9 +570,7 @@ const AICampaigns: React.FC = () => {
         updatedAt: new Date(),
       });
 
-      // Log the campaign creation action
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // TODO: Get from auth context
         actionType: 'campaign_create',
         sourceModule: 'CampaignsEngine',

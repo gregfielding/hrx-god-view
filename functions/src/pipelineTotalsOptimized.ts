@@ -1,5 +1,6 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -107,7 +108,7 @@ async function checkRateLimiting(companyId: string): Promise<boolean> {
     
     // Check global rate limiting
     const globalKey = `pipeline_update_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
     const globalSnap = await globalRef.get();
     
     if (globalSnap.exists) {
@@ -120,7 +121,7 @@ async function checkRateLimiting(companyId: string): Promise<boolean> {
     
     // Check company-specific rate limiting
     const companyKey = `pipeline_update_rate_limit:company:${companyId}:${hourKey}`;
-    const companyRef = db.collection('ai_cache').doc(companyKey);
+    const companyRef = getAiCacheDoc(companyKey);
     const companySnap = await companyRef.get();
     
     if (companySnap.exists) {
@@ -148,18 +149,20 @@ async function updateRateLimiting(companyId: string): Promise<void> {
     
     // Update global counter
     const globalKey = `pipeline_update_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
+    const globalSnap = await globalRef.get();
+    const globalData = globalSnap.exists ? (globalSnap.data() as any) : {};
     await globalRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (globalData.count || 0) + 1,
     }, { merge: true });
     
     // Update company counter
     const companyKey = `pipeline_update_rate_limit:company:${companyId}:${hourKey}`;
-    const companyRef = db.collection('ai_cache').doc(companyKey);
+    const companyRef = getAiCacheDoc(companyKey);
+    const companySnap = await companyRef.get();
+    const companyData = companySnap.exists ? (companySnap.data() as any) : {};
     await companyRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (companyData.count || 0) + 1,
     }, { merge: true });
   } catch (error) {
     console.error('Error updating rate limiting:', error);
@@ -173,13 +176,16 @@ async function checkForLoop(tenantId: string, companyId: string): Promise<boolea
   try {
     const now = Date.now();
     const loopKey = `loop_prevention:pipeline:${companyId}:${now}`;
-    const loopRef = db.collection('ai_cache').doc(loopKey);
+    const loopRef = getAiCacheDoc(loopKey);
     
     // Check if we've processed this company recently
     const loopSnap = await loopRef.get();
     if (loopSnap.exists) {
       const loopData = loopSnap.data() as any;
-      if (loopData.updatedAt && (now - loopData.updatedAt.toMillis()) < PIPELINE_CONFIG.LOOP_PREVENTION_TTL) {
+      const updatedAt = typeof loopData.updatedAt === 'number'
+        ? loopData.updatedAt
+        : loopData.updatedAt?.toMillis?.();
+      if (updatedAt && (now - updatedAt) < PIPELINE_CONFIG.LOOP_PREVENTION_TTL) {
         console.log(`🚫 Loop prevention: Company ${companyId} processed too recently`);
         return true; // Potential loop detected
       }
@@ -199,10 +205,10 @@ async function markCompanyAsUpdated(companyId: string): Promise<void> {
   try {
     const now = Date.now();
     const loopKey = `loop_prevention:pipeline:${companyId}:${now}`;
-    const loopRef = db.collection('ai_cache').doc(loopKey);
+    const loopRef = getAiCacheDoc(loopKey);
     
     await loopRef.set({
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: now,
       processedBy: 'pipelineTotalsOptimized'
     });
   } catch (error) {

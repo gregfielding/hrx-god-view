@@ -42,7 +42,6 @@ PHASE1_FUNCTIONS=(
   "dealCoachAction"
   
   # AI & Analytics Functions (30+)
-  "logAIActionCallable"
   "analyzeAITraining"
   "getAIChatSettings"
   "updateAIChatSettings"

@@ -2,7 +2,7 @@ import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { logEnrichmentEvent } from './utils/logging';
-import { createContactAILog } from './utils/aiLogging';
+import { logger } from './utils/logger';
 import { getApolloKey } from './utils/secrets';
 import { apolloContactEnrichment, apolloCompanyByDomain, ApolloContactEnrichment } from './utils/apollo';
 
@@ -396,15 +396,18 @@ export async function runContactEnrichment(
     { merge: true }
   );
 
-  await createContactAILog(
-    'contactEnrichment.success',
-    contactId,
-    'Contact enrichment completed',
+  await logger.aiEvent({
+    eventType: 'contactEnrichment.success',
+    targetType: 'contact',
+    targetId: contactId,
+    reason: 'Contact enrichment completed',
+    contextType: 'contact_enrichment',
+    aiTags: ['contact', 'enrichment'],
+    urgencyScore: 4,
     tenantId,
-    'system',
-    { apolloData: !!apolloData, mode },
-    undefined
-  );
+    userId: 'system',
+    metadata: { apolloData: !!apolloData, mode }
+  });
   
   console.log(`Contact enrichment completed for ${contactName}`);
 }

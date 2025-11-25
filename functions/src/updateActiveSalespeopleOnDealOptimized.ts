@@ -1,5 +1,6 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -58,7 +59,7 @@ async function checkRateLimiting(dealId: string): Promise<boolean> {
     
     // Check global rate limiting
     const globalKey = `active_salespeople_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
     const globalSnap = await globalRef.get();
     
     if (globalSnap.exists) {
@@ -71,7 +72,7 @@ async function checkRateLimiting(dealId: string): Promise<boolean> {
     
     // Check deal-specific rate limiting
     const dealKey = `active_salespeople_rate_limit:deal:${dealId}:${hourKey}`;
-    const dealRef = db.collection('ai_cache').doc(dealKey);
+    const dealRef = getAiCacheDoc(dealKey);
     const dealSnap = await dealRef.get();
     
     if (dealSnap.exists) {
@@ -99,18 +100,20 @@ async function updateRateLimiting(dealId: string): Promise<void> {
     
     // Update global counter
     const globalKey = `active_salespeople_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
+    const globalSnap = await globalRef.get();
+    const globalData = globalSnap.exists ? (globalSnap.data() as any) : {};
     await globalRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (globalData.count || 0) + 1,
     }, { merge: true });
     
     // Update deal counter
     const dealKey = `active_salespeople_rate_limit:deal:${dealId}:${hourKey}`;
-    const dealRef = db.collection('ai_cache').doc(dealKey);
+    const dealRef = getAiCacheDoc(dealKey);
+    const dealSnap = await dealRef.get();
+    const dealData = dealSnap.exists ? (dealSnap.data() as any) : {};
     await dealRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (dealData.count || 0) + 1,
     }, { merge: true });
   } catch (error) {
     console.error('Error updating rate limiting:', error);
@@ -124,13 +127,16 @@ async function checkForLoop(tenantId: string, dealId: string, companyIds: string
   try {
     const now = Date.now();
     const loopKey = `loop_prevention:${dealId}:${now}`;
-    const loopRef = db.collection('ai_cache').doc(loopKey);
+    const loopRef = getAiCacheDoc(loopKey);
     
     // Check if we've processed this deal recently
     const loopSnap = await loopRef.get();
     if (loopSnap.exists) {
       const loopData = loopSnap.data() as any;
-      if (loopData.updatedAt && (now - loopData.updatedAt.toMillis()) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
+      const updatedAt = typeof loopData.updatedAt === 'number'
+        ? loopData.updatedAt
+        : loopData.updatedAt?.toMillis?.();
+      if (updatedAt && (now - updatedAt) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
         console.log(`🚫 Loop prevention: Deal ${dealId} processed too recently`);
         return true; // Potential loop detected
       }
@@ -140,12 +146,14 @@ async function checkForLoop(tenantId: string, dealId: string, companyIds: string
     const entitiesToCheck = [...companyIds, ...contactIds];
     for (const entityId of entitiesToCheck) {
       const entityKey = `loop_prevention:entity:${entityId}:${now}`;
-      const entityRef = db.collection('ai_cache').doc(entityKey);
+      const entityRef = getAiCacheDoc(entityKey);
       const entitySnap = await entityRef.get();
-      
       if (entitySnap.exists) {
         const entityData = entitySnap.data() as any;
-        if (entityData.updatedAt && (now - entityData.updatedAt.toMillis()) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
+        const entityUpdatedAt = typeof entityData.updatedAt === 'number'
+          ? entityData.updatedAt
+          : entityData.updatedAt?.toMillis?.();
+        if (entityUpdatedAt && (now - entityUpdatedAt) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
           console.log(`🚫 Loop prevention: Entity ${entityId} updated too recently`);
           return true; // Potential loop detected
         }
@@ -165,13 +173,12 @@ async function checkForLoop(tenantId: string, dealId: string, companyIds: string
 async function markEntitiesAsUpdated(dealId: string, companyIds: string[], contactIds: string[]): Promise<void> {
   try {
     const now = Date.now();
-    const batch = db.batch();
     
     // Mark deal as processed
     const dealKey = `loop_prevention:${dealId}:${now}`;
-    const dealRef = db.collection('ai_cache').doc(dealKey);
-    batch.set(dealRef, {
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const dealRef = getAiCacheDoc(dealKey);
+    await dealRef.set({
+      updatedAt: now,
       processedBy: 'updateActiveSalespeopleOnDealOptimized'
     });
     
@@ -179,14 +186,12 @@ async function markEntitiesAsUpdated(dealId: string, companyIds: string[], conta
     const entitiesToMark = [...companyIds, ...contactIds];
     for (const entityId of entitiesToMark) {
       const entityKey = `loop_prevention:entity:${entityId}:${now}`;
-      const entityRef = db.collection('ai_cache').doc(entityKey);
-      batch.set(entityRef, {
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      const entityRef = getAiCacheDoc(entityKey);
+      await entityRef.set({
+        updatedAt: now,
         processedBy: 'updateActiveSalespeopleOnDealOptimized'
       });
     }
-    
-    await batch.commit();
   } catch (error) {
     console.error('Error marking entities as updated:', error);
   }

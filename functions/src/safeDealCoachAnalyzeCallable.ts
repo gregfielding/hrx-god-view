@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { SafeFunctionUtils, CostTracker } from './utils/safeFunctionTemplate';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -102,7 +103,7 @@ async function checkCache(dealId: string, stageKey: string): Promise<any | null>
   CostTracker.trackOperation('checkCache', 0.001);
 
   const cacheId = `coach_analyze_${dealId}_${stageKey}`;
-  const cacheRef = db.collection('ai_cache').doc(cacheId);
+  const cacheRef = getAiCacheDoc(cacheId);
   const cached = await cacheRef.get();
   
   if (cached.exists) {
@@ -308,11 +309,13 @@ async function updateCacheSafely(dealId: string, stageKey: string, result: any):
   CostTracker.trackOperation('updateCacheSafely', 0.001);
 
   const cacheId = `coach_analyze_${dealId}_${stageKey}`;
-  const cacheRef = db.collection('ai_cache').doc(cacheId);
-  await cacheRef.set({ 
-    payload: result, 
-    updatedAt: admin.firestore.FieldValue.serverTimestamp() 
-  }, { merge: true });
+  const cacheRef = getAiCacheDoc(cacheId);
+  await cacheRef.set(
+    {
+      payload: result,
+    },
+    { merge: true }
+  );
 }
 
 /**

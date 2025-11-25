@@ -1,7 +1,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { logAIAction } from '../feedbackEngine';
+import { logger } from '../utils/logger';
 
 const db = getFirestore();
 
@@ -142,7 +142,7 @@ export const deliverLearningBoost = onCall(async (request) => {
     await db.collection('userLearningBoosts').doc(userBoostId).set(userBoost);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_delivered',
       sourceModule: 'MiniLearningBoosts',
@@ -176,7 +176,7 @@ export const deliverLearningBoost = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_delivered',
       sourceModule: 'MiniLearningBoosts',
@@ -226,7 +226,7 @@ export const markBoostViewed = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -247,7 +247,7 @@ export const markBoostViewed = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -319,7 +319,7 @@ export const completeLearningBoost = onCall(async (request) => {
     await updateUserLearningProfile(userId, timeSpent || 0);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_completed',
       sourceModule: 'MiniLearningBoosts',
@@ -340,7 +340,7 @@ export const completeLearningBoost = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_completed',
       sourceModule: 'MiniLearningBoosts',
@@ -391,7 +391,7 @@ export const skipLearningBoost = onCall(async (request) => {
     });
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_skipped',
       sourceModule: 'MiniLearningBoosts',
@@ -412,7 +412,7 @@ export const skipLearningBoost = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_boost_skipped',
       sourceModule: 'MiniLearningBoosts',
@@ -481,7 +481,7 @@ export const getUserLearningDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_dashboard_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -508,7 +508,7 @@ export const getUserLearningDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'learning_dashboard_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -605,7 +605,7 @@ export const getAdminLearningDashboard = onCall(async (request) => {
     };
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_learning_dashboard_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -632,7 +632,7 @@ export const getAdminLearningDashboard = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: adminUserId,
       actionType: 'admin_learning_dashboard_viewed',
       sourceModule: 'MiniLearningBoosts',
@@ -710,7 +710,7 @@ export const deliverWeeklyLearningBoosts = onSchedule({
     console.log(`Weekly learning boosts completed: ${deliveredCount} delivered, ${errorCount} errors`);
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_learning_boosts_delivered',
       sourceModule: 'MiniLearningBoosts',
@@ -731,7 +731,7 @@ export const deliverWeeklyLearningBoosts = onSchedule({
   } catch (error: any) {
     console.error('Weekly learning boosts delivery failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'weekly_learning_boosts_delivered',
       sourceModule: 'MiniLearningBoosts',

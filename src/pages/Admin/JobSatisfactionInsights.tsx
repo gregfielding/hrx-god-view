@@ -100,6 +100,7 @@ import {
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { logger } from '../../utils/logger';
 import { useModuleAccess } from '../../utils/useModuleAccess';
 import JSICustomReportBuilder from '../../components/JSICustomReportBuilder';
 import { generatePDFReport, generateExcelReport } from '../../utils/exportUtils';
@@ -1156,8 +1157,7 @@ const JobSatisfactionInsights: React.FC = () => {
   // Log AI action for JSI dashboard interactions
   const logJSIInteraction = async (action: string, details: any) => {
     try {
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'admin', // Will be replaced with actual user ID
         actionType: `jsi_${action}`,
         sourceModule: 'JobSatisfactionInsights',

@@ -133,7 +133,7 @@ const useAIFieldLogging = (fieldName: string, contextId: string, contextType: 'c
       const functions = getFunctions(app, 'us-central1');
       const logAIAction = httpsCallable(functions, 'logAIAction');
       
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'current-user-id', // Get from auth context
         actionType: 'ai_field_change',
         sourceModule: 'AISettings',
@@ -511,7 +511,7 @@ const logFieldChange = async (fieldName: string, contextId: string, contextType:
     const functions = getFunctions(app, 'us-central1');
     const logAIAction = httpsCallable(functions, 'logAIAction');
     
-    const result = await logAIAction({
+    const result = await logger.aiEvent({
       // ... log data
     });
     

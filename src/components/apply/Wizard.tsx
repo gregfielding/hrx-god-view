@@ -21,7 +21,7 @@ import JobPreferencesStep from './steps/JobPreferencesStep';
 import RequirementsAcknowledgementStep from './steps/RequirementsAcknowledgementStep';
 import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
-import { geocodeAddress } from '../../utils/geocodeAddress';
+import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from '../../utils/gigShiftApplicationLimits';
 
 type WizardProps = {
@@ -1118,6 +1118,28 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       // Merge selected profile fields into users/{uid}
       const userRef = doc(db, 'users', effectiveUid!);
       let personal = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+      const resumeAddress =
+        !personal.street && (userProfile?.contact?.address || userProfile?.contact?.city)
+          ? userProfile?.contact?.address ||
+            `${userProfile?.contact?.city || ''}, ${userProfile?.contact?.state || ''} ${userProfile?.contact?.zip || ''}`
+          : undefined;
+
+      if ((!personal.street || !personal.city || !personal.state) && resumeAddress) {
+        try {
+          const detailed = await geocodeAddressDetailed(resumeAddress);
+          personal = {
+            ...personal,
+            street: personal.street || detailed.street,
+            city: personal.city || detailed.city,
+            state: personal.state || detailed.state,
+            zip: personal.zip || detailed.zip,
+            homeLat: personal.homeLat ?? detailed.lat,
+            homeLng: personal.homeLng ?? detailed.lng,
+          };
+        } catch (resumeGeoErr) {
+          console.warn('Fallback resume geocode failed:', resumeGeoErr);
+        }
+      }
       
       // CRITICAL: Ensure address has coordinates before final submission
       if ((personal.street || personal.city || personal.state) && (!personal.homeLat || !personal.homeLng)) {
@@ -1145,6 +1167,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             // Don't block submission, but log the error
           }
         }
+      }
+
+      if (
+        !personal.street ||
+        !personal.city ||
+        !personal.state ||
+        !personal.zip ||
+        personal.homeLat === undefined ||
+        personal.homeLng === undefined
+      ) {
+        alert('Please provide and validate your complete home address before submitting.');
+        setSaving(false);
+        setActiveStep(1);
+        return;
       }
       
       // Debug logging for address data

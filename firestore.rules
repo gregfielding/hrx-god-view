@@ -762,16 +762,6 @@ service cloud.firestore {
       allow read, write: if isHRX();
     }
 
-    // --- AI MOMENTS ---
-    match /aiMoments/{momentId} {
-      allow read, write: if isHRX();
-    }
-
-    // --- SCHEDULED MOMENTS ---
-    match /scheduledMoments/{scheduledMomentId} {
-      allow read, write: if isHRX();
-    }
-
     // --- FEEDBACK CAMPAIGNS ---
     match /feedbackCampaigns/{campaignId} {
       allow read, write: if isHRX();
@@ -782,29 +772,6 @@ service cloud.firestore {
       allow read, write: if isHRX();
     }
 
-    // --- AI LOGS ---
-    match /ai_logs/{logId} {
-      allow read, write: if isHRX();
-      allow read: if isAuthenticated() && (
-        request.auth.uid == resource.data.userId ||
-        request.auth.uid == resource.data.workerId ||
-        isTenantAdmin(resource.data.tenantId)
-      );
-      allow read: if isAuthenticated() && hasCRMAccess() && (
-        resource.data.targetType == 'deal' && 
-        resource.data.targetId != null
-      );
-      // Allow reading deal-related AI logs for users with CRM access
-      allow read: if isAuthenticated() && hasCRMAccess() && (
-        resource.data.eventType != null && 
-        resource.data.eventType.matches('deal\\..*')
-      );
-      // Temporary: Allow reading AI logs for any authenticated user assigned to the tenant
-      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
-      // Temporary: Allow all authenticated users for debugging
-      allow read: if isAuthenticated();
-    }
-    
     // --- EVENTS (Event Bus) ---
     match /events/{eventId} {
       allow read, write: if isHRX();

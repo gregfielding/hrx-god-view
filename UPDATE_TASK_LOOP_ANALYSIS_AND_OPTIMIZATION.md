@@ -19,7 +19,7 @@ There are **multiple Firestore triggers** that fire when tasks are updated:
 // Trigger 1: Logs every task update to AI logs
 export const firestoreLogTaskUpdated = onDocumentUpdated('tasks/{taskId}', async (event) => {
   // Creates AI logs for every task update
-  await logAIAction({ ... });
+  await logger.aiEvent({ ... });
 });
 
 // Trigger 2: Updates active salespeople when task associations change

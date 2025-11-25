@@ -1,7 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -30,7 +30,7 @@ export const logTaskUpdate = onRequest({
     }
 
     // Process the AI log entry
-    await logAIAction({
+    await logger.aiEvent({
       userId: payload.userId || 'system',
       actionType: payload.actionType || 'task_updated',
       sourceModule: 'HTTPWorker',
@@ -77,7 +77,7 @@ export const logUserUpdate = onRequest({
     }
 
     // Process the AI log entry
-    await logAIAction({
+    await logger.aiEvent({
       userId: payload.userId || 'system',
       actionType: payload.actionType || 'user_updated',
       sourceModule: 'HTTPWorker',

@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -297,9 +298,8 @@ async function logEnhancedChatInteraction(data: {
   contextShare: any;
 }): Promise<void> {
   try {
-    const { logAIAction } = await import('./utils/aiLogging');
     
-    await logAIAction({
+    await logger.aiEvent({
       eventType: `enhancedMainChat.${data.agentId}`,
       targetType: data.contextShare.contextType,
       targetId: data.entityId,

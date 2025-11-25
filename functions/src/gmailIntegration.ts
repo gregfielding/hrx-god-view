@@ -3,6 +3,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
+import { logger } from './utils/logger';
 
 
 const db = getFirestore();
@@ -1739,8 +1740,7 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
 
             // Also log to AI system for analytics
             try {
-              const { logAIAction } = await import('./utils/aiLogging');
-              await logAIAction({
+              await logger.aiEvent({
                 eventType: 'email.sent_to_contact',
                 targetType: 'contact',
                 targetId: contact.id,

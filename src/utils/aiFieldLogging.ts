@@ -1,7 +1,5 @@
 import { useCallback } from 'react';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-
-import { app } from '../firebase';
+import { logger } from './logger';
 
 // AI Field Patterns - defines which fields are AI-relevant and their metadata
 export const AI_FIELD_PATTERNS: Record<string, { contextType: string; urgencyScore: number }> = {
@@ -312,15 +310,12 @@ export const retryFailedLogs = async () => {
     const failedLogs: any[] = JSON.parse(localStorage.getItem('ai_failed_logs') || '[]');
     if (failedLogs.length === 0) return;
     
-    const functions = getFunctions(app, 'us-central1');
-    const logAIAction = httpsCallable(functions, 'logAIAction');
-    
     const retryPromises = failedLogs.map(async (logData: any) => {
       try {
         const pattern = AI_FIELD_PATTERNS[logData.fieldName];
         if (!pattern) return { success: false, error: 'Unknown field' };
         
-        await logAIAction({
+        await logger.aiEvent({
           userId: 'system', // Will be updated with actual user ID
           actionType: 'ai_field_change',
           sourceModule: 'AISettings',
@@ -375,10 +370,7 @@ export const useAIFieldLogging = (fieldName: string, contextId: string, contextT
       // Validate the data
       validateFieldData(fieldName, oldValue, newValue);
       
-      const functions = getFunctions(app, 'us-central1');
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      
-      await logAIAction({
+      await logger.aiEvent({
         userId: 'current-user-id', // TODO: Get from auth context
         actionType: 'ai_field_change',
         sourceModule: 'AISettings',

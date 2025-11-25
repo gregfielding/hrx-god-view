@@ -1,5 +1,4 @@
-import { addDoc, collection, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { db } from '../firebase';
+import * as admin from 'firebase-admin';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -18,7 +17,8 @@ type Loggable =
   | undefined;
 
 const ENABLE_FIRESTORE_LOGS =
-  (process.env.NEXT_PUBLIC_ENABLE_FIRESTORE_LOGS || '').toLowerCase() === 'true';
+  (process.env.ENABLE_FIRESTORE_LOGS || '').toLowerCase() === 'true';
+const IS_PROD = process.env.NODE_ENV === 'production';
 const MAX_MESSAGE_CHARS = 500;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -38,51 +38,62 @@ function formatError(err: any): string | undefined {
 function stringifyExtra(extra?: Record<string, any>): Record<string, any> | undefined {
   if (!extra) return undefined;
   try {
-    const payload = JSON.stringify(extra);
-    if (!payload || payload.length > MAX_MESSAGE_CHARS) return undefined;
+    const json = JSON.stringify(extra);
+    if (!json || json.length > MAX_MESSAGE_CHARS) return undefined;
     return extra;
   } catch {
     return undefined;
   }
 }
 
-async function persistSmallLog(level: LogLevel, msg: string, opts?: LogOptions) {
+async function persistSmallLog(level: LogLevel, msg: string, opts?: LogOptions): Promise<void> {
   if (!ENABLE_FIRESTORE_LOGS) return;
-  const totalChars = msg.length + (opts?.context?.length || 0);
-  if (totalChars > MAX_MESSAGE_CHARS) return;
-  try {
-    await addDoc(collection(db, 'system_logs'), {
-      level,
-      msg,
-      context: opts?.context || null,
-      extra: stringifyExtra(opts?.extra) || null,
-      error: formatError(opts?.error) || null,
-      ts: serverTimestamp(),
-      expiresAt: Timestamp.fromMillis(Date.now() + TTL_MS),
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.debug('[logger] Firestore log skipped:', err);
+  const textLength = msg.length + (opts?.context?.length || 0);
+  if (textLength > MAX_MESSAGE_CHARS) {
+    return;
   }
+  if (!admin.apps.length) {
+    admin.initializeApp();
+  }
+  const db = admin.firestore();
+  const now = Date.now();
+  const doc = {
+    level,
+    msg,
+    context: opts?.context || null,
+    extra: stringifyExtra(opts?.extra) || null,
+    error: formatError(opts?.error) || null,
+    ts: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: admin.firestore.Timestamp.fromMillis(now + TTL_MS),
+  };
+  await db.collection('system_logs').add(doc);
 }
 
 function consoleLog(level: LogLevel, msg: string, opts?: LogOptions) {
-  const payload = { context: opts?.context, extra: opts?.extra, error: opts?.error };
+  const payload = {
+    context: opts?.context,
+    extra: opts?.extra,
+    error: opts?.error,
+  };
+  const consoleArgs: any[] = [`[${level.toUpperCase()}] ${msg}`];
+  if (!IS_PROD || level !== 'debug') {
+    consoleArgs.push(payload);
+  }
   switch (level) {
     case 'debug':
-      console.debug(`[${level}] ${msg}`, payload);
+      console.debug(...consoleArgs);
       break;
     case 'info':
-      console.info(`[${level}] ${msg}`, payload);
+      console.info(...consoleArgs);
       break;
     case 'warn':
-      console.warn(`[${level}] ${msg}`, payload);
+      console.warn(...consoleArgs);
       break;
     case 'error':
-      console.error(`[${level}] ${msg}`, payload);
+      console.error(...consoleArgs);
       break;
     default:
-      console.log(`[log] ${msg}`, payload);
+      console.log(...consoleArgs);
   }
 }
 
@@ -97,10 +108,14 @@ function normalizeOptions(opts?: Loggable): LogOptions | undefined {
   return { extra: { value: opts } };
 }
 
-async function log(level: LogLevel, msg: string, opts?: Loggable) {
+async function log(level: LogLevel, msg: string, opts?: Loggable): Promise<void> {
   const normalized = normalizeOptions(opts);
   consoleLog(level, msg, normalized);
-  await persistSmallLog(level, msg, normalized);
+  try {
+    await persistSmallLog(level, msg, normalized);
+  } catch (err) {
+    console.debug('[logger] Firestore log skipped:', err instanceof Error ? err.message : err);
+  }
 }
 
 const AI_EXTRA_FIELDS = [
@@ -161,4 +176,4 @@ export const logger = {
   },
 };
 
-export default logger;
+

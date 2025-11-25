@@ -183,7 +183,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const lastActivitySentAtRef = useRef<number>(0);
   const isCreatingUserProfileRef = useRef<boolean>(false);
 
-  const LOGIN_PING_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+  const LOGIN_PING_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   const shouldReportLoginPing = (uid: string) => {
     if (typeof window === 'undefined') return false;
@@ -193,15 +193,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const lastPing = Number(localStorage.getItem(key) || '0');
       const dueToAge = now - lastPing > LOGIN_PING_INTERVAL_MS;
 
-      const monthKey = new Date().toISOString().slice(0, 7); // YYYY-MM
-      let hash = 0;
-      const sampleKey = `${uid}:${monthKey}`;
-      for (let i = 0; i < sampleKey.length; i++) {
-        hash = (hash * 33 + sampleKey.charCodeAt(i)) % 1000;
-      }
-      const sampleHit = hash % 100 === 0; // Roughly 1% sample per month
-
-      return dueToAge || sampleHit;
+      return dueToAge;
     } catch (error) {
       console.warn('Login ping sampling failed:', error);
       return false;

@@ -15,12 +15,12 @@ setGlobalOptions({
 });
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { runAIScheduler, manualSchedulerRun } from './scheduler';
-import { logAIAction } from './feedbackEngine';
 import { getTraitsAndTags } from './utils/openaiHelper';
 import * as FirebaseFirestore from 'firebase-admin/firestore';
 import sgMail from '@sendgrid/mail';
 import { runFirestoreTriggerTests } from './testTriggersCLI';
 import type { TestResult } from './testFirestoreTriggers';
+import { logger } from './utils/logger';
 import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
@@ -72,7 +72,6 @@ import { firestoreCompanySnapshotFanout } from './firestoreCompanySnapshotFanout
 import { companySnapshotFanoutCallable, batchCompanySnapshotFanoutCallable } from './companySnapshotFanoutOptimized';
 
 // Safe AI log updated trigger with field filters
-export { firestoreLogAILogUpdated } from './safeFirestoreAILogUpdated';
 
 // Remote kill switch management functions
 export {
@@ -261,42 +260,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 });
 
-export const logAIActionCallable = onCall(async (request) => {
-  try {
-    const logData = request.data || {};
-
-    // Emergency kill-switch and aggressive sampling already live inside logAIAction
-    // Add lightweight server-side filtering to reduce noisy client calls
-    const blockedEventTypes = new Set([
-      'ai_log.created','ai_log.updated','ai_log.deleted',
-      'system.heartbeat','cache_hit','debug',
-      'user.updated','conversation.updated','message.updated','task.updated'
-    ]);
-    const minUrgency = 7;
-
-    const eventType = logData.eventType || logData.action || '';
-    const urgencyScore = typeof logData.urgencyScore === 'number' ? logData.urgencyScore : null;
-
-    if (eventType && blockedEventTypes.has(eventType)) {
-      return { success: true, skipped: true, reason: 'blocked_event_type' };
-    }
-    if (urgencyScore !== null && urgencyScore < minUrgency) {
-      return { success: true, skipped: true, reason: 'low_urgency' };
-    }
-
-    // Basic sampling for non-critical logs (1%)
-    const isCritical = urgencyScore !== null && urgencyScore >= 9;
-    if (!isCritical && Math.random() > 0.01) {
-      return { success: true, skipped: true, reason: 'sampled_out' };
-    }
-
-    await logAIAction(logData);
-    return { success: true, message: 'AI action logged successfully' };
-  } catch (error) {
-    console.error('Error in logAIAction Cloud Function:', error);
-    throw new HttpsError('internal', 'Failed to log AI action');
-  }
-});
 
 export const analyzeAITraining = onCall(async (request) => {
   const { customerId, userId } = request.data;
@@ -343,7 +306,7 @@ Communication Style: ${(customerData || {}).communicationStyle || ''}
   } finally {
     const latencyMs = Date.now() - start;
     // AI LOG: Training analysis event
-    await logAIAction({
+    await logger.aiEvent({
       userId: userId || null,
       actionType: 'training_analysis',
       sourceModule: 'TrainingEngine',
@@ -633,7 +596,7 @@ export const reindexVectorCollection = onCall(async (request) => {
       });
     }, 3000);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_reindex',
       sourceModule: 'VectorSettings',
@@ -654,7 +617,7 @@ export const reindexVectorCollection = onCall(async (request) => {
 
     return { success: true, message: 'Reindexing started' };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_reindex',
       sourceModule: 'VectorSettings',
@@ -731,7 +694,7 @@ export const runContextAssembly = onCall(async (request) => {
     // Simulate context assembly (in real implementation, this would assemble actual context)
     const assembledPrompt = `[System Context] ${sources.map((s: any) => s.dataPreview).join(' ')}\n\n[User Request] ${liveRequest}`;
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'context_assembly',
       sourceModule: 'AutoContextEngine',
@@ -758,7 +721,7 @@ export const runContextAssembly = onCall(async (request) => {
       engine: engine?.name
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'context_assembly',
       sourceModule: 'AutoContextEngine',
@@ -809,7 +772,7 @@ export const createRetrievalFilter = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_create',
       sourceModule: 'RetrievalFilters',
@@ -830,7 +793,7 @@ export const createRetrievalFilter = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_create',
       sourceModule: 'RetrievalFilters',
@@ -864,7 +827,7 @@ export const updateRetrievalFilter = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_update',
       sourceModule: 'RetrievalFilters',
@@ -876,7 +839,7 @@ export const updateRetrievalFilter = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_update',
       sourceModule: 'RetrievalFilters',
@@ -897,7 +860,7 @@ export const deleteRetrievalFilter = onCall(async (request) => {
   try {
     await db.collection('retrievalFilters').doc(filterId).delete();
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_delete',
       sourceModule: 'RetrievalFilters',
@@ -909,7 +872,7 @@ export const deleteRetrievalFilter = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'retrieval_filter_delete',
       sourceModule: 'RetrievalFilters',
@@ -951,7 +914,7 @@ export const createPromptTemplate = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_create',
       sourceModule: 'PromptBuilder',
@@ -963,7 +926,7 @@ export const createPromptTemplate = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_create',
       sourceModule: 'PromptBuilder',
@@ -987,7 +950,7 @@ export const updatePromptTemplate = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_update',
       sourceModule: 'PromptBuilder',
@@ -999,7 +962,7 @@ export const updatePromptTemplate = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_update',
       sourceModule: 'PromptBuilder',
@@ -1024,7 +987,7 @@ export const testPromptTemplate = onCall(async (request) => {
       assembledPrompt = assembledPrompt.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_test',
       sourceModule: 'PromptBuilder',
@@ -1042,7 +1005,7 @@ export const testPromptTemplate = onCall(async (request) => {
       latency: Date.now() - start
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'prompt_template_test',
       sourceModule: 'PromptBuilder',
@@ -1096,7 +1059,7 @@ export const updateAutoDevOpsSettings = onCall(async (request) => {
       updatedBy: userId
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_settings_update',
       sourceModule: 'AutoDevOps',
@@ -1108,7 +1071,7 @@ export const updateAutoDevOpsSettings = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_settings_update',
       sourceModule: 'AutoDevOps',
@@ -1136,7 +1099,7 @@ export const applyAutoDevOpsPatch = onCall(async (request) => {
 
     // In a real implementation, this would apply the actual code patch
     // For now, we'll just log the action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_patch_apply',
       sourceModule: 'AutoDevOps',
@@ -1148,7 +1111,7 @@ export const applyAutoDevOpsPatch = onCall(async (request) => {
 
     return { success: true, message: 'Patch applied successfully' };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_patch_apply',
       sourceModule: 'AutoDevOps',
@@ -1173,7 +1136,7 @@ export const createAutoDevOpsLog = onCall(async (request) => {
       createdBy: userId
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_log_create',
       sourceModule: 'AutoDevOps',
@@ -1185,7 +1148,7 @@ export const createAutoDevOpsLog = onCall(async (request) => {
 
     return { id: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'autodevops_log_create',
       sourceModule: 'AutoDevOps',
@@ -1201,147 +1164,44 @@ export const createAutoDevOpsLog = onCall(async (request) => {
 
 // Enhanced AutoDevOps Functions for Real-time AI Monitoring
 export const analyzeAILogsForPatterns = onCall(async (request) => {
-  const { timeRange, userId } = request.data;
-  const start = Date.now();
-  
-  try {
-    // Get AI logs from the specified time range
-    const logsRef = db.collection('ai_logs');
-    const timeFilter = timeRange || 24; // Default to 24 hours
-    const cutoffTime = new Date(Date.now() - timeFilter * 60 * 60 * 1000);
-    
-    const snapshot = await logsRef
-      .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime))
-      .orderBy('timestamp', 'desc')
-      .limit(1000)
-      .get();
+  const { userId } = request.data || {};
+  logger.info('analyzeAILogsForPatterns called but AI logging is disabled.', {
+    context: 'autoDevOps.analyzeAILogsForPatterns',
+    extra: { userId }
+  });
 
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
-
-    // Analyze patterns
-    const patterns = await analyzeLogPatterns(logs);
-    
-    // Generate AutoDevOps logs for detected issues
-    const autoDevOpsLogs = await generateAutoDevOpsLogs(patterns, logs);
-
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_pattern_analysis',
-      sourceModule: 'AutoDevOps',
-      success: true,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Analyzed ${logs.length} AI logs for patterns`
-    });
-
-    return { patterns, autoDevOpsLogs };
-  } catch (error: any) {
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_pattern_analysis',
-      sourceModule: 'AutoDevOps',
-      success: false,
-      errorMessage: error.message,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: 'Failed to analyze AI logs for patterns'
-    });
-    throw error;
-  }
+  return {
+    patterns: [],
+    autoDevOpsLogs: [],
+    message: 'AI logging has been disabled; no log patterns are available.'
+  };
 });
 
 export const getAILogQualityMetrics = onCall(async (request) => {
-  const { customerId, module, timeRange } = request.data;
-  
-  try {
-    const logsRef = db.collection('ai_logs');
-    const timeFilter = timeRange || 24;
-    const cutoffTime = new Date(Date.now() - timeFilter * 60 * 60 * 1000);
-    
-    let query = logsRef.where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime));
-    
-    if (customerId) {
-      query = query.where('customerId', '==', customerId);
-    }
-    
-    if (module) {
-      query = query.where('sourceModule', '==', module);
-    }
-    
-    const snapshot = await query.orderBy('timestamp', 'desc').get();
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
+  const { customerId, module } = request.data || {};
+  logger.info('getAILogQualityMetrics called but AI logging is disabled.', {
+    context: 'autoDevOps.getAILogQualityMetrics',
+    extra: { customerId, module }
+  });
 
-    // Calculate quality metrics
-    const metrics = calculateQualityMetrics(logs);
-    
-    return { metrics, totalLogs: logs.length };
-  } catch (error: any) {
-    throw new Error(`Failed to get AI log quality metrics: ${error.message}`);
-  }
+  return {
+    metrics: {},
+    totalLogs: 0,
+    message: 'AI logging has been disabled; no quality metrics are available.'
+  };
 });
 
 export const suggestConfigImprovements = onCall(async (request) => {
-  const { customerId, module, issueType, userId } = request.data;
-  const start = Date.now();
-  
-  try {
-    // Get current configuration
-    const config = await getCurrentConfig(customerId, module);
-    
-    // Get recent logs for context
-    const logsRef = db.collection('ai_logs');
-    const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    
-    let query = logsRef.where('timestamp', '>=', admin.firestore.Timestamp.fromDate(cutoffTime));
-    if (customerId) {
-      query = query.where('customerId', '==', customerId);
-    }
-    if (module) {
-      query = query.where('sourceModule', '==', module);
-    }
-    
-    const snapshot = await query.orderBy('timestamp', 'desc').limit(100).get();
-    const logs = snapshot.docs.map((doc: any) => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate()
-    }));
+  const { customerId, module, issueType, userId } = request.data || {};
+  logger.info('suggestConfigImprovements called but AI logging is disabled.', {
+    context: 'autoDevOps.suggestConfigImprovements',
+    extra: { customerId, module, issueType, userId }
+  });
 
-    // Generate improvement suggestions
-    const suggestions = await generateConfigSuggestions(config, logs, issueType);
-    
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_config_suggestions',
-      sourceModule: 'AutoDevOps',
-      success: true,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Generated config suggestions for ${module}`
-    });
-
-    return { suggestions };
-  } catch (error: any) {
-    await logAIAction({
-      userId,
-      actionType: 'autodevops_config_suggestions',
-      sourceModule: 'AutoDevOps',
-      success: false,
-      errorMessage: error.message,
-      latencyMs: Date.now() - start,
-      versionTag: 'v1',
-      reason: `Failed to generate config suggestions for ${module}`
-    });
-    throw error;
-  }
+  return {
+    suggestions: [],
+    message: 'AI logging has been disabled; there is no historical data to drive config suggestions.'
+  };
 });
 
 // Helper functions for AI log analysis
@@ -1711,7 +1571,7 @@ export const getAIChatSettings = onCall(async (request) => {
       }
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_get',
       sourceModule: 'AIChat',
@@ -1723,7 +1583,7 @@ export const getAIChatSettings = onCall(async (request) => {
 
     return { settings };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_get',
       sourceModule: 'AIChat',
@@ -1757,7 +1617,7 @@ export const updateAIChatSettings = onCall(async (request) => {
       }, { merge: true });
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_update',
       sourceModule: 'AIChat',
@@ -1769,7 +1629,7 @@ export const updateAIChatSettings = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_settings_update',
       sourceModule: 'AIChat',
@@ -1801,7 +1661,7 @@ export const getAIChatConversations = onCall(async (request) => {
       updatedAt: doc.data().updatedAt?.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversations_get',
       sourceModule: 'AIChat',
@@ -1813,7 +1673,7 @@ export const getAIChatConversations = onCall(async (request) => {
 
     return { conversations };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversations_get',
       sourceModule: 'AIChat',
@@ -1869,7 +1729,7 @@ export const createAIChatConversation = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_conversation_create',
       sourceModule: 'AIChat',
@@ -1881,7 +1741,7 @@ export const createAIChatConversation = onCall(async (request) => {
 
     return { conversationId: conversationRef.id, aiResponse };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_conversation_create',
       sourceModule: 'AIChat',
@@ -1949,7 +1809,7 @@ export const sendAIChatMessage = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_message_send',
       sourceModule: 'AIChat',
@@ -1961,7 +1821,7 @@ export const sendAIChatMessage = onCall(async (request) => {
 
     return { aiResponse, escalated: shouldEscalate };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_message_send',
       sourceModule: 'AIChat',
@@ -1998,7 +1858,7 @@ export const escalateConversation = onCall(async (request) => {
       })
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversation_escalate',
       sourceModule: 'AIChat',
@@ -2010,7 +1870,7 @@ export const escalateConversation = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_chat_conversation_escalate',
       sourceModule: 'AIChat',
@@ -2246,7 +2106,7 @@ export const getFAQSuggestions = onCall(async (request) => {
       suggestion.question.toLowerCase().includes(currentMessage?.toLowerCase() || '')
     ).slice(0, 3);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_faq_suggestions',
       sourceModule: 'AIChat',
@@ -2258,7 +2118,7 @@ export const getFAQSuggestions = onCall(async (request) => {
 
     return { suggestions: filteredSuggestions };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_faq_suggestions',
       sourceModule: 'AIChat',
@@ -2289,7 +2149,7 @@ export const scheduleRecurringCheckinV2 = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_schedule',
       sourceModule: 'AIChat',
@@ -2301,7 +2161,7 @@ export const scheduleRecurringCheckinV2 = onCall(async (request) => {
 
     return { checkinId: checkinRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_schedule',
       sourceModule: 'AIChat',
@@ -2333,7 +2193,7 @@ export const getPendingCheckins = onCall(async (request) => {
       ...doc.data()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_pending',
       sourceModule: 'AIChat',
@@ -2345,7 +2205,7 @@ export const getPendingCheckins = onCall(async (request) => {
 
     return { checkins: pendingCheckins };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'ai_chat_checkin_pending',
       sourceModule: 'AIChat',
@@ -2445,7 +2305,7 @@ export const analyzeConversationSentiment = onCall(async (request) => {
       rules: automationRules,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: conversation.workerId,
       actionType: 'ai_chat_sentiment_analysis',
       sourceModule: 'AIChat',
@@ -2456,7 +2316,7 @@ export const analyzeConversationSentiment = onCall(async (request) => {
     });
     return { sentiment, actionsTaken };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'unknown',
       actionType: 'ai_chat_sentiment_analysis',
       sourceModule: 'AIChat',
@@ -2526,7 +2386,7 @@ export const triggerScheduledCheckins = onSchedule({
     
     console.log(`Triggered ${triggeredCheckins.length} check-ins`);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_chat_checkin_trigger',
       sourceModule: 'AIChat',
@@ -2538,7 +2398,7 @@ export const triggerScheduledCheckins = onSchedule({
   } catch (error: any) {
     console.error('Error triggering check-ins:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_chat_checkin_trigger',
       sourceModule: 'AIChat',
@@ -2665,7 +2525,7 @@ export const getRealTimeAIChatAnalytics = onCall(async (request) => {
       }
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_analytics_generate',
       sourceModule: 'AIChat',
@@ -2677,7 +2537,7 @@ export const getRealTimeAIChatAnalytics = onCall(async (request) => {
     
     return { analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'ai_chat_analytics_generate',
       sourceModule: 'AIChat',
@@ -2883,7 +2743,7 @@ export const manageCustomerFAQ = onCall(async (request) => {
         throw new Error('Invalid action');
     }
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'customer_faq_manage',
       sourceModule: 'AIChat',
@@ -2928,7 +2788,7 @@ export const trackSatisfaction = onCall(async (request) => {
       await analyzeLowSatisfaction(conversationId, customerId, workerId, satisfactionScore, feedback);
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'satisfaction_tracked',
       sourceModule: 'AIChat',
@@ -2940,7 +2800,7 @@ export const trackSatisfaction = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'satisfaction_tracked',
       sourceModule: 'AIChat',
@@ -3055,7 +2915,7 @@ export const collectAIFeedback = onCall(async (request) => {
       await triggerLearningCycle(feedbackRecord, analysis);
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_feedback_collected',
       sourceModule: 'AIFeedbackLoop',
@@ -3075,7 +2935,7 @@ export const collectAIFeedback = onCall(async (request) => {
 
     return { success: true, feedbackId: feedbackRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_feedback_collected',
       sourceModule: 'AIFeedbackLoop',
@@ -3209,7 +3069,7 @@ async function applyImmediateLearning(feedbackRecord: any, analysis: any) {
         }
 
         // 🧠 Log AI learning action
-        await logAIAction({
+        await logger.aiEvent({
           userId: 'system',
           actionType: 'ai_learning_applied',
           sourceModule: 'AIFeedbackLoop',
@@ -3272,7 +3132,7 @@ export const generateAIPerformanceInsights = onCall(async (request) => {
 
     const insightsRef = await db.collection('ai_performance_insights').add(insightsRecord);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_performance_insights_generated',
       sourceModule: 'AIFeedbackLoop',
@@ -3292,7 +3152,7 @@ export const generateAIPerformanceInsights = onCall(async (request) => {
 
     return { success: true, insights };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_performance_insights_generated',
       sourceModule: 'AIFeedbackLoop',
@@ -3440,7 +3300,7 @@ export const getAIFeedbackData = onCall(async (request) => {
       timestamp: doc.data().timestamp.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_feedback_data_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3460,7 +3320,7 @@ export const getAIFeedbackData = onCall(async (request) => {
 
     return { success: true, feedback };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_feedback_data_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3495,7 +3355,7 @@ export const getAILearningTasks = onCall(async (request) => {
       createdAt: doc.data().createdAt.toDate()
     }));
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_tasks_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3515,7 +3375,7 @@ export const getAILearningTasks = onCall(async (request) => {
 
     return { success: true, tasks };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_tasks_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3604,7 +3464,7 @@ export const getFeedbackAnalytics = onCall(async (request) => {
       );
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'feedback_analytics_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3624,7 +3484,7 @@ export const getFeedbackAnalytics = onCall(async (request) => {
 
     return { success: true, analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'feedback_analytics_retrieved',
       sourceModule: 'AIFeedbackLoop',
@@ -3684,7 +3544,7 @@ export const applyAILearning = onCall(async (request) => {
     });
     
     // Log the learning application
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_applied',
       sourceModule: 'AIFeedbackLoop',
@@ -3717,7 +3577,7 @@ export const applyAILearning = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'ai_learning_applied',
       sourceModule: 'AIFeedbackLoop',
@@ -3756,7 +3616,7 @@ export const scheduleContinuousLearning = onCall(async (request) => {
 
     await db.collection('ai_learning_schedules').doc(scheduleId).set(scheduleData);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'continuous_learning_scheduled',
       sourceModule: 'AIFeedbackLoop',
@@ -3776,7 +3636,7 @@ export const scheduleContinuousLearning = onCall(async (request) => {
 
     return { success: true, scheduleId };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'continuous_learning_scheduled',
       sourceModule: 'AIFeedbackLoop',
@@ -3899,7 +3759,7 @@ export const createBroadcast = onCall(async (request) => {
       await sendBroadcastInternal(broadcastRef.id, recipients);
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: senderId,
       actionType: 'broadcast_created',
       sourceModule: 'Broadcast',
@@ -3915,7 +3775,7 @@ export const createBroadcast = onCall(async (request) => {
       status: broadcast.status 
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: senderId,
       actionType: 'broadcast_created',
       sourceModule: 'Broadcast',
@@ -3983,7 +3843,7 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
     
     await batch.commit();
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: broadcast.senderId,
       actionType: 'broadcast_sent',
       sourceModule: 'Broadcast',
@@ -3995,7 +3855,7 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
     
     return { success: true, numRecipients: recipients.length };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'broadcast_sent',
       sourceModule: 'Broadcast',
@@ -4088,7 +3948,7 @@ export const replyToBroadcast = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'broadcast_reply',
       sourceModule: 'Broadcast',
@@ -4105,7 +3965,7 @@ export const replyToBroadcast = onCall(async (request) => {
       escalationReason: escalated ? escalationReason : null
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: workerId,
       actionType: 'broadcast_reply',
       sourceModule: 'Broadcast',
@@ -4203,7 +4063,7 @@ export const getBroadcastAnalytics = onCall(async (request) => {
       repliesByDay: getRepliesByDay(replies, timeRangeMs)
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'broadcast_analytics_generate',
       sourceModule: 'Broadcast',
@@ -4215,7 +4075,7 @@ export const getBroadcastAnalytics = onCall(async (request) => {
     
     return { analytics };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'admin',
       actionType: 'broadcast_analytics_generate',
       sourceModule: 'Broadcast',
@@ -4518,7 +4378,7 @@ export const evaluatePromptWithFilters = onCall(async (request) => {
       });
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_evaluation',
       sourceModule: 'RetrievalFilters',
@@ -4543,7 +4403,7 @@ export const evaluatePromptWithFilters = onCall(async (request) => {
       chunks: filteredChunks.slice(0, 10) // Return first 10 for preview
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_evaluation',
       sourceModule: 'RetrievalFilters',
@@ -4578,7 +4438,7 @@ export const assignFilterToModule = onCall(async (request) => {
       assignedBy: userId
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_assigned',
       sourceModule: 'RetrievalFilters',
@@ -4598,7 +4458,7 @@ export const assignFilterToModule = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'filter_assigned',
       sourceModule: 'RetrievalFilters',
@@ -4642,7 +4502,7 @@ export const rescoreVectorChunk = onCall(async (request) => {
       previousScore: oldScore
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_rescored',
       sourceModule: 'VectorSettings',
@@ -4662,7 +4522,7 @@ export const rescoreVectorChunk = onCall(async (request) => {
     
     return { success: true, oldScore, newScore };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_rescored',
       sourceModule: 'VectorSettings',
@@ -4709,7 +4569,7 @@ export const archiveVectorChunk = onCall(async (request) => {
     // Delete from active collection
     await chunkRef.delete();
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_archived',
       sourceModule: 'VectorSettings',
@@ -4729,7 +4589,7 @@ export const archiveVectorChunk = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_archived',
       sourceModule: 'VectorSettings',
@@ -4772,7 +4632,7 @@ export const tagChunk = onCall(async (request) => {
       taggedBy: userId
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_tagged',
       sourceModule: 'VectorSettings',
@@ -4792,7 +4652,7 @@ export const tagChunk = onCall(async (request) => {
     
     return { success: true, tags: newTags };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'vector_tagged',
       sourceModule: 'VectorSettings',
@@ -4864,7 +4724,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
       return acc;
     }, {} as Record<string, number>);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'orchestration_report',
       sourceModule: 'AIAnalytics',
@@ -4894,7 +4754,7 @@ export const generateOrchestrationReport = onCall(async (request) => {
         .map(([module, count]) => ({ module, count }))
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'orchestration_report',
       sourceModule: 'AIAnalytics',
@@ -4954,7 +4814,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
       return acc;
     }, {} as Record<string, number>);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'failure_analysis',
       sourceModule: 'AIAnalytics',
@@ -4983,7 +4843,7 @@ export const analyzePromptFailurePatterns = onCall(async (request) => {
         .map(([errorType, count]) => ({ errorType, count }))
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'failure_analysis',
       sourceModule: 'AIAnalytics',
@@ -5067,7 +4927,7 @@ export const simulateOrchestrationScenario = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'scenario_simulated',
       sourceModule: 'TestBench',
@@ -5087,7 +4947,7 @@ export const simulateOrchestrationScenario = onCall(async (request) => {
     
     return orchestrationResult;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'scenario_simulated',
       sourceModule: 'TestBench',
@@ -5140,7 +5000,7 @@ export const validatePromptConsistency = onCall(async (request) => {
     
     const overallConsistency = (consistencyScore + latencyConsistency) / 2;
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'consistency_validated',
       sourceModule: 'TestBench',
@@ -5168,7 +5028,7 @@ export const validatePromptConsistency = onCall(async (request) => {
       totalChecks: logs.length
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'consistency_validated',
       sourceModule: 'TestBench',
@@ -5260,7 +5120,7 @@ export const validateInviteToken = onCall(async (request) => {
       }
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'invite_token_validated',
       sourceModule: 'OnboardingFlow',
@@ -5289,7 +5149,7 @@ export const validateInviteToken = onCall(async (request) => {
       expiresAt: inviteData.expiresAt
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'invite_token_validated',
       sourceModule: 'OnboardingFlow',
@@ -5327,7 +5187,7 @@ export const markInviteTokenUsed = onCall(async (request) => {
       usedAt: admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'invite_token_used',
       sourceModule: 'OnboardingFlow',
@@ -5347,7 +5207,7 @@ export const markInviteTokenUsed = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'invite_token_used',
       sourceModule: 'OnboardingFlow',
@@ -5432,7 +5292,7 @@ export const assignOrgToUser = onCall(async (request) => {
       });
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'org_assigned_to_user',
       sourceModule: 'OnboardingFlow',
@@ -5459,7 +5319,7 @@ export const assignOrgToUser = onCall(async (request) => {
       tenantId: type === 'Customer' && parentTenantId ? parentTenantId : orgId
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'org_assigned_to_user',
       sourceModule: 'OnboardingFlow',
@@ -5510,7 +5370,7 @@ export const createInviteToken = onCall(async (request) => {
       used: false
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: createdBy,
       actionType: 'invite_token_created',
       sourceModule: 'OnboardingFlow',
@@ -5535,7 +5395,7 @@ export const createInviteToken = onCall(async (request) => {
       expiresAt
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: createdBy,
       actionType: 'invite_token_created',
       sourceModule: 'OnboardingFlow',
@@ -6668,7 +6528,7 @@ Effective performance management helps workers succeed and organizations thrive.
       });
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_drafts_generated',
       sourceModule: 'HelpManagement',
@@ -6693,7 +6553,7 @@ Effective performance management helps workers succeed and organizations thrive.
       message: `Successfully generated ${savedDrafts.length} help article drafts. You can now review, edit, and publish them.`
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_drafts_generated',
       sourceModule: 'HelpManagement',
@@ -6817,7 +6677,7 @@ export const updateHelpArticlesWithNewInfo = onCall(async (request) => {
         updated.push({ id: docSnap.id, title: data.title });
       }
     }
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_articles_updated',
       sourceModule: 'HelpManagement',
@@ -6841,7 +6701,7 @@ export const updateHelpArticlesWithNewInfo = onCall(async (request) => {
       message: `Updated ${updated.length} articles with new information.`
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_articles_updated',
       sourceModule: 'HelpManagement',
@@ -6869,7 +6729,7 @@ export const logMotivationEvent = onCall(async (request) => {
   const start = Date.now();
   let success = false;
   let errorMessage = '';
-  let logRef = null;
+  let logId: string | null = null;
 
   try {
     // Compose log entry
@@ -6904,15 +6764,19 @@ export const logMotivationEvent = onCall(async (request) => {
       latencyMs: Date.now() - start,
     };
 
-    logRef = await admin.firestore().collection('ai_logs').add(logEntry);
+    logger.info('DailyMotivation event captured (Firestore logging disabled).', {
+      context: 'dailyMotivation.logEvent',
+      extra: logEntry
+    });
     success = true;
-    return { success: true, logId: logRef.id };
+    logId = null;
+    return { success: true, logId };
   } catch (error: any) {
     errorMessage = error.message || 'Unknown error';
     throw error;
   } finally {
-    // Also log via logAIAction for analytics/consistency
-    await logAIAction({
+    // Record an AI event for analytics/consistency
+    await logger.aiEvent({
       userId: request.auth?.uid || data.workerId || 'unknown',
       actionType: data.actionType || 'motivation_event',
       sourceModule: 'DailyMotivation',
@@ -6936,7 +6800,7 @@ export const logMotivationEvent = onCall(async (request) => {
       success,
       aiRelevant: true,
       contextType: 'motivation',
-      reason: data.reason || errorMessage,
+      reason: data.reason || errorMessage || 'motivation_event',
       versionTag: 'v1',
       latencyMs: Date.now() - start,
     });
@@ -6973,7 +6837,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
       if (birthdayB < today) birthdayB.setFullYear(today.getFullYear() + 1);
       return birthdayA.getTime() - birthdayB.getTime();
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
@@ -6994,7 +6858,7 @@ export const getUpcomingBirthdays = onCall(async (request) => {
     });
     return { birthdays: upcomingBirthdays };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_upcoming_birthdays',
       sourceModule: 'BirthdayManager',
@@ -7052,7 +6916,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
       read: false
     };
     await db.collection('notifications').add(notification);
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
@@ -7073,7 +6937,7 @@ export const sendBirthdayMessage = onCall(async (request) => {
     });
     return { success: true, messageId: birthdayMessage.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'send_birthday_message',
       sourceModule: 'BirthdayManager',
@@ -7114,7 +6978,7 @@ export const getMotivations = onCall(async (request) => {
     }
     const snapshot = await motivationsQuery.get();
     const motivations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data(), createdAt: doc.data().createdAt?.toDate() }));
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
@@ -7134,7 +6998,7 @@ export const getMotivations = onCall(async (request) => {
     });
     return { motivations };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'get_motivations',
       sourceModule: 'MotivationLibrary',
@@ -7173,7 +7037,7 @@ export const addMotivation = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
     const docRef = await db.collection('motivations').add(motivation);
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
@@ -7193,7 +7057,7 @@ export const addMotivation = onCall(async (request) => {
     });
     return { success: true, motivationId: docRef.id };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'add_motivation',
       sourceModule: 'MotivationLibrary',
@@ -7266,7 +7130,7 @@ export const seedMotivationMessagesFromAPI = onCall(async (request) => {
     }
 
     // Log the seeding operation
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'seed_motivations_from_api',
       sourceModule: 'MotivationLibrary',
@@ -7292,7 +7156,7 @@ export const seedMotivationMessagesFromAPI = onCall(async (request) => {
       skippedQuotes: skippedQuotes.slice(0, 10)
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'seed_motivations_from_api',
       sourceModule: 'MotivationLibrary',
@@ -7333,7 +7197,7 @@ export const checkBirthdays = onSchedule({
       const dob = user.dob.toDate ? user.dob.toDate() : new Date(user.dob);
       return dob.getMonth() + 1 === month && dob.getDate() === day;
     });
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
@@ -7352,7 +7216,7 @@ export const checkBirthdays = onSchedule({
     });
     console.log(`Birthday check completed: ${usersWithBirthdaysToday.length} birthdays found`);
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'birthday_check',
       sourceModule: 'BirthdayManager',
@@ -7400,7 +7264,7 @@ export const updateCustomerAISettings = onCall(async (request) => {
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_settings_update',
       sourceModule: 'AISettings',
@@ -7454,7 +7318,7 @@ export const updateAgencyAISettings = onCall(async (request) => {
     throw new HttpsError('internal', errorMessage, { agencyId, settingsType, settings });
   } finally {
     const latencyMs = Date.now() - start;
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'ai_settings_update',
       sourceModule: 'AISettings',
@@ -7582,7 +7446,7 @@ export const updateHelpTopic = onCall(async (request) => {
       lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_updated',
       sourceModule: 'HelpManagement',
@@ -7602,7 +7466,7 @@ export const updateHelpTopic = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_updated',
       sourceModule: 'HelpManagement',
@@ -7633,7 +7497,7 @@ export const deleteHelpTopic = onCall(async (request) => {
   try {
     await db.collection('help_topics').doc(topicId).delete();
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_deleted',
       sourceModule: 'HelpManagement',
@@ -7653,7 +7517,7 @@ export const deleteHelpTopic = onCall(async (request) => {
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'help_topic_deleted',
       sourceModule: 'HelpManagement',
@@ -7911,7 +7775,7 @@ ${templateData.tenant_legal_footer || `This email was sent by ${templateData.ten
     });
     
     // Log the AI action for email failure
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_email_failed',
       sourceModule: 'InviteUserV2',
@@ -8127,7 +7991,7 @@ export const revokeInviteV2 = onCall(async (request) => {
     await db.collection('users').doc(userRecord.uid).update(updateData);
 
     // Log the AI action for successful revocation
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
@@ -8148,7 +8012,7 @@ export const revokeInviteV2 = onCall(async (request) => {
     return { success: true };
   } catch (error: any) {
     // Log the AI action for failed revocation
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'unknown',
       actionType: 'invite_revoked',
       sourceModule: 'RevokeInviteV2',
@@ -8505,7 +8369,7 @@ export const scheduledTriggerTests = onSchedule({
     const summary = await runFirestoreTriggerTests();
     
     // Log the results
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_trigger_tests_completed',
       sourceModule: 'ScheduledTests',
@@ -8566,7 +8430,7 @@ export const scheduledTriggerTests = onSchedule({
     console.error('Error in scheduled trigger tests:', error);
     
     // Log the error
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_trigger_tests_failed',
       sourceModule: 'ScheduledTests',
@@ -8657,7 +8521,7 @@ export const translateContent = onCall(async (request) => {
     
     const translatedContent = completion.choices[0].message.content?.trim() || content;
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'content_translation',
       sourceModule: 'TranslationService',
@@ -8683,7 +8547,7 @@ export const translateContent = onCall(async (request) => {
       targetLanguage
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'content_translation',
       sourceModule: 'TranslationService',
@@ -8792,7 +8656,7 @@ export const updateUserLoginInfo = onCall({
     
     await userRef.update(updateData);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'user_login_updated',
       sourceModule: 'LoginTracking',
@@ -8816,7 +8680,7 @@ export const updateUserLoginInfo = onCall({
       helloMessageSettings: updateData.helloMessageSettings
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'user_login_updated',
       sourceModule: 'LoginTracking',
@@ -8870,7 +8734,7 @@ export const updateUserActivity = onCall({
 
     await userRef.update(updateData);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'user_activity_heartbeat',
       sourceModule: 'ActivityTracking',
@@ -8890,7 +8754,7 @@ export const updateUserActivity = onCall({
 
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'user_activity_heartbeat',
       sourceModule: 'ActivityTracking',
@@ -8955,7 +8819,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
       
       await db.collection('appAiSettings').doc('helloMessages').set(defaultSettings);
       
-      await logAIAction({
+      await logger.aiEvent({
         userId: request.auth?.uid || 'system',
         actionType: 'hello_settings_created',
         sourceModule: 'HelloMessageConfig',
@@ -8970,7 +8834,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
     
     const settings = settingsDoc.data();
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_retrieved',
       sourceModule: 'HelloMessageConfig',
@@ -8982,7 +8846,7 @@ export const getHelloMessageSettings = onCall(async (request) => {
     
     return settings;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_retrieved',
       sourceModule: 'HelloMessageConfig',
@@ -9014,7 +8878,7 @@ export const updateHelloMessageSettings = onCall(async (request) => {
     
     await db.collection('appAiSettings').doc('helloMessages').update(updateData);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_updated',
       sourceModule: 'HelloMessageConfig',
@@ -9034,7 +8898,7 @@ export const updateHelloMessageSettings = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_settings_updated',
       sourceModule: 'HelloMessageConfig',
@@ -9115,7 +8979,7 @@ export const getMobileChatData = onCall(async (request) => {
       lastHelloSent: null
     };
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'mobile_chat_data_retrieved',
       sourceModule: 'MobileAPI',
@@ -9149,7 +9013,7 @@ export const getMobileChatData = onCall(async (request) => {
     
     return result;
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'mobile_chat_data_retrieved',
       sourceModule: 'MobileAPI',
@@ -9266,7 +9130,7 @@ export const sendHelloMessage = onCall(async (request) => {
       'helloMessageSettings.lastHelloSent': admin.firestore.FieldValue.serverTimestamp()
     });
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'hello_message_sent',
       sourceModule: 'HelloMessageService',
@@ -9290,7 +9154,7 @@ export const sendHelloMessage = onCall(async (request) => {
       message: helloMessage.content[userLanguage]
     };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'hello_message_sent',
       sourceModule: 'HelloMessageService',
@@ -9370,7 +9234,7 @@ export const manageTenantCustomers = onCall(async (request) => {
         throw new Error('Invalid action');
     }
     
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'tenant_customers_managed',
       sourceModule: 'TenantManagement',
@@ -9390,7 +9254,7 @@ export const manageTenantCustomers = onCall(async (request) => {
     
     return { success: true };
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'tenant_customers_managed',
       sourceModule: 'TenantManagement',
@@ -9693,7 +9557,7 @@ export const executeScheduledCampaigns = onCall(async (request) => {
       traitChanges: {}
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_executed',
       sourceModule: 'CampaignsEngine',
@@ -9720,7 +9584,7 @@ export const executeScheduledCampaigns = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_executed',
       sourceModule: 'CampaignsEngine',
@@ -9929,7 +9793,7 @@ export const executePendingCampaigns = onSchedule({
 
     console.log(`Campaign execution completed: ${executedCount} executed, ${errorCount} errors`);
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_campaigns_executed',
       sourceModule: 'CampaignsEngine',
@@ -9950,7 +9814,7 @@ export const executePendingCampaigns = onSchedule({
   } catch (error: any) {
     console.error('Scheduled campaign execution failed:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       userId: 'system',
       actionType: 'scheduled_campaigns_executed',
       sourceModule: 'CampaignsEngine',
@@ -10019,7 +9883,7 @@ export const getCampaignAnalytics = onCall(async (request) => {
       traitImpact: await calculateTraitImpact(campaign, interactions)
     };
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_analytics_retrieved',
       sourceModule: 'CampaignsEngine',
@@ -10040,7 +9904,7 @@ export const getCampaignAnalytics = onCall(async (request) => {
     return analytics;
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'campaign_analytics_retrieved',
       sourceModule: 'CampaignsEngine',
@@ -10505,7 +10369,7 @@ export const getTenantAIEngagementSettings = onCall(async (request) => {
       };
     }
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10525,7 +10389,7 @@ export const getTenantAIEngagementSettings = onCall(async (request) => {
     return { success: true, data: settings };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10572,7 +10436,7 @@ export const updateTenantAIEngagementSettings = onCall(async (request) => {
       updatedBy: request.auth?.uid || 'system'
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_updated',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10592,7 +10456,7 @@ export const updateTenantAIEngagementSettings = onCall(async (request) => {
     return { success: true };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'security_level_ai_engagement_settings_updated',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10681,7 +10545,7 @@ export const filterWorkersBySecurityLevel = onCall(async (request) => {
       }
     });
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'workers_filtered_by_security_level',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10709,7 +10573,7 @@ export const filterWorkersBySecurityLevel = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'workers_filtered_by_security_level',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10763,7 +10627,7 @@ export const getWorkerAIEngagementConfig = onCall(async (request) => {
 
     const levelSettings = settings?.[securityLevel] || {};
 
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'worker_ai_engagement_config_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10796,7 +10660,7 @@ export const getWorkerAIEngagementConfig = onCall(async (request) => {
     };
 
   } catch (error: any) {
-    await logAIAction({
+    await logger.aiEvent({
       userId: request.auth?.uid || 'system',
       actionType: 'worker_ai_engagement_config_retrieved',
       sourceModule: 'SecurityLevelAIEngagement',
@@ -10978,7 +10842,6 @@ export { updateActiveSalespeopleOnDealCallable } from './updateActiveSalespeople
 // Do NOT export updateActiveSalespeopleOnEmailLog/updateActiveSalespeopleOnActivityLog triggers
 export { toggleCircuitBreaker, getCircuitBreakerStatus } from './emergencyTriggerDisable';
 // Safe version of AI log trigger to prevent infinite loops
-export { firestoreLogAILogCreated } from './firestoreLogAILogCreatedDisabled';
 // Safe AI log processor (minimal, conservative) - EMERGENCY: COMPLETELY DISABLED
 // export { processAILog } from './safeAiEngineProcessor';
 export { registerChildCompany, setCompanyRelationship, removeCompanyRelationship } from './parentChildCompanies';

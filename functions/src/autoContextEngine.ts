@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall } from 'firebase-functions/v2/https';
-import { logAIAction } from './feedbackEngine';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -92,7 +92,7 @@ export const orchestratePrompt = onCall(async (request) => {
     };
     
     // Step 8: Log the orchestration
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'prompt_orchestration',
       targetType: 'user',
       targetId: userId,
@@ -136,7 +136,7 @@ export const orchestratePrompt = onCall(async (request) => {
   } catch (error: any) {
     console.error('Orchestration error:', error);
     
-    await logAIAction({
+    await logger.aiEvent({
       eventType: 'prompt_orchestration_error',
       targetType: 'user',
       targetId: userId,

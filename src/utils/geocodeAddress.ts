@@ -1,6 +1,19 @@
 const apiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 
-export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number }> {
+export type GeocodeDetails = {
+  lat: number;
+  lng: number;
+  street?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  formattedAddress?: string;
+};
+
+const getComponent = (components: any[], types: string[]) =>
+  components.find((comp: any) => types.every((t) => comp.types.includes(t)))?.long_name || '';
+
+export async function geocodeAddressDetailed(address: string): Promise<GeocodeDetails> {
   if (!apiKey) throw new Error('Google Maps API key is not set');
   const response = await fetch(
     `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
@@ -8,9 +21,34 @@ export async function geocodeAddress(address: string): Promise<{ lat: number; ln
     )}&key=${apiKey}`,
   );
   const data = await response.json();
-  if (data.status === 'OK') {
-    const { lat, lng } = data.results[0].geometry.location;
-    return { lat, lng };
+  if (data.status !== 'OK' || !data.results?.length) {
+    throw new Error('Geocoding failed');
   }
-  throw new Error('Geocoding failed');
+
+  const result = data.results[0];
+  const components = result.address_components || [];
+  const streetNumber = getComponent(components, ['street_number']);
+  const route = getComponent(components, ['route']);
+  const street = `${streetNumber} ${route}`.trim();
+  const city =
+    getComponent(components, ['locality']) ||
+    getComponent(components, ['sublocality']) ||
+    getComponent(components, ['administrative_area_level_2']);
+  const state = getComponent(components, ['administrative_area_level_1']);
+  const zip = getComponent(components, ['postal_code']);
+
+  return {
+    lat: result.geometry.location.lat,
+    lng: result.geometry.location.lng,
+    street: street || undefined,
+    city: city || undefined,
+    state: state || undefined,
+    zip: zip || undefined,
+    formattedAddress: result.formatted_address,
+  };
+}
+
+export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number }> {
+  const detailed = await geocodeAddressDetailed(address);
+  return { lat: detailed.lat, lng: detailed.lng };
 }

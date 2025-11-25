@@ -799,7 +799,7 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     console.log('Auto-merge completed');
 
     // Log AI action
-    await logAIAction({
+    await logger.aiEvent({
       userId,
       actionType: 'resume_parsed',
       sourceModule: 'ResumeParser',
@@ -1709,7 +1709,7 @@ function calculateTotalExperience(experience: WorkExperience[]): number {
 /**
  * Log AI action for analytics
  */
-async function logAIAction(data: any) {
+async function logger.aiEvent(data: any) {
   try {
     await db.collection('aiLogs').add({
       ...data,

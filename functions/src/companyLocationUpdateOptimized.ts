@@ -1,5 +1,6 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getAiCacheDoc } from './utils/inMemoryCache';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -58,7 +59,7 @@ async function checkRateLimiting(locationId: string): Promise<boolean> {
     
     // Check global rate limiting
     const globalKey = `location_update_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
     const globalSnap = await globalRef.get();
     
     if (globalSnap.exists) {
@@ -71,7 +72,7 @@ async function checkRateLimiting(locationId: string): Promise<boolean> {
     
     // Check location-specific rate limiting
     const locationKey = `location_update_rate_limit:location:${locationId}:${hourKey}`;
-    const locationRef = db.collection('ai_cache').doc(locationKey);
+    const locationRef = getAiCacheDoc(locationKey);
     const locationSnap = await locationRef.get();
     
     if (locationSnap.exists) {
@@ -99,18 +100,20 @@ async function updateRateLimiting(locationId: string): Promise<void> {
     
     // Update global counter
     const globalKey = `location_update_rate_limit:global:${hourKey}`;
-    const globalRef = db.collection('ai_cache').doc(globalKey);
+    const globalRef = getAiCacheDoc(globalKey);
+    const globalSnap = await globalRef.get();
+    const globalData = globalSnap.exists ? (globalSnap.data() as any) : {};
     await globalRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (globalData.count || 0) + 1,
     }, { merge: true });
     
     // Update location counter
     const locationKey = `location_update_rate_limit:location:${locationId}:${hourKey}`;
-    const locationRef = db.collection('ai_cache').doc(locationKey);
+    const locationRef = getAiCacheDoc(locationKey);
+    const locationSnap = await locationRef.get();
+    const locationData = locationSnap.exists ? (locationSnap.data() as any) : {};
     await locationRef.set({
-      count: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      count: (locationData.count || 0) + 1,
     }, { merge: true });
   } catch (error) {
     console.error('Error updating rate limiting:', error);
@@ -124,13 +127,16 @@ async function checkForLoop(tenantId: string, locationId: string): Promise<boole
   try {
     const now = Date.now();
     const loopKey = `loop_prevention:location:${locationId}:${now}`;
-    const loopRef = db.collection('ai_cache').doc(loopKey);
+    const loopRef = getAiCacheDoc(loopKey);
     
     // Check if we've processed this location recently
     const loopSnap = await loopRef.get();
     if (loopSnap.exists) {
       const loopData = loopSnap.data() as any;
-      if (loopData.updatedAt && (now - loopData.updatedAt.toMillis()) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
+      const updatedAt = typeof loopData.updatedAt === 'number'
+        ? loopData.updatedAt
+        : loopData.updatedAt?.toMillis?.();
+      if (updatedAt && (now - updatedAt) < UPDATE_CONFIG.LOOP_PREVENTION_TTL) {
         console.log(`🚫 Loop prevention: Location ${locationId} processed too recently`);
         return true; // Potential loop detected
       }
@@ -150,10 +156,10 @@ async function markLocationAsUpdated(locationId: string): Promise<void> {
   try {
     const now = Date.now();
     const loopKey = `loop_prevention:location:${locationId}:${now}`;
-    const loopRef = db.collection('ai_cache').doc(loopKey);
+    const loopRef = getAiCacheDoc(loopKey);
     
     await loopRef.set({
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: now,
       processedBy: 'companyLocationUpdateOptimized'
     });
   } catch (error) {

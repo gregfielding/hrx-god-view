@@ -38,10 +38,10 @@ import {
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { doc, collection, addDoc, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { logger } from '../../../utils/logger';
 
 
 interface Note {
@@ -209,10 +209,7 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
 
   const logNoteCreation = async (noteId: string, noteData: any) => {
     try {
-      const functions = getFunctions();
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      
-      await logAIAction({
+      await logger.aiEvent({
         actionType: 'note_created',
         sourceModule: 'NotesTab',
         userId: uid,
@@ -241,11 +238,7 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
 
   const triggerAIReview = async (workerId: string, triggerType: string, context: any) => {
     try {
-      const functions = getFunctions();
-      const logAIAction = httpsCallable(functions, 'logAIAction');
-      
-      // Log the AI review trigger instead of calling a non-existent function
-      await logAIAction({
+      await logger.aiEvent({
         actionType: 'ai_review_triggered',
         sourceModule: 'NotesTab',
         userId: workerId,

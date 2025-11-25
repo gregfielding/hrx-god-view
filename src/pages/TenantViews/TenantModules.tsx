@@ -50,6 +50,7 @@ import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../firebase';
+import { logger } from '../../utils/logger';
 
 import ModuleDetailsView from './ModuleDetailsView';
 
@@ -479,17 +480,15 @@ const TenantModules: React.FC = () => {
         lastUpdated: new Date().toISOString(),
       }, { merge: true });
       
-      // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleToggle_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'TenantModules',
-        changed: 'module_toggle',
-        moduleId: id,
-        newEnabled: moduleToToggle.isEnabled,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_toggle',
-        userId: currentUser?.uid || null,
-        sourceModule: 'TenantModules',
+      await logger.info('Module toggled', {
+        context: 'TenantModules',
+        extra: {
+          tenantId,
+          moduleId: id,
+          newEnabled: moduleToToggle.isEnabled,
+          userId: currentUser?.uid || null,
+          eventType: 'module_toggle',
+        },
       });
     } catch (err) {
       console.error('Error saving module toggle:', err);
@@ -587,22 +586,14 @@ const TenantModules: React.FC = () => {
         lastUpdated: new Date().toISOString(),
       }, { merge: true });
       
-      // Log the change
-      await setDoc(doc(db, 'ai_logs', `${tenantId}_ModuleSettings_${Date.now()}`), {
-        tenantId: tenantId,
-        section: 'TenantModules',
-        changed: 'module_settings',
-        moduleId: selectedModule.id,
-        oldValue: selectedModule.isCore 
-          ? coreModulesState.find(m => m.id === selectedModule.id)
-          : selectedModule.category === 'wellness'
-          ? wellnessModulesState.find(m => m.id === selectedModule.id)
-          : optionalModulesState.find(m => m.id === selectedModule.id),
-        newValue: selectedModule,
-        timestamp: new Date().toISOString(),
-        eventType: 'module_settings_update',
-        userId: currentUser?.uid || null,
-        sourceModule: 'TenantModules',
+      await logger.info('Module settings updated', {
+        context: 'TenantModules',
+        extra: {
+          tenantId,
+          moduleId: selectedModule.id,
+          userId: currentUser?.uid || null,
+          eventType: 'module_settings_update',
+        },
       });
       
       setSuccess(true);

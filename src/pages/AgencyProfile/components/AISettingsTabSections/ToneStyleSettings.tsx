@@ -10,12 +10,13 @@ import {
   Alert,
 } from '@mui/material';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
-import { db , app } from '../../../../firebase';
+import { db, app } from '../../../../firebase';
 import { LoggableSlider } from '../../../../components/LoggableField';
 import { useAuth } from '../../../../contexts/AuthContext';
+import { logger } from '../../../../utils/logger';
 
 const toneTraits = [
   {
@@ -96,21 +97,13 @@ const ToneStyleSettings: React.FC<ToneStyleSettingsProps> = ({ tenantId }) => {
       const functions = getFunctions(app, 'us-central1');
       const updateFn = httpsCallable(functions, 'updateAgencyAISettings');
       await updateFn({ tenantId, settingsType: 'toneSettings', settings: tone });
-      // --- AI Log for processing ---
-      await addDoc(collection(db, 'ai_logs'), {
-        tenantId,
-        section: 'ToneStyleSettings',
-        changed: 'toneSettings',
-        oldValue: originalTone,
-        newValue: tone,
-        timestamp: new Date().toISOString(),
-        eventType: 'ai_settings_update',
-        contextType: 'tone',
-        aiRelevant: true,
-        urgencyScore: 3,
-        success: true,
-        userId: currentUser?.uid || null,
-        sourceModule: 'AISettings',
+      await logger.info('Tone settings updated', {
+        context: 'ToneStyleSettings',
+        extra: {
+          tenantId,
+          userId: currentUser?.uid || null,
+          eventType: 'ai_settings_update',
+        },
       });
       setOriginalTone(tone);
       setSuccess(true);

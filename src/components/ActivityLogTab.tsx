@@ -45,10 +45,9 @@ import {
   StarOutline as PriorityLowIcon,
   AutoAwesome as AIIcon,
 } from '@mui/icons-material';
-import { collection, query, where, orderBy, limit, getDocs, Timestamp } from 'firebase/firestore';
+import { Timestamp } from 'firebase/firestore';
 
 // import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
 
 interface ActivityLog {
   id: string;
@@ -132,34 +131,9 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
 
   const loadActivities = async () => {
     if (!tenantId || !entityId) return;
-    
-    try {
-      setLoading(true);
-      setError('');
-
-      // Query AI logs for this entity
-      const aiLogsRef = collection(db, 'ai_logs');
-      const aiLogsQuery = query(
-        aiLogsRef,
-        where('tenantId', '==', tenantId),
-        where('targetId', '==', entityId),
-        orderBy('createdAt', 'desc'),
-        limit(100)
-      );
-
-      const aiLogsSnapshot = await getDocs(aiLogsQuery);
-      const aiLogs = aiLogsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as ActivityLog[];
-
-      setActivities(aiLogs);
-    } catch (err: any) {
-      console.error('Error loading activities:', err);
-      setError(err.message || 'Failed to load activities');
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
+    setError('');
+    setActivities([]);
   };
 
   // Filter and sort activities
@@ -407,6 +381,11 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
         </Card>
       )}
 
+      <Alert severity="info" sx={{ mb: 2 }}>
+        AI logging has been disabled in this workspace. Historical AI events are no longer stored,
+        so this view will remain empty unless alternative activity sources are configured.
+      </Alert>
+
       {/* Activities Table */}
       <Card>
         <CardContent sx={{ p: 0 }}>
@@ -531,10 +510,10 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({
           ) : (
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <Typography color="text.secondary">
-                No activities found
+                No AI activities to display.
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                Activities will appear here as AI logging events occur
+                AI event storage has been turned off, so this list will remain empty unless an alternate source is provided.
               </Typography>
             </Box>
           )}

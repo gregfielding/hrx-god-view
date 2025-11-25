@@ -2,7 +2,7 @@ import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import OpenAI from 'openai';
 import { withIdempotency } from './middleware/aiGuard';
-import { logAIAction } from './utils/aiLogging';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -60,7 +60,7 @@ export const app_ai_generateResponse = onCall({
       const confidence = Math.min(0.95, Math.max(0.5, 1 - tokensUsed / Math.max(1, maxTokens)));
 
       try {
-        await logAIAction({
+        await logger.aiEvent({
           eventType: 'mobile.ai.response',
           targetType: 'conversation',
           targetId: conversationId,

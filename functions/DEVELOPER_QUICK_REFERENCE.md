@@ -76,7 +76,7 @@ Use manual logging for non-CRUD operations:
 ```typescript
 import { logAIAction } from './feedbackEngine';
 
-await logAIAction({
+await logger.aiEvent({
   eventType: 'complex_operation.completed',
   targetType: 'operation',
   targetId: result.id,
