@@ -410,49 +410,60 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       const eVerify = defaults.eVerify || {};
       const billing = defaults.billing || {};
       
-      // Only apply defaults if fields are empty (don't overwrite existing values)
       const updates: any = {};
       
-      if (!currentFormData.replacingExistingAgency && rules.replacingExistingAgency !== undefined) {
+      // For NEW job orders: Always apply company defaults (overwrite existing values)
+      // For EXISTING job orders: Only apply defaults if fields are empty (preserve existing values)
+      const shouldApplyDefault = (fieldValue: any, defaultValue: any) => {
+        if (!isEditing) {
+          // New job order: always apply if default exists
+          return defaultValue !== undefined;
+        } else {
+          // Existing job order: only apply if field is empty and default exists
+          return !fieldValue && defaultValue !== undefined;
+        }
+      };
+      
+      if (shouldApplyDefault(currentFormData.replacingExistingAgency, rules.replacingExistingAgency)) {
         updates.replacingExistingAgency = rules.replacingExistingAgency;
       }
-      if (!currentFormData.rolloverExistingStaff && rules.rolloverExistingStaff !== undefined) {
+      if (shouldApplyDefault(currentFormData.rolloverExistingStaff, rules.rolloverExistingStaff)) {
         updates.rolloverExistingStaff = rules.rolloverExistingStaff;
       }
-      if (!currentFormData.timeclockSystem && rules.timeclockSystem) {
+      if (shouldApplyDefault(currentFormData.timeclockSystem, rules.timeclockSystem)) {
         updates.timeclockSystem = rules.timeclockSystem;
       }
-      if (!currentFormData.attendancePolicy && rules.attendancePolicy) {
+      if (shouldApplyDefault(currentFormData.attendancePolicy, rules.attendancePolicy)) {
         updates.attendancePolicy = rules.attendancePolicy;
       }
-      if (!currentFormData.noShowPolicy && rules.noShowPolicy) {
+      if (shouldApplyDefault(currentFormData.noShowPolicy, rules.noShowPolicy)) {
         updates.noShowPolicy = rules.noShowPolicy;
       }
-      if (!currentFormData.overtimePolicy && rules.overtimePolicy) {
+      if (shouldApplyDefault(currentFormData.overtimePolicy, rules.overtimePolicy)) {
         updates.overtimePolicy = rules.overtimePolicy;
       }
-      if (!currentFormData.callOffPolicy && rules.callOffPolicy) {
+      if (shouldApplyDefault(currentFormData.callOffPolicy, rules.callOffPolicy)) {
         updates.callOffPolicy = rules.callOffPolicy;
       }
-      if (!currentFormData.injuryHandlingPolicy && rules.injuryHandlingPolicy) {
+      if (shouldApplyDefault(currentFormData.injuryHandlingPolicy, rules.injuryHandlingPolicy)) {
         updates.injuryHandlingPolicy = rules.injuryHandlingPolicy;
       }
-      if (!currentFormData.disciplinePolicy && rules.disciplinePolicy) {
+      if (shouldApplyDefault(currentFormData.disciplinePolicy, rules.disciplinePolicy)) {
         updates.disciplinePolicy = rules.disciplinePolicy;
       }
-      if (!currentFormData.eVerifyRequired && eVerify.eVerifyRequired !== undefined) {
+      if (shouldApplyDefault(currentFormData.eVerifyRequired, eVerify.eVerifyRequired)) {
         updates.eVerifyRequired = eVerify.eVerifyRequired;
       }
-      if (!currentFormData.poRequired && billing.poRequired !== undefined) {
+      if (shouldApplyDefault(currentFormData.poRequired, billing.poRequired)) {
         updates.poRequired = billing.poRequired;
       }
-      if (!currentFormData.paymentTerms && billing.paymentTerms) {
+      if (shouldApplyDefault(currentFormData.paymentTerms, billing.paymentTerms)) {
         updates.paymentTerms = billing.paymentTerms;
       }
-      if (!currentFormData.invoiceDeliveryMethod && billing.invoiceDeliveryMethod) {
+      if (shouldApplyDefault(currentFormData.invoiceDeliveryMethod, billing.invoiceDeliveryMethod)) {
         updates.invoiceDeliveryMethod = billing.invoiceDeliveryMethod;
       }
-      if (!currentFormData.invoiceFrequency && billing.invoiceFrequency) {
+      if (shouldApplyDefault(currentFormData.invoiceFrequency, billing.invoiceFrequency)) {
         updates.invoiceFrequency = billing.invoiceFrequency;
       }
       
@@ -1590,9 +1601,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       onChange={(event, newValue) => {
                         handleInputChange('jobTitle', newValue || '');
                       }}
-                      onInputChange={(event, newInputValue) => {
-                        handleInputChange('jobTitle', newInputValue);
-                      }}
                       renderInput={(params) => (
                         <TextField
                           {...params}
@@ -1652,11 +1660,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                 onChange={(event, newValue) => {
                                   const updated = [...gigPositions];
                                   updated[index].jobTitle = newValue || '';
-                                  setGigPositions(updated);
-                                }}
-                                onInputChange={(event, newInputValue) => {
-                                  const updated = [...gigPositions];
-                                  updated[index].jobTitle = newInputValue;
                                   setGigPositions(updated);
                                 }}
                                 renderInput={(params) => (

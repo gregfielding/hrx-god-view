@@ -5272,40 +5272,44 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                 />
               </Grid>
               <Grid item xs={12} md={6}>
-                <TextField
+                <Autocomplete
                   fullWidth
-                  label="Type"
-                  select
-                  value={newLocation.type}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, type: e.target.value }))}
-                >
-                  <MenuItem value="Office">Office</MenuItem>
-                  <MenuItem value="Warehouse">Warehouse</MenuItem>
-                  <MenuItem value="Plant">Plant</MenuItem>
-                  <MenuItem value="Distribution Center">Distribution Center</MenuItem>
-                  <MenuItem value="Manufacturing">Manufacturing</MenuItem>
-                  <MenuItem value="Retail">Retail</MenuItem>
-                  <MenuItem value="Branch">Branch</MenuItem>
-                  <MenuItem value="Headquarters">Headquarters</MenuItem>
-                  <MenuItem value="Data Center">Data Center</MenuItem>
-                  <MenuItem value="Call Center">Call Center</MenuItem>
-                  <MenuItem value="Research & Development">Research & Development</MenuItem>
-                  <MenuItem value="Training Center">Training Center</MenuItem>
-                  <MenuItem value="Service Center">Service Center</MenuItem>
-                  <MenuItem value="Showroom">Showroom</MenuItem>
-                  <MenuItem value="Storage Facility">Storage Facility</MenuItem>
-                  <MenuItem value="Hotel">Hotel</MenuItem>
-                  <MenuItem value="Medical Clinic">Medical Clinic</MenuItem>
-                  <MenuItem value="Hospital">Hospital</MenuItem>
-                  <MenuItem value="Retirement Home">Retirement Home</MenuItem>
-                  <MenuItem value="Sports Arena">Sports Arena</MenuItem>
-                  <MenuItem value="Sports Stadium">Sports Stadium</MenuItem>
-                  <MenuItem value="Fairgrounds">Fairgrounds</MenuItem>
-                  <MenuItem value="Concert Venue">Concert Venue</MenuItem>
-                  <MenuItem value="Convention Center">Convention Center</MenuItem>
-                  <MenuItem value="College">College</MenuItem>
-                  <MenuItem value="High School">High School</MenuItem>
-                </TextField>
+                  freeSolo
+                  options={[
+                    'Office',
+                    'Warehouse',
+                    'Plant',
+                    'Distribution Center',
+                    'Manufacturing',
+                    'Retail',
+                    'Branch',
+                    'Headquarters',
+                    'Data Center',
+                    'Call Center',
+                    'Research & Development',
+                    'Training Center',
+                    'Service Center',
+                    'Showroom',
+                    'Storage Facility',
+                    'Hotel',
+                    'Medical Clinic',
+                    'Hospital',
+                    'Retirement Home',
+                    'Sports Arena',
+                    'Sports Stadium',
+                    'Fairgrounds',
+                    'Concert Venue',
+                    'Convention Center',
+                    'College',
+                    'High School',
+                    'Dining Hall',
+                  ]}
+                  value={newLocation.type || ''}
+                  onChange={(_, newValue) => setNewLocation(prev => ({ ...prev, type: newValue || '' }))}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Type" />
+                  )}
+                />
               </Grid>
               {company.divisions && company.divisions.length > 0 && (
                 <Grid item xs={12} md={6}>

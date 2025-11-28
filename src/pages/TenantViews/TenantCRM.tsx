@@ -98,6 +98,11 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db , functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
+import { useFavorites } from '../../hooks/useFavorites';
+import FavoriteButton from '../../components/FavoriteButton';
+import FavoritesFilter from '../../components/FavoritesFilter';
+import ContactTable from '../../components/ContactTable';
+import ContactTableRow from '../../components/ContactTableRow';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import { AssociationUtils } from '../../utils/associationUtils';
 import CRMImportDialog from '../../components/CRMImportDialog';
@@ -3259,6 +3264,10 @@ const ContactsTab: React.FC<{
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [lastActivities, setLastActivities] = useState<{[key: string]: any}>({});
   const [runningCleanup, setRunningCleanup] = useState(false);
+  
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('contacts');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
   // Function to run the cleanup
   const runCleanup = async () => {
@@ -3427,6 +3436,11 @@ const ContactsTab: React.FC<{
   const filteredContacts = React.useMemo(() => {
     let filtered = contacts;
     
+    // Apply favorites filter
+    if (showFavoritesOnly) {
+      filtered = filtered.filter(contact => isFavorite(contact.id));
+    }
+    
     // Apply company filter if selected
     if (selectedCompanyFilter) {
       // Map company names to ids for legacy records that only have companyName
@@ -3484,7 +3498,7 @@ const ContactsTab: React.FC<{
     });
     
     return filtered;
-  }, [contacts, selectedCompanyFilter, locationStateFilter, sortField, sortDirection, companies, locations, lastActivities]);
+  }, [contacts, selectedCompanyFilter, locationStateFilter, sortField, sortDirection, companies, locations, lastActivities, showFavoritesOnly, isFavorite]);
 
   // Load all companies for the filter dropdown
   const loadAllCompanies = React.useCallback(async () => {
@@ -3778,14 +3792,34 @@ const ContactsTab: React.FC<{
             }}
             InputProps={{
               startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: search && (
-                <IconButton
-                  size="small"
-                  onClick={() => onSearchChange('')}
-                  sx={{ mr: 0.5, p: 0.5 }}
-                >
-                  <ClearIcon fontSize="small" />
-                </IconButton>
+              endAdornment: (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <FavoritesFilter
+                    favoriteType="contacts"
+                    showFavoritesOnly={showFavoritesOnly}
+                    onToggle={setShowFavoritesOnly}
+                    showText={false}
+                    size="small"
+                    sx={{
+                      minWidth: '32px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      '&:hover': {
+                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                      }
+                    }}
+                  />
+                  {search && (
+                    <IconButton
+                      size="small"
+                      onClick={() => onSearchChange('')}
+                      sx={{ mr: 0.5, p: 0.5 }}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
               ),
             }}
           />
@@ -3833,326 +3867,57 @@ const ContactsTab: React.FC<{
       <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Contacts Table */}
-      <TableContainer component={Paper} sx={{ 
-        overflowX: 'auto',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-      }}>
-        <Table sx={{ minWidth: 1200 }}>
-          <TableHead>
-            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-              <TableCell sx={{ 
-                width: 200,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                <TableSortLabel
-                  active={sortField === 'fullName'}
-                  direction={sortField === 'fullName' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('fullName')}
-                  sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
-                  }}
-                >
-                  Name
-                </TableSortLabel>
-              </TableCell>
-              <TableCell sx={{ 
-                width: 150,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                <TableSortLabel
-                  active={sortField === 'jobTitle'}
-                  direction={sortField === 'jobTitle' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('jobTitle')}
-                  sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
-                  }}
-                >
-                  Job Title
-                </TableSortLabel>
-              </TableCell>
-              <TableCell sx={{ 
-                width: 200,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                Contact Info
-              </TableCell>
-              <TableCell sx={{ 
-                width: 150,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                <TableSortLabel
-                  active={sortField === 'company'}
-                  direction={sortField === 'company' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('company')}
-                  sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
-                  }}
-                >
-                  Company
-                </TableSortLabel>
-              </TableCell>
-              
-              <TableCell sx={{ 
-                width: 120,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                Location
-              </TableCell>
-              <TableCell sx={{ 
-                width: 150,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
-                <TableSortLabel
-                  active={sortField === 'lastActivity'}
-                  direction={sortField === 'lastActivity' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('lastActivity')}
-                  sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
-                  }}
-                >
-                  Last Activity
-                </TableSortLabel>
-              </TableCell>
+      <ContactTable
+        contacts={filteredContacts}
+        loading={loading}
+        columns={{
+          favorites: true,
+          name: true,
+          jobTitle: true,
+          contactInfo: true,
+          company: true,
+          location: true,
+          lastActivity: true,
+        }}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSort={handleSort}
+        renderRow={(contact, index) => {
+          const getInitials = (contact: any) => {
+            if (contact.fullName) {
+              return contact.fullName.charAt(0).toUpperCase();
+            }
+            return '?';
+          };
 
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading || contacts.length === 0 ? (
-              // Skeleton loader rows
-              Array.from({ length: 8 }).map((_, index) => (
-                <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
-                  <TableCell sx={{ px: 2, py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Skeleton variant="circular" width={32} height={32} />
-                      <Skeleton variant="text" width={120} height={20} />
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                      <Skeleton variant="text" width={140} height={16} />
-                      <Skeleton variant="text" width={100} height={16} />
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={120} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={80} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              filteredContacts.map((contact) => (
-              <TableRow 
-                key={contact.id} 
-                hover
-                onClick={() => navigate(`/crm/contacts/${contact.id}`)}
-                sx={{ 
-                  height: '48px',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    backgroundColor: '#F9FAFB'
-                  }
-                }}
-              >
-                <TableCell sx={{ px: 2, py: 1 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Avatar 
-                      src={contact.avatar || contact.logoUrl}
-                      sx={{ 
-                        width: 32, 
-                        height: 32,
-                        backgroundColor: getAvatarColor(contact.fullName || ''),
-                        color: getAvatarTextColor(contact.fullName || ''),
-                        fontWeight: 600,
-                        fontSize: '12px'
-                      }}
-                    >
-                      {contact.fullName?.charAt(0) || '?'}
-                    </Avatar>
-                    <Typography 
-                      variant="body2" 
-                      fontWeight={600} 
-                      color="#111827"
-                      sx={{ fontSize: '0.9375rem' }}
-                    >
-                      {contact.fullName}
-                    </Typography>
-                  </Box>
-                </TableCell>
-                <TableCell sx={{ py: 1 }}>
-                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                    {contact.jobTitle || contact.title || '-'}
-                  </Typography>
-                </TableCell>
-                
-                <TableCell sx={{ py: 1 }}>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                    {contact.email && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <EmailIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
-                        <Typography 
-                          variant="body2" 
-                          sx={{ 
-                            color: '#6B7280',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            maxWidth: '140px',
-                            fontSize: '0.8125rem'
-                          }}
-                          title={contact.email}
-                        >
-                          {contact.email}
-                        </Typography>
-                      </Box>
-                    )}
-                    {contact.phone && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, pl: 2 }}>
-                        <PhoneIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
-                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.8125rem' }}>
-                          {contact.phone}
-                        </Typography>
-                      </Box>
-                    )}
-                  </Box>
-                </TableCell>
-                <TableCell sx={{ py: 1 }}>
-                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                    {(() => {
-                      // First check for direct companyName field (most reliable)
-                      if (contact.companyName) {
-                        return contact.companyName;
-                      }
-                      
-                      // Second check for legacy companyId field
-                      if (contact.companyId) {
-                        const company = companies.find(c => c.id === contact.companyId);
-                        if (company) {
-                          return company.companyName || company.name || '-';
-                        }
-                      }
-                      
-                      // Third check for associations.companies array
-                      const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
-                      const primaryCompanyId = assocCompanies[0];
-                      const company = companies.find(c => c.id === primaryCompanyId);
-                      return company?.companyName || company?.name || '-';
-                    })()}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ py: 1 }}>
-                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                    {(() => {
-                      // First check for legacy locationId field
-                      if (contact.locationId) {
-                        const location = locations.find(loc => loc.id === contact.locationId);
-                        if (location) {
-                          const locationName = location.name || location.nickname || 'Unknown Location';
-                          const cityState = [location.city, location.state].filter(Boolean).join(', ');
-                          const locationCode = location.code ? ` [${location.code}]` : '';
-                          return cityState ? `${locationName}${locationCode} (${cityState})` : `${locationName}${locationCode}`;
-                        }
-                        // If locationId exists but location not found, show locationName if available
-                        if (contact.locationName) {
-                          return contact.locationName;
-                        }
-                      }
-                      
-                      // Fallback to associations.locations array
-                      const assocLocs = (contact.associations?.locations || []) as any[];
-                      const obj = assocLocs.find(l => typeof l === 'object');
-                      const locName = obj?.snapshot?.name || obj?.name;
-                      const locCode = obj?.snapshot?.code || obj?.code;
-                      if (locName) {
-                        const codeDisplay = locCode ? ` [${locCode}]` : '';
-                        return `${locName}${codeDisplay}`;
-                      }
-                      
-                      // Final fallback to contact city/state
-                      if (contact.city && contact.state) return `${contact.city}, ${contact.state}`;
-                      return '-';
-                    })()}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ py: 1 }}>
-                  <Typography 
-                    variant="body2" 
-                    color={lastActivities[contact.id] ? "#6B7280" : "#9CA3AF"}
-                    sx={{ fontSize: '0.875rem' }}
-                  >
-                    {lastActivities[contact.id] 
-                      ? formatRelativeTime(lastActivities[contact.id].timestamp)
-                      : 'No Activity'
-                    }
-                  </Typography>
-                </TableCell>
-
-              </TableRow>
-            ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          return (
+            <ContactTableRow
+              key={contact.id}
+              contact={contact}
+              isFavorite={isFavorite}
+              toggleFavorite={toggleFavorite}
+              onRowClick={() => navigate(`/crm/contacts/${contact.id}`)}
+              getAvatarColor={getAvatarColor}
+              getAvatarTextColor={getAvatarTextColor}
+              getInitials={getInitials}
+              columns={{
+                favorites: true,
+                name: true,
+                jobTitle: true,
+                contactInfo: true,
+                company: true,
+                location: true,
+                lastActivity: true,
+              }}
+              companies={companies}
+              locations={locations}
+              lastActivity={lastActivities[contact.id] ? { timestamp: lastActivities[contact.id].timestamp } : undefined}
+              formatRelativeTime={formatRelativeTime}
+              rowIndex={index}
+            />
+          );
+        }}
+      />
 
       {/* Load More Button */}
       {hasMore && (

@@ -2,26 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   TextField,
   Button,
-  Avatar,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
   IconButton,
-  TableSortLabel,
   CircularProgress,
-  Skeleton,
   Autocomplete,
-  Chip,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -34,13 +23,14 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, doc, getDoc, limit, startAfter } from 'firebase/firestore';
 import { db } from '../firebase';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { formatPhoneNumber } from '../utils/formatPhone';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
+import ContactTable from '../components/ContactTable';
+import ContactTableRow from '../components/ContactTableRow';
 
 interface Contact {
   id: string;
@@ -77,6 +67,11 @@ const RecruiterContacts: React.FC = () => {
   const [sortField, setSortField] = useState<string>('fullName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  // Pagination state
+  const [contactsPageSize] = useState(20);
+  const [contactsLastDoc, setContactsLastDoc] = useState<any>(null);
+  const [contactsHasMore, setContactsHasMore] = useState(false);
 
   // Favorites
   const { favorites, isFavorite, toggleFavorite } = useFavorites('contacts');
@@ -87,7 +82,19 @@ const RecruiterContacts: React.FC = () => {
       loadCompanies();
       loadContacts();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  // Reload contacts when search changes (reset pagination)
+  // Note: Other filters (company, role, status, state) are applied client-side
+  useEffect(() => {
+    if (tenantId) {
+      setContactsLastDoc(null);
+      setContactsHasMore(false);
+      loadContacts(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const loadCompanies = async () => {
     if (!tenantId) return;
@@ -108,7 +115,7 @@ const RecruiterContacts: React.FC = () => {
     }
   };
 
-  const loadContacts = async () => {
+  const loadContacts = async (append = false) => {
     if (!tenantId) {
       console.error('❌ Cannot load contacts: tenantId is missing');
       setLoading(false);
@@ -117,94 +124,194 @@ const RecruiterContacts: React.FC = () => {
     
     try {
       setLoading(true);
-      console.log(`🔍 Loading contacts for tenant: ${tenantId}`);
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       
-      // Try to order by fullName first, fallback to createdAt if that fails
-      let snapshot;
-      try {
-        const q = query(contactsRef, orderBy('fullName', 'asc'));
-        snapshot = await getDocs(q);
-        console.log(`✅ Loaded ${snapshot.docs.length} contacts (ordered by fullName)`);
-      } catch (orderByError: any) {
-        // If orderBy fails (e.g., missing index or field), try ordering by createdAt
-        console.warn('⚠️ Failed to order by fullName, trying createdAt:', orderByError);
-        try {
-          const q = query(contactsRef, orderBy('createdAt', 'desc'));
-          snapshot = await getDocs(q);
-          console.log(`✅ Loaded ${snapshot.docs.length} contacts (ordered by createdAt)`);
-        } catch (createdAtError: any) {
-          // If that also fails, just get all contacts without ordering
-          console.warn('⚠️ Failed to order by createdAt, loading without order:', createdAtError);
-          snapshot = await getDocs(contactsRef);
-          console.log(`✅ Loaded ${snapshot.docs.length} contacts (no ordering)`);
+      // If searching, fetch ALL contacts and filter client-side (like CRM does)
+      if (search.trim()) {
+        const searchLower = search.toLowerCase().trim();
+        console.log('🔍 Searching contacts for:', searchLower);
+        
+        // Query ALL contacts without limit for comprehensive search
+        const q = query(contactsRef, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        console.log('Found', snapshot.size, 'contacts in database (searching through ALL contacts)');
+        
+        if (!snapshot.empty) {
+          const contactsData: Contact[] = [];
+          
+          // Process all contacts
+          for (const contactDoc of snapshot.docs) {
+            const contactData = {
+              id: contactDoc.id,
+              ...contactDoc.data()
+            } as Contact;
+            
+            // Ensure fullName exists
+            if (!contactData.fullName && (contactData.firstName || contactData.lastName)) {
+              contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
+            }
+            
+            // Load company name if companyId exists
+            if (contactData.companyId) {
+              try {
+                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId);
+                const companySnap = await getDoc(companyRef);
+                if (companySnap.exists()) {
+                  const companyData = companySnap.data();
+                  contactData.companyName = companyData.companyName || companyData.name;
+                }
+              } catch (error) {
+                console.warn(`Error loading company for contact ${contactData.id}:`, error);
+              }
+            }
+            
+            // Load location name if locationId exists
+            if (contactData.locationId && contactData.companyId) {
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId, 'locations', contactData.locationId);
+                const locationSnap = await getDoc(locationRef);
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data();
+                  contactData.locationName = locationData.name || locationData.nickname;
+                }
+              } catch (error) {
+                console.warn(`Error loading location for contact ${contactData.id}:`, error);
+              }
+            }
+            
+            contactsData.push(contactData);
+          }
+          
+          // Filter client-side for substring matching
+          const filteredData = contactsData.filter((contact) => {
+            const fullName = (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
+            const email = (contact.email || '').toLowerCase();
+            const phone = (contact.phone || '').toLowerCase();
+            const title = (contact.title || '').toLowerCase();
+            const companyName = (contact.companyName || '').toLowerCase();
+            
+            return fullName.includes(searchLower) ||
+                   email.includes(searchLower) ||
+                   phone.includes(searchLower) ||
+                   title.includes(searchLower) ||
+                   companyName.includes(searchLower);
+          });
+          
+          // Sort by relevance (exact matches first, then prefix matches)
+          filteredData.sort((a, b) => {
+            const aName = (a.fullName || `${a.firstName || ''} ${a.lastName || ''}` || '').toLowerCase();
+            const bName = (b.fullName || `${b.firstName || ''} ${b.lastName || ''}` || '').toLowerCase();
+            
+            // Exact match gets highest priority
+            if (aName === searchLower && bName !== searchLower) return -1;
+            if (bName === searchLower && aName !== searchLower) return 1;
+            
+            // Prefix match gets second priority
+            if (aName.startsWith(searchLower) && !bName.startsWith(searchLower)) return -1;
+            if (bName.startsWith(searchLower) && !aName.startsWith(searchLower)) return 1;
+            
+            // Then sort alphabetically
+            return aName.localeCompare(bName);
+          });
+          
+          // Paginate results
+          if (append) {
+            const currentLength = contacts.length;
+            const nextPage = filteredData.slice(currentLength, currentLength + contactsPageSize);
+            setContacts(prev => [...prev, ...nextPage]);
+            setContactsHasMore(filteredData.length > currentLength + nextPage.length);
+          } else {
+            const limitedData = filteredData.slice(0, contactsPageSize);
+            setContacts(limitedData);
+            setContactsHasMore(filteredData.length > contactsPageSize);
+          }
+          setContactsLastDoc(null); // No lastDoc for search results
+        } else {
+          if (!append) {
+            setContacts([]);
+          }
+          setContactsHasMore(false);
+        }
+      } else {
+        // No search - use normal pagination
+        const constraints: any[] = [orderBy('createdAt', 'desc'), limit(contactsPageSize)];
+        
+        if (contactsLastDoc && append) {
+          constraints.push(startAfter(contactsLastDoc));
+        }
+        
+        const q = query(contactsRef, ...constraints);
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const contactsData: Contact[] = [];
+          
+          for (const contactDoc of snapshot.docs) {
+            const contactData = {
+              id: contactDoc.id,
+              ...contactDoc.data()
+            } as Contact;
+            
+            // Ensure fullName exists
+            if (!contactData.fullName && (contactData.firstName || contactData.lastName)) {
+              contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
+            }
+            
+            // Load company name if companyId exists
+            if (contactData.companyId) {
+              try {
+                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId);
+                const companySnap = await getDoc(companyRef);
+                if (companySnap.exists()) {
+                  const companyData = companySnap.data();
+                  contactData.companyName = companyData.companyName || companyData.name;
+                }
+              } catch (error) {
+                console.warn(`Error loading company for contact ${contactData.id}:`, error);
+              }
+            }
+            
+            // Load location name if locationId exists
+            if (contactData.locationId && contactData.companyId) {
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId, 'locations', contactData.locationId);
+                const locationSnap = await getDoc(locationRef);
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data();
+                  contactData.locationName = locationData.name || locationData.nickname;
+                }
+              } catch (error) {
+                console.warn(`Error loading location for contact ${contactData.id}:`, error);
+              }
+            }
+            
+            contactsData.push(contactData);
+          }
+          
+          setContacts(prev => append ? [...prev, ...contactsData] : contactsData);
+          setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setContactsHasMore(snapshot.size === contactsPageSize);
+        } else {
+          if (!append) {
+            setContacts([]);
+          }
+          setContactsHasMore(false);
         }
       }
       
-      const contactsData: Contact[] = [];
-      
-      for (const contactDoc of snapshot.docs) {
-        const contactData = {
-          id: contactDoc.id,
-          ...contactDoc.data()
-        } as Contact;
-        
-        // Ensure fullName exists (construct from firstName/lastName if needed)
-        if (!contactData.fullName && (contactData.firstName || contactData.lastName)) {
-          contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
-        }
-        
-        // Load company name if companyId exists
-        if (contactData.companyId) {
-          try {
-            const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId);
-            const companySnap = await getDoc(companyRef);
-            if (companySnap.exists()) {
-              const companyData = companySnap.data();
-              contactData.companyName = companyData.companyName || companyData.name;
-            }
-          } catch (error) {
-            console.warn(`Error loading company for contact ${contactData.id}:`, error);
-          }
-        }
-        
-        // Load location name if locationId exists
-        if (contactData.locationId && contactData.companyId) {
-          try {
-            const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId, 'locations', contactData.locationId);
-            const locationSnap = await getDoc(locationRef);
-            if (locationSnap.exists()) {
-              const locationData = locationSnap.data();
-              contactData.locationName = locationData.name || locationData.nickname;
-            }
-          } catch (error) {
-            console.warn(`Error loading location for contact ${contactData.id}:`, error);
-          }
-        }
-        
-        contactsData.push(contactData);
-      }
-      
-      // Sort in memory by fullName if we couldn't order by it in the query
-      contactsData.sort((a, b) => {
-        const aName = (a.fullName || `${a.firstName || ''} ${a.lastName || ''}` || '').toLowerCase();
-        const bName = (b.fullName || `${b.firstName || ''} ${b.lastName || ''}` || '').toLowerCase();
-        return aName.localeCompare(bName);
-      });
-      
-      console.log(`✅ Successfully processed ${contactsData.length} contacts`);
-      setContacts(contactsData);
+      console.log(`✅ Successfully loaded ${contacts.length} contacts`);
     } catch (error: any) {
       console.error('❌ Error loading contacts:', error);
-      console.error('Error details:', {
-        code: error?.code,
-        message: error?.message,
-        stack: error?.stack,
-        tenantId
-      });
       setContacts([]);
+      setContactsHasMore(false);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreContacts = () => {
+    if (contactsHasMore && !loading) {
+      loadContacts(true);
     }
   };
 
@@ -226,6 +333,7 @@ const RecruiterContacts: React.FC = () => {
       case 'companyName':
         return (contact.companyName || '').toLowerCase();
       case 'title':
+      case 'jobTitle':
         return (contact.title || '').toLowerCase();
       case 'role':
         return (contact.role || '').toLowerCase();
@@ -386,15 +494,6 @@ const RecruiterContacts: React.FC = () => {
 
   return (
     <Box>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Contacts' }
-          ]}
-        />
-      </Box>
       {/* Filter & Toolbar Area */}
       <Box sx={{ 
         mb: 2,
@@ -593,299 +692,66 @@ const RecruiterContacts: React.FC = () => {
       <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Contacts Table */}
-      <TableContainer component={Paper} sx={{
-        overflowX: 'auto',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-      }}>
-        {loading || contacts.length === 0 ? (
-          <Table sx={{ minWidth: 1200 }}>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={80} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={100} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={80} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={120} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={100} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={90} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={110} height={20} />
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Array.from({ length: 8 }).map((_, index) => (
-                <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="circular" width={24} height={24} />
-                  </TableCell>
-                  <TableCell sx={{ px: 2, py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Skeleton variant="circular" width={32} height={32} />
-                      <Skeleton variant="text" width={150} height={20} />
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={60} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={80} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={70} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={90} height={20} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Table sx={{ minWidth: 1200 }}>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Favorites
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  <TableSortLabel
-                    active={sortField === 'fullName'}
-                    direction={sortField === 'fullName' ? sortDirection : 'asc'}
-                    onClick={() => handleSort('fullName')}
-                    sx={{ 
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#374151',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em'
-                    }}
-                  >
-                    Contact Name
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  <TableSortLabel
-                    active={sortField === 'companyName'}
-                    direction={sortField === 'companyName' ? sortDirection : 'asc'}
-                    onClick={() => handleSort('companyName')}
-                    sx={{ 
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#374151',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em'
-                    }}
-                  >
-                    Company
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Title
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Role
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Contact Info
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Location
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredContacts.map((contact) => (
-                <TableRow 
-                  key={contact.id} 
-                  hover
-                  onClick={() => handleViewContact(contact)}
-                  sx={{ 
-                    height: '48px',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: '#F9FAFB'
-                    }
-                  }}
-                >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <FavoriteButton
-                      itemId={contact.id}
-                      favoriteType="contacts"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites'
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ px: 2, py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Avatar 
-                        sx={{ 
-                          width: 32, 
-                          height: 32,
-                          backgroundColor: getAvatarColor(contact.fullName || contact.firstName || ''),
-                          color: getAvatarTextColor(contact.fullName || contact.firstName || ''),
-                          fontWeight: 600,
-                          fontSize: '12px'
-                        }}
-                      >
-                        {getInitials(contact)}
-                      </Avatar>
-                      <Typography 
-                        variant="body2" 
-                        fontWeight={600} 
-                        color="#111827"
-                        sx={{ fontSize: '0.9375rem' }}
-                      >
-                        {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unnamed Contact'}
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    {contact.companyName ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <BusinessIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
-                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                          {contact.companyName}
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                      {contact.title || '-'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    {contact.role ? (
-                      <Chip
-                        label={getRoleLabel(contact.role)}
-                        size="small"
-                        color={getRoleColor(contact.role) as any}
-                        sx={{ height: 24, fontSize: '0.75rem' }}
-                      />
-                    ) : (
-                      <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      {contact.email && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <EmailIcon sx={{ color: '#9CA3AF', fontSize: 14 }} />
-                          <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                            {contact.email}
-                          </Typography>
-                        </Box>
-                      )}
-                      {contact.phone && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <PhoneIcon sx={{ color: '#9CA3AF', fontSize: 14 }} />
-                          <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                            {formatPhoneNumber(contact.phone)}
-                          </Typography>
-                        </Box>
-                      )}
-                      {!contact.email && !contact.phone && (
-                        <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                      )}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    {contact.locationName ? (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <LocationOnIcon sx={{ color: '#9CA3AF', fontSize: 16 }} />
-                        <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                          {contact.locationName}
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <ContactTable
+        contacts={filteredContacts}
+        loading={loading}
+        columns={{
+          favorites: true,
+          name: true,
+          jobTitle: true,
+          role: true,
+          contactInfo: true,
+          company: true,
+          location: true,
+        }}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSort={handleSort}
+        renderRow={(contact, index) => (
+          <ContactTableRow
+            key={contact.id}
+            contact={contact}
+            isFavorite={isFavorite}
+            toggleFavorite={toggleFavorite}
+            onRowClick={handleViewContact}
+            getAvatarColor={getAvatarColor}
+            getAvatarTextColor={getAvatarTextColor}
+            getInitials={getInitials}
+            columns={{
+              favorites: true,
+              name: true,
+              jobTitle: true,
+              role: true,
+              contactInfo: true,
+              company: true,
+              location: true,
+            }}
+            companies={companies}
+            locations={[]}
+            getRoleLabel={getRoleLabel}
+            getRoleColor={getRoleColor}
+            rowIndex={index}
+          />
         )}
-      </TableContainer>
+      />
+
+      {/* Load More Button */}
+      {contactsHasMore && !loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, mb: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={loadMoreContacts}
+            sx={{
+              borderRadius: '8px',
+              textTransform: 'none',
+              fontWeight: 500,
+              px: 3
+            }}
+          >
+            Load More Contacts
+          </Button>
+        </Box>
+      )}
 
       {/* Loading State */}
       {loading && (

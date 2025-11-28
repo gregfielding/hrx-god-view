@@ -36,6 +36,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  Autocomplete,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -1340,41 +1341,64 @@ const LocationDetails: React.FC = () => {
                     InputProps={{ startAdornment: <PhoneIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
                   />
                   
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Type</InputLabel>
-                    <Select
-                      value={location.type || ''}
-                      label="Type"
-                      onChange={(e) => handleFieldChange('type', e.target.value)}
-                    >
-                      <MenuItem value="Office">Office</MenuItem>
-                      <MenuItem value="Warehouse">Warehouse</MenuItem>
-                      <MenuItem value="Plant">Plant</MenuItem>
-                      <MenuItem value="Distribution Center">Distribution Center</MenuItem>
-                      <MenuItem value="Manufacturing">Manufacturing</MenuItem>
-                      <MenuItem value="Retail">Retail</MenuItem>
-                      <MenuItem value="Branch">Branch</MenuItem>
-                      <MenuItem value="Headquarters">Headquarters</MenuItem>
-                      <MenuItem value="Data Center">Data Center</MenuItem>
-                      <MenuItem value="Call Center">Call Center</MenuItem>
-                      <MenuItem value="Research & Development">Research & Development</MenuItem>
-                      <MenuItem value="Training Center">Training Center</MenuItem>
-                      <MenuItem value="Service Center">Service Center</MenuItem>
-                      <MenuItem value="Showroom">Showroom</MenuItem>
-                      <MenuItem value="Storage Facility">Storage Facility</MenuItem>
-                      <MenuItem value="Hotel">Hotel</MenuItem>
-                      <MenuItem value="Medical Clinic">Medical Clinic</MenuItem>
-                      <MenuItem value="Hospital">Hospital</MenuItem>
-                      <MenuItem value="Retirement Home">Retirement Home</MenuItem>
-                      <MenuItem value="Sports Arena">Sports Arena</MenuItem>
-                      <MenuItem value="Sports Stadium">Sports Stadium</MenuItem>
-                      <MenuItem value="Fairgrounds">Fairgrounds</MenuItem>
-                      <MenuItem value="Concert Venue">Concert Venue</MenuItem>
-                      <MenuItem value="Convention Center">Convention Center</MenuItem>
-                      <MenuItem value="College">College</MenuItem>
-                      <MenuItem value="High School">High School</MenuItem>
-                    </Select>
-                  </FormControl>
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    size="small"
+                    options={[
+                      'Office',
+                      'Warehouse',
+                      'Plant',
+                      'Distribution Center',
+                      'Manufacturing',
+                      'Retail',
+                      'Branch',
+                      'Headquarters',
+                      'Data Center',
+                      'Call Center',
+                      'Research & Development',
+                      'Training Center',
+                      'Service Center',
+                      'Showroom',
+                      'Storage Facility',
+                      'Hotel',
+                      'Medical Clinic',
+                      'Hospital',
+                      'Retirement Home',
+                      'Sports Arena',
+                      'Sports Stadium',
+                      'Fairgrounds',
+                      'Concert Venue',
+                      'Convention Center',
+                      'College',
+                      'High School',
+                      'Dining Hall',
+                    ]}
+                    value={location.type || ''}
+                    onChange={(_, newValue) => {
+                      if (newValue !== null && newValue !== location.type) {
+                        handleFieldChange('type', newValue);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const inputValue = (e.target as HTMLInputElement).value;
+                      if (inputValue && inputValue !== location.type) {
+                        handleFieldChange('type', inputValue);
+                      }
+                    }}
+                    renderInput={(params) => (
+                      <TextField 
+                        {...params} 
+                        label="Type"
+                        onBlur={(e) => {
+                          const inputValue = e.target.value;
+                          if (inputValue && inputValue !== location.type) {
+                            handleFieldChange('type', inputValue);
+                          }
+                        }}
+                      />
+                    )}
+                  />
                   
                   {companyDivisions.length > 0 && (
                     <FormControl fullWidth size="small">

@@ -53,7 +53,6 @@ import { JobOrder } from '../types/Phase1Types';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -376,15 +375,6 @@ const RecruiterJobOrders: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Job Orders' }
-          ]}
-        />
-      </Box>
       {/* Filters and Search */}
       <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
         <TextField

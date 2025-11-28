@@ -36,6 +36,7 @@ import { discoverCompanyLocations } from './discoverCompanyLocations';
 import { discoverCompanyUrls } from './discoverCompanyUrls';
 import { getSalespeople } from './getSalespeople';
 import { scrapeIndeedJobs } from './scrapeIndeedJobs';
+import { addJobTitle } from './addJobTitle';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
@@ -10955,3 +10956,6 @@ export {
 
 // Scheduled Orchestrator (Phase 3)
 export { scheduledOrchestrator };
+
+// Job Title Management
+export { addJobTitle };

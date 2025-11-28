@@ -29,6 +29,7 @@ import {
   Snackbar,
   Card,
   CardContent,
+  Autocomplete,
 } from '@mui/material';
 import {
   Delete,
@@ -502,22 +503,44 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
 
                 {/* Type */}
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Type</InputLabel>
-                    <Select
-                      value={editForm.type}
-                      onChange={(e) => setEditForm(prev => ({ ...prev, type: e.target.value as any }))}
-                      label="Type"
-                    >
-                      <MenuItem value="Office">Office</MenuItem>
-                      <MenuItem value="Manufacturing">Manufacturing</MenuItem>
-                      <MenuItem value="Warehouse">Warehouse</MenuItem>
-                      <MenuItem value="Retail">Retail</MenuItem>
-                      <MenuItem value="Distribution">Distribution</MenuItem>
-                      <MenuItem value="Branch">Branch</MenuItem>
-                      <MenuItem value="Headquarters">Headquarters</MenuItem>
-                    </Select>
-                  </FormControl>
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    options={[
+                      'Office',
+                      'Warehouse',
+                      'Plant',
+                      'Distribution Center',
+                      'Manufacturing',
+                      'Retail',
+                      'Branch',
+                      'Headquarters',
+                      'Data Center',
+                      'Call Center',
+                      'Research & Development',
+                      'Training Center',
+                      'Service Center',
+                      'Showroom',
+                      'Storage Facility',
+                      'Hotel',
+                      'Medical Clinic',
+                      'Hospital',
+                      'Retirement Home',
+                      'Sports Arena',
+                      'Sports Stadium',
+                      'Fairgrounds',
+                      'Concert Venue',
+                      'Convention Center',
+                      'College',
+                      'High School',
+                      'Dining Hall',
+                    ]}
+                    value={editForm.type || ''}
+                    onChange={(_, newValue) => setEditForm(prev => ({ ...prev, type: newValue || '' }))}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Type" />
+                    )}
+                  />
                 </Grid>
 
                 {/* Division */}

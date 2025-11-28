@@ -98,6 +98,7 @@ import {
   where,
   orderBy,
   getDocs,
+  addDoc,
   updateDoc,
   setDoc,
   deleteDoc,
@@ -1077,10 +1078,379 @@ const CompanyDashboardTab: React.FC<{
   );
 };
 
-const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[] }> = ({ company, currentTab, locations }) => {
-  if (locations.length === 0) {
+const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[] }> = ({ company, currentTab, locations: initialLocations }) => {
+  const { tenantId } = useAuth();
+  const [locations, setLocations] = useState<any[]>(initialLocations);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLocation, setNewLocation] = useState({
+    name: '',
+    code: '',
+    address: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    country: 'USA',
+    type: 'Office',
+    division: '',
+    phone: '',
+    coordinates: null
+  });
+  const autocompleteRef = useRef<any>(null);
+
+  // Reload locations when company changes
+  useEffect(() => {
+    loadLocations();
+  }, [company?.id, tenantId]);
+
+  const loadLocations = async () => {
+    if (!company?.id || !tenantId) return;
+    
+    try {
+      setLoading(true);
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
+      const q = query(locationsRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+      const locationsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setLocations(locationsData);
+    } catch (err) {
+      console.error('Error loading locations:', err);
+      setError('Failed to load locations');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddLocation = async () => {
+    if (!company?.id || !tenantId) return;
+    
+    try {
+      const locationData = {
+        ...newLocation,
+        createdAt: new Date().toISOString(),
+        discoveredBy: 'Manual',
+        contactCount: 0,
+        dealCount: 0,
+        salespersonCount: 0
+      };
+
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', company.id, 'locations');
+      const docRef = await addDoc(locationsRef, locationData);
+      
+      const addedLocation = { id: docRef.id, ...locationData };
+      setLocations(prev => [...prev, addedLocation]);
+      
+      setNewLocation({
+        name: '',
+        code: '',
+        address: '',
+        city: '',
+        state: '',
+        zipCode: '',
+        country: 'USA',
+        type: 'Office',
+        division: '',
+        phone: '',
+        coordinates: null
+      });
+      setShowAddForm(false);
+      setError(null);
+    } catch (err) {
+      console.error('Error adding location:', err);
+      setError('Failed to add location');
+    }
+  };
+
+  if (loading && locations.length === 0) {
     return (
-      <Card>
+      <Box sx={{ p: 3, textAlign: 'center' }}>
+        <CircularProgress />
+        <Typography sx={{ mt: 2 }}>Loading locations...</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 0 }}>
+      {/* Header with Add Location Button */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3 }}>
+        <Typography variant="h6" fontWeight={700}>
+          Locations ({locations.length})
+        </Typography>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => setShowAddForm(true)}
+        >
+          Add Location
+        </Button>
+      </Box>
+
+      {/* Error Display */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2, mx: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      {/* Manual Add Form */}
+      {showAddForm && (
+        <Box sx={{ mb: 3, px: 3 }}>
+          <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>Add New Location</Typography>
+          <Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Location Name"
+                  value={newLocation.name}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g., Headquarters, Manufacturing Plant"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Location Code"
+                  value={newLocation.code}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, code: e.target.value }))}
+                  placeholder="Internal code (e.g., HQ-01)"
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Autocomplete
+                  fullWidth
+                  freeSolo
+                  options={[
+                    'Office',
+                    'Warehouse',
+                    'Plant',
+                    'Distribution Center',
+                    'Manufacturing',
+                    'Retail',
+                    'Branch',
+                    'Headquarters',
+                    'Data Center',
+                    'Call Center',
+                    'Research & Development',
+                    'Training Center',
+                    'Service Center',
+                    'Showroom',
+                    'Storage Facility',
+                    'Hotel',
+                    'Medical Clinic',
+                    'Hospital',
+                    'Retirement Home',
+                    'Sports Arena',
+                    'Sports Stadium',
+                    'Fairgrounds',
+                    'Concert Venue',
+                    'Convention Center',
+                    'College',
+                    'High School',
+                    'Dining Hall',
+                  ]}
+                  value={newLocation.type || ''}
+                  onChange={(_, newValue) => setNewLocation(prev => ({ ...prev, type: newValue || '' }))}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Type" />
+                  )}
+                />
+              </Grid>
+              {company.divisions && company.divisions.length > 0 && (
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Division (Optional)</InputLabel>
+                    <Select
+                      value={newLocation.division}
+                      label="Division (Optional)"
+                      onChange={(e) => setNewLocation(prev => ({ ...prev, division: e.target.value }))}
+                    >
+                      <MenuItem value="">
+                        <em>No division</em>
+                      </MenuItem>
+                      {company.divisions.map((division: string) => (
+                        <MenuItem key={division} value={division}>
+                          {division}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+              )}
+              <Grid item xs={12}>
+                <GoogleAutocomplete
+                  onLoad={(ref) => {
+                    autocompleteRef.current = ref;
+                  }}
+                  onPlaceChanged={() => {
+                    const place = autocompleteRef.current?.getPlace();
+                    if (place?.geometry?.location) {
+                      const lat = place.geometry.location.lat();
+                      const lng = place.geometry.location.lng();
+                      
+                      const addressComponents = place.address_components || [];
+                      let streetNumber = '';
+                      let route = '';
+                      let city = '';
+                      let state = '';
+                      let zipCode = '';
+                      let country = 'USA';
+
+                      addressComponents.forEach((component: any) => {
+                        const types = component.types;
+                        if (types.includes('street_number')) {
+                          streetNumber = component.long_name;
+                        } else if (types.includes('route')) {
+                          route = component.long_name;
+                        } else if (types.includes('locality')) {
+                          city = component.long_name;
+                        } else if (types.includes('administrative_area_level_1')) {
+                          state = component.short_name;
+                        } else if (types.includes('postal_code')) {
+                          zipCode = component.long_name;
+                        } else if (types.includes('country')) {
+                          country = component.short_name;
+                        }
+                      });
+
+                      const fullAddress = streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
+
+                      setNewLocation(prev => ({
+                        ...prev,
+                        address: fullAddress,
+                        city,
+                        state,
+                        zipCode,
+                        country,
+                        coordinates: {
+                          lat,
+                          lng
+                        }
+                      }));
+                    }
+                  }}
+                >
+                  <TextField
+                    fullWidth
+                    label="Address"
+                    value={newLocation.address}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, address: e.target.value }))}
+                    placeholder="Start typing an address..."
+                    InputProps={{
+                      endAdornment: newLocation.coordinates && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                          <Chip 
+                            size="small" 
+                            label="📍 GPS" 
+                            color="success" 
+                            variant="outlined"
+                          />
+                        </Box>
+                      )
+                    }}
+                  />
+                </GoogleAutocomplete>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="City"
+                  value={newLocation.city}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, city: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="State"
+                  value={newLocation.state}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, state: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="ZIP Code"
+                  value={newLocation.zipCode}
+                  onChange={(e) => setNewLocation(prev => ({ ...prev, zipCode: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Phone"
+                  value={newLocation.phone}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
+                    const pretty = raw.length >= 10
+                      ? `(${raw.slice(0,3)}) ${raw.slice(3,6)}-${raw.slice(6,10)}`
+                      : raw;
+                    setNewLocation(prev => ({ ...prev, phone: pretty }));
+                  }}
+                  placeholder="(555) 123-4567"
+                />
+              </Grid>
+              {newLocation.coordinates && (
+                <Grid item xs={12}>
+                  <Box sx={{ 
+                    p: 2, 
+                    bgcolor: 'success.light', 
+                    borderRadius: 1, 
+                    border: '1px solid',
+                    borderColor: 'success.main'
+                  }}>
+                    <Typography variant="subtitle2" color="success.dark" gutterBottom>
+                      📍 GPS Coordinates Captured
+                    </Typography>
+                    <Typography variant="body2" color="success.dark">
+                      Latitude: {newLocation.coordinates.lat.toFixed(6)} | Longitude: {newLocation.coordinates.lng.toFixed(6)}
+                    </Typography>
+                  </Box>
+                </Grid>
+              )}
+            </Grid>
+            <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
+              <Button
+                variant="contained"
+                onClick={handleAddLocation}
+                disabled={!newLocation.name || !newLocation.address}
+              >
+                Add Location
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  setShowAddForm(false);
+                  setNewLocation({
+                    name: '',
+                    code: '',
+                    address: '',
+                    city: '',
+                    state: '',
+                    zipCode: '',
+                    country: 'USA',
+                    type: 'Office',
+                    division: '',
+                    phone: '',
+                    coordinates: null
+                  });
+                }}
+              >
+                Cancel
+              </Button>
+            </Box>
+          </Box>
+        </Box>
+      )}
+
+      {/* Locations Table */}
+      {locations.length === 0 && !showAddForm ? (
+        <Card sx={{ mx: 3 }}>
         <CardHeader title="Locations" />
         <CardContent>
           <Typography variant="body1" color="text.secondary">
@@ -1088,57 +1458,155 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
           </Typography>
         </CardContent>
       </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader title={`Locations (${locations.length})`} />
-      <CardContent>
-        <TableContainer>
-          <Table>
+      ) : locations.length > 0 ? (
+        <Box px={3} pb={3}>
+          <TableContainer 
+            component={Paper} 
+            variant="outlined"
+            sx={{
+              overflowX: 'auto',
+              borderRadius: '8px',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Table sx={{ minWidth: 800 }}>
             <TableHead>
-              <TableRow>
-                <TableCell><strong>Name</strong></TableCell>
-                <TableCell><strong>Type</strong></TableCell>
-                <TableCell><strong>Address</strong></TableCell>
-                <TableCell><strong>City</strong></TableCell>
-                <TableCell><strong>State</strong></TableCell>
-                <TableCell><strong>Zip Code</strong></TableCell>
+                <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Name
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Type
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Address
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    City
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    State
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: '#374151',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid #E5E7EB',
+                    py: 1.5
+                  }}>
+                    Zip Code
+                  </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {locations.map((location) => (
-                <TableRow key={location.id} hover>
-                  <TableCell>
-                    <Typography variant="body2" fontWeight={500}>
+                  <TableRow 
+                    key={location.id}
+                    hover
+                    sx={{
+                      height: '48px',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: '#F9FAFB'
+                      }
+                    }}
+                  >
+                    <TableCell sx={{ py: 1, px: 2 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        fontWeight: 600,
+                        color: "#111827",
+                        fontSize: '0.9375rem'
+                      }}>
                       {location.name || location.nickname || 'Unnamed Location'}
                     </Typography>
                   </TableCell>
-                  <TableCell>
+                    <TableCell sx={{ py: 1 }}>
                     <Chip 
                       label={location.type || 'Unknown'} 
                       size="small" 
                       variant="outlined"
+                        sx={{
+                          fontSize: '0.75rem',
+                          fontWeight: 500
+                        }}
                     />
                   </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem'
+                      }}>
                       {location.address || location.street || '-'}
                     </Typography>
                   </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem'
+                      }}>
                       {location.city || '-'}
                     </Typography>
                   </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem'
+                      }}>
                       {location.state || '-'}
                     </Typography>
                   </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{
+                        variant: "body2",
+                        color: "#111827",
+                        fontSize: '0.875rem'
+                      }}>
                       {location.zipCode || '-'}
                     </Typography>
                   </TableCell>
@@ -1147,8 +1615,9 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
             </TableBody>
           </Table>
         </TableContainer>
-      </CardContent>
-    </Card>
+        </Box>
+      ) : null}
+    </Box>
   );
 };
 

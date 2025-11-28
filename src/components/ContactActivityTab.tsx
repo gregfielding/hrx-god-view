@@ -4,6 +4,7 @@ import {
   Typography,
   Card,
   CardContent,
+  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -20,8 +21,9 @@ import {
   TextField,
   Alert,
   CircularProgress,
+  Skeleton,
+  Grid,
 } from '@mui/material';
-import { Timeline as TimelineIcon } from '@mui/icons-material';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -149,52 +151,122 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
   };
 
   return (
-    <Box>
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 1, px: 3 }}>
-        <Box display="flex" alignItems="center" gap={1}>
-          <TimelineIcon /><Typography variant="h6">Contact Activity</Typography>
-        </Box>
-        {/* Filters */}
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-          <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel>Type</InputLabel>
-            <Select value={typeFilter} label="Type" onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}>
-              <MenuItem value="all">All</MenuItem>
-              <MenuItem value="task">Tasks</MenuItem>
-              <MenuItem value="email">Emails</MenuItem>
-              <MenuItem value="note">Notes</MenuItem>
-            </Select>
-          </FormControl>
-          <TextField
-            type="date"
-            size="small"
-            label="Start"
-            InputLabelProps={{ shrink: true }}
-            value={startDate}
-            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-          />
-          <TextField
-            type="date"
-            size="small"
-            label="End"
-            InputLabelProps={{ shrink: true }}
-            value={endDate}
-            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-          />
-          <Typography variant="body2" color="text.secondary">
-            {total} results
-          </Typography>
-        </Box>
-      </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Card>
-        <CardContent>
+        <CardHeader 
+          title="Contact Activity" 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+          action={
+            <Typography variant="body2" color="text.secondary" sx={{ mr: 2 }}>
+              {total} results
+            </Typography>
+          }
+        />
+        <CardContent sx={{ p: 2 }}>
+          {/* Filters */}
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12} sm={4} md={3}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Type</InputLabel>
+                <Select 
+                  value={typeFilter} 
+                  label="Type" 
+                  onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}
+                >
+                  <MenuItem value="all">All</MenuItem>
+                  <MenuItem value="task">Tasks</MenuItem>
+                  <MenuItem value="email">Emails</MenuItem>
+                  <MenuItem value="note">Notes</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={4} md={3}>
+              <TextField
+                type="date"
+                size="small"
+                fullWidth
+                label="Start Date"
+                InputLabelProps={{ shrink: true }}
+                value={startDate}
+                onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={4} md={3}>
+              <TextField
+                type="date"
+                size="small"
+                fullWidth
+                label="End Date"
+                InputLabelProps={{ shrink: true }}
+                value={endDate}
+                onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+              />
+            </Grid>
+          </Grid>
+          
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           {loading ? (
-            <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>
+            <Box>
+              <TableContainer 
+                component={Paper} 
+                variant="outlined"
+                sx={{
+                  borderRadius: 1,
+                  border: '1px solid',
+                  borderColor: 'divider'
+                }}
+              >
+                <Table>
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.50' }}>
+                      {['Type', 'Title', 'Description', 'When', ''].map((header) => (
+                        <TableCell key={header} sx={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: 'text.secondary',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          py: 1.5
+                        }}>
+                          {header}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <TableRow key={`skeleton-${index}`}>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="rectangular" width={60} height={24} sx={{ borderRadius: 1 }} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="text" width="80%" height={20} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="text" width="60%" height={20} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="text" width={120} height={20} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="circular" width={24} height={24} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Box>
           ) : filtered.length === 0 ? (
             <Box textAlign="center" py={4}>
-              <Typography color="text.secondary">No activity yet.</Typography>
-              <Typography variant="caption" color="text.secondary">Completed tasks and emails will appear here.</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                No activity yet
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Completed tasks and emails will appear here
+              </Typography>
             </Box>
           ) : (
             <TableContainer 
@@ -202,20 +274,22 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
               variant="outlined"
               sx={{
                 overflowX: 'auto',
-                borderRadius: '8px',
-                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider'
               }}
             >
               <Table sx={{ minWidth: 1000 }}>
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                  <TableRow sx={{ bgcolor: 'grey.50' }}>
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Type
@@ -223,10 +297,11 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Title
@@ -234,10 +309,11 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Description
@@ -245,15 +321,25 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       When
                     </TableCell>
-                    <TableCell />
+                    <TableCell sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'text.secondary',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                      py: 1.5
+                    }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -262,9 +348,10 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     <TableRow 
                       onClick={() => handleRowClick(it)}
                       sx={{
-                        height: '48px',
                         cursor: 'pointer',
-                        '&:hover': { backgroundColor: '#F9FAFB' }
+                        '&:hover': { 
+                          bgcolor: 'grey.50' 
+                        }
                       }}
                     >
                       <TableCell sx={{ py: 1 }}>
@@ -281,34 +368,32 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                         />
                       </TableCell>
                       <TableCell sx={{ py: 1, px: 2 }}>
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#111827",
-                          fontSize: '0.875rem',
-                          fontWeight: 500
-                        }}>
+                        <Typography 
+                          variant="body2" 
+                          sx={{
+                            color: 'text.primary',
+                            fontWeight: 500
+                          }}
+                        >
                           {it.title}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ py: 1 }}>
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#6B7280",
-                          fontSize: '0.875rem',
-                          maxWidth: 420,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }}>
+                        <Typography 
+                          variant="body2" 
+                          color="text.secondary"
+                          sx={{
+                            maxWidth: 420,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
                           {it.description}
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ py: 1 }}>
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#6B7280",
-                          fontSize: '0.875rem'
-                        }}>
+                        <Typography variant="body2" color="text.secondary">
                           {it.timestamp?.toLocaleString?.()}
                         </Typography>
                       </TableCell>
@@ -318,13 +403,13 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                     </TableRow>
                     {expandedId === it.id && (
                       <TableRow>
-                        <TableCell colSpan={5} sx={{ bgcolor: '#FAFAFA' }}>
+                        <TableCell colSpan={5} sx={{ bgcolor: 'grey.50' }}>
                           {it.type === 'email' ? (
                             <Box sx={{ p: 2 }}>
                               {expanding && !expandedContent[it.id] ? (
                                 <Box display="flex" justifyContent="center"><CircularProgress size={20} /></Box>
                               ) : expandedContent[it.id]?.bodyHtml ? (
-                                <Box sx={{ border: '1px solid #E5E7EB', borderRadius: 1, p: 2 }} dangerouslySetInnerHTML={{ __html: expandedContent[it.id].bodyHtml as string }} />
+                                <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }} dangerouslySetInnerHTML={{ __html: expandedContent[it.id].bodyHtml as string }} />
                               ) : (
                                 <Typography variant="body2" color="text.secondary">
                                   {expandedContent[it.id]?.bodySnippet || 'No content available'}
@@ -347,10 +432,26 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
           )}
           {/* Pagination */}
           {filtered.length > 0 && (
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-              <Button size="small" variant="outlined" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
-              <Typography variant="caption">Page {page} of {totalPages}</Typography>
-              <Button size="small" variant="outlined" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</Button>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3 }}>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                disabled={page <= 1} 
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Typography variant="body2" color="text.secondary">
+                Page {page} of {totalPages}
+              </Typography>
+              <Button 
+                size="small" 
+                variant="outlined" 
+                disabled={page >= totalPages} 
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
             </Box>
           )}
         </CardContent>

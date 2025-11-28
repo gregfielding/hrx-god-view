@@ -38,10 +38,17 @@ const RecruiterMain: React.FC = () => {
     navigate(paths[newValue]);
   };
 
+  // Check if we're on a detail page (route has an ID parameter)
+  // Exclude special routes like "/new" or "/edit" which should show the menu
+  const isDetailPage = /\/recruiter\/(job-orders|users|companies|contacts|user-groups|jobs-board)\/[^/]+/.test(location.pathname) 
+    && !location.pathname.endsWith('/new') 
+    && !location.pathname.includes('/edit/');
+
   return (
     <Box sx={{ p: 0 }}>
-      {/* Navigation Menu */}
-      <Box sx={{ mb: 3 }}>
+      {/* Navigation Menu - Only show on list pages, not detail pages */}
+      {!isDetailPage && (
+        <Box sx={{ mb: 3 }}>
         <Box sx={{ 
           display: 'flex', 
           gap: { xs: 2, sm: 3.5, md: 4 },
@@ -478,6 +485,7 @@ const RecruiterMain: React.FC = () => {
           </Box>
         </Box>
       </Box>
+      )}
 
       {/* Tab Content - Use Outlet for nested routes */}
       <Outlet />

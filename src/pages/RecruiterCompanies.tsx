@@ -42,7 +42,6 @@ import { db } from '../firebase';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 const RecruiterCompanies: React.FC = () => {
   const navigate = useNavigate();
@@ -194,15 +193,6 @@ const RecruiterCompanies: React.FC = () => {
 
   return (
     <Box>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Companies' }
-          ]}
-        />
-      </Box>
       {/* Filter & Toolbar Area */}
       <Box sx={{ 
         mb: 2,

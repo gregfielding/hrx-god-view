@@ -49,6 +49,7 @@
   "scripts": {
     "start": "react-scripts start",
     "start:lenient": "NODE_OPTIONS=--max-old-space-size=4096 DISABLE_ESLINT_PLUGIN=true TSC_COMPILE_ON_ERROR=true react-scripts start",
+    "start:safe": "NODE_OPTIONS=--max-old-space-size=8192 DISABLE_ESLINT_PLUGIN=true TSC_COMPILE_ON_ERROR=true SKIP_PREFLIGHT_CHECK=true react-scripts start",
     "build": "react-scripts build",
     "build:lenient": "DISABLE_ESLINT_PLUGIN=true TSC_COMPILE_ON_ERROR=true react-scripts build",
     "test": "react-scripts test",

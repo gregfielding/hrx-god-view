@@ -15,8 +15,6 @@ import {
   Assignment as AssignmentIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
-
 const RecruiterDashboard: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -55,13 +53,6 @@ const RecruiterDashboard: React.FC = () => {
   const handleCardClick = (path: string) => {
     navigate(path);
   };
-
-  const breadcrumbItems = [
-    {
-      label: 'Recruiter',
-      href: '/recruiter'
-    }
-  ];
 
   return (
     <Box sx={{ p: 0 }}>

@@ -64,6 +64,9 @@ import {
   CheckCircle as CheckCircleIcon,
   RocketLaunch as RocketLaunchIcon,
   LocationOn as LocationIcon,
+  Edit as EditIcon,
+  Work as WorkIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -86,6 +89,8 @@ import { TaskService } from '../../utils/taskService';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import { logger } from '../../utils/logger';
+import ContactHeader from '../../components/ContactHeader';
+import { useFavorites } from '../../hooks/useFavorites';
 
 interface ContactData {
   id: string;
@@ -221,6 +226,9 @@ const ContactDetails: React.FC = () => {
   const { tenantId, user } = useAuth();
   const taskService = TaskService.getInstance();
   
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('contacts');
+  
   const [contact, setContact] = useState<ContactData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -303,6 +311,13 @@ const ContactDetails: React.FC = () => {
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  
+  // Edit mode state for Contact Details card
+  const [isEditingContactDetails, setIsEditingContactDetails] = useState(false);
+  
+  // Job Orders state
+  const [jobOrders, setJobOrders] = useState<any[]>([]);
+  const [loadingJobOrders, setLoadingJobOrders] = useState(false);
 
   // Lazy load AI components
   useEffect(() => {
@@ -858,11 +873,67 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  // Load job orders associated with this contact
+  const loadJobOrdersForContact = async () => {
+    if (!contactId || !tenantId) {
+      setJobOrders([]);
+      return;
+    }
+    
+    try {
+      setLoadingJobOrders(true);
+      const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+      
+      // Query job orders where contact ID matches any of the role fields
+      // Firestore doesn't support OR queries with multiple fields, so we query each field separately
+      const contactRoleFields = [
+        'hrContactId',
+        'decisionMaker',
+        'operationsContactId',
+        'procurementContactId',
+        'billingContactId',
+        'safetyContactId',
+        'invoiceContactId'
+      ];
+      
+      const queries = contactRoleFields.map(field => 
+        query(jobOrdersRef, where(field, '==', contactId))
+      );
+      
+      // Execute all queries in parallel
+      const queryResults = await Promise.all(
+        queries.map(q => getDocs(q).catch(err => {
+          console.warn(`Query failed for ${q}:`, err);
+          return { docs: [] };
+        }))
+      );
+      
+      // Combine and deduplicate results
+      const allJobOrders = new Map<string, any>();
+      
+      queryResults.forEach(snapshot => {
+        snapshot.docs.forEach(doc => {
+          const jobOrderData = { id: doc.id, ...doc.data() };
+          allJobOrders.set(doc.id, jobOrderData);
+        });
+      });
+      
+      const uniqueJobOrders = Array.from(allJobOrders.values());
+      setJobOrders(uniqueJobOrders);
+    } catch (err) {
+      console.error('Error loading job orders for contact:', err);
+      setJobOrders([]);
+    } finally {
+      setLoadingJobOrders(false);
+    }
+  };
+
   useEffect(() => {
     loadContact();
     loadSalespeople();
     loadRecentActivities();
     loadAllCompanies();
+    loadJobOrdersForContact();
   }, [contactId, tenantId]);
 
   // Initialize selected locations when contact or companyLocations change
@@ -1480,484 +1551,81 @@ const ContactDetails: React.FC = () => {
           <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>
         </Breadcrumbs>
       </Box>
-      {/* Header */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Contact Avatar */}
-            <Box sx={{ position: 'relative' }}>
-              <Avatar
-                src={contact.avatar}
-                sx={{ 
-                  width: 128, 
-                  height: 128,
-                  bgcolor: contact.avatar ? 'transparent' : 'primary.main',
-                  fontSize: '2.5rem',
-                  fontWeight: 'bold'
-                }}
-              >
-                {getInitials(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`)}
-              </Avatar>
-              
-              {/* Avatar Upload/Delete Buttons */}
-              <Box sx={{ 
-                position: 'absolute', 
-                bottom: -8, 
-                right: -8,
-                display: 'flex',
-                gap: 0.5
-              }}>
-                <input
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  id="avatar-upload"
-                  type="file"
-                  onChange={handleAvatarUpload}
-                  disabled={avatarLoading}
-                />
-                <label htmlFor="avatar-upload">
-                  <IconButton
-                    component="span"
-                    size="small"
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
-                    }}
-                    disabled={avatarLoading}
-                  >
-                    {avatarLoading ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <UploadIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                </label>
-                
-                {contact.avatar && (
-                  <IconButton
-                    size="small"
-                    onClick={handleAvatarDelete}
-                    disabled={avatarLoading}
-                    sx={{
-                      bgcolor: 'grey.300',
-                      color: 'grey.700',
-                      '&:hover': {
-                        bgcolor: 'grey.400'
-                      },
-                      width: 28,
-                      height: 28
-                    }}
-                  >
-                    {avatarLoading ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <DeleteIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-
-            {/* Contact Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
-              </Typography>
-              
-              {/* Job Title */}
-              <Typography variant="body2" color="text.secondary"  sx={{ fontWeight: 'bold' }}>
-                {contact.jobTitle || contact.title || 'No title'}
-              </Typography>
-
-              {/* Professional Headline from Apollo */}
-              {contact?.headline && (
-                <Typography 
-                  variant="body2" 
-                  color="text.secondary" 
-                  sx={{ 
-                    fontStyle: 'italic',
-                    maxWidth: '600px',
-                    lineHeight: 1.4,
-                    mb: 0.5
-                  }}
-                >
-                  {contact.headline}
-                </Typography>
-              )}
-
-              {/* Company and Location Links (associations are source of truth) */}
-              {company && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography 
-                    variant="body2" 
-                    color="primary"
-                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                    onClick={() => navigate(`/crm/companies/${company.id}`)}
-                  >
-                    {company.companyName || company.name}
-                  </Typography>
-                  {(() => {
-                    // Get all associated locations
-                    const assocLocations = contact.associations?.locations || [];
-                    const selectedLocations = [];
-                    
-                    // First, try to get locations from associations
-                    for (const locationId of assocLocations) {
-                      const location = companyLocations.find((l: any) => l.id === locationId);
-                      if (location) {
-                        selectedLocations.push(location);
-                      }
-                    }
-                    
-                    // If no locations found in associations, check legacy locationId
-                    if (selectedLocations.length === 0 && contact.locationId) {
-                      const legacyLocation = companyLocations.find((l: any) => l.id === contact.locationId);
-                      if (legacyLocation) {
-                        selectedLocations.push(legacyLocation);
-                      }
-                    }
-                    
-                    // Display locations
-                    if (selectedLocations.length > 0) {
-                      return (
-                        <>
-                          <Typography variant="body2" color="text.secondary">/</Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                            {selectedLocations.map((location, index) => (
-                              <React.Fragment key={location.id}>
-                                {index > 0 && <Typography variant="body2" color="text.secondary">, </Typography>}
-                                <Typography 
-                                  variant="body2" 
-                                  color="primary"
-                                  sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                                  onClick={() => navigate(`/crm/companies/${company.id}/locations/${location.id}`)}
-                                >
-                                  {location.nickname || location.name || location.title || 'Unknown Location'}
-                                </Typography>
-                              </React.Fragment>
-                            ))}
-                          </Box>
-                        </>
-                      );
-                    }
-                    
-                    return null;
-                  })()}
-                </Box>
-              )}
-
-              {/* Location Information */}
-              {getFormattedLocation() && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <LocationIcon fontSize="small" color="secondary" />
-                  <Typography 
-                    variant="body2" 
-                    color="text.secondary"
-                  >
-                    {getFormattedLocation()}
-                  </Typography>
-                </Box>
-              )}
-              
-              {/* Contact Icons */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0, mt: 0 }}>
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.email ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.email ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.email ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.email ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.email) {
-                      window.open(`mailto:${contact.email}`, '_blank');
-                    }
-                  }}
-                  title={contact.email ? 'Send Email' : 'No email'}
-                >
-                  <EmailIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.phone || contact.workPhone ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.phone || contact.workPhone ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.phone || contact.workPhone ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.phone || contact.workPhone ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.phone || contact.workPhone) {
-                      window.open(`tel:${contact.phone || contact.workPhone}`, '_blank');
-                    }
-                  }}
-                  title={contact.phone || contact.workPhone ? 'Call Phone' : 'No phone'}
-                >
-                  <PhoneIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.linkedInUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.linkedInUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.linkedInUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.linkedInUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.linkedInUrl) {
-                      let url = contact.linkedInUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.linkedInUrl ? 'View LinkedIn' : 'No LinkedIn'}
-                >
-                  <LinkedInIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.twitterUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.twitterUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.twitterUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.twitterUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.twitterUrl) {
-                      let url = contact.twitterUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.twitterUrl ? 'View Twitter' : 'No Twitter'}
-                >
-                  <TwitterIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.facebookUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.facebookUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.facebookUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.facebookUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.facebookUrl) {
-                      let url = contact.facebookUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.facebookUrl ? 'View Facebook' : 'No Facebook'}
-                >
-                  <FacebookIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.instagramUrl ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.instagramUrl ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.instagramUrl ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.instagramUrl ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.instagramUrl) {
-                      let url = contact.instagramUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.instagramUrl ? 'View Instagram' : 'No Instagram'}
-                >
-                  <InstagramIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: contact.website ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.website ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.website ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.website ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (contact.website) {
-                      let url = contact.website;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={contact.website ? 'Visit Website' : 'No Website'}
-                >
-                  <LanguageIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Box>
-
-              {/* Contact Type and Engagement Level */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Type:</Typography>
-                  <Chip 
-                    label={contact?.contactType || 'Unknown'} 
-                    color={contact?.contactType === 'Decision Maker' ? 'success' : 
-                           contact?.contactType === 'Unknown' ? 'warning' : 'primary'} 
-                    size="small" 
-                    sx={{ fontWeight: 500 }}
-                  />
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Engagement:</Typography>
-                  <Chip 
-                    label={metrics.completedTasks > 5 ? 'High' : metrics.completedTasks > 2 ? 'Medium' : 'Low'} 
-                    color={metrics.completedTasks > 5 ? 'success' : metrics.completedTasks > 2 ? 'warning' : 'error'} 
-                    size="small" 
-                    sx={{ fontWeight: 500 }}
-                  />
-                </Box>
-                {contact?.inferredSeniority && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Seniority:</Typography>
-                    <Chip 
-                      label={contact.inferredSeniority} 
-                      color={contact.inferredSeniority === 'C-Level' || contact.inferredSeniority === 'Executive' ? 'success' : 
-                             contact.inferredSeniority === 'Senior' ? 'primary' : 
-                             contact.inferredSeniority === 'Mid-Level' ? 'warning' : 'default'} 
-                      size="small" 
-                      sx={{ fontWeight: 500 }}
-                    />
-                  </Box>
-                )}
-
-              </Box>
-            </Box>
-          </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              {/* {shouldShowFindContactInfoButton() && (
-                <Button
-                  variant="outlined"
-                  color="primary"
-                  startIcon={findingContactInfo ? <CircularProgress size={20} color="inherit" /> : <EmailIcon />}
-                  onClick={handleFindContactInfo}
-                  disabled={findingContactInfo}
-                >
-                  {findingContactInfo ? 'Finding...' : 'Find Contact Info'}
-                </Button>
-              )} */}
-              <Button 
-                variant="outlined" 
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddNoteDialog(true)}
-                size="small"
-              >
-                Add Note
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={aiEnhancing ? <CircularProgress size={20} color="inherit" /> : <RocketLaunchIcon />}
-                onClick={handleAIEnhancement}
-                disabled={aiEnhancing}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  },
-                  '&:disabled': {
-                    bgcolor: 'grey.400'
-                  }
-                }}
-              >
-                {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={<CheckCircleIcon />}
-                onClick={() => setShowLogActivityDialog(true)}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  }
-                }}
-              >
-                Log Activity
-              </Button>
-            </Box>
-            {contact.lastEnrichedAt && (
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', textAlign: 'right' }}>
-                Last updated: {(() => {
-                  try {
-                    // Handle Firestore timestamp
-                    if (contact.lastEnrichedAt.toDate) {
-                      return contact.lastEnrichedAt.toDate().toLocaleString();
-                    }
-                    // Handle string or number
-                    const date = new Date(contact.lastEnrichedAt);
-                    if (isNaN(date.getTime())) {
-                      return 'Recently';
-                    }
-                    return date.toLocaleString();
-                  } catch (error) {
-                    return 'Recently';
-                  }
-                })()}
-              </Typography>
-            )}
-          </Box>
-        </Box>
-      </Box>
+      {/* Build navigation links */}
+      {(() => {
+        const links: Array<{ type: 'company' | 'location' | 'deal' | 'jobOrder'; id: string; name: string; companyId?: string }> = [];
+        
+        // Add company link
+        if (company?.id) {
+          links.push({
+            type: 'company',
+            id: company.id,
+            name: company.companyName || company.name || 'Company'
+          });
+        }
+        
+        // Add location links
+        const assocLocations = contact?.associations?.locations || [];
+        const locationIds: string[] = [];
+        
+        if (assocLocations.length > 0) {
+          assocLocations.forEach((loc: any) => {
+            const locId = typeof loc === 'string' ? loc : loc?.id;
+            if (locId) locationIds.push(locId);
+          });
+        } else if (contact?.locationId) {
+          locationIds.push(contact.locationId);
+        }
+        
+        locationIds.forEach(locationId => {
+          const location = companyLocations.find(l => l.id === locationId);
+          if (location && company?.id) {
+            links.push({
+              type: 'location',
+              id: locationId,
+              name: location.nickname || location.name || location.title || 'Location',
+              companyId: company.id
+            });
+          }
+        });
+        
+        // Calculate metrics
+        const associatedTasks = associationsData.entities.tasks || [];
+        const completedTasks = associatedTasks.filter((task: any) => task.status === 'completed').length;
+        
+        // Return Contact Header Component
+        if (contact) {
+          return (
+            <ContactHeader
+              contact={contact}
+              tenantId={tenantId}
+              favoriteType="contacts"
+              isFavorite={isFavorite}
+              toggleFavorite={toggleFavorite}
+              navigationLinks={links}
+              metrics={{
+                completedTasks,
+                totalTasks: associatedTasks.length
+              }}
+              onAddNote={() => setShowAddNoteDialog(true)}
+              onAIEnhance={handleAIEnhancement}
+              onLogActivity={() => setShowLogActivityDialog(true)}
+              aiEnhancing={aiEnhancing}
+              onAvatarUpload={async (url: string) => {
+                await handleContactUpdate('avatar', url);
+                showToast('Avatar uploaded successfully!', 'success');
+              }}
+              onAvatarDelete={async () => {
+                await handleContactUpdate('avatar', '');
+                showToast('Avatar deleted successfully!', 'success');
+              }}
+              routePrefix="/crm"
+              companyLocations={companyLocations}
+            />
+          );
+        }
+        return null;
+      })()}
 
       {/* Success/Error Alerts */}
       {aiSuccess && (
@@ -1981,7 +1649,7 @@ const ContactDetails: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DashboardIcon fontSize="small" />
-                Dashboard
+                Overview
               </Box>
             } 
           />
@@ -2184,21 +1852,37 @@ const ContactDetails: React.FC = () => {
                 <CardHeader 
                   title="Contact Details" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <TextField
-                      label="Full Name"
-                      defaultValue={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
-                      onBlur={(e) => {
-                        const next = (e.target.value || '').trim();
-                        if ((contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`) !== next) {
-                          handleContactUpdate('fullName', next);
+                  action={
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditingContactDetails(!isEditingContactDetails)}
+                      sx={{ 
+                        color: isEditingContactDetails ? 'primary.main' : 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
                         }
                       }}
-                      fullWidth
-                      size="small"
-                    />
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {isEditingContactDetails ? (
+                    // Edit Mode - Show Input Fields
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <TextField
+                        label="Full Name"
+                        defaultValue={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`}
+                        onBlur={(e) => {
+                          const next = (e.target.value || '').trim();
+                          if ((contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`) !== next) {
+                            handleContactUpdate('fullName', next);
+                          }
+                        }}
+                        fullWidth
+                        size="small"
+                      />
                     <TextField
                       label="Email"
                       defaultValue={contact.email || ''}
@@ -2556,9 +2240,424 @@ const ContactDetails: React.FC = () => {
                       />
                     </Box>
                   </Box>
+                  ) : (
+                    // View Mode - Show as Read-Only Text with Better Visual Hierarchy
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {/* Contact Information Section */}
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Contact Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {(contact.fullName || contact.firstName || contact.lastName) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Full Name
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.email && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <EmailIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Email
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    <MUILink 
+                                      href={`mailto:${contact.email}`} 
+                                      color="primary" 
+                                      underline="hover"
+                                      sx={{ wordBreak: 'break-all' }}
+                                    >
+                                      {contact.email}
+                                    </MUILink>
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {(contact.phone || contact.workPhone) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Phone
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {contact.phone || contact.workPhone || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.mobilePhone && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Mobile
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {contact.mobilePhone}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Address
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                    {contact.formattedAddress || 
+                                     [contact.address, contact.city, contact.state, contact.country, contact.zipcode]
+                                       .filter(Boolean)
+                                       .join(', ') || '-'}
+                                    {contact.timeZone && ` (${contact.timeZone})`}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+
+                      {/* Professional Information Section */}
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Professional Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {(contact.jobTitle || contact.title) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Job Title
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {contact.jobTitle || contact.title || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {contact.headline && (
+                            <Grid item xs={12}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Professional Headline
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, fontStyle: 'italic' }}>
+                                {contact.headline}
+                              </Typography>
+                            </Grid>
+                          )}
+                          {contact.companyName && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Company
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {contact.companyId ? (
+                                      <MUILink
+                                        href={`/crm/companies/${contact.companyId}`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigate(`/crm/companies/${contact.companyId}`);
+                                        }}
+                                        color="primary"
+                                        underline="hover"
+                                        sx={{ fontWeight: 500 }}
+                                      >
+                                        {contact.companyName}
+                                      </MUILink>
+                                    ) : (
+                                      <span style={{ fontWeight: 500 }}>{contact.companyName}</span>
+                                    )}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          {selectedLocations.length > 0 && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5, display: 'block' }}>
+                                    Work Locations
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.25 }}>
+                                    {selectedLocations.map((location) => (
+                                      <Chip
+                                        key={location.id}
+                                        label={location.nickname || location.name || location.title || 'Location'}
+                                        size="small"
+                                        variant="outlined"
+                                        sx={{ height: 24, fontSize: '0.75rem' }}
+                                      />
+                                    ))}
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+
+                      {/* Additional Details Section */}
+                      {(contact.contactType || contact.leadSource || contact.linkedInUrl || contact.twitterUrl || contact.facebookUrl || contact.instagramUrl || contact.website || contact.birthday || contact.salesOwnerName) && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Additional Details
+                          </Typography>
+                          <Grid container spacing={2}>
+                            {contact.contactType && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Contact Type
+                                </Typography>
+                                <Box sx={{ mt: 0.5 }}>
+                                  <Chip 
+                                    label={contact.contactType} 
+                                    size="small" 
+                                    color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                                    sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                                  />
+                                </Box>
+                              </Grid>
+                            )}
+                            {contact.leadSource && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Lead Source
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.leadSource}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {contact.salesOwnerName && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Sales Owner
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.salesOwnerName}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {contact.birthday && (
+                              <Grid item xs={12} sm={6}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Birthday
+                                </Typography>
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {contact.birthday}
+                                </Typography>
+                              </Grid>
+                            )}
+                            {(contact.linkedInUrl || contact.twitterUrl || contact.facebookUrl || contact.instagramUrl || contact.website) && (
+                              <Grid item xs={12}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 1, display: 'block' }}>
+                                  Social Profiles & Website
+                                </Typography>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+                                  {contact.linkedInUrl && (
+                                    <MUILink
+                                      href={contact.linkedInUrl.startsWith('http') ? contact.linkedInUrl : `https://${contact.linkedInUrl}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <LinkedInIcon sx={{ fontSize: 18 }} />
+                                      LinkedIn
+                                    </MUILink>
+                                  )}
+                                  {contact.twitterUrl && (
+                                    <MUILink
+                                      href={contact.twitterUrl.startsWith('http') ? contact.twitterUrl : `https://${contact.twitterUrl}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <TwitterIcon sx={{ fontSize: 18 }} />
+                                      Twitter
+                                    </MUILink>
+                                  )}
+                                  {contact.facebookUrl && (
+                                    <MUILink
+                                      href={contact.facebookUrl.startsWith('http') ? contact.facebookUrl : `https://${contact.facebookUrl}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <FacebookIcon sx={{ fontSize: 18 }} />
+                                      Facebook
+                                    </MUILink>
+                                  )}
+                                  {contact.instagramUrl && (
+                                    <MUILink
+                                      href={contact.instagramUrl.startsWith('http') ? contact.instagramUrl : `https://${contact.instagramUrl}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <InstagramIcon sx={{ fontSize: 18 }} />
+                                      Instagram
+                                    </MUILink>
+                                  )}
+                                  {contact.website && (
+                                    <MUILink
+                                      href={contact.website.startsWith('http') ? contact.website : `https://${contact.website}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontSize: '0.875rem' }}
+                                    >
+                                      <LanguageIcon sx={{ fontSize: 18 }} />
+                                      Website
+                                    </MUILink>
+                                  )}
+                                </Box>
+                              </Grid>
+                            )}
+                          </Grid>
+                        </Box>
+                      )}
+
+                      {/* Status Section */}
+                      <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <Box>
+                            <Typography variant="body2" fontWeight={500} component="div">
+                              Contact Status
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25, display: 'block' }}>
+                              {contact.isActive !== false ? 'Active and available for engagement' : 'Archived or inactive'}
+                            </Typography>
+                          </Box>
+                          <Chip
+                            label={contact.isActive !== false ? 'Active' : 'Inactive'}
+                            size="small"
+                            color={contact.isActive !== false ? 'success' : 'default'}
+                            sx={{ fontWeight: 500, height: 24 }}
+                          />
+                        </Box>
+                      </Box>
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
 
+              {/* Recent Activity */}
+              <Card>
+                <CardHeader 
+                  title="Recent Activity" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {loadingActivities ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  ) : recentActivities.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {recentActivities.map((activity) => (
+                        <Box 
+                          key={activity.id} 
+                          sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1, 
+                            p: 1, 
+                            borderRadius: 1,
+                            cursor: 'pointer',
+                            '&:hover': {
+                              bgcolor: 'grey.50'
+                            }
+                          }}
+                          onClick={() => {
+                            // Navigate to appropriate section based on activity type
+                            switch (activity.type) {
+                              case 'task':
+                                setTabValue(1); // Tasks tab
+                                break;
+                              case 'note':
+                                setTabValue(4); // Notes tab
+                                break;
+                              case 'email':
+                                setTabValue(5); // Activity tab
+                                break;
+                              default:
+                                break;
+                            }
+                          }}
+                        >
+                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                            {getActivityIcon(activity.icon)}
+                          </Avatar>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="body2" fontSize="0.75rem" fontWeight="medium" noWrap>
+                              {activity.title}
+                            </Typography>
+                            {activity.description && (
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                {activity.description.length > 50 
+                                  ? `${activity.description.substring(0, 50)}...` 
+                                  : activity.description}
+                              </Typography>
+                            )}
+                          </Box>
+                          <Typography variant="caption" color="text.secondary" fontSize="0.7rem">
+                            {formatActivityTime(activity.timestamp)}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No recent activity
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Activities will appear here as they occur
+                      </Typography>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
 
             </Box>
           </Grid>
@@ -2566,6 +2665,25 @@ const ContactDetails: React.FC = () => {
           {/* Center Column - Contact Intelligence */}
           <Grid item xs={12} md={5}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Professional Summary (shows only if content exists) */}
+              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
+                <Card>
+                  <CardHeader 
+                    title="Professional Summary" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary" 
+                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
+                    >
+                      {String(contact.professionalSummary)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Sales Coach Widget */}
               <Card>
                 <CardHeader 
@@ -2791,100 +2909,94 @@ const ContactDetails: React.FC = () => {
             </Box>
           </Grid>
 
-          {/* Right Column - Active Salespeople + Recent Activity + Associations */}
+          {/* Right Column - Connections: Company, Location, Opportunities, Job Orders, Active Salespeople */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Professional Summary (shows only if content exists) */}
-              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
+              {/* Company */}
+              {company && (
                 <Card>
                   <CardHeader 
-                    title="Professional Summary" 
+                    title="Company" 
                     titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
                   />
                   <CardContent sx={{ p: 2 }}>
-                    <Typography 
-                      variant="body2" 
-                      color="text.secondary" 
-                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
+                    <Box 
+                      sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 1, 
+                        p: 1, 
+                        borderRadius: 1, 
+                        bgcolor: 'grey.50',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          bgcolor: 'grey.100'
+                        }
+                      }}
+                      onClick={() => navigate(`/crm/companies/${company.id}`)}
                     >
-                      {String(contact.professionalSummary)}
-                    </Typography>
+                      <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                        <BusinessIcon sx={{ fontSize: 16 }} />
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {company.companyName || company.name || 'Unknown Company'}
+                        </Typography>
+                        {company.industry && (
+                          <Typography variant="caption" color="text.secondary">
+                            {company.industry}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
                   </CardContent>
                 </Card>
               )}
 
-              {/* Active Salespeople */}
-              <Card>
-                <CardHeader 
-                  title="Active Salespeople" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
-                      try {
-                        setRebuildingActive(true);
-                        const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
-                        
-                        // Pass the deal IDs that are already loaded in the frontend
-                        const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
-                        
-                        const resp: any = await fn({ tenantId, contactId, dealIds });
-                        const data = resp?.data || {};
-                        if (data.ok) {
-                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
-                        } else if (data.error) {
-                          setLocalError(`Rebuild failed: ${data.error}`);
-                        } else {
-                          setLocalSuccess('Rebuild requested');
+              {/* Location */}
+              {selectedLocations.length > 0 && selectedLocations.map((location) => (
+                <Card key={location.id}>
+                  <CardHeader 
+                    title="Location" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Box 
+                      sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 1, 
+                        p: 1, 
+                        borderRadius: 1, 
+                        bgcolor: 'grey.50',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          bgcolor: 'grey.100'
                         }
-                        // Light refresh
-                        try {
-                          await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
-                        } catch {}
-                      } catch (e) {
-                        console.error('Rebuild active salespeople – error', e);
-                        setLocalError('Failed to rebuild active salespeople');
-                      } finally {
-                        setRebuildingActive(false);
-                      }
-                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
-                  }
-                />
-                <CardContent sx={{ p: 2 }}>
-
-                  
-                  {contact?.activeSalespeople && Object.keys(contact.activeSalespeople).length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {Object.values(contact.activeSalespeople as any)
-                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
-                        .slice(0, 5)
-                        .map((sp: any) => (
-                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
-                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
-                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
-                            </Avatar>
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {sp.jobTitle || sp.department || ''}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        ))}
+                      }}
+                      onClick={() => {
+                        if (company?.id) {
+                          navigate(`/crm/companies/${company.id}/locations/${location.id}`);
+                        }
+                      }}
+                    >
+                      <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                        <LocationIcon sx={{ fontSize: 16 }} />
+                      </Avatar>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {location.nickname || location.name || location.title || 'Unknown Location'}
+                        </Typography>
+                        {location.code && (
+                          <Typography variant="caption" color="text.secondary">
+                            {location.code}
+                          </Typography>
+                        )}
+                      </Box>
                     </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                        No active salespeople found
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Click "Rebuild" to scan deals, tasks, and emails
-                      </Typography>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              ))}
 
               {/* Opportunities */}
               <Card>
@@ -2996,6 +3108,177 @@ const ContactDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
+              {/* Job Orders */}
+              <Card>
+                <CardHeader 
+                  title="Job Orders" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {loadingJobOrders ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                      <Skeleton variant="rectangular" height={32} />
+                    </Box>
+                  ) : jobOrders.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {jobOrders
+                        .sort((a: any, b: any) => {
+                          // Sort by status priority (open > draft > on_hold > filled > cancelled)
+                          const statusPriority: Record<string, number> = {
+                            'open': 5,
+                            'draft': 4,
+                            'on_hold': 3,
+                            'filled': 2,
+                            'completed': 2,
+                            'cancelled': 1
+                          };
+                          const aPriority = statusPriority[a.status] || 0;
+                          const bPriority = statusPriority[b.status] || 0;
+                          if (aPriority !== bPriority) {
+                            return bPriority - aPriority;
+                          }
+                          // Then sort by created date (newest first)
+                          const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                          const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                          return bDate.getTime() - aDate.getTime();
+                        })
+                        .slice(0, 5)
+                        .map((jobOrder: any) => {
+                          // Determine contact's role in this job order
+                          let contactRole = '';
+                          if (jobOrder.hrContactId === contactId) contactRole = 'HR Contact';
+                          else if (jobOrder.decisionMaker === contactId) contactRole = 'Decision Maker';
+                          else if (jobOrder.operationsContactId === contactId) contactRole = 'Operations';
+                          else if (jobOrder.procurementContactId === contactId) contactRole = 'Procurement';
+                          else if (jobOrder.billingContactId === contactId) contactRole = 'Billing';
+                          else if (jobOrder.safetyContactId === contactId) contactRole = 'Safety';
+                          else if (jobOrder.invoiceContactId === contactId) contactRole = 'Invoice';
+                          
+                          // Format status
+                          const statusLabels: Record<string, string> = {
+                            'open': 'Open',
+                            'draft': 'Draft',
+                            'on_hold': 'On Hold',
+                            'filled': 'Filled',
+                            'completed': 'Completed',
+                            'cancelled': 'Cancelled'
+                          };
+                          const statusLabel = statusLabels[jobOrder.status] || jobOrder.status || 'Unknown';
+                          
+                          // Format job order number
+                          const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
+                          
+                          return (
+                            <Box 
+                              key={jobOrder.id} 
+                              sx={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: 1, 
+                                p: 1, 
+                                borderRadius: 1, 
+                                bgcolor: 'grey.50',
+                                cursor: 'pointer',
+                                '&:hover': {
+                                  bgcolor: 'grey.100'
+                                }
+                              }}
+                              onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
+                            >
+                              <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                                <WorkIcon sx={{ fontSize: 16 }} />
+                              </Avatar>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {jobOrder.jobOrderName || jobOrder.jobTitle || 'Unknown Job Order'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  #{jobOrderNumber} • {statusLabel}{contactRole ? ` • ${contactRole}` : ''}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          );
+                        })}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No associated job orders</Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Active Salespeople */}
+              <Card>
+                <CardHeader 
+                  title="Active Salespeople" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button size="small" disabled={rebuildingActive} onClick={async () => {
+                      try {
+                        setRebuildingActive(true);
+                        const fn = httpsCallable(functions, 'rebuildContactActiveSalespeople');
+                        
+                        // Pass the deal IDs that are already loaded in the frontend
+                        const dealIds = associationsData.entities.deals?.map((d: any) => d.id) || [];
+                        
+                        const resp: any = await fn({ tenantId, contactId, dealIds });
+                        const data = resp?.data || {};
+                        if (data.ok) {
+                          setLocalSuccess(`Active salespeople updated (${data.count ?? data.updated ?? 0})`);
+                        } else if (data.error) {
+                          setLocalError(`Rebuild failed: ${data.error}`);
+                        } else {
+                          setLocalSuccess('Rebuild requested');
+                        }
+                        // Light refresh
+                        try {
+                          await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+                        } catch {}
+                      } catch (e) {
+                        console.error('Rebuild active salespeople – error', e);
+                        setLocalError('Failed to rebuild active salespeople');
+                      } finally {
+                        setRebuildingActive(false);
+                      }
+                    }}>{rebuildingActive ? 'Rebuilding…' : 'Rebuild'}</Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.activeSalespeople && Object.keys(contact.activeSalespeople).length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {Object.values(contact.activeSalespeople as any)
+                        .sort((a: any, b: any) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0))
+                        .slice(0, 5)
+                        .map((sp: any) => (
+                          <Box key={sp.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
+                              {(sp.displayName || sp.firstName || 'S').charAt(0)}
+                            </Avatar>
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" fontWeight="medium">
+                                {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Unknown'}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {sp.jobTitle || sp.department || ''}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        ))}
+                    </Box>
+                  ) : (
+                    <Box sx={{ textAlign: 'center', py: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        No active salespeople found
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Click "Rebuild" to scan deals, tasks, and emails
+                      </Typography>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Local snackbars for rebuild feedback */}
               <Snackbar open={!!localSuccess} autoHideDuration={3000} onClose={() => setLocalSuccess(null)}>
                 <Alert severity="success" onClose={() => setLocalSuccess(null)} sx={{ width: '100%' }}>
@@ -3007,86 +3290,6 @@ const ContactDetails: React.FC = () => {
                   {localError}
                 </Alert>
               </Snackbar>
-
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader 
-                  title="Recent Activity" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {loadingActivities ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  ) : recentActivities.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {recentActivities.map((activity) => (
-                        <Box 
-                          key={activity.id} 
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            p: 1, 
-                            borderRadius: 1,
-                            cursor: 'pointer',
-                            '&:hover': {
-                              bgcolor: 'grey.50'
-                            }
-                          }}
-                          onClick={() => {
-                            // Navigate to appropriate section based on activity type
-                            switch (activity.type) {
-                              case 'task':
-                                setTabValue(1); // Tasks tab
-                                break;
-                              case 'note':
-                                setTabValue(4); // Notes tab
-                                break;
-                              case 'email':
-                                setTabValue(5); // Activity tab
-                                break;
-                              default:
-                                break;
-                            }
-                          }}
-                        >
-                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
-                            {getActivityIcon(activity.icon)}
-                          </Avatar>
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="body2" fontSize="0.75rem" fontWeight="medium" noWrap>
-                              {activity.title}
-                            </Typography>
-                            {activity.description && (
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {activity.description.length > 50 
-                                  ? `${activity.description.substring(0, 50)}...` 
-                                  : activity.description}
-                              </Typography>
-                            )}
-                          </Box>
-                          <Typography variant="caption" color="text.secondary" fontSize="0.7rem">
-                            {formatActivityTime(activity.timestamp)}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No recent activity
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Activities will appear here as they occur
-                      </Typography>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
             </Box>
           </Grid>
         </Grid>

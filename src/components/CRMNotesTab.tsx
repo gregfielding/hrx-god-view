@@ -30,6 +30,7 @@ import {
   DialogContent,
   DialogActions,
   Divider,
+  Skeleton,
 } from '@mui/material';
 import {
   Visibility as ViewIcon,
@@ -335,31 +336,25 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   };
 
   return (
-    <Box sx={{ px: 0, py: 0 }}>
-      {/* Header */}
-      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mt: 0, mb: 0, px: 3 }}>
-        <Typography variant="h6" fontWeight={700}>
-          {entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : entityType === 'jobOrder' ? 'Job Order' : 'Company'} Notes History ({notes.length})
-        </Typography>
-      </Box>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, px: 3 }}>
-        {entityType === 'location' 
-          ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
-          : entityType === 'deal'
-          ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
-          : entityType === 'jobOrder'
-          ? 'Add notes, observations, and feedback about this job order. All notes trigger AI review for insights.'
-          : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
-      </Typography>
-      <Divider sx={{ my: 2 }} />
-
-      {/* Add Note Form */}
-      <Box sx={{ px: 3, mb: 3 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <NoteIcon color="primary" sx={{ mr: 1 }} />
-          <Typography variant="h6">Add New Note</Typography>
-        </Box>
-        <Grid container spacing={2}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Add Note Form Card */}
+      <Card>
+        <CardHeader 
+          title="Add New Note" 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
+            {entityType === 'location' 
+              ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
+              : entityType === 'deal'
+              ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
+              : entityType === 'jobOrder'
+              ? 'Add notes, observations, and feedback about this job order. All notes trigger AI review for insights.'
+              : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
+          </Typography>
+          
+          <Grid container spacing={2}>
           <Grid item xs={12}>
             <TextField
               label="Note Content"
@@ -423,7 +418,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
           </Grid>
 
           <Grid item xs={12}>
-            <Typography variant="subtitle2" gutterBottom>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
               Tags (optional)
             </Typography>
             <Box display="flex" flexWrap="wrap" gap={1}>
@@ -441,73 +436,156 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                   color={selectedTags.includes(tag) ? 'primary' : 'default'}
                   variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
                   size="small"
+                  sx={{
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out',
+                    '&:hover': {
+                      transform: 'translateY(-1px)',
+                      boxShadow: 1
+                    }
+                  }}
                 />
               ))}
             </Box>
           </Grid>
 
           <Grid item xs={12}>
-            <Box display="flex" alignItems="center" gap={2}>
-              <Button
-                variant="outlined"
-                component="label"
-                startIcon={<AttachFileIcon />}
-              >
-                Attach Files
-                <input
-                  type="file"
-                  hidden
-                  multiple
-                  onChange={handleFileSelect}
-                />
-              </Button>
+            <Box display="flex" flexDirection="column" gap={1.5}>
+              <Box display="flex" alignItems="center" gap={2}>
+                <Button
+                  variant="outlined"
+                  component="label"
+                  startIcon={<AttachFileIcon />}
+                  size="small"
+                >
+                  Attach Files
+                  <input
+                    type="file"
+                    hidden
+                    multiple
+                    onChange={handleFileSelect}
+                  />
+                </Button>
+                {selectedFiles.length > 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedFiles.length} file(s) selected
+                  </Typography>
+                )}
+              </Box>
+              
               {selectedFiles.length > 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  {selectedFiles.length} file(s) selected
-                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {selectedFiles.map((file, index) => (
+                    <Chip
+                      key={index}
+                      label={file.name}
+                      onDelete={() => removeFile(index)}
+                      size="small"
+                      variant="outlined"
+                      sx={{ 
+                        maxWidth: 200,
+                        '& .MuiChip-label': {
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }
+                      }}
+                    />
+                  ))}
+                </Box>
               )}
             </Box>
-            
-            {selectedFiles.length > 0 && (
-              <Box mt={1}>
-                {selectedFiles.map((file, index) => (
-                  <Chip
-                    key={index}
-                    label={file.name}
-                    onDelete={() => removeFile(index)}
-                    size="small"
-                    sx={{ mr: 1, mb: 1 }}
-                  />
-                ))}
-              </Box>
-            )}
           </Grid>
 
           <Grid item xs={12}>
-            <Button
-              variant="contained"
-              onClick={handleSubmitNote}
-              disabled={!newNote.trim() || uploading || loading}
-              startIcon={<AddIcon />}
-              size="large"
-            >
-              {uploading ? 'Uploading...' : loading ? 'Adding Note...' : 'Add Note & Trigger AI Review'}
-            </Button>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+              <Button
+                variant="contained"
+                onClick={handleSubmitNote}
+                disabled={!newNote.trim() || uploading || loading}
+                startIcon={<AddIcon />}
+                size="medium"
+                sx={{ minWidth: 200 }}
+              >
+                {uploading ? 'Uploading...' : loading ? 'Adding Note...' : 'Add Note & Trigger AI Review'}
+              </Button>
+            </Box>
           </Grid>
         </Grid>
-      </Box>
+        </CardContent>
+      </Card>
 
-      {/* Notes History */}
-      <Card sx={{ p: 0, m: 0 }}>
-        <CardContent sx={{ p: 0, m: 0 }}>
+      {/* Notes History Card */}
+      <Card>
+        <CardHeader 
+          title={`${entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : entityType === 'jobOrder' ? 'Job Order' : 'Company'} Notes History (${notes.length})`} 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
           {loading ? (
-            <Box display="flex" justifyContent="center" p={3}>
-              <Typography>Loading notes...</Typography>
+            <Box>
+              <TableContainer 
+                component={Paper} 
+                variant="outlined"
+                sx={{
+                  borderRadius: 1,
+                  border: '1px solid',
+                  borderColor: 'divider'
+                }}
+              >
+                <Table>
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: 'grey.50' }}>
+                      {['Content', 'Author', 'Date', 'Actions'].map((header) => (
+                        <TableCell key={header} sx={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: 'text.secondary',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          py: 1.5
+                        }}>
+                          {header}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <TableRow key={`skeleton-${index}`}>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="text" width="100%" height={20} />
+                          <Skeleton variant="text" width="60%" height={16} sx={{ mt: 0.5 }} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Skeleton variant="circular" width={32} height={32} />
+                            <Skeleton variant="text" width={100} height={20} />
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Skeleton variant="text" width={120} height={20} />
+                        </TableCell>
+                        <TableCell sx={{ py: 2 }}>
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            <Skeleton variant="circular" width={32} height={32} />
+                            <Skeleton variant="circular" width={32} height={32} />
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
             </Box>
           ) : notes.length === 0 ? (
-            <Box textAlign="center" p={3}>
-              <Typography variant="body2" color="text.secondary">
-                No notes yet. Add the first note above.
+            <Box textAlign="center" py={4}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                No notes yet
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Add the first note above
               </Typography>
             </Box>
           ) : (
@@ -516,20 +594,22 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
               variant="outlined"
               sx={{
                 overflowX: 'auto',
-                borderRadius: '8px',
-                boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider'
               }}
             >
               <Table sx={{ minWidth: 1200 }}>
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                  <TableRow sx={{ bgcolor: 'grey.50' }}>
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Content
@@ -537,10 +617,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Author
@@ -548,10 +629,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Date
@@ -559,10 +641,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     <TableCell sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#374151',
+                      color: 'text.secondary',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
-                      borderBottom: '1px solid #E5E7EB',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
                       py: 1.5
                     }}>
                       Actions
@@ -574,9 +657,8 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                     <TableRow 
                       key={note.id}
                       sx={{
-                        height: '48px',
                         '&:hover': {
-                          backgroundColor: '#F9FAFB'
+                          bgcolor: 'grey.50'
                         }
                       }}
                     >
