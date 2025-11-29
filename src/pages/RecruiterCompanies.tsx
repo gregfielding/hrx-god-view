@@ -2,46 +2,35 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   TextField,
   Button,
-  Avatar,
-  ToggleButtonGroup,
-  ToggleButton,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
   IconButton,
-  TableSortLabel,
-  CircularProgress,
-  Skeleton,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Grid
+  Grid,
 } from '@mui/material';
 import {
   Search as SearchIcon,
   Clear as ClearIcon,
   Add as AddIcon,
-  Person as PersonIcon,
-  Business as BusinessIcon
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
+import { db, functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { Autocomplete } from '@mui/material';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
-import FavoriteButton from '../components/FavoriteButton';
+import CompanyTable from '../components/CompanyTable';
+import { CircularProgress, Snackbar, Alert } from '@mui/material';
 
 const RecruiterCompanies: React.FC = () => {
   const navigate = useNavigate();
@@ -49,7 +38,11 @@ const RecruiterCompanies: React.FC = () => {
   
   // State
   const [companies, setCompanies] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null);
+  const companiesPageSize = 50; // Same as CRM
   const [search, setSearch] = useState('');
   const [locationStateFilter, setLocationStateFilter] = useState('all');
   const [sortField, setSortField] = useState<string>('companyName');
@@ -57,34 +50,186 @@ const RecruiterCompanies: React.FC = () => {
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
+  const [companyForm, setCompanyForm] = useState({
+    name: '',
+    website: '',
+    parentCompany: '',
+  });
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   // Favorites
   const { favorites, isFavorite, toggleFavorite } = useFavorites('companies');
 
-  // Load companies
+  // Load companies when filters/search change
   useEffect(() => {
-    loadCompanies();
-  }, [tenantId]);
-
-  const loadCompanies = async () => {
+    if (tenantId) {
+      loadCompanies('', null, false);
+      loadAllCompanies();
+      loadContacts();
+    }
+  }, [tenantId, search, locationStateFilter, showFavoritesOnly]);
+  
+  // Load contacts for contact counts
+  const loadContacts = async () => {
     if (!tenantId) return;
     
     try {
-      setLoading(true);
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const q = query(contactsRef);
+      const snapshot = await getDocs(q);
+      const contactsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setContacts(contactsData);
+    } catch (error) {
+      console.error('Error loading contacts:', error);
+    }
+  };
+
+  // Load all companies for parent company autocomplete
+  const loadAllCompanies = async () => {
+    if (!tenantId) return;
+    
+    try {
+      setLoadingAllCompanies(true);
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       const q = query(companiesRef, orderBy('companyName', 'asc'));
-      
       const snapshot = await getDocs(q);
       const companiesData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      setAllCompanies(companiesData);
+    } catch (error) {
+      console.error('Error loading all companies:', error);
+    } finally {
+      setLoadingAllCompanies(false);
+    }
+  };
+
+  const loadCompanies = async (searchQuery = '', startDoc: DocumentSnapshot | null = null, append = false) => {
+    if (!tenantId) return;
+    
+    setLoading(true);
+    
+    try {
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const hasActiveFilters = searchQuery.trim() || locationStateFilter !== 'all' || showFavoritesOnly;
       
-      setCompanies(companiesData);
+      if (hasActiveFilters) {
+        // When filtering/searching, query ALL companies and filter client-side
+        const q = query(companiesRef, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        
+        let filtered = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as any[];
+        
+        // Apply search filter
+        if (searchQuery.trim()) {
+          const searchLower = searchQuery.toLowerCase().trim();
+          filtered = filtered.filter(company => {
+            const companyName = (company.companyName || company.name || '').toLowerCase();
+            const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+            const city = (company.city || '').toLowerCase();
+            const industry = (company.industry || '').toLowerCase();
+            
+            return companyName.includes(searchLower) ||
+                   companyUrl.includes(searchLower) ||
+                   city.includes(searchLower) ||
+                   industry.includes(searchLower);
+          });
+        }
+        
+        // Apply state filter
+        if (locationStateFilter !== 'all') {
+          filtered = filtered.filter(company => {
+            const state = company.state || company.address?.state || '';
+            return state === locationStateFilter;
+          });
+        }
+        
+        // Apply favorites filter
+        if (showFavoritesOnly) {
+          filtered = filtered.filter(company => isFavorite(company.id));
+        }
+        
+        // Sort the filtered results
+        filtered.sort((a, b) => {
+          const aValue = getSortableValue(a, sortField);
+          const bValue = getSortableValue(b, sortField);
+          
+          if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+          if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+          return 0;
+        });
+        
+        // Apply pagination to filtered results
+        if (!append) {
+          const limitedData = filtered.slice(0, companiesPageSize);
+          setCompanies(limitedData);
+          setHasMore(filtered.length > companiesPageSize);
+          setLastDoc(null); // Can't use lastDoc with filtered results
+        } else {
+          // For "Load More", we need to track how many we've already shown
+          const currentCount = companies.length;
+          const limitedData = filtered.slice(currentCount, currentCount + companiesPageSize);
+          setCompanies(prev => [...prev, ...limitedData]);
+          setHasMore(filtered.length > currentCount + limitedData.length);
+        }
+      } else {
+        // No filters - use Firestore pagination
+        const constraints: any[] = [orderBy('createdAt', 'desc'), limit(companiesPageSize)];
+        
+        if (startDoc) {
+          constraints.push(startAfter(startDoc));
+        }
+        
+        const q = query(companiesRef, ...constraints);
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const companiesData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          
+          setCompanies(prev => append ? [...prev, ...companiesData] : companiesData);
+          setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+          setHasMore(snapshot.size === companiesPageSize);
+        } else {
+          if (!append) {
+            setCompanies([]);
+          }
+          setHasMore(false);
+        }
+      }
     } catch (error) {
       console.error('Error loading companies:', error);
+      setCompanies([]);
+      setHasMore(false);
     } finally {
       setLoading(false);
+    }
+  };
+  
+  const loadMoreCompanies = () => {
+    if (hasMore && !loading) {
+      const hasActiveFilters = search.trim() || locationStateFilter !== 'all' || showFavoritesOnly;
+      if (hasActiveFilters) {
+        // For filtered results, load more from the same filtered set
+        loadCompanies(search, null, true);
+      } else {
+        // For normal pagination, use lastDoc
+        loadCompanies('', lastDoc, true);
+      }
     }
   };
 
@@ -118,41 +263,12 @@ const RecruiterCompanies: React.FC = () => {
     }
   };
 
-  // Filter and sort companies
+  // Sort companies (filtering is now done in loadCompanies)
   const filteredCompanies = React.useMemo(() => {
-    let filtered = companies;
+    // Apply client-side sorting only (filtering is handled in loadCompanies)
+    const sorted = [...companies];
     
-    // Apply favorites filter
-    if (showFavoritesOnly) {
-      filtered = filtered.filter(company => isFavorite(company.id));
-    }
-    
-    // Apply search filter
-    if (search.trim()) {
-      const searchLower = search.toLowerCase().trim();
-      filtered = filtered.filter(company => {
-        const companyName = (company.companyName || company.name || '').toLowerCase();
-        const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
-        const city = (company.city || '').toLowerCase();
-        const industry = (company.industry || '').toLowerCase();
-        
-        return companyName.includes(searchLower) ||
-               companyUrl.includes(searchLower) ||
-               city.includes(searchLower) ||
-               industry.includes(searchLower);
-      });
-    }
-    
-    // Apply state filter
-    if (locationStateFilter !== 'all') {
-      filtered = filtered.filter(company => {
-        const state = company.state || company.address?.state || '';
-        return state === locationStateFilter;
-      });
-    }
-    
-    // Sort the filtered companies
-    filtered.sort((a, b) => {
+    sorted.sort((a, b) => {
       const aValue = getSortableValue(a, sortField);
       const bValue = getSortableValue(b, sortField);
       
@@ -161,8 +277,8 @@ const RecruiterCompanies: React.FC = () => {
       return 0;
     });
     
-    return filtered;
-  }, [companies, search, sortField, sortDirection, locationStateFilter, showFavoritesOnly, isFavorite]);
+    return sorted;
+  }, [companies, sortField, sortDirection]);
 
   // Helper function to get avatar background color
   const getAvatarColor = (name: string) => {
@@ -182,13 +298,117 @@ const RecruiterCompanies: React.FC = () => {
     return colors[index];
   };
 
+  // Helper functions for CompanyTable
+  const getCompanyContacts = (companyId: string) => {
+    return contacts.filter((contact: any) => {
+      // Check new associations format first
+      const assocCompanies = (contact.associations?.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
+      if (assocCompanies.includes(companyId)) {
+        return true;
+      }
+      // Fallback to legacy companyId field
+      if (contact.companyId === companyId) {
+        return true;
+      }
+      return false;
+    });
+  };
+  const getCompanyDeals = (_companyId: string) => [];
+  const getCompanyPipelineValue = (_company: any) => ({ totalLow: 0, totalHigh: 0, dealCount: 0 });
+  const getCompanySalespeople = (company: any): string[] => {
+    const salespeople: string[] = [];
+    if (company.accountOwner) {
+      salespeople.push(company.accountOwner);
+    }
+    return salespeople;
+  };
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   const handleViewCompany = (company: any) => {
     navigate(`/recruiter/companies/${company.id}`);
   };
 
   const handleAddNew = () => {
     setEditingCompany(null);
+    setCompanyForm({
+      name: '',
+      website: '',
+      parentCompany: '',
+    });
+    setError('');
     setShowCompanyDialog(true);
+  };
+
+  const handleSaveCompany = async () => {
+    if (!companyForm.name.trim()) {
+      setError('Company name is required');
+      return;
+    }
+
+    if (!tenantId || !currentUser?.uid) {
+      setError('Missing tenant ID or user information');
+      return;
+    }
+
+    setSavingCompany(true);
+    setError('');
+
+    try {
+      const { parentCompany, ...rest } = companyForm;
+      const companyData = {
+        ...rest,
+        companyName: companyForm.name, // Use companyName for consistency
+        tenantId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Add the current user as an associated salesperson
+        associations: {
+          salespeople: [currentUser.uid]
+        },
+        parentCompany: parentCompany || null,
+        // Legacy fields for backward compatibility
+        salesOwnerId: currentUser.uid || null,
+        accountOwnerId: currentUser.uid || null,
+        salesOwnerName: currentUser.displayName || currentUser.email || 'Unknown',
+        accountOwnerName: currentUser.displayName || currentUser.email || 'Unknown'
+      };
+
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const newDocRef = await addDoc(companiesRef, companyData);
+      const newCompanyId = newDocRef.id;
+
+      // If parent company selected, call function to register child on parent
+      if (parentCompany) {
+        try {
+          const fn = httpsCallable(functions, 'registerChildCompany');
+          await fn({ tenantId, parentCompanyId: parentCompany, childCompanyId: newCompanyId });
+        } catch (e) {
+          console.warn('registerChildCompany failed', e);
+        }
+      }
+
+      // Reset form and close dialog
+      setCompanyForm({ name: '', website: '', parentCompany: '' });
+      setShowCompanyDialog(false);
+      setSuccess(true);
+      setSuccessMessage('Company added successfully!');
+      
+      // Reload companies with current filters
+      await loadCompanies(search, null, false);
+      await loadAllCompanies();
+    } catch (err: any) {
+      console.error('Error adding company:', err);
+      setError(err.message || 'Failed to add company');
+    } finally {
+      setSavingCompany(false);
+    }
   };
 
   return (
@@ -323,341 +543,172 @@ const RecruiterCompanies: React.FC = () => {
       <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Companies Table */}
-      <TableContainer component={Paper} sx={{
-        overflowX: 'auto',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
-      }}>
-        {loading || companies.length === 0 ? (
-          <Table sx={{ minWidth: 1200 }}>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={80} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={100} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={80} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={120} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={100} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={90} height={20} />
-                </TableCell>
-                <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
-                  <Skeleton variant="text" width={110} height={20} />
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Array.from({ length: 8 }).map((_, index) => (
-                <TableRow key={`skeleton-${index}`} sx={{ height: '48px' }}>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="circular" width={24} height={24} />
-                  </TableCell>
-                  <TableCell sx={{ px: 2, py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Skeleton variant="circular" width={32} height={32} />
-                      <Skeleton variant="text" width={150} height={20} />
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={60} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={80} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={70} height={20} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Skeleton variant="text" width={90} height={20} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Table sx={{ minWidth: 1200 }}>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Favorites
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  <TableSortLabel
-                    active={sortField === 'companyName'}
-                    direction={sortField === 'companyName' ? sortDirection : 'asc'}
-                    onClick={() => handleSort('companyName')}
-                    sx={{ 
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#374151',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em'
-                    }}
-                  >
-                    Company Name
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Contacts
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Deals
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  textAlign: 'right',
-                  py: 1.5
-                }}>
-                  Pipeline Value
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  textAlign: 'right',
-                  py: 1.5
-                }}>
-                  Closed Value
-                </TableCell>
-                <TableCell sx={{ 
-                  fontSize: '0.75rem',
-                  fontWeight: 600, 
-                  color: '#374151',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                  borderBottom: '1px solid #E5E7EB',
-                  py: 1.5
-                }}>
-                  Salespeople
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredCompanies.map((company) => (
-                <TableRow 
-                  key={company.id} 
-                  hover
-                  onClick={() => handleViewCompany(company)}
-                  sx={{ 
-                    height: '48px',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: '#F9FAFB'
-                    }
-                  }}
-                >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <FavoriteButton
-                      itemId={company.id}
-                      favoriteType="companies"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites'
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ px: 2, py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Avatar 
-                        src={company.logo || company.logoUrl || company.logo_url || company.avatar}
-                        sx={{ 
-                          width: 32, 
-                          height: 32,
-                          backgroundColor: getAvatarColor(company.companyName || company.name || ''),
-                          color: getAvatarTextColor(company.companyName || company.name || ''),
-                          fontWeight: 600,
-                          fontSize: '12px'
-                        }}
-                      >
-                        {(company.companyName || company.name || '?').charAt(0).toUpperCase()}
-                      </Avatar>
-                      <Typography 
-                        variant="body2" 
-                        fontWeight={600} 
-                        color="#111827"
-                        sx={{ fontSize: '0.9375rem' }}
-                      >
-                        {company.companyName || company.name || company.legalName || '-'}
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <PersonIcon sx={{ color: '#9CA3AF', fontSize: 18 }} />
-                      <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                        0
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <BusinessIcon sx={{ color: '#9CA3AF', fontSize: 18 }} />
-                      <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                        0
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1, textAlign: 'right' }}>
-                    <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1, textAlign: 'right' }}>
-                    <Typography variant="body2" color="#9CA3AF" sx={{ fontSize: '0.875rem' }}>-</Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
-                      {company.accountOwner || '-'}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </TableContainer>
-
-      {/* Loading State */}
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, gap: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <CircularProgress size={20} />
-            <Typography variant="body2" color="#6B7280">Loading companies...</Typography>
-          </Box>
-        </Box>
-      )}
-
-      {/* Empty State */}
-      {filteredCompanies.length === 0 && !loading && (
-        <Box sx={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          py: 8,
-          textAlign: 'center'
-        }}>
-          <Box sx={{ 
-            width: 120, 
-            height: 120, 
-            borderRadius: '50%', 
-            backgroundColor: '#F3F4F6',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            mb: 3
-          }}>
-            <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
-          </Box>
-          <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827', mb: 1 }}>
-            No companies yet
-          </Typography>
-          <Typography variant="body2" color="#6B7280" sx={{ mb: 3 }}>
-            Add your first company to start building your CRM
-          </Typography>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={handleAddNew}
-            sx={{
-              borderRadius: '8px',
-              textTransform: 'none',
-              fontWeight: 500
-            }}
-          >
-            Add Your First Company
-          </Button>
-        </Box>
-      )}
+      <CompanyTable
+        companies={filteredCompanies}
+        loading={loading}
+        hasMore={hasMore}
+        onLoadMore={loadMoreCompanies}
+        columns={{
+          favorites: true,
+          companyName: true,
+          contacts: true,
+          deals: true,
+          pipelineValue: true,
+          headquarters: true,
+          salespeople: true,
+        }}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        onSort={handleSort}
+        onRowClick={handleViewCompany}
+        isFavorite={isFavorite}
+        toggleFavorite={toggleFavorite}
+        getAvatarColor={getAvatarColor}
+        getAvatarTextColor={getAvatarTextColor}
+        getCompanyContacts={getCompanyContacts}
+        getCompanyDeals={getCompanyDeals}
+        getCompanyPipelineValue={getCompanyPipelineValue}
+        getCompanySalespeople={getCompanySalespeople}
+        formatCurrency={formatCurrency}
+        emptyStateMessage="No companies found"
+        emptyStateAction={
+          filteredCompanies.length === 0 && !loading ? (
+            <Box sx={{ textAlign: 'center' }}>
+              <Box
+                sx={{
+                  width: 120,
+                  height: 120,
+                  borderRadius: '50%',
+                  backgroundColor: '#F3F4F6',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  mb: 3,
+                  mx: 'auto',
+                }}
+              >
+                <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+              </Box>
+              <Typography variant="h6" sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}>
+                No companies yet
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                Add your first company to start building your CRM
+              </Typography>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<AddIcon />}
+                onClick={handleAddNew}
+                sx={{
+                  borderRadius: 1,
+                  textTransform: 'none',
+                  fontWeight: 500,
+                }}
+              >
+                Add Your First Company
+              </Button>
+            </Box>
+          ) : undefined
+        }
+      />
 
       {/* Company Dialog */}
-      <Dialog open={showCompanyDialog} onClose={() => setShowCompanyDialog(false)} maxWidth="md" fullWidth>
+      <Dialog 
+        open={showCompanyDialog} 
+        onClose={() => {
+          if (!savingCompany) {
+            setShowCompanyDialog(false);
+            setError('');
+          }
+        }} 
+        maxWidth="md" 
+        fullWidth
+      >
         <DialogTitle>
           {editingCompany ? 'Edit Company' : 'Add New Company'}
         </DialogTitle>
         <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+              {error}
+            </Alert>
+          )}
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
                 label="Company Name"
-                value={editingCompany?.companyName || ''}
-                disabled
-                sx={{ mb: 2 }}
+                value={companyForm.name}
+                onChange={(e) => setCompanyForm(prev => ({ ...prev, name: e.target.value }))}
+                required
+                disabled={savingCompany}
+                error={!!error && !companyForm.name.trim()}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Industry"
-                value={editingCompany?.industry || ''}
-                disabled
-                sx={{ mb: 2 }}
+                label="Website"
+                value={companyForm.website}
+                onChange={(e) => setCompanyForm(prev => ({ ...prev, website: e.target.value }))}
+                placeholder="https://example.com"
+                disabled={savingCompany}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                options={allCompanies}
+                getOptionLabel={(option) => option.companyName || option.name || ''}
+                value={allCompanies.find((c) => c.id === companyForm.parentCompany) || null}
+                onChange={(event, newValue) => {
+                  setCompanyForm(prev => ({ ...prev, parentCompany: newValue?.id || '' }));
+                }}
+                loading={loadingAllCompanies}
+                disabled={savingCompany}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Parent Company"
+                    placeholder="Select a parent company (optional)"
+                  />
+                )}
               />
             </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowCompanyDialog(false)}>Cancel</Button>
-          <Button variant="contained" onClick={() => setShowCompanyDialog(false)}>
-            {editingCompany ? 'Update' : 'Create'}
+          <Button 
+            onClick={() => {
+              setShowCompanyDialog(false);
+              setError('');
+            }} 
+            disabled={savingCompany}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSaveCompany} 
+            variant="contained" 
+            disabled={savingCompany || !companyForm.name.trim()}
+          >
+            {savingCompany ? <CircularProgress size={20} /> : 'Save Company'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Snackbars */}
+      <Snackbar open={!!error && !showCompanyDialog} autoHideDuration={4000} onClose={() => setError('')}>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

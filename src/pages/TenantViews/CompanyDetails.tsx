@@ -43,7 +43,6 @@ import {
   List,
   ListItem,
   ListItemText,
-  Breadcrumbs,
   Link as MUILink,
   InputAdornment,
 } from '@mui/material';
@@ -93,6 +92,8 @@ import {
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import SalesCoach from '../../components/SalesCoach';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import CompanyHeader from '../../components/CompanyHeader';
+import { useFavorites } from '../../hooks/useFavorites';
 import {
   collection,
   doc,
@@ -132,6 +133,7 @@ import AIEnrichmentWidget from '../../components/AIEnrichmentWidget';
 import DecisionMakersPanel from '../../components/DecisionMakersPanel';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import { getStageHexColor, getTextContrastColor } from '../../utils/crmStageColors';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import AIAssistantChat from '../../components/AIAssistantChat';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import DealAgeChip from '../../components/DealAgeChip';
@@ -314,12 +316,16 @@ const CompanyDetails: React.FC = () => {
   const { updateCacheState } = useCRMCache();
   const navigate = useNavigate();
 
-
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('companies');
   
   const [company, setCompany] = useState<any>(null);
   const [contacts, setContacts] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [jobPostings, setJobPostings] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [notesCount, setNotesCount] = useState<number>(0);
+  const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // UI: Related Companies dialog
@@ -548,12 +554,43 @@ const CompanyDetails: React.FC = () => {
     // Note: We intentionally avoid a listener on associations.companies due to legacy shapes
     // and cross-tenant index/rules issues. Legacy deals can be backfilled with companyId.
     
+    // Real-time listener for locations
+    const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
+    const unsubscribeLocations = onSnapshot(locationsRef, (snapshot) => {
+      const locationsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setLocations(locationsData);
+    }, (err) => {
+      console.error('Error loading locations:', err);
+    });
+    
+    // Real-time listener for notes count
+    const notesRef = collection(db, 'tenants', tenantId, 'notes');
+    const notesQuery = query(notesRef, where('entityId', '==', companyId), where('entityType', '==', 'company'));
+    const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
+      setNotesCount(snapshot.size);
+    }, (err) => {
+      console.error('Error loading notes count:', err);
+    });
+    
+    // Real-time listener for job orders
+    const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+    const jobOrdersQuery = query(jobOrdersRef, where('companyId', '==', companyId));
+    const unsubscribeJobOrders = onSnapshot(jobOrdersQuery, (snapshot) => {
+      const jobOrdersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setJobOrders(jobOrdersData);
+    }, (err) => {
+      console.error('Error loading job orders:', err);
+    });
+    
     // Cleanup function to unsubscribe from listeners
     return () => {
       unsubscribeCompany();
       unsubscribeContacts();
       unsubscribeDeals1();
       unsubscribeDeals2();
+      unsubscribeLocations();
+      unsubscribeNotes();
+      unsubscribeJobOrders();
     };
   }, [companyId, tenantId, updateCacheState]);
 
@@ -652,59 +689,47 @@ const CompanyDetails: React.FC = () => {
     }
   }, [tenantId]);
 
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      
-      if (file.size > 2 * 1024 * 1024) {
-        setError('Logo file size must be less than 2MB');
-        return;
-      }
-
-      const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'];
-      if (!validTypes.includes(file.type)) {
-        setError('Please upload a PNG, JPG, or SVG file');
-        return;
-      }
-
-      setLogoLoading(true);
-      try {
-        const storageRef = ref(storage, `companies/${tenantId}/${company.id}/logo.${file.name.split('.').pop()}`);
-        await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(storageRef);
-        
-        const updatedCompany = { ...company, logo: downloadURL };
-        // setCompany(updatedCompany); // Not available in OverviewTab component
-        
-        await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), { logo: downloadURL });
-        setSuccess('Logo uploaded successfully!');
-      } catch (err) {
-        console.error('Error uploading logo:', err);
-        setError('Failed to upload logo. Please try again.');
-      }
-      setLogoLoading(false);
+  // Logo upload handler for CompanyHeader (takes URL string)
+  const handleLogoUpload = async (url: string) => {
+    if (!companyId || !tenantId) return;
+    try {
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId), { 
+        logo: url,
+        updatedAt: serverTimestamp()
+      });
+      setCompany((prev: any) => ({ ...prev, logo: url }));
+      setSuccess('Logo uploaded successfully!');
+    } catch (err) {
+      console.error('Error updating logo:', err);
+      setError('Failed to update logo. Please try again.');
     }
   };
-  const handleDeleteLogo = async () => {
-    setLogoLoading(true);
+
+  // Logo delete handler for CompanyHeader
+  const handleLogoDelete = async () => {
+    if (!companyId || !tenantId || !company?.logo) return;
     try {
-      if (company.logo) {
-        const urlParts = company.logo.split('/');
-        const fileName = urlParts[urlParts.length - 1];
-        const fileExtension = fileName.split('.').pop() || 'png';
-        const storageRef = ref(storage, `companies/${tenantId}/${company.id}/logo.${fileExtension}`);
+      // Delete from storage
+      const urlParts = company.logo.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      const storageRef = ref(storage, `tenants/${tenantId}/companies/${companyId}/logo/${fileName}`);
+      try {
         await deleteObject(storageRef);
+      } catch (storageErr) {
+        console.warn('Logo not found in storage, continuing with document update:', storageErr);
       }
       
-      const updatedCompany = { ...company, logo: '' };
-      // setCompany(updatedCompany); // Not available in OverviewTab component
-      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), { logo: '' });
+      // Update document
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId), { 
+        logo: '',
+        updatedAt: serverTimestamp()
+      });
+      setCompany((prev: any) => ({ ...prev, logo: '' }));
       setSuccess('Logo deleted successfully!');
     } catch (err) {
       console.error('Error deleting logo:', err);
       setError('Failed to delete logo. Please try again.');
     }
-    setLogoLoading(false);
   };
 
   // Helper function to ensure URLs have proper protocols
@@ -991,500 +1016,36 @@ const CompanyDetails: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
-            Companies
-          </MUILink>
-          <Typography color="text.primary">{company?.companyName || company?.name || 'Company'}</Typography>
-        </Breadcrumbs>
-      </Box>
-      {/* Enhanced Header - Persistent Company Information */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Company Logo/Avatar */}
-            <Box sx={{ position: 'relative' }}>
-              <Avatar
-                src={company.logo}
-                alt={company.companyName || company.name}
-                sx={{ 
-                  width: 128, 
-                  height: 128,
-                  bgcolor: 'primary.main',
-                  fontSize: '2rem',
-                  fontWeight: 'bold'
-                }}
-              >
-                {(company.companyName || company.name || 'C').charAt(0).toUpperCase()}
-              </Avatar>
-              <Box sx={{ 
-                position: 'absolute', 
-                bottom: -8, 
-                right: -8, 
-                display: 'flex', 
-                gap: 0.5 
-              }}>
-                <IconButton
-                  size="small"
-                  sx={{
-                    bgcolor: 'grey.300',
-                    '&:hover': { bgcolor: 'grey.400' },
-                    width: 24,
-                    height: 24
-                  }}
-                  onClick={() => logoInputRef.current?.click()}
-                >
-                  <UploadIcon sx={{ fontSize: 16, color: 'grey.600' }} />
-                </IconButton>
-                {company.logo && (
-                  <IconButton
-                    size="small"
-                    sx={{
-                      bgcolor: 'grey.300',
-                      '&:hover': { bgcolor: 'grey.400' },
-                      width: 24,
-                      height: 24
-                    }}
-                    onClick={handleDeleteLogo}
-                  >
-                    <DeleteIcon sx={{ fontSize: 16, color: 'grey.600' }} />
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-
-            {/* Company Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                  {company.companyName || company.name}
-                </Typography>
-              </Box>
-              {company?.pipelineValue && typeof company.pipelineValue.low === 'number' && typeof company.pipelineValue.high === 'number' && (
-                <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
-                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                    ${Number(company.pipelineValue.low || 0).toLocaleString()} – ${Number(company.pipelineValue.high || 0).toLocaleString()}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* Company Stats */}
-              {(company.foundedYear || company.estimatedEmployees || company.annualRevenue) && (
-                <Box 
-                  className="company-stats-box"
-                  sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: 2, 
-                    mt: 0, 
-                    marginTop: 0,
-                    '&.company-stats-box': {
-                      marginTop: '0 !important'
-                    }
-                  }}
-                >
-                  {company.foundedYear && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Founded:</Typography>
-                      <Typography variant="body2" color="text.primary">{company.foundedYear}</Typography>
-                    </Box>
-                  )}
-                  {company.estimatedEmployees && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Employees:</Typography>
-                      <Typography variant="body2" color="text.primary">{company.estimatedEmployees.toLocaleString()}</Typography>
-                    </Box>
-                  )}
-                  {company.annualRevenue && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Revenue:</Typography>
-                      <Typography variant="body2" color="text.primary">${company.annualRevenue.toLocaleString()}</Typography>
-                    </Box>
-                  )}
-                </Box>
-              )}
-
-              {/* Industry Information */}
-              {(company.industry || company.subIndustry) && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0 }}>
-                  {company.industry && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Industry:</Typography>
-                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
-                        {getIndustryByCode(company.industry)?.name || company.industry}
-                      </Typography>
-                    </Box>
-                  )}
-                  {company.subIndustry && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Sub-Industry:</Typography>
-                      <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
-                        {getIndustryByCode(company.subIndustry)?.name || company.subIndustry}
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
-              )}
-              {/* Address */}
-              {(company.address || company.city || company.state) && (
-                <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <LocationIcon sx={{ fontSize: 16 }} />
-                  {[
-                    company.address,
-                    company.city,
-                    company.state,
-                    company.zip
-                  ].filter(Boolean).join(', ')}
-                </Typography>
-              )}
-              
-              {/* Related Companies */}
-              {(() => {
-                const relatedCompanies: Array<{ id: string; name: string; relation: string }> = [];
-                
-                // Handle parent company
-                const parentId = company.parentCompany || null;
-                if (parentId) {
-                  const actualParentId = typeof parentId === 'string' ? parentId : 
-                                       (parentId && typeof parentId === 'object' && parentId.id) ? parentId.id : 
-                                       null;
-                  if (actualParentId) {
-                    relatedCompanies.push({ id: actualParentId, name: 'Parent Company', relation: 'parent' });
-                  }
-                }
-                
-                // Handle child companies
-                const childIds: any[] = Array.isArray(company.childCompanies) ? company.childCompanies : [];
-                childIds.forEach((cid) => {
-                  const actualChildId = typeof cid === 'string' ? cid : 
-                                      (cid && typeof cid === 'object' && cid.id) ? cid.id : 
-                                      null;
-                  if (actualChildId) {
-                    relatedCompanies.push({ id: actualChildId, name: 'Child Company', relation: 'child' });
-                  }
-                });
-                
-                // Handle MSP
-                const msp = company.msp || null;
-                if (msp) {
-                  const actualMspId = typeof msp === 'string' ? msp : 
-                                    (msp && typeof msp === 'object' && msp.id) ? msp.id : 
-                                    null;
-                  if (actualMspId) {
-                    relatedCompanies.push({ id: actualMspId, name: 'MSP', relation: 'msp' });
-                  }
-                }
-                
-                if (relatedCompanies.length === 0) return null;
-                
-                return (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0 }}>
-                    <AccountTreeIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                      {relatedCompanies.map((rel, index) => (
-                        <React.Fragment key={rel.id}>
-                          <MUILink
-                            component="button"
-                            variant="body2"
-                            color="primary"
-                            sx={{ 
-                              textDecoration: 'none', 
-                              fontWeight: 500,
-                              cursor: 'pointer',
-                              '&:hover': { textDecoration: 'underline' }
-                            }}
-                            onClick={() => navigate(`/crm/companies/${rel.id}`)}
-                          >
-                            <CompanyNameDisplay tenantId={tenantId!} companyId={rel.id} />
-                          </MUILink>
-                          {index < relatedCompanies.length - 1 && (
-                            <Typography variant="body2" color="text.secondary">•</Typography>
-                          )}
-                        </React.Fragment>
-                      ))}
-                    </Box>
-                  </Box>
-                );
-              })()}
-              
-              {/* Social Media Icons */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.website ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.website ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.website ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.website ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.website) {
-                      let url = company.website;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.website ? 'Visit Website' : 'Add Website URL'}
-                >
-                  <LanguageIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.linkedin ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.linkedin ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.linkedin ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.linkedin ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.linkedin) {
-                      let url = company.linkedin;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.linkedin ? 'Open LinkedIn' : 'Add LinkedIn URL'}
-                >
-                  <LinkedInIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.indeed ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.indeed ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.indeed ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.indeed ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.indeed) {
-                      let url = company.indeed;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.indeed ? 'View Jobs on Indeed' : 'Add Indeed URL'}
-                >
-                  <WorkIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-                
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.facebook ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.facebook ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.facebook ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.facebook ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.facebook) {
-                      let url = company.facebook;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.facebook ? 'View Facebook Page' : 'Add Facebook URL'}
-                >
-                  <FacebookIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-
-                {/* AngelList Icon */}
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.angellist ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.angellist ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.angellist ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.angellist ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.angellist) {
-                      let url = company.angellist;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.angellist ? 'View AngelList Profile' : 'Add AngelList URL'}
-                >
-                  <AngelListIcon hasUrl={!!company.angellist} />
-                </IconButton>
-
-                {/* Crunchbase Icon */}
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 0.5,
-                    color: company.crunchbase ? 'primary.main' : 'text.disabled',
-                    bgcolor: company.crunchbase ? 'primary.50' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: company.crunchbase ? 'primary.dark' : 'text.disabled',
-                      bgcolor: company.crunchbase ? 'primary.100' : 'transparent'
-                    }
-                  }}
-                  onClick={() => {
-                    if (company.crunchbase) {
-                      let url = company.crunchbase;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                  title={company.crunchbase ? 'View Crunchbase Profile' : 'Add Crunchbase URL'}
-                >
-                  <CrunchbaseIcon hasUrl={!!company.crunchbase} />
-                </IconButton>
-              </Box>
-
-              {/* Relationship and Pipeline Status */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
-                {/* Relationship Strength */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Relationship:</Typography>
-                  <Chip
-                    label={contacts.length > 5 ? 'Strong' : contacts.length > 2 ? 'Medium' : 'Weak'}
-                    size="small"
-                    sx={{
-                      bgcolor: contacts.length > 5 ? 'success.light' : contacts.length > 2 ? 'warning.light' : 'error.light',
-                      color: contacts.length > 5 ? 'success.dark' : contacts.length > 2 ? 'warning.dark' : 'error.dark',
-                      fontWeight: 500,
-                      fontSize: '0.75rem'
-                    }}
-                  />
-                </Box>
-                
-                {/* Pipeline Health */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Pipeline:</Typography>
-                  <Chip
-                    label={deals.length > 3 ? 'Excellent' : deals.length > 1 ? 'Good' : 'Needs Attention'}
-                    size="small"
-                    sx={{
-                      bgcolor: deals.length > 3 ? 'success.light' : deals.length > 1 ? 'warning.light' : 'error.light',
-                      color: deals.length > 3 ? 'success.dark' : deals.length > 1 ? 'warning.dark' : 'error.dark',
-                      fontWeight: 500,
-                      fontSize: '0.75rem'
-                    }}
-                  />
-                </Box>
-              </Box>
-
-
-            </Box>
-          </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.5 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Button 
-                variant="outlined" 
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddNoteDialog(true)}
-                size="small"
-              >
-                Add Note
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={<CheckCircleIcon />}
-                onClick={() => setShowLogActivityDialog(true)}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  }
-                }}
-              >
-                Log Activity
-              </Button>
-              <Button
-                variant="contained"
-                startIcon={<RocketLaunchIcon />}
-                onClick={handleEnhanceWithAI}
-                disabled={aiLoading}
-                sx={{
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  },
-                  '&:disabled': {
-                    bgcolor: 'grey.400'
-                  }
-                }}
-              >
-                {aiLoading ? 'Enhancing...' : 'AI Enhance'}
-              </Button>
-            </Box>
-            {company.lastEnrichedAt && (
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', textAlign: 'right' }}>
-                Last updated: {(() => {
-                  try {
-                    // Handle Firestore timestamp
-                    if (company.lastEnrichedAt.toDate) {
-                      return company.lastEnrichedAt.toDate().toLocaleString();
-                    }
-                    // Handle string or number
-                    const date = new Date(company.lastEnrichedAt);
-                    if (isNaN(date.getTime())) {
-                      return 'Recently';
-                    }
-                    return date.toLocaleString();
-                  } catch (error) {
-                    return 'Recently';
-                  }
-                })()}
-              </Typography>
-            )}
-          </Box>
-        </Box>
-        
-        {/* Hidden file input for logo upload */}
-        <input
-          ref={logoInputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={handleLogoUpload}
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'CRM', href: '/crm' },
+            { label: 'Companies', href: '/crm?tab=companies', onClick: () => navigate('/crm?tab=companies') },
+            { label: company?.companyName || company?.name || 'Company' },
+          ]}
         />
       </Box>
+      {/* Company Header */}
+      <CompanyHeader
+        company={company}
+        tenantId={tenantId!}
+        routePrefix="crm"
+        favoriteType="companies"
+        isFavorite={isFavorite}
+        toggleFavorite={toggleFavorite}
+        metrics={{
+          contactsCount: contacts.length,
+          dealsCount: deals.length,
+        }}
+        onAddNote={() => setShowAddNoteDialog(true)}
+        onLogActivity={() => setShowLogActivityDialog(true)}
+        onAIEnhance={handleEnhanceWithAI}
+        aiEnhancing={aiLoading}
+        onAvatarUpload={handleLogoUpload}
+        onAvatarDelete={handleLogoDelete}
+        getIndustryByCode={getIndustryByCode}
+        CompanyNameDisplay={CompanyNameDisplay}
+      />
       {/* Pattern Alerts */}
       {featureFlags.patternAlerts && patternAlerts.length > 0 && (
         <Box sx={{ mb: 2 }}>
@@ -1564,7 +1125,7 @@ const CompanyDetails: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <DashboardIcon fontSize="small" />
-                Dashboard
+                Overview
               </Box>
             } 
           />
@@ -1573,6 +1134,9 @@ const CompanyDetails: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PlaceIcon fontSize="small" />
                 Locations
+                {locations.length > 0 && (
+                  <Badge badgeContent={locations.length} color="primary" />
+                )}
               </Box>
             } 
           />
@@ -1581,7 +1145,9 @@ const CompanyDetails: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PersonIcon fontSize="small" />
                 Contacts
-                {/* <Badge badgeContent={contacts.length} color="primary" /> */}
+                {contacts.length > 0 && (
+                  <Badge badgeContent={contacts.length} color="primary" />
+                )}
               </Box>
             } 
           />
@@ -1617,6 +1183,9 @@ const CompanyDetails: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <NotesIcon fontSize="small" />
                 Notes
+                {notesCount > 0 && (
+                  <Badge badgeContent={notesCount} color="primary" />
+                )}
               </Box>
             } 
           />
@@ -1642,8 +1211,10 @@ const CompanyDetails: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <WorkIcon fontSize="small" />
-                Job Postings
-                {/* <Badge badgeContent={jobPostings.length} color="primary" /> */}
+                Job Orders
+                {jobOrders.length > 0 && (
+                  <Badge badgeContent={jobOrders.length} color="primary" />
+                )}
               </Box>
             } 
           />
@@ -1720,9 +1291,9 @@ const CompanyDetails: React.FC = () => {
         <SimilarTab company={company} tenantId={tenantId} />
       )}
 
-      {/* Job Postings tab (index 7 when Vendor Process enabled, index 6 when disabled) */}
+      {/* Job Orders tab (index 7 when Vendor Process enabled, index 6 when disabled) */}
       {tabValue === (company.centralizedVendorProcess ? 7 : 6) && (
-        <IndeedJobsTab company={company} jobPostings={jobPostings} setJobPostings={setJobPostings} jobsLoading={jobsLoading} setJobsLoading={setJobsLoading} />
+        <JobOrdersTab jobOrders={jobOrders} routePrefix="crm" />
       )}
 
       {/* News tab (index 8 when Vendor Process enabled, index 7 when disabled) */}
@@ -2890,6 +2461,9 @@ const CompanyDashboardTab: React.FC<{
   const [rebuildingActive, setRebuildingActive] = useState(false);
   const [localSuccess, setLocalSuccess] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isEditingCompanyDetails, setIsEditingCompanyDetails] = useState(false);
+  const [jobOrders, setJobOrders] = useState<any[]>([]);
+  const [loadingJobOrders, setLoadingJobOrders] = useState(false);
   const navigate = useNavigate();
   // Local helper: URL protocol enforcement
   const ensureUrlProtocol = (url: string): string => {
@@ -2910,6 +2484,35 @@ const CompanyDashboardTab: React.FC<{
     }
   };
 
+  // Load job orders for company
+  const loadJobOrdersForCompany = async () => {
+    if (!company?.id || !tenantId) {
+      setJobOrders([]);
+      return;
+    }
+    
+    try {
+      setLoadingJobOrders(true);
+      const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+      
+      // Query job orders where companyId matches
+      const companyQuery = query(jobOrdersRef, where('companyId', '==', company.id));
+      const snapshot = await getDocs(companyQuery);
+      
+      const jobOrdersData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setJobOrders(jobOrdersData);
+    } catch (err) {
+      console.error('Error loading job orders for company:', err);
+      setJobOrders([]);
+    } finally {
+      setLoadingJobOrders(false);
+    }
+  };
+
   // Lazy load AI components
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2917,6 +2520,13 @@ const CompanyDashboardTab: React.FC<{
     }, 1000);
     return () => clearTimeout(timer);
   }, []);
+
+  // Load job orders when company changes
+  useEffect(() => {
+    if (company?.id && tenantId) {
+      loadJobOrdersForCompany();
+    }
+  }, [company?.id, tenantId]);
 
   const calculateCompanyMetrics = () => {
     const totalRevenue = deals.reduce((sum, deal) => {
@@ -3030,37 +2640,29 @@ const CompanyDashboardTab: React.FC<{
       <Grid item xs={12} md={4}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
-          {/* Company Description Widget */}
-          <Box sx={{ mb: 0 }}>
-          <Card>
-          <CardHeader 
-              title="Company Description"
-              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-            />
-            <CardContent sx={{ p: 2 }}>
-            {company.shortDescription || company.description ? (
-                <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.6 }}>
-                  {company.shortDescription || company.description}
-                </Typography>
-              ) : (
-                <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                  No company description available. Use AI Enhance to generate one.
-                </Typography>
-              )}
-            </CardContent>
-            </Card>
-          </Box>
-
           {/* Company Details (Widget) */}
           <Box sx={{ mb: 0, boxShadow: 0 }}>
           <Card>
           <CardHeader 
               title="Company Details"
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              action={
+                <IconButton
+                  size="small"
+                  onClick={() => setIsEditingCompanyDetails(!isEditingCompanyDetails)}
+                  sx={{
+                    color: isEditingCompanyDetails ? 'primary.main' : 'text.secondary',
+                  }}
+                >
+                  <EditIcon fontSize="small" />
+                </IconButton>
+              }
             />
           
           <CardContent sx={{ p: 2 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {isEditingCompanyDetails ? (
+            // Edit Mode - Show Input Fields
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <TextField
                   label="Company Name"
                   defaultValue={company.companyName || company.name || ''}
@@ -3252,10 +2854,359 @@ const CompanyDashboardTab: React.FC<{
                   )}
                 /> */}
                </Box>
+          ) : (
+            // View Mode - Show as Read-Only Text with Better Visual Hierarchy
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Basic Information Section */}
+              <Box>
+                <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Basic Information
+                </Typography>
+                <Grid container spacing={2}>
+                  {(company.companyName || company.name) && (
+                    <Grid item xs={12} sm={6}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                            Company Name
+                          </Typography>
+                          <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                            {company.companyName || company.name}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  )}
+                  
+                  {company.foundedYear && (
+                    <Grid item xs={12} sm={6}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <TimeClockIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                            Founded Year
+                          </Typography>
+                          <Typography variant="body1" sx={{ mt: 0.25 }}>
+                            {company.foundedYear}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  )}
+                  
+                  {company.estimatedEmployees && (
+                    <Grid item xs={12} sm={6}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                            Estimated Employees
+                          </Typography>
+                          <Typography variant="body1" sx={{ mt: 0.25 }}>
+                            {typeof company.estimatedEmployees === 'number' ? company.estimatedEmployees.toLocaleString() : company.estimatedEmployees}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  )}
+                  
+                  {company.annualRevenue && (
+                    <Grid item xs={12} sm={6}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <DealIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                            Annual Revenue
+                          </Typography>
+                          <Typography variant="body1" sx={{ mt: 0.25 }}>
+                            ${typeof company.annualRevenue === 'number' ? company.annualRevenue.toLocaleString() : company.annualRevenue}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  )}
+                  
+                  {company.industry && (
+                    <Grid item xs={12} sm={6}>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                            Industry
+                          </Typography>
+                          <Typography variant="body1" sx={{ mt: 0.25 }}>
+                            {getIndustryByCode(company.industry)?.name || company.industry}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Grid>
+                  )}
+                </Grid>
+              </Box>
+
+              {/* Contact Information Section */}
+              {(company.website || company.phone || company.linkedin || company.indeed || company.facebook || company.twitter || company.angellist || company.crunchbase) && (
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Contact & Social Media
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {company.website && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <LanguageIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Website
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.website.startsWith('http') ? company.website : `https://${company.website}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.website}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.phone && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Corporate Phone
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              {company.phone}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.linkedin && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <LinkedInIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              LinkedIn
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.linkedin.startsWith('http') ? company.linkedin : `https://${company.linkedin}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.linkedin}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.indeed && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Indeed
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.indeed.startsWith('http') ? company.indeed : `https://${company.indeed}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.indeed}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.facebook && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <FacebookIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Facebook
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.facebook.startsWith('http') ? company.facebook : `https://${company.facebook}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.facebook}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.twitter && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <TwitterIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Twitter
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.twitter.startsWith('http') ? company.twitter : `https://${company.twitter}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.twitter}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.angellist && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <Box sx={{ width: 18, height: 18, mt: 0.5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img src="/img/angellist-icon-blue.svg" alt="AngelList" style={{ width: '16px', height: '16px' }} />
+                          </Box>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              AngelList
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.angellist.startsWith('http') ? company.angellist : `https://${company.angellist}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.angellist}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.crunchbase && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <Box sx={{ width: 18, height: 18, mt: 0.5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <img src="/img/crunchbase-icon-blue.svg" alt="Crunchbase" style={{ width: '16px', height: '16px' }} />
+                          </Box>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Crunchbase
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              <MUILink 
+                                href={company.crunchbase.startsWith('http') ? company.crunchbase : `https://${company.crunchbase}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                color="primary"
+                                underline="hover"
+                                sx={{ wordBreak: 'break-all' }}
+                              >
+                                {company.crunchbase}
+                              </MUILink>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                  </Grid>
+                </Box>
+              )}
+
+              {/* Additional Details Section */}
+              {(company.centralizedVendorProcess || company.subIndustry) && (
+                <Box>
+                  <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Additional Details
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {company.centralizedVendorProcess && (
+                      <Grid item xs={12}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <CheckCircleIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                          <Typography variant="body2" color="text.secondary">
+                            Centralized Vendor Process
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    )}
+                    
+                    {company.subIndustry && (
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Sub-Industry
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              {(() => {
+                                const subIndustries = company.industry ? getSubIndustries(company.industry) : [];
+                                const subIndustry = subIndustries.find(si => si.code === company.subIndustry);
+                                return subIndustry?.name || company.subIndustry;
+                              })()}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    )}
+                  </Grid>
+                </Box>
+              )}
+            </Box>
+          )}
           </CardContent>
           {/* Recent Contacts moved to right column below Recent Activity */}
           </Card>
           </Box>
+
+          {/* Recent Activity */}
+          <Card>
+            <CardHeader 
+              title="Recent Activity" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              <RecentActivityWidget company={company} tenantId={tenantId} />
+            </CardContent>
+          </Card>
 
         </Box>
       </Grid>
@@ -3346,7 +3297,26 @@ const CompanyDashboardTab: React.FC<{
           {/* AI Enrichment – hidden per request */}
           {/* <AIEnrichmentWidget company={company} tenantId={tenantId} /> */}
 
-          {/* Company Details (Widget) moved to left column */}
+          {/* Company Description Widget */}
+          <Box sx={{ mb: 0 }}>
+            <Card>
+              <CardHeader 
+                title="Company Description"
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ p: 2 }}>
+                {company.shortDescription || company.description ? (
+                  <Typography variant="body2" color="text.primary" sx={{ lineHeight: 1.6 }}>
+                    {company.shortDescription || company.description}
+                  </Typography>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                    No company description available. Use AI Enhance to generate one.
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Box>
 
           {/* Sales Coach */}
           <Card>
@@ -3497,20 +3467,9 @@ const CompanyDashboardTab: React.FC<{
           </Card>
         </Box>
       </Grid>
-      {/* Right Column - Recent Activity + Opportunities + Active Salespeople */}
+      {/* Right Column - Opportunities + Active Salespeople */}
       <Grid item xs={12} md={3}>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Recent Activity - Moved to top of right column */}
-          <Card>
-            <CardHeader 
-              title="Recent Activity" 
-              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-            />
-            <CardContent sx={{ p: 2 }}>
-              <RecentActivityWidget company={company} tenantId={tenantId} />
-            </CardContent>
-          </Card>
-
           {/* Opportunities - Moved above Active Salespeople */}
           <Card>
             <CardHeader 
@@ -3691,7 +3650,103 @@ const CompanyDashboardTab: React.FC<{
             </Alert>
           </Snackbar>
 
-
+          {/* Job Orders */}
+          <Card>
+            <CardHeader 
+              title="Job Orders" 
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ p: 2 }}>
+              {loadingJobOrders ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                  <Skeleton variant="rectangular" height={32} />
+                </Box>
+              ) : jobOrders.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {jobOrders
+                    .sort((a: any, b: any) => {
+                      // Sort by status priority (open > draft > on_hold > filled > cancelled)
+                      const statusPriority: Record<string, number> = {
+                        'open': 5,
+                        'draft': 4,
+                        'on_hold': 3,
+                        'filled': 2,
+                        'completed': 2,
+                        'cancelled': 1
+                      };
+                      const aPriority = statusPriority[a.status] || 0;
+                      const bPriority = statusPriority[b.status] || 0;
+                      if (aPriority !== bPriority) {
+                        return bPriority - aPriority;
+                      }
+                      // Then sort by created date (newest first)
+                      const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                      const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                      return bDate.getTime() - aDate.getTime();
+                    })
+                    .slice(0, 5)
+                    .map((jobOrder: any) => {
+                      // Format status
+                      const statusLabels: Record<string, string> = {
+                        'open': 'Open',
+                        'draft': 'Draft',
+                        'on_hold': 'On Hold',
+                        'filled': 'Filled',
+                        'completed': 'Completed',
+                        'cancelled': 'Cancelled'
+                      };
+                      const statusLabel = statusLabels[jobOrder.status] || jobOrder.status || 'Unknown';
+                      
+                      // Format job order number
+                      const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
+                      
+                      return (
+                        <Box 
+                          key={jobOrder.id} 
+                          sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 1, 
+                            p: 1, 
+                            borderRadius: 1, 
+                            bgcolor: 'grey.50',
+                            cursor: 'pointer',
+                            '&:hover': {
+                              bgcolor: 'grey.100'
+                            }
+                          }}
+                          onClick={() => navigate(`/crm/job-orders/${jobOrder.id}`)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => { 
+                            if (e.key === 'Enter' || e.key === ' ') { 
+                              e.preventDefault(); 
+                              navigate(`/crm/job-orders/${jobOrder.id}`); 
+                            } 
+                          }}
+                        >
+                          <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
+                            <WorkIcon sx={{ fontSize: 16 }} />
+                          </Avatar>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="body2" fontWeight="medium">
+                              {jobOrder.jobOrderName || jobOrder.jobTitle || 'Unknown Job Order'}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              #{jobOrderNumber} • {statusLabel}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No associated job orders</Typography>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Recent Contacts (moved here) */}
           <Box sx={{ mb: 0 }}>
@@ -4907,6 +4962,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
 
   // Debug Google Maps API loading
@@ -5105,7 +5161,25 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
   });
   const autocompleteRef = useRef<any>(null);
 
-
+  // Filter locations based on search query
+  const filteredLocations = React.useMemo(() => {
+    if (!searchQuery.trim()) {
+      return locations;
+    }
+    
+    const searchLower = searchQuery.toLowerCase();
+    return locations.filter((location) => {
+      const name = (location.name || location.nickname || '').toLowerCase();
+      const code = (location.code || '').toLowerCase();
+      const city = (location.city || '').toLowerCase();
+      const state = (location.state || '').toLowerCase();
+      
+      return name.includes(searchLower) || 
+             code.includes(searchLower) || 
+             city.includes(searchLower) || 
+             state.includes(searchLower);
+    });
+  }, [locations, searchQuery]);
 
   const handleAddLocation = async () => {
     try {
@@ -5154,20 +5228,53 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
   }
   return (
     <Box sx={{ p: 0 }}>
-      {/* Header with AI Discovery Button */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3 }}>
+      {/* Header with Search and Add Location Button */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3, gap: 2 }}>
         <Typography variant="h6" fontWeight={700}>
           Company Locations
         </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          {/* <Button
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
+          <TextField
+            size="small"
             variant="outlined"
-            startIcon={<AutoAwesomeIcon />}
-            onClick={discoverLocationsWithAI}
-            disabled={aiLoading}
-          >
-            {aiLoading ? 'Discovering...' : 'AI Discover Locations'}
-          </Button> */}
+            placeholder="Search by name, code, city, or state..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+              endAdornment: searchQuery && (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    onClick={() => setSearchQuery('')}
+                    sx={{ p: 0.5 }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+            sx={{ 
+              width: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
+          />
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -5247,417 +5354,533 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
         </Card>
       )} */}
 
-      {/* Manual Add Form */}
-      {showAddForm && (
-        <Box sx={{ mb: 3 }}>
-          <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>Add New Location</Typography>
-          <Box>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Location Name"
-                  value={newLocation.name}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g., Headquarters, Manufacturing Plant"
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Location Code"
-                  value={newLocation.code}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, code: e.target.value }))}
-                  placeholder="Internal code (e.g., HQ-01)"
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  freeSolo
-                  options={[
-                    'Office',
-                    'Warehouse',
-                    'Plant',
-                    'Distribution Center',
-                    'Manufacturing',
-                    'Retail',
-                    'Branch',
-                    'Headquarters',
-                    'Data Center',
-                    'Call Center',
-                    'Research & Development',
-                    'Training Center',
-                    'Service Center',
-                    'Showroom',
-                    'Storage Facility',
-                    'Hotel',
-                    'Medical Clinic',
-                    'Hospital',
-                    'Retirement Home',
-                    'Sports Arena',
-                    'Sports Stadium',
-                    'Fairgrounds',
-                    'Concert Venue',
-                    'Convention Center',
-                    'College',
-                    'High School',
-                    'Dining Hall',
-                  ]}
-                  value={newLocation.type || ''}
-                  onChange={(_, newValue) => setNewLocation(prev => ({ ...prev, type: newValue || '' }))}
-                  renderInput={(params) => (
-                    <TextField {...params} label="Type" />
-                  )}
-                />
-              </Grid>
-              {company.divisions && company.divisions.length > 0 && (
+      {/* Add Location Dialog */}
+      <Dialog 
+        open={showAddForm} 
+        onClose={() => {
+          setShowAddForm(false);
+          setNewLocation({
+            name: '',
+            code: '',
+            address: '',
+            city: '',
+            state: '',
+            zipCode: '',
+            country: 'USA',
+            type: 'Office',
+            division: '',
+            phone: '',
+            coordinates: null
+          });
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Typography variant="h6">Add New Location</Typography>
+            <IconButton 
+              onClick={() => {
+                setShowAddForm(false);
+                setNewLocation({
+                  name: '',
+                  code: '',
+                  address: '',
+                  city: '',
+                  state: '',
+                  zipCode: '',
+                  country: 'USA',
+                  type: 'Office',
+                  division: '',
+                  phone: '',
+                  coordinates: null
+                });
+              }}
+            >
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+        
+        <DialogContent>
+          <Box sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Add a new location for this company. Use the address field to automatically populate city, state, and ZIP code.
+            </Typography>
+
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+                {error}
+              </Alert>
+            )}
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
-                  <FormControl fullWidth>
-                    <InputLabel>Division (Optional)</InputLabel>
-                    <Select
-                      value={newLocation.division}
-                      label="Division (Optional)"
-                      onChange={(e) => setNewLocation(prev => ({ ...prev, division: e.target.value }))}
-                    >
-                      <MenuItem value="">
-                        <em>No division</em>
-                      </MenuItem>
-                      {company.divisions.map((division: string) => (
-                        <MenuItem key={division} value={division}>
-                          {division}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-              )}
-              <Grid item xs={12}>
-                <GoogleAutocomplete
-                  onLoad={(ref) => {
-                    console.log('GoogleAutocomplete onLoad called, ref:', ref);
-                    autocompleteRef.current = ref;
-                  }}
-                  onPlaceChanged={() => {
-                    const place = autocompleteRef.current.getPlace();
-                    if (place.geometry && place.geometry.location) {
-                      const lat = place.geometry.location.lat();
-                      const lng = place.geometry.location.lng();
-                      
-                      // Extract address components
-                      const addressComponents = place.address_components || [];
-                      let streetNumber = '';
-                      let route = '';
-                      let city = '';
-                      let state = '';
-                      let zipCode = '';
-                      let country = 'USA';
-
-                      addressComponents.forEach((component) => {
-                        const types = component.types;
-                        if (types.includes('street_number')) {
-                          streetNumber = component.long_name;
-                        } else if (types.includes('route')) {
-                          route = component.long_name;
-                        } else if (types.includes('locality')) {
-                          city = component.long_name;
-                        } else if (types.includes('administrative_area_level_1')) {
-                          state = component.short_name;
-                        } else if (types.includes('postal_code')) {
-                          zipCode = component.long_name;
-                        } else if (types.includes('country')) {
-                          country = component.short_name;
-                        }
-                      });
-
-                      const fullAddress = streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
-
-                      setNewLocation(prev => ({
-                        ...prev,
-                        address: fullAddress,
-                        city,
-                        state,
-                        zipCode,
-                        country,
-                        coordinates: {
-                          lat,
-                          lng
-                        }
-                      }));
-                    }
-                  }}
-                >
                   <TextField
                     fullWidth
-                    label="Address"
-                    value={newLocation.address}
-                    onChange={(e) => setNewLocation(prev => ({ ...prev, address: e.target.value }))}
-                    placeholder="Start typing an address..."
-                    InputProps={{
-                      endAdornment: newLocation.coordinates && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
-                          <Chip 
-                            size="small" 
-                            label="📍 GPS" 
-                            color="success" 
-                            variant="outlined"
-                          />
-                        </Box>
-                      )
-                    }}
+                    label="Location Name"
+                    value={newLocation.name}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="e.g., Headquarters, Manufacturing Plant"
                   />
-                </GoogleAutocomplete>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="City"
-                  value={newLocation.city}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, city: e.target.value }))}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="State"
-                  value={newLocation.state}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, state: e.target.value }))}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="ZIP Code"
-                  value={newLocation.zipCode}
-                  onChange={(e) => setNewLocation(prev => ({ ...prev, zipCode: e.target.value }))}
-                />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Phone"
-                  value={newLocation.phone}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
-                    const pretty = raw.length >= 10
-                      ? `(${raw.slice(0,3)}) ${raw.slice(3,6)}-${raw.slice(6,10)}`
-                      : raw;
-                    setNewLocation(prev => ({ ...prev, phone: pretty }));
-                  }}
-                  placeholder="(555) 123-4567"
-                />
-              </Grid>
-              {newLocation.coordinates && (
-                <Grid item xs={12}>
-                  <Box sx={{ 
-                    p: 2, 
-                    bgcolor: 'success.light', 
-                    borderRadius: 1, 
-                    border: '1px solid',
-                    borderColor: 'success.main'
-                  }}>
-                    <Typography variant="subtitle2" color="success.dark" gutterBottom>
-                      📍 GPS Coordinates Captured
-                    </Typography>
-                    <Typography variant="body2" color="success.dark">
-                      Latitude: {newLocation.coordinates.lat.toFixed(6)} | Longitude: {newLocation.coordinates.lng.toFixed(6)}
-                    </Typography>
-                  </Box>
                 </Grid>
-              )}
-            </Grid>
-            <Box sx={{ display: 'flex', gap: 1, mt: 2 }}>
-              <Button
-                variant="contained"
-                onClick={handleAddLocation}
-                disabled={!newLocation.name || !newLocation.address}
-              >
-                Add Location
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => setShowAddForm(false)}
-              >
-                Cancel
-              </Button>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Location Code"
+                    value={newLocation.code}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, code: e.target.value }))}
+                    placeholder="Internal code (e.g., HQ-01)"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Autocomplete
+                    fullWidth
+                    freeSolo
+                    options={[
+                      'Office',
+                      'Warehouse',
+                      'Plant',
+                      'Distribution Center',
+                      'Manufacturing',
+                      'Retail',
+                      'Branch',
+                      'Headquarters',
+                      'Data Center',
+                      'Call Center',
+                      'Research & Development',
+                      'Training Center',
+                      'Service Center',
+                      'Showroom',
+                      'Storage Facility',
+                      'Hotel',
+                      'Medical Clinic',
+                      'Hospital',
+                      'Retirement Home',
+                      'Sports Arena',
+                      'Sports Stadium',
+                      'Fairgrounds',
+                      'Concert Venue',
+                      'Convention Center',
+                      'College',
+                      'High School',
+                      'Dining Hall',
+                    ]}
+                    value={newLocation.type || ''}
+                    onChange={(_, newValue) => setNewLocation(prev => ({ ...prev, type: newValue || '' }))}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Type" />
+                    )}
+                  />
+                </Grid>
+                {company.divisions && company.divisions.length > 0 && (
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth>
+                      <InputLabel>Division (Optional)</InputLabel>
+                      <Select
+                        value={newLocation.division}
+                        label="Division (Optional)"
+                        onChange={(e) => setNewLocation(prev => ({ ...prev, division: e.target.value }))}
+                      >
+                        <MenuItem value="">
+                          <em>No division</em>
+                        </MenuItem>
+                        {company.divisions.map((division: string) => (
+                          <MenuItem key={division} value={division}>
+                            {division}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                )}
+                <Grid item xs={12}>
+                  <GoogleAutocomplete
+                    onLoad={(ref) => {
+                      console.log('GoogleAutocomplete onLoad called, ref:', ref);
+                      autocompleteRef.current = ref;
+                    }}
+                    onPlaceChanged={() => {
+                      const place = autocompleteRef.current.getPlace();
+                      if (place.geometry && place.geometry.location) {
+                        const lat = place.geometry.location.lat();
+                        const lng = place.geometry.location.lng();
+                        
+                        // Extract address components
+                        const addressComponents = place.address_components || [];
+                        let streetNumber = '';
+                        let route = '';
+                        let city = '';
+                        let state = '';
+                        let zipCode = '';
+                        let country = 'USA';
+
+                        addressComponents.forEach((component) => {
+                          const types = component.types;
+                          if (types.includes('street_number')) {
+                            streetNumber = component.long_name;
+                          } else if (types.includes('route')) {
+                            route = component.long_name;
+                          } else if (types.includes('locality')) {
+                            city = component.long_name;
+                          } else if (types.includes('administrative_area_level_1')) {
+                            state = component.short_name;
+                          } else if (types.includes('postal_code')) {
+                            zipCode = component.long_name;
+                          } else if (types.includes('country')) {
+                            country = component.short_name;
+                          }
+                        });
+
+                        const fullAddress = streetNumber && route ? `${streetNumber} ${route}` : place.formatted_address || '';
+
+                        setNewLocation(prev => ({
+                          ...prev,
+                          address: fullAddress,
+                          city,
+                          state,
+                          zipCode,
+                          country,
+                          coordinates: {
+                            lat,
+                            lng
+                          }
+                        }));
+                      }
+                    }}
+                  >
+                    <TextField
+                      fullWidth
+                      label="Address"
+                      value={newLocation.address}
+                      onChange={(e) => setNewLocation(prev => ({ ...prev, address: e.target.value }))}
+                      placeholder="Start typing an address..."
+                      InputProps={{
+                        endAdornment: newLocation.coordinates && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                            <Chip 
+                              size="small" 
+                              label="📍 GPS" 
+                              color="success" 
+                              variant="outlined"
+                            />
+                          </Box>
+                        )
+                      }}
+                    />
+                  </GoogleAutocomplete>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="City"
+                    value={newLocation.city}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, city: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="State"
+                    value={newLocation.state}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, state: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="ZIP Code"
+                    value={newLocation.zipCode}
+                    onChange={(e) => setNewLocation(prev => ({ ...prev, zipCode: e.target.value }))}
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Phone"
+                    value={newLocation.phone}
+                    onChange={(e) => {
+                      const raw = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
+                      const pretty = raw.length >= 10
+                        ? `(${raw.slice(0,3)}) ${raw.slice(3,6)}-${raw.slice(6,10)}`
+                        : raw;
+                      setNewLocation(prev => ({ ...prev, phone: pretty }));
+                    }}
+                    placeholder="(555) 123-4567"
+                  />
+                </Grid>
+                {newLocation.coordinates && (
+                  <Grid item xs={12}>
+                    <Box sx={{ 
+                      p: 2, 
+                      bgcolor: 'success.light', 
+                      borderRadius: 1, 
+                      border: '1px solid',
+                      borderColor: 'success.main'
+                    }}>
+                      <Typography variant="subtitle2" color="success.dark" gutterBottom>
+                        📍 GPS Coordinates Captured
+                      </Typography>
+                      <Typography variant="body2" color="success.dark">
+                        Latitude: {newLocation.coordinates.lat.toFixed(6)} | Longitude: {newLocation.coordinates.lng.toFixed(6)}
+                      </Typography>
+                    </Box>
+                  </Grid>
+                )}
+              </Grid>
             </Box>
           </Box>
-        </Box>
-      )}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 3, pt: 0 }}>
+          <Button 
+            onClick={() => {
+              setShowAddForm(false);
+              setNewLocation({
+                name: '',
+                code: '',
+                address: '',
+                city: '',
+                state: '',
+                zipCode: '',
+                country: 'USA',
+                type: 'Office',
+                division: '',
+                phone: '',
+                coordinates: null
+              });
+            }}
+            variant="outlined"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={handleAddLocation}
+            disabled={!newLocation.name || !newLocation.address}
+            size="large"
+          >
+            Add Location
+          </Button>
+        </DialogActions>
+      </Dialog>
       {/* Locations Table */}
-      {locations.length > 0 ? (
-        <Box px={0} pb={3}>
+      {loading && locations.length === 0 ? (
+        <Box px={3} pb={3}>
           <TableContainer 
             component={Paper} 
             variant="outlined"
-            sx={{
+            sx={{ 
               overflowX: 'auto',
-              borderRadius: '8px',
-              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'divider',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+              '& .MuiTable-root': {
+                borderCollapse: 'separate',
+                borderSpacing: 0
+              }
             }}
           >
             <Table sx={{ minWidth: 1200 }}>
               <TableHead>
-                <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Location Name
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Code
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Address
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Type
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Division
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Contacts
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Deals
-                  </TableCell>
-                  <TableCell sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5
-                  }}>
-                    Salespeople
-                  </TableCell>
+                <TableRow sx={{ 
+                  backgroundColor: 'grey.50',
+                  borderBottom: '2px solid',
+                  borderColor: 'divider',
+                  '& th': {
+                    borderBottom: '2px solid',
+                    borderColor: 'divider',
+                    fontWeight: 600
+                  }
+                }}>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, pl: 2 }}>Location Name</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Code</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Address</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Type</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Division</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Contacts</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Deals</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {locations.map((location) => (
+                {Array.from({ length: 5 }).map((_, index) => (
                   <TableRow 
-                    key={location.id}
-                    onClick={() => handleViewLocation(location)}
-                    sx={{
+                    key={`skeleton-${index}`} 
+                    sx={{ 
                       height: '48px',
-                      cursor: 'pointer',
-                      '&:hover': {
-                        backgroundColor: '#F9FAFB'
+                      bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                      '& td': {
+                        borderBottom: '1px solid',
+                        borderColor: 'divider'
                       }
                     }}
                   >
-                    <TableCell sx={{ py: 1, px: 2 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        fontWeight: 600,
-                        color: "#111827",
-                        fontSize: '0.9375rem'
-                      }}>
-                        {location.name}
+                    <TableCell sx={{ pl: 2, pr: 2, py: 1.5 }}><Skeleton variant="text" width={140} height={20} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="text" width={80} height={20} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="text" width={200} height={20} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="rectangular" width={80} height={24} sx={{ borderRadius: 1 }} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="text" width={100} height={20} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="text" width={60} height={20} /></TableCell>
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}><Skeleton variant="text" width={60} height={20} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      ) : filteredLocations.length === 0 && !showAddForm ? (
+        <Box px={3} py={4} textAlign="center">
+          <LocationOnIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            {searchQuery ? 'No locations match your search' : 'No Locations Found'}
+          </Typography>
+          {searchQuery && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Try adjusting your search terms
+            </Typography>
+          )}
+        </Box>
+      ) : filteredLocations.length > 0 ? (
+        <TableContainer 
+          component={Paper} 
+          variant="outlined"
+          sx={{
+            overflowX: 'auto',
+            borderRadius: '8px',
+            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+          }}
+        >
+          <Table sx={{ minWidth: 1200 }}>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Location Name
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Code
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Address
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Type
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Division
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Contacts
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Deals
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredLocations.map((location, index) => (
+                <TableRow 
+                  key={location.id}
+                  onClick={() => handleViewLocation(location)}
+                  sx={{
+                    height: '48px',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      backgroundColor: '#F9FAFB'
+                    }
+                  }}
+                >
+                  <TableCell sx={{ py: 1, px: 2 }}>
+                      <Typography sx={{ variant: "body2", fontWeight: 600, color: "#111827", fontSize: '0.9375rem' }}>
+                        {location.name || location.nickname || 'Unnamed Location'}
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
                       {location.code ? (
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#374151",
-                          fontSize: '0.875rem',
-                          fontWeight: 500,
-                          fontFamily: 'monospace'
-                        }}>
+                        <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem', fontWeight: 500, fontFamily: 'monospace' }}>
                           {location.code}
                         </Typography>
                       ) : (
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#9CA3AF",
-                          fontSize: '0.875rem'
-                        }}>
+                        <Typography sx={{ variant: "body2", color: "#9CA3AF", fontSize: '0.875rem' }}>
                           -
                         </Typography>
                       )}
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#111827",
-                        fontSize: '0.875rem'
-                      }}>
-                        {location.address}
+                      <Typography sx={{ variant: "body2", color: "#111827", fontSize: '0.875rem' }}>
+                        {location.address || location.street || '-'}
                       </Typography>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#6B7280",
-                        fontSize: '0.875rem'
-                      }}>
-                        {location.city}, {location.state} {location.zipCode}
-                      </Typography>
+                      {(location.city || location.state || location.zipCode) && (
+                        <Typography sx={{ variant: "body2", color: "#6B7280", fontSize: '0.875rem' }}>
+                          {[location.city, location.state, location.zipCode].filter(Boolean).join(', ')}
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
                       <Chip 
-                        label={location.type} 
+                        label={location.type || 'Unknown'} 
                         size="small" 
                         color="primary"
-                        sx={{
-                          fontSize: '0.75rem',
-                          fontWeight: 500
-                        }}
+                        sx={{ fontSize: '0.75rem', fontWeight: 500 }}
                       />
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
@@ -5667,49 +5890,22 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
                           size="small" 
                           color="secondary"
                           variant="outlined"
-                          sx={{
-                            fontSize: '0.75rem',
-                            fontWeight: 500
-                          }}
+                          sx={{ fontSize: '0.75rem', fontWeight: 500 }}
                         />
                       ) : (
-                        <Typography sx={{
-                          variant: "body2",
-                          color: "#9CA3AF",
-                          fontSize: '0.875rem'
-                        }}>
+                        <Typography sx={{ variant: "body2", color: "#9CA3AF", fontSize: '0.875rem' }}>
                           -
                         </Typography>
                       )}
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#374151",
-                        fontSize: '0.875rem',
-                        fontWeight: 500
-                      }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem', fontWeight: 500 }}>
                         {location.contactCount || 0}
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ py: 1 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#374151",
-                        fontSize: '0.875rem',
-                        fontWeight: 500
-                      }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem', fontWeight: 500 }}>
                         {location.dealCount || 0}
-                      </Typography>
-                    </TableCell>
-                    <TableCell sx={{ py: 1 }}>
-                      <Typography sx={{
-                        variant: "body2",
-                        color: "#374151",
-                        fontSize: '0.875rem',
-                        fontWeight: 500
-                      }}>
-                        {location.salespersonCount || 0}
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -5717,26 +5913,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
               </TableBody>
             </Table>
           </TableContainer>
-        </Box>
-      ) : (
-        <Box px={3} py={4} textAlign="center">
-          <LocationOnIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
-            No Locations Found
-          </Typography>
-                    {/* <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Use AI to automatically discover company locations or add them manually.
-          </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AutoAwesomeIcon />}
-            onClick={discoverLocationsWithAI}
-            disabled={aiLoading}
-          >
-            {aiLoading ? 'Discovering...' : 'Discover with AI'}
-          </Button> */}
-        </Box>
-      )}
+      ) : null}
     </Box>
   );
 };
@@ -5753,7 +5930,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   // Sorting and search state
   const [sortField, setSortField] = useState<string>('');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Contact form state
   const [contactForm, setContactForm] = useState({
@@ -5828,11 +6005,15 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     }
   };
 
-  const filteredAndSortedContacts = contacts
-    .filter((contact: any) => {
-      if (!searchTerm) return true;
-      const searchLower = searchTerm.toLowerCase();
-      const fullName = (contact.fullName || contact.name || '').toLowerCase();
+  // Filter contacts based on search query
+  const filteredContacts = React.useMemo(() => {
+    if (!searchQuery.trim()) {
+      return contacts;
+    }
+    
+    const searchLower = searchQuery.toLowerCase();
+    return contacts.filter((contact: any) => {
+      const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
       const firstName = (contact.firstName || '').toLowerCase();
       const lastName = (contact.lastName || '').toLowerCase();
       const email = (contact.email || '').toLowerCase();
@@ -5841,7 +6022,10 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
              firstName.includes(searchLower) || 
              lastName.includes(searchLower) || 
              email.includes(searchLower);
-    })
+    });
+  }, [contacts, searchQuery]);
+
+  const filteredAndSortedContacts = filteredContacts
     .sort((a: any, b: any) => {
       if (!sortField) return 0;
       
@@ -5989,75 +6173,135 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
       }
     }
 };
+
   return (
     <>
-      <Box px={0} pb={4}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 1, px: 3 }}>
-        <Typography variant="h6" fontWeight={700}>Contacts</Typography>
-        <Button 
-          variant="contained" 
-          startIcon={<AddIcon />} 
-          onClick={() => setShowAddContactDialog(true)}
-          sx={{
-            height: 36,
-            textTransform: 'none',
-            fontWeight: 500,
-            fontSize: '0.875rem',
-            px: 2.5,
-            py: 0.75
-          }}
-        >
-          Add Contact
-        </Button>
-      </Box>
-      
-      {/* Search Field */}
-      <Box sx={{ px: 3, mb: 2 }}>
-        <TextField
-          fullWidth
-          placeholder="Search contacts by name or email..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          size="small"
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              backgroundColor: '#F9FAFB',
-              '&:hover': {
-                backgroundColor: '#F3F4F6'
-              },
-              '&.Mui-focused': {
-                backgroundColor: '#FFFFFF'
+      <Box sx={{ p: 0 }}>
+        {/* Header with Search and Add Contact Button */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3, gap: 2 }}>
+        <Typography variant="h6" fontWeight={700}>
+          Contacts
+        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
+          <TextField
+            size="small"
+            variant="outlined"
+            placeholder="Search by name or email..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+              endAdornment: searchQuery && (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    onClick={() => setSearchQuery('')}
+                    sx={{ p: 0.5 }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+            sx={{ 
+              width: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
               }
-            }
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon sx={{ color: '#6B7280', fontSize: 20 }} />
-              </InputAdornment>
-            ),
-            endAdornment: searchTerm && (
-              <InputAdornment position="end">
-                <IconButton
-                  size="small"
-                  onClick={() => setSearchTerm('')}
-                  sx={{ color: '#6B7280' }}
-                >
-                  <ClearIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </InputAdornment>
-            )
-          }}
-        />
+            }}
+          />
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setShowAddContactDialog(true)}
+          >
+            Add Contact
+          </Button>
+        </Box>
       </Box>
       
+      {/* Error Display */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity="error" sx={{ mb: 2, mx: 3 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
-      
-      {filteredAndSortedContacts.length > 0 ? (
+
+      {/* Contacts Table */}
+      {loading && contacts.length === 0 ? (
+        <Box px={3} pb={3}>
+          <TableContainer 
+            component={Paper} 
+            variant="outlined"
+            sx={{ 
+              overflowX: 'auto',
+              borderRadius: 1,
+              border: '1px solid',
+              borderColor: 'divider',
+              boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+              '& .MuiTable-root': {
+                borderCollapse: 'separate',
+                borderSpacing: 0
+              }
+            }}
+          >
+            <Table sx={{ minWidth: 1200 }}>
+              <TableHead>
+                <TableRow sx={{ 
+                  backgroundColor: 'grey.50',
+                  borderBottom: '2px solid',
+                  borderColor: 'divider'
+                }}>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Name</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Title</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Email</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Phone</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Location</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>LinkedIn</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {[1, 2, 3].map((i) => (
+                  <TableRow key={i}>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      ) : filteredAndSortedContacts.length === 0 && !showAddContactDialog ? (
+        <Box px={3} py={4} textAlign="center">
+          <PersonIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            {searchQuery ? 'No contacts match your search' : 'No Contacts Found'}
+          </Typography>
+          {searchQuery && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Try adjusting your search terms
+            </Typography>
+          )}
+        </Box>
+      ) : filteredAndSortedContacts.length > 0 ? (
         <TableContainer 
           component={Paper} 
           variant="outlined"
@@ -6070,26 +6314,16 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
           <Table sx={{ minWidth: 1200 }}>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
-                <TableCell 
-                  sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5,
-                    cursor: 'pointer',
-                    '&:hover': { backgroundColor: '#F3F4F6' }
-                  }}
-                  onClick={() => handleSort('name')}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    Name
-                    {sortField === 'name' && (
-                      sortDirection === 'asc' ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </Box>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Name
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -6124,26 +6358,16 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 }}>
                   Phone
                 </TableCell>
-                <TableCell 
-                  sx={{
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                    borderBottom: '1px solid #E5E7EB',
-                    py: 1.5,
-                    cursor: 'pointer',
-                    '&:hover': { backgroundColor: '#F3F4F6' }
-                  }}
-                  onClick={() => handleSort('location')}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    Location
-                    {sortField === 'location' && (
-                      sortDirection === 'asc' ? <ArrowUpwardIcon sx={{ fontSize: 16 }} /> : <ArrowDownwardIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </Box>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Location
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -6159,7 +6383,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredAndSortedContacts.map((contact: any) => (
+              {filteredAndSortedContacts.map((contact: any, index: number) => (
                 <TableRow 
                   key={contact.id}
                   onClick={() => navigate(`/crm/contacts/${contact.id}`)}
@@ -6172,152 +6396,86 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                   }}
                 >
                   <TableCell sx={{ py: 1, px: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Avatar
-                        src={contact.avatar}
-                        sx={{
-                          width: 32,
-                          height: 32,
-                          fontWeight: 600,
-                          fontSize: '12px',
-                          ...getAvatarColor(contact.fullName || contact.name || 'Unknown')
-                        }}
-                      >
-                        {getInitials(contact.fullName || contact.name || 'Unknown')}
-                      </Avatar>
-                      <Typography sx={{
-                        variant: "body2",
-                        fontWeight: 600,
-                        color: "#111827",
-                        fontSize: '0.9375rem'
-                      }}>
-                        {contact.fullName || contact.name}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Avatar
+                          src={contact.avatar}
+                          sx={{
+                            width: 36,
+                            height: 36,
+                            fontWeight: 600,
+                            fontSize: '0.875rem',
+                            ...(contact.avatar ? {} : getAvatarColor(contact.fullName || contact.name || contact.firstName || contact.lastName || 'Unknown'))
+                          }}
+                        >
+                          {!contact.avatar && getInitials(contact.fullName || contact.name || contact.firstName || contact.lastName || 'Unknown')}
+                        </Avatar>
+                        <Typography sx={{ variant: "body2", fontWeight: 600, color: "#111827", fontSize: '0.9375rem' }}>
+                          {contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unnamed Contact'}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {contact.jobTitle || contact.title || '-'}
                       </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography sx={{
-                      variant: "body2",
-                      color: "#6B7280",
-                      fontSize: '0.875rem'
-                    }}>
-                      {contact.title || contact.jobTitle}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography sx={{
-                      variant: "body2",
-                      color: "#6B7280",
-                      fontSize: '0.875rem'
-                    }}>
-                      {contact.email}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography sx={{
-                      variant: "body2",
-                      color: "#6B7280",
-                      fontSize: '0.875rem'
-                    }}>
-                      {contact.phone ? formatPhoneNumber(contact.phone) : '-'}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    <Typography sx={{
-                      variant: "body2",
-                      color: "#6B7280",
-                      fontSize: '0.875rem'
-                    }}>
-                      {(() => {
-                        if (contact.locationId) {
-                          const location = companyLocations.find(loc => loc.id === contact.locationId);
-                          if (location) {
-                            const locationName = location?.nickname || location?.name || 'Unknown Location';
-                            const locationCode = location.code ? ` [${location.code}]` : '';
-                            return `${locationName}${locationCode}`;
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {contact.email || '-'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {contact.phone ? formatPhoneNumber(contact.phone) : '-'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#6B7280", fontSize: '0.875rem' }}>
+                        {(() => {
+                          if (contact.locationId) {
+                            const location = companyLocations.find(loc => loc.id === contact.locationId);
+                            if (location) {
+                              return location?.nickname || location?.name || 'Unknown Location';
+                            }
                           }
+                          return 'No location';
+                        })()}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      {(() => {
+                        const linkedinUrl = contact.linkedinUrl || contact.linkedin || contact.linkedInUrl || contact.linkedIn;
+                        if (linkedinUrl) {
+                          return (
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(linkedinUrl, '_blank');
+                              }}
+                              color="primary"
+                              title="Open LinkedIn Profile"
+                              sx={{ fontSize: 16, color: '#0077B5' }}
+                            >
+                              <LinkedInIcon />
+                            </IconButton>
+                          );
+                        } else {
+                          return (
+                            <Typography sx={{ variant: "body2", color: "#9CA3AF", fontSize: '0.875rem' }}>
+                              -
+                            </Typography>
+                          );
                         }
-                        return 'No location';
                       })()}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1 }}>
-                    {(() => {
-                      // Check multiple possible LinkedIn field names
-                      const linkedinUrl = contact.linkedinUrl || contact.linkedin || contact.linkedInUrl || contact.linkedIn;
-                      
-                      if (linkedinUrl) {
-                        return (
-                          <IconButton
-                            size="small"
-                            onClick={() => window.open(linkedinUrl, '_blank')}
-                            color="primary"
-                            title="Open LinkedIn Profile"
-                            sx={{ fontSize: 16, color: '#0077B5' }}
-                          >
-                            <LinkedInIcon />
-                          </IconButton>
-                        );
-                      } else {
-                        return (
-                          <Typography sx={{
-                            variant: "body2",
-                            color: "#9CA3AF",
-                            fontSize: '0.875rem'
-                          }}>
-                            No LinkedIn
-                          </Typography>
-                        );
-                      }
-                    })()}
-                  </TableCell>
-
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      ) : (
-        <Box sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          py: 8,
-          textAlign: 'center'
-        }}>
-          <Box sx={{
-            width: 120,
-            height: 120,
-            borderRadius: '50%',
-            backgroundColor: '#F3F4F6',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            mb: 3
-          }}>
-            <PersonIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
-          </Box>
-          <Typography sx={{
-            variant: "h6",
-            fontWeight: 600,
-            color: '#111827',
-            mb: 1
-          }}>
-            No contacts found
-          </Typography>
-          <Typography sx={{
-            variant: "body2",
-            color: "#6B7280",
-            mb: 3
-          }}>
-            No contacts are associated with this company yet.
-                    </Typography>
-        </Box>
-      )}
-      
-      {/* Removed +more indicator; table now shows all contacts */}
-    </Box>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : null}
+      </Box>
 
       {/* Add Contact Dialog */}
       <Dialog open={showAddContactDialog} onClose={() => setShowAddContactDialog(false)} maxWidth="md" fullWidth>
@@ -7286,6 +7444,312 @@ const NewsTab: React.FC<{ company: any }> = ({ company }) => {
     </Box>
   );
 };
+const JobOrdersTab: React.FC<{ jobOrders: any[]; routePrefix: 'crm' | 'recruiter' }> = ({ jobOrders, routePrefix }) => {
+  const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortField, setSortField] = useState<string>('createdAt');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const formatJobOrderNumber = (number: string | number) => {
+    if (typeof number === 'string') return number;
+    return number.toString().padStart(4, '0');
+  };
+
+  const getJobOrderAge = (createdAt: any) => {
+    if (!createdAt) return null;
+    const date = createdAt?.toDate ? createdAt.toDate() : new Date(createdAt);
+    const now = new Date();
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
+  const getStatusColor = (status: string) => {
+    const statusLower = (status || '').toLowerCase();
+    if (statusLower.includes('open') || statusLower === 'active') return 'success';
+    if (statusLower.includes('hold') || statusLower === 'on_hold') return 'warning';
+    if (statusLower.includes('filled') || statusLower === 'completed') return 'info';
+    if (statusLower.includes('cancel')) return 'error';
+    return 'default';
+  };
+
+  const filteredAndSortedJobOrders = React.useMemo(() => {
+    let filtered = jobOrders;
+
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((jobOrder: any) => {
+        const jobOrderName = (jobOrder.jobOrderName || '').toLowerCase();
+        const jobTitle = (jobOrder.jobTitle || '').toLowerCase();
+        const jobOrderNumber = formatJobOrderNumber(jobOrder.jobOrderNumber || '').toLowerCase();
+        const status = (jobOrder.status || '').toLowerCase();
+        const companyName = (jobOrder.companyName || jobOrder.deal?.companyName || '').toLowerCase();
+        return jobOrderName.includes(query) || 
+               jobTitle.includes(query) || 
+               jobOrderNumber.includes(query) ||
+               status.includes(query) ||
+               companyName.includes(query);
+      });
+    }
+
+    // Sort
+    filtered.sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'createdAt') {
+        aVal = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+        bVal = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+      } else if (sortField === 'jobOrderNumber') {
+        aVal = formatJobOrderNumber(a.jobOrderNumber || '');
+        bVal = formatJobOrderNumber(b.jobOrderNumber || '');
+      } else if (sortField === 'status') {
+        aVal = (a.status || '').toLowerCase();
+        bVal = (b.status || '').toLowerCase();
+      } else {
+        aVal = a[sortField] || '';
+        bVal = b[sortField] || '';
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return filtered;
+  }, [jobOrders, searchQuery, sortField, sortDirection]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
+  return (
+    <Box sx={{ p: 0 }}>
+      {/* Header with Search */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3, gap: 2 }}>
+        <Typography variant="h6" fontWeight={700}>
+          Job Orders {jobOrders.length > 0 && `(${jobOrders.length})`}
+        </Typography>
+        <TextField
+          size="small"
+          variant="outlined"
+          placeholder="Search by order #, title, status..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+              </InputAdornment>
+            ),
+            endAdornment: searchQuery && (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  onClick={() => setSearchQuery('')}
+                  sx={{ p: 0.5 }}
+                >
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            )
+          }}
+          sx={{ 
+            width: 280,
+            height: 36,
+            '& .MuiOutlinedInput-root': {
+              height: 36,
+              borderRadius: '6px',
+              backgroundColor: 'white',
+              fontSize: '0.875rem',
+              '& fieldset': {
+                borderColor: '#E5E7EB',
+              },
+              '&:hover fieldset': {
+                borderColor: '#D1D5DB',
+              },
+              '&.Mui-focused fieldset': {
+                borderColor: '#3B82F6',
+              },
+            },
+          }}
+        />
+      </Box>
+
+      {filteredAndSortedJobOrders.length === 0 ? (
+        <Box sx={{ textAlign: 'center', py: 8, px: 3 }}>
+          {searchQuery ? (
+            <>
+              <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                No job orders found
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Try adjusting your search criteria
+              </Typography>
+            </>
+          ) : (
+            <>
+              <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                No job orders yet
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                Job orders associated with this company will appear here
+              </Typography>
+            </>
+          )}
+        </Box>
+      ) : (
+        <TableContainer 
+          component={Paper} 
+          variant="outlined"
+          sx={{
+            overflowX: 'auto',
+            borderRadius: '8px',
+            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+          }}
+        >
+          <Table sx={{ minWidth: 1200 }}>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5,
+                  cursor: 'pointer'
+                }} onClick={() => handleSort('jobOrderNumber')}>
+                  Order #
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5,
+                  cursor: 'pointer'
+                }} onClick={() => handleSort('jobOrderName')}>
+                  Title
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Job Title
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5,
+                  cursor: 'pointer'
+                }} onClick={() => handleSort('status')}>
+                  Status
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  Workers
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5,
+                  cursor: 'pointer'
+                }} onClick={() => handleSort('createdAt')}>
+                  Created
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredAndSortedJobOrders.map((jobOrder: any, index: number) => {
+                const age = getJobOrderAge(jobOrder.createdAt);
+                return (
+                  <TableRow 
+                    key={jobOrder.id}
+                    onClick={() => navigate(`/${routePrefix}/job-orders/${jobOrder.id}`)}
+                    sx={{
+                      height: '48px',
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: '#F9FAFB'
+                      }
+                    }}
+                  >
+                    <TableCell sx={{ py: 1, px: 2 }}>
+                      <Typography sx={{ variant: "body2", fontWeight: 600, color: "#111827", fontSize: '0.9375rem' }}>
+                        {formatJobOrderNumber(jobOrder.jobOrderNumber || jobOrder.jobOrderSeq || '')}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", fontWeight: 500, color: "#111827", fontSize: '0.875rem' }}>
+                        {jobOrder.jobOrderName || 'Unnamed Job Order'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {jobOrder.jobTitle || '-'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Chip
+                        label={jobOrder.status || 'Unknown'}
+                        size="small"
+                        color={getStatusColor(jobOrder.status) as any}
+                        sx={{ fontSize: '0.75rem', fontWeight: 500 }}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {jobOrder.workersNeeded || jobOrder.headcountRequested || 0} / {jobOrder.headcountFilled || 0}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#6B7280", fontSize: '0.875rem' }}>
+                        {age !== null ? `${age} day${age !== 1 ? 's' : ''} ago` : '-'}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
+  );
+};
+
 const IndeedJobsTab: React.FC<{ 
   company: any; 
   jobPostings: any[]; 

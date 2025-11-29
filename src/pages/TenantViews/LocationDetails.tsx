@@ -19,7 +19,6 @@ import {
   Avatar,
   IconButton,
   Chip,
-  Breadcrumbs,
   Link as MUILink,
   Paper,
   Tabs,
@@ -68,6 +67,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import ActivityLogTab from '../../components/ActivityLogTab';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 
 interface LocationData {
   id: string;
@@ -1005,19 +1005,15 @@ const LocationDetails: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          <MUILink underline="hover" color="inherit" href="/companies" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=companies'); }}>
-            Companies
-          </MUILink>
-          <MUILink underline="hover" color="inherit" href={`/crm/companies/${companyId}`} onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${companyId}`); }}>
-            {company?.companyName || company?.name || 'Company'}
-          </MUILink>
-          <Typography color="text.primary">{location.name}</Typography>
-        </Breadcrumbs>
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'CRM', href: '/crm' },
+            { label: 'Companies', onClick: () => navigate('/crm?tab=companies') },
+            { label: company?.companyName || company?.name || 'Company', href: `/crm/companies/${companyId}` },
+            { label: location.name },
+          ]}
+        />
       </Box>
 
       {/* Enhanced Header - Persistent Location Information */}

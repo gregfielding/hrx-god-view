@@ -323,7 +323,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
       bgcolor: 'background.paper',
       border: '1px solid',
       borderColor: 'divider',
-      boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)'
+      boxShadow: 'none'
     }}>
       {/* Mobile Layout: Avatar + Action Buttons Row */}
       <Box sx={{ 

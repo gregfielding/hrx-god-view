@@ -34,7 +34,6 @@ import {
   Divider,
   Switch,
   FormControlLabel,
-  Breadcrumbs,
 } from '@mui/material';
 import {
   Phone as PhoneIcon,
@@ -78,6 +77,7 @@ import ContactHeader from '../components/ContactHeader';
 import { useFavorites } from '../hooks/useFavorites';
 import AddNoteDialog from '../components/AddNoteDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -746,21 +746,15 @@ const RecruiterContactDetails: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/recruiter" onClick={(e) => { e.preventDefault(); navigate('/recruiter'); }}>
-            Recruiter
-          </MUILink>
-          {company && (
-            <MUILink underline="hover" color="inherit" href={`/recruiter/companies/${company.id}`} onClick={(e) => { e.preventDefault(); navigate(`/recruiter/companies/${company.id}`); }}>
-              {company.companyName || company.name}
-            </MUILink>
-          )}
-          <MUILink underline="hover" color="inherit" href="/recruiter/contacts" onClick={(e) => { e.preventDefault(); navigate('/recruiter/contacts'); }}>
-            Contacts
-          </MUILink>
-          <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>
-        </Breadcrumbs>
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            ...(company ? [{ label: company.companyName || company.name, href: `/recruiter/companies/${company.id}` }] : []),
+            { label: 'Contacts', href: '/recruiter/contacts' },
+            { label: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact' },
+          ]}
+        />
       </Box>
       
       {/* Contact Header Component */}

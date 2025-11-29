@@ -31,7 +31,6 @@ import {
   CardContent,
   CardHeader,
   Snackbar,
-  Breadcrumbs,
   Link as MUILink,
   Skeleton,
   TableContainer,
@@ -91,6 +90,7 @@ import AddNoteDialog from '../../components/AddNoteDialog';
 import { logger } from '../../utils/logger';
 import ContactHeader from '../../components/ContactHeader';
 import { useFavorites } from '../../hooks/useFavorites';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 
 interface ContactData {
   id: string;
@@ -1535,21 +1535,15 @@ const ContactDetails: React.FC = () => {
   return (
     <Box sx={{ p: 0 }}>
       {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          {company && (
-            <MUILink underline="hover" color="inherit" href={`/crm/companies/${company.id}`} onClick={(e) => { e.preventDefault(); navigate(`/crm/companies/${company.id}`); }}>
-              {company.companyName || company.name}
-            </MUILink>
-          )}
-          <MUILink underline="hover" color="inherit" href="/contacts" onClick={(e) => { e.preventDefault(); navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts'); }}>
-            Contacts
-          </MUILink>
-          <Typography color="text.primary">{contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact'}</Typography>
-        </Breadcrumbs>
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'CRM', href: '/crm' },
+            ...(company ? [{ label: company.companyName || company.name, href: `/crm/companies/${company.id}` }] : []),
+            { label: 'Contacts', onClick: () => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts') },
+            { label: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact' },
+          ]}
+        />
       </Box>
       {/* Build navigation links */}
       {(() => {

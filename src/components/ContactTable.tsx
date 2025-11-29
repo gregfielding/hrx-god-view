@@ -144,7 +144,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
                 fontWeight: 600
               }
             }}>
-              {columns.favorites && renderHeaderCell('Favorites', undefined, 'favorites')}
+              {columns.favorites && renderHeaderCell('', undefined, 'favorites')}
               {columns.name && renderHeaderCell('Contact Name', 'fullName', 'name')}
               {(columns.jobTitle || columns.title) && renderHeaderCell('Job Title', 'jobTitle', 'jobTitle')}
               {columns.role && renderHeaderCell('Role', undefined, 'role')}

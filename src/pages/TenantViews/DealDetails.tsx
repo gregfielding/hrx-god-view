@@ -26,7 +26,6 @@ import {
   ListItem,
   ListItemText,
   Chip,
-  Breadcrumbs,
   Link as MUILink,
   Select,
   MenuItem,
@@ -90,6 +89,7 @@ import ManageContactsDialog from '../../components/ManageContactsDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
 import NextStepsWidget from '../../components/NextStepsWidget';
 import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
+import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 
 interface DealData {
   id: string;
@@ -1713,16 +1713,14 @@ const DealDetails: React.FC = () => {
         `}
       </style>
       {/* Breadcrumbs */}
-      <Box sx={{ mb: 2 }}>
-        <Breadcrumbs aria-label="breadcrumb">
-          <MUILink underline="hover" color="inherit" href="/crm" onClick={(e) => { e.preventDefault(); navigate('/crm'); }}>
-            CRM
-          </MUILink>
-          <MUILink underline="hover" color="inherit" href="/opportunities" onClick={(e) => { e.preventDefault(); navigate('/crm?tab=opportunities'); }}>
-            Opportunities
-          </MUILink>
-          <Typography color="text.primary">{deal?.name || 'Deal'}</Typography>
-        </Breadcrumbs>
+      <Box sx={{ mb: 2, pt: 1 }}>
+        <BreadcrumbNav
+          items={[
+            { label: 'CRM', href: '/crm' },
+            { label: 'Opportunities', onClick: () => navigate('/crm?tab=opportunities') },
+            { label: deal?.name || 'Deal' },
+          ]}
+        />
       </Box>
 
       {/* Enhanced Header - Persistent Deal Information */}
