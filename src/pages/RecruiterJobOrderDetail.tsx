@@ -69,7 +69,8 @@ import {
   Visibility as VisibilityIcon,
   Settings as SettingsIcon,
   Save as SaveIcon,
-  Edit as EditIcon
+  Edit as EditIcon,
+  ContentCopy as ContentCopyIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -1799,6 +1800,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
   const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
+  const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
   // Load job order
   useEffect(() => {
@@ -2535,18 +2537,41 @@ const RecruiterJobOrderDetail: React.FC = () => {
               {(jobOrder.companyName || company?.companyName || company?.name || 'C').charAt(0).toUpperCase()}
             </Avatar>
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography 
-                variant="h5" 
-                sx={{ 
-                  fontWeight: 'bold', 
-                  color: 'text.primary',
-                  fontSize: { xs: '1.25rem', sm: '1.5rem' },
-                  lineHeight: 1.2,
-                  mb: 0.5
-                }}
-              >
-                {jobOrder.jobOrderName}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+                <Typography 
+                  variant="h5" 
+                  sx={{ 
+                    fontWeight: 'bold', 
+                    color: 'text.primary',
+                    fontSize: { xs: '1.25rem', sm: '1.5rem' },
+                    lineHeight: 1.2,
+                    flex: 1
+                  }}
+                >
+                  {jobOrder.jobOrderName}
+                </Typography>
+                {/* Share Button - Mobile - Show if there's an active Job Board Post */}
+                {(() => {
+                  const activeJobPost = connectedJobPosts.find(post => post.status === 'active');
+                  if (activeJobPost) {
+                    return (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<ContentCopyIcon />}
+                        onClick={() => {
+                          const url = `${window.location.origin}/c1/jobs-board/${activeJobPost.id}`;
+                          navigator.clipboard.writeText(url);
+                          setShareSnackbarOpen(true);
+                        }}
+                      >
+                        Share
+                      </Button>
+                    );
+                  }
+                  return null;
+                })()}
+              </Box>
               {/* E-Verify Image - Mobile */}
               {(() => {
                 const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
@@ -2708,29 +2733,52 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
                   {jobOrder.jobOrderName}
                 </Typography>
-                {/* E-Verify Image */}
-                {(() => {
-                  // Check if job order has explicit eVerify setting
-                  const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
-                  // If explicitly set (true or false), use that value
-                  // Otherwise, fall back to company defaults
-                  const shouldShowEVerify = jobOrderEVerify !== undefined 
-                    ? jobOrderEVerify === true
-                    : (company?.defaults?.eVerify?.eVerifyRequired || false);
-                  
-                  return shouldShowEVerify ? (
-                    <Box
-                      component="img"
-                      src="/img/everify.png"
-                      alt="E-Verify"
-                      sx={{
-                        height: 30,
-                        width: 'auto',
-                        objectFit: 'contain'
-                      }}
-                    />
-                  ) : null;
-                })()}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {/* Share Button - Show if there's an active Job Board Post */}
+                  {(() => {
+                    const activeJobPost = connectedJobPosts.find(post => post.status === 'active');
+                    if (activeJobPost) {
+                      return (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<ContentCopyIcon />}
+                          onClick={() => {
+                            const url = `${window.location.origin}/c1/jobs-board/${activeJobPost.id}`;
+                            navigator.clipboard.writeText(url);
+                            setShareSnackbarOpen(true);
+                          }}
+                        >
+                          Share
+                        </Button>
+                      );
+                    }
+                    return null;
+                  })()}
+                  {/* E-Verify Image */}
+                  {(() => {
+                    // Check if job order has explicit eVerify setting
+                    const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
+                    // If explicitly set (true or false), use that value
+                    // Otherwise, fall back to company defaults
+                    const shouldShowEVerify = jobOrderEVerify !== undefined 
+                      ? jobOrderEVerify === true
+                      : (company?.defaults?.eVerify?.eVerifyRequired || false);
+                    
+                    return shouldShowEVerify ? (
+                      <Box
+                        component="img"
+                        src="/img/everify.png"
+                        alt="E-Verify"
+                        sx={{
+                          height: 30,
+                          width: 'auto',
+                          objectFit: 'contain'
+                        }}
+                      />
+                    ) : null;
+                  })()}
+                </Box>
               </Box>
         
               {/* Status Row with Job Order Number */}
@@ -3980,6 +4028,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
         onContactsChange={handleContactsChange}
         dealCompanyId={jobOrder?.companyId || company?.id}
       />
+
+      {/* Share Snackbar */}
+      <Snackbar
+        open={shareSnackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setShareSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setShareSnackbarOpen(false)} severity="success" sx={{ width: '100%' }}>
+          Job posting URL copied to clipboard!
+        </Alert>
+      </Snackbar>
      
     </Box>
   );
