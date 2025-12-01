@@ -298,7 +298,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       lastName: existingPersonal.lastName || userProfile.lastName || '',
       email: existingPersonal.email || userProfile.email || '',
       phone: existingPersonal.phone || userProfile.phone || userProfile.phoneE164 || '',
-      dob: existingPersonal.dob || userProfile.dob || '',
+      dob: existingPersonal.dob || userProfile.dob || userProfile.dateOfBirth || '',
       street: existingPersonal.street || addressInfo.streetAddress || '',
       unit: existingPersonal.unit || addressInfo.unitNumber || '',
       city: existingPersonal.city || userProfile.city || addressInfo.city || '',
@@ -793,8 +793,48 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           try {
             const updatedSnap = await getDoc(userRef);
             if (updatedSnap.exists()) {
-              setUserProfile(updatedSnap.data());
+              const updatedProfile = updatedSnap.data();
+              setUserProfile(updatedProfile);
               console.log('✅ User profile reloaded after personal info save');
+              
+              // CRITICAL: Update formData.personal with the saved values so they persist across steps
+              // This ensures that when the user navigates to the next step, the data is available
+              const addressInfo = updatedProfile.addressInfo || {};
+              const savedPersonal = {
+                firstName: updatedProfile.firstName || p.firstName || '',
+                lastName: updatedProfile.lastName || p.lastName || '',
+                email: updatedProfile.email || p.email || '',
+                phone: updatedProfile.phone || updatedProfile.phoneE164 || p.phone || '',
+                dob: updatedProfile.dob || updatedProfile.dateOfBirth || p.dob || '',
+                street: addressInfo.streetAddress || p.street || '',
+                unit: addressInfo.unitNumber || p.unit || '',
+                city: updatedProfile.city || addressInfo.city || p.city || '',
+                state: updatedProfile.state || addressInfo.state || p.state || '',
+                zip: updatedProfile.zipCode || addressInfo.zip || p.zip || '',
+                homeLat: addressInfo.homeLat !== undefined ? addressInfo.homeLat : (p.homeLat !== undefined ? p.homeLat : updatedProfile.homeLat),
+                homeLng: addressInfo.homeLng !== undefined ? addressInfo.homeLng : (p.homeLng !== undefined ? p.homeLng : updatedProfile.homeLng),
+              };
+              
+              // Update formData with saved values
+              setFormData((prev: any) => {
+                const updated = {
+                  ...prev,
+                  personal: {
+                    ...prev.personal,
+                    ...savedPersonal,
+                  },
+                };
+                // Synchronously update formDataRef so persist can use the latest data
+                formDataRef.current = updated;
+                return updated;
+              });
+              
+              // Also persist to draft application
+              if (appId) {
+                await persist({ personal: savedPersonal });
+              }
+              
+              console.log('✅ formData.personal updated with saved values:', savedPersonal);
             }
           } catch (err) {
             console.warn('Failed to reload user profile:', err);

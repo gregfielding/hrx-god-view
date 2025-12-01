@@ -22,8 +22,11 @@ import {
   Switch,
   Card,
   CardContent,
+  CardHeader,
+  IconButton,
   InputAdornment,
   Stack,
+  Link as MUILink,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -40,6 +43,13 @@ import {
   DirectionsBike,
   DirectionsWalk,
   MoreHoriz,
+  Edit as EditIcon,
+  Email as EmailIcon,
+  Phone as PhoneIcon,
+  CalendarToday as CalendarIcon,
+  Language as LanguageIcon,
+  AccountBox as AccountBoxIcon,
+  LocalPhone as LocalPhoneIcon,
 } from '@mui/icons-material';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
@@ -146,6 +156,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
 
   // Phone verification status
   const [phoneVerified, setPhoneVerified] = useState(false);
+  const [isEditingBasicIdentity, setIsEditingBasicIdentity] = useState(false);
+  const [isEditingHomeAddress, setIsEditingHomeAddress] = useState(false);
 
   // Removed AI insights section
 
@@ -220,6 +232,12 @@ const transportOptions: Array<{
           if (snapshot.exists()) {
             const data = snapshot.data();
             
+            // Get effective tenant ID first (same pattern as UserProfilePage)
+            const effectiveTenantId = activeTenant?.id || data.activeTenantId || data.tenantId || activeTenantId;
+            
+            // Fetch tenant-dependent fields from nested structure first, then fallback to direct fields
+            const tenantData = effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
+            
             // Convert dates to ISO strings for form inputs
             // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
             const dobValue = data.dob || data.dateOfBirth;
@@ -241,7 +259,7 @@ const transportOptions: Array<{
               linkedinUrl: data.linkedinUrl || '',
               dateOfBirth,
               gender: data.gender || undefined,
-              securityLevel: data.securityLevel || '5',
+              securityLevel: tenantData.securityLevel || data.securityLevel || '5',
               employmentType: data.employmentType || 'Full-Time',
               departmentId: data.departmentId || '',
               divisionId: data.divisionId || '',
@@ -253,7 +271,17 @@ const transportOptions: Array<{
               workerId: data.workerId || '',
               union: data.union || '',
               workEligibility: data.workEligibility !== false,
-              languages: data.languages || [],
+              languages: (() => {
+                const langs = data.languages || [];
+                // Normalize languages - convert objects to strings for the form
+                return langs.map((lang: any) => {
+                  if (typeof lang === 'string') return lang;
+                  if (lang && typeof lang === 'object') {
+                    return lang.language || lang.name || String(lang || '');
+                  }
+                  return String(lang || '');
+                }).filter(Boolean);
+              })(),
               emergencyContact: data.emergencyContact || undefined,
               transportMethod: data.transportMethod || null,
               role: data.role || 'Worker',
@@ -701,194 +729,482 @@ const transportOptions: Array<{
           {/* 🧍 Basic Identity Section */}
           <Grid item xs={12}>
             <Card variant="outlined" sx={{ p: cardPadding }}>
-              <CardContent sx={{ p: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <PersonIcon sx={{ mr: 1 }} color="primary" />
-                  <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
-                </Box>
-                <Grid container spacing={2}>
-                  {/* Left Column */}
-                  <Grid item xs={12} sm={6}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          required
-                          name="firstName"
-                          label="First Name"
-                          value={form.firstName}
-                          onChange={handleChange}
-                          onBlur={handleBlur}
-                          disabled={!canEditProfile()}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          required
-                          name="lastName"
-                          label="Last Name"
-                          value={form.lastName}
-                          onChange={handleChange}
-                          onBlur={handleBlur}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="preferredName"
-                          label="Preferred Name"
-                          value={form.preferredName}
-                          onChange={handleChange}
-                          onBlur={handleBlur}
-                          helperText="Shown in Companion/chat and dashboards"
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          required
-                          name="phone"
-                          label="Phone"
-                          value={form.phone}
-                          onChange={handleChange}
-                          onBlur={handleBlur}
-                          InputProps={{
-                            endAdornment: phoneVerified ? (
-                              <InputAdornment position="end">
-                                <CheckCircleIcon color="success" fontSize="small" titleAccess="Phone Verified" />
-                              </InputAdornment>
-                            ) : null
-                          }}
-                          helperText={phoneVerified ? "Verified" : ""}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          required
-                          name="email"
-                          label="Email"
-                          type="email"
-                          value={form.email}
-                          onChange={handleChange}
-                          onBlur={handleBlur}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="dateOfBirth"
-                          label="Date of Birth"
-                          type="date"
-                          required
-                          value={form.dateOfBirth}
-                          onChange={(e) => {
-                            handleChange(e as any);
-                            persistProfileField('dateOfBirth', (e.target as HTMLInputElement).value);
-                          }}
-                          InputLabelProps={{ shrink: true }}
-                          helperText="Used for EEO reporting or validation"
-                        />
+              <CardHeader 
+                title={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <PersonIcon sx={{ mr: 1 }} color="primary" />
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
+                  </Box>
+                }
+                titleTypographyProps={{ component: 'div' }}
+                action={
+                  canEditProfile() && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditingBasicIdentity(!isEditingBasicIdentity)}
+                      sx={{ 
+                        color: isEditingBasicIdentity ? 'primary.main' : 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
+                        }
+                      }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  )
+                }
+                sx={{ pb: 0 }}
+              />
+              <CardContent sx={{ p: 2, pt: 2 }}>
+                {isEditingBasicIdentity ? (
+                  // Edit Mode - Show Input Fields
+                  <Grid container spacing={2}>
+                    {/* Left Column */}
+                    <Grid item xs={12} sm={6}>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            required
+                            name="firstName"
+                            label="First Name"
+                            value={form.firstName}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            required
+                            name="lastName"
+                            label="Last Name"
+                            value={form.lastName}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="preferredName"
+                            label="Preferred Name"
+                            value={form.preferredName}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            helperText="Shown in Companion/chat and dashboards"
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            required
+                            name="phone"
+                            label="Phone"
+                            value={form.phone}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            InputProps={{
+                              endAdornment: phoneVerified ? (
+                                <InputAdornment position="end">
+                                  <CheckCircleIcon color="success" fontSize="small" titleAccess="Phone Verified" />
+                                </InputAdornment>
+                              ) : null
+                            }}
+                            helperText={phoneVerified ? "Verified" : ""}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            required
+                            name="email"
+                            label="Email"
+                            type="email"
+                            value={form.email}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="dateOfBirth"
+                            label="Date of Birth"
+                            type="date"
+                            required
+                            value={form.dateOfBirth}
+                            onChange={(e) => {
+                              handleChange(e as any);
+                              persistProfileField('dateOfBirth', (e.target as HTMLInputElement).value);
+                            }}
+                            InputLabelProps={{ shrink: true }}
+                            helperText="Used for EEO reporting or validation"
+                            size="small"
+                          />
+                        </Grid>
                       </Grid>
                     </Grid>
-                  </Grid>
-                  
-                  {/* Right Column */}
-                  <Grid item xs={12} sm={6}>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="linkedinUrl"
-                          label="LinkedIn URL"
-                          value={form.linkedinUrl || ''}
-                          onChange={handleChange}
-                          onBlur={(e) => persistProfileField('linkedinUrl', e.target.value)}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Autocomplete
-                          multiple
-                          options={languageOptions}
-                          value={form.languages || []}
-                          onChange={handleLanguagesChange}
-                          renderInput={(params) => (
-                            <TextField {...params} label="Languages" placeholder="Select languages" />
-                          )}
-                          renderTags={(value, getTagProps) =>
-                            value.map((option, index) => (
-                              <Chip label={option} {...getTagProps({ index })} key={option} />
-                            ))
-                          }
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="emergencyContactName"
-                          label="Emergency Contact Name"
-                          value={form.emergencyContact?.name || ''}
-                          onChange={(e) => handleEmergencyContactChange('name', e.target.value)}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="emergencyContactRelationship"
-                          label="Relationship"
-                          value={form.emergencyContact?.relationship || ''}
-                          onChange={(e) => handleEmergencyContactChange('relationship', e.target.value)}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <TextField
-                          fullWidth
-                          name="emergencyContactPhone"
-                          label="Emergency Contact Phone"
-                          value={form.emergencyContact?.phone || ''}
-                          onChange={(e) => handleEmergencyContactChange('phone', e.target.value)}
-                        />
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                            How will you get to work?
-                          </Typography>
-                          <Stack direction="row" spacing={1} flexWrap="wrap">
-                            {transportOptions.map((option) => {
-                              const Icon = option.icon;
-                              const isSelected = form.transportMethod === option.value;
-                              return (
-                                <Chip
-                                  key={option.value}
-                                  icon={<Icon fontSize="small" />}
-                                  label={option.label}
-                                  onClick={() => handleTransportMethodToggle(option.value)}
-                                  color={isSelected ? 'primary' : 'default'}
-                                  variant={isSelected ? 'filled' : 'outlined'}
-                                  sx={{
-                                    borderRadius: '999px',
-                                    px: 1.5,
-                                    height: 36,
-                                    fontWeight: isSelected ? 600 : 500,
-                                    mt: 0.5
-                                  }}
+                    
+                    {/* Right Column */}
+                    <Grid item xs={12} sm={6}>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="linkedinUrl"
+                            label="LinkedIn URL"
+                            value={form.linkedinUrl || ''}
+                            onChange={handleChange}
+                            onBlur={(e) => persistProfileField('linkedinUrl', e.target.value)}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Autocomplete
+                            multiple
+                            options={languageOptions}
+                            value={(() => {
+                              const langs = form.languages || [];
+                              // Normalize to strings - handle both string and object formats
+                              return langs.map((lang: any) => {
+                                if (typeof lang === 'string') return lang;
+                                if (lang && typeof lang === 'object') {
+                                  return lang.language || lang.name || String(lang || '');
+                                }
+                                return String(lang || '');
+                              }).filter(Boolean);
+                            })()}
+                            onChange={handleLanguagesChange}
+                            getOptionLabel={(option: string) => option}
+                            size="small"
+                            renderInput={(params) => (
+                              <TextField {...params} label="Languages" placeholder="Select languages" />
+                            )}
+                            renderTags={(value: string[], getTagProps) =>
+                              value.map((option: string, index: number) => (
+                                <Chip 
+                                  label={option} 
+                                  {...getTagProps({ index })} 
+                                  key={option || index} 
                                 />
-                              );
-                            })}
-                          </Stack>
-                        </Box>
+                              ))
+                            }
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="emergencyContactName"
+                            label="Emergency Contact Name"
+                            value={form.emergencyContact?.name || ''}
+                            onChange={(e) => handleEmergencyContactChange('name', e.target.value)}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="emergencyContactRelationship"
+                            label="Relationship"
+                            value={form.emergencyContact?.relationship || ''}
+                            onChange={(e) => handleEmergencyContactChange('relationship', e.target.value)}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            name="emergencyContactPhone"
+                            label="Emergency Contact Phone"
+                            value={form.emergencyContact?.phone || ''}
+                            onChange={(e) => handleEmergencyContactChange('phone', e.target.value)}
+                            size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                              How will you get to work?
+                            </Typography>
+                            <Stack direction="row" spacing={1} flexWrap="wrap">
+                              {transportOptions.map((option) => {
+                                const Icon = option.icon;
+                                const isSelected = form.transportMethod === option.value;
+                                return (
+                                  <Chip
+                                    key={option.value}
+                                    icon={<Icon fontSize="small" />}
+                                    label={option.label}
+                                    onClick={() => handleTransportMethodToggle(option.value)}
+                                    color={isSelected ? 'primary' : 'default'}
+                                    variant={isSelected ? 'filled' : 'outlined'}
+                                    sx={{
+                                      borderRadius: '999px',
+                                      px: 1.5,
+                                      height: 36,
+                                      fontWeight: isSelected ? 600 : 500,
+                                      mt: 0.5
+                                    }}
+                                  />
+                                );
+                              })}
+                            </Stack>
+                          </Box>
+                        </Grid>
                       </Grid>
                     </Grid>
                   </Grid>
-                </Grid>
+                ) : (
+                  // View Mode - Show as Read-Only Text with Better Visual Hierarchy
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {/* Personal Information Section */}
+                    <Box>
+                      <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Personal Information
+                      </Typography>
+                      <Grid container spacing={2}>
+                        {(form.firstName || form.lastName) && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Full Name
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                  {`${form.firstName || ''} ${form.lastName || ''}`.trim() || '-'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
+                        
+                        {form.preferredName && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <AccountBoxIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Preferred Name
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  {form.preferredName}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
+                        
+                        {form.email && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <EmailIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Email
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  <MUILink 
+                                    href={`mailto:${form.email}`} 
+                                    color="primary" 
+                                    underline="hover"
+                                    sx={{ wordBreak: 'break-all' }}
+                                  >
+                                    {form.email}
+                                  </MUILink>
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
+                        
+                        {form.phone && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Phone
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                  <Typography variant="body1">
+                                    {formatPhoneNumber(form.phone) || form.phone}
+                                  </Typography>
+                                  {phoneVerified && (
+                                    <CheckCircleIcon color="success" fontSize="small" titleAccess="Phone Verified" />
+                                  )}
+                                </Box>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
+                        
+                        {form.dateOfBirth && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <CalendarIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Date of Birth
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                  {form.dateOfBirth ? new Date(form.dateOfBirth).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '-'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
+                      </Grid>
+                    </Box>
+
+                    {/* Additional Information Section */}
+                    {(form.linkedinUrl || (form.languages && form.languages.length > 0)) && (
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Additional Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {form.linkedinUrl && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LanguageIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    LinkedIn
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    <MUILink 
+                                      href={form.linkedinUrl.startsWith('http') ? form.linkedinUrl : `https://${form.linkedinUrl}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      color="primary"
+                                      underline="hover"
+                                      sx={{ wordBreak: 'break-all' }}
+                                    >
+                                      {form.linkedinUrl}
+                                    </MUILink>
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {form.languages && form.languages.length > 0 && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LanguageIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5, display: 'block' }}>
+                                    Languages
+                                  </Typography>
+                                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.25 }}>
+                                    {form.languages.map((lang: any, index: number) => {
+                                      // Handle both string and object formats
+                                      const languageName = typeof lang === 'string' 
+                                        ? lang 
+                                        : (lang?.language || lang?.name || 'Unknown');
+                                      return (
+                                        <Chip 
+                                          key={index}
+                                          label={languageName} 
+                                          size="small" 
+                                          variant="outlined"
+                                        />
+                                      );
+                                    })}
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+
+                    {/* Emergency Contact Section */}
+                    {(form.emergencyContact?.name || form.emergencyContact?.phone) && (
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Emergency Contact
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {form.emergencyContact?.name && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <EmergencyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Name
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {form.emergencyContact.name}
+                                    {form.emergencyContact?.relationship && ` (${form.emergencyContact.relationship})`}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {form.emergencyContact?.phone && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocalPhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Phone
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {formatPhoneNumber(form.emergencyContact.phone) || form.emergencyContact.phone}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+
+                    {/* Transportation Method */}
+                    {form.transportMethod && (() => {
+                      const transportOption = transportOptions.find(opt => opt.value === form.transportMethod);
+                      const TransportIcon = transportOption?.icon || DirectionsCar;
+                      return (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Transportation
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <TransportIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                How will you get to work?
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                {transportOption?.label || form.transportMethod}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Box>
+                      );
+                    })()}
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>
 
           {/* 📍 Employment Classification Section */}
-          {canSeeSensitiveSections() && (
+          {/* Only show Employment Details for internal employees (security levels 5-7) */}
+          {(() => {
+            const profileSecurityLevel = parseInt(form.securityLevel || '0');
+            return profileSecurityLevel >= 5 && profileSecurityLevel <= 7;
+          })() && (
             <Grid item xs={12}>
               <Card variant="outlined" sx={{ p: cardPadding }}>
                 <CardContent sx={{ p: 0 }}>
@@ -1135,20 +1451,112 @@ const transportOptions: Array<{
           {/* Address Section */}
           <Grid item xs={12}>
             <Card variant="outlined" sx={{ p: cardPadding }}>
-              <CardContent sx={{ p: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
-                  <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>
-                </Box>
-                <AddressFormFields uid={uid} formData={addressInfo} onFormChange={handleAddressChange} />
-                <MapWithMarkers
-                  homeLat={addressInfo.homeLat}
-                  homeLng={addressInfo.homeLng}
-                  workLat={addressInfo.workLat}
-                  workLng={addressInfo.workLng}
-                  currentLat={addressInfo.currentLat}
-                  currentLng={addressInfo.currentLng}
-                />
+              <CardHeader 
+                title={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>
+                  </Box>
+                }
+                titleTypographyProps={{ component: 'div' }}
+                action={
+                  canEditProfile() && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditingHomeAddress(!isEditingHomeAddress)}
+                      sx={{ 
+                        color: isEditingHomeAddress ? 'primary.main' : 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
+                        }
+                      }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  )
+                }
+                sx={{ pb: 0 }}
+              />
+              <CardContent sx={{ p: 2, pt: 2 }}>
+                {isEditingHomeAddress ? (
+                  // Edit Mode - Show Address Form and Map
+                  <Box>
+                    <AddressFormFields uid={uid} formData={addressInfo} onFormChange={handleAddressChange} />
+                    <Box sx={{ mt: 3 }}>
+                      <MapWithMarkers
+                        homeLat={addressInfo.homeLat}
+                        homeLng={addressInfo.homeLng}
+                        workLat={addressInfo.workLat}
+                        workLng={addressInfo.workLng}
+                        currentLat={addressInfo.currentLat}
+                        currentLng={addressInfo.currentLng}
+                      />
+                    </Box>
+                  </Box>
+                ) : (
+                  // View Mode - Show as Read-Only Text
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {(addressInfo.streetAddress || addressInfo.city || addressInfo.state || addressInfo.zip) && (
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Address Information
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {(addressInfo.streetAddress || addressInfo.unitNumber) && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Street Address
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {[addressInfo.streetAddress, addressInfo.unitNumber].filter(Boolean).join(', ') || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                          
+                          {(addressInfo.city || addressInfo.state || addressInfo.zip) && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    City, State, ZIP
+                                  </Typography>
+                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                    {[addressInfo.city, addressInfo.state, addressInfo.zip]
+                                      .filter(Boolean)
+                                      .join(', ') || '-'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                    
+                    {/* Map in View Mode - Show if coordinates exist */}
+                    {(addressInfo.homeLat && addressInfo.homeLng) && (
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Location Map
+                        </Typography>
+                        <MapWithMarkers
+                          homeLat={addressInfo.homeLat}
+                          homeLng={addressInfo.homeLng}
+                          workLat={addressInfo.workLat}
+                          workLng={addressInfo.workLng}
+                          currentLat={addressInfo.currentLat}
+                          currentLng={addressInfo.currentLng}
+                        />
+                      </Box>
+                    )}
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </Grid>

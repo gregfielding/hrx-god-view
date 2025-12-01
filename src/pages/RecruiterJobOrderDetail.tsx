@@ -68,7 +68,8 @@ import {
   CalendarMonth as CalendarIcon,
   Visibility as VisibilityIcon,
   Settings as SettingsIcon,
-  Save as SaveIcon
+  Save as SaveIcon,
+  Edit as EditIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -1797,6 +1798,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [selectedRecruiterIds, setSelectedRecruiterIds] = useState<string[]>([]);
   const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
+  const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
 
   // Load job order
   useEffect(() => {
@@ -2505,8 +2507,183 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </Box>
       {/* Enhanced Header - Matching Deal Details Layout */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <Box sx={{ 
+        mb: 3,
+        p: { xs: 2, md: 3 },
+        borderRadius: 2,
+        bgcolor: 'background.paper',
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: 'none'
+      }}>
+        {/* Mobile Layout */}
+        <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+          {/* Mobile: Avatar and Title Row */}
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+            <Avatar
+              src={company?.logo}
+              alt={jobOrder.companyName || company?.companyName || company?.name || 'Company'}
+              sx={{ 
+                width: 96, 
+                height: 96,
+                bgcolor: 'primary.main',
+                fontSize: '1.75rem',
+                fontWeight: 'bold',
+                flexShrink: 0
+              }}
+            >
+              {(jobOrder.companyName || company?.companyName || company?.name || 'C').charAt(0).toUpperCase()}
+            </Avatar>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography 
+                variant="h5" 
+                sx={{ 
+                  fontWeight: 'bold', 
+                  color: 'text.primary',
+                  fontSize: { xs: '1.25rem', sm: '1.5rem' },
+                  lineHeight: 1.2,
+                  mb: 0.5
+                }}
+              >
+                {jobOrder.jobOrderName}
+              </Typography>
+              {/* E-Verify Image - Mobile */}
+              {(() => {
+                const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
+                const shouldShowEVerify = jobOrderEVerify !== undefined 
+                  ? jobOrderEVerify === true
+                  : (company?.defaults?.eVerify?.eVerifyRequired || false);
+                
+                return shouldShowEVerify ? (
+                  <Box
+                    component="img"
+                    src="/img/everify.png"
+                    alt="E-Verify"
+                    sx={{
+                      height: 24,
+                      width: 'auto',
+                      objectFit: 'contain',
+                      mt: 0.5
+                    }}
+                  />
+                ) : null;
+              })()}
+            </Box>
+          </Box>
+
+          {/* Mobile: Status Chips */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1.5, flexWrap: 'wrap' }}>
+            <Chip
+              label={`#${jobOrder.jobOrderNumber || '0002'}`}
+              size="small"
+              sx={{ bgcolor: 'grey.200', color: 'text.primary', fontWeight: 600, fontSize: '0.7rem', height: 22 }}
+            />
+            {(jobOrder as any).jobType && (
+              <Chip
+                label={(jobOrder as any).jobType === 'gig' ? 'Gig' : 'Career'}
+                size="small"
+                color="default"
+                sx={{ fontSize: '0.7rem', height: 22 }}
+              />
+            )}
+            <Chip
+              label={jobOrder.status}
+              color={getStatusColor(jobOrder.status) as any}
+              size="small"
+              sx={{ fontSize: '0.7rem', height: 22 }}
+            />
+            {location && (
+              <Chip
+                label={`${location.city || ''}${location.city && location.state ? ', ' : ''}${location.state || ''}`}
+                color="default"
+                size="small"
+                sx={{ fontSize: '0.7rem', height: 22 }}
+              />
+            )}
+            {(jobOrder as any).jobType === 'gig' ? (
+              shifts.length > 0 && (
+                <Chip
+                  label={format(new Date(shifts[0].shiftDate), 'MMM dd')}
+                  color="default"
+                  size="small"
+                  sx={{ fontSize: '0.7rem', height: 22 }}
+                />
+              )
+            ) : (
+              jobOrder.startDate && (
+                <Chip
+                  label={format(safeToDate(jobOrder.startDate), 'MMM dd')}
+                  color="default"
+                  size="small"
+                  sx={{ fontSize: '0.7rem', height: 22 }}
+                />
+              )
+            )}
+          </Box>
+
+          {/* Mobile: Company & Location Links */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
+            {(() => {
+              const companyName = jobOrder?.companyName || company?.companyName || company?.name || jobOrder?.deal?.companyName;
+              const companyId = jobOrder?.companyId || company?.id || jobOrder?.deal?.companyId;
+              
+              if (companyName && companyId) {
+                return (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <BusinessIcon fontSize="small" color="primary" />
+                    <MUILink
+                      underline="hover"
+                      color="primary"
+                      href={`/recruiter/companies/${companyId}`}
+                      onClick={(e) => { e.preventDefault(); navigate(`/recruiter/companies/${companyId}`); }}
+                      sx={{ fontSize: '0.8125rem', fontWeight: 500 }}
+                    >
+                      {companyName}
+                    </MUILink>
+                  </Box>
+                );
+              }
+              return null;
+            })()}
+
+            {(() => {
+              const worksiteName = jobOrder?.worksiteName;
+              const worksiteId = jobOrder?.worksiteId;
+              const loadedLocationName = location?.nickname || location?.name;
+              const dealLocations = jobOrder?.deal?.associations?.locations || [];
+              const locationEntry = dealLocations.length > 0 ? dealLocations[0] : null;
+              const dealLocationId = typeof locationEntry === 'string' ? locationEntry : locationEntry?.id;
+              const dealLocationName = typeof locationEntry === 'string' ? '' : (locationEntry?.snapshot?.name || locationEntry?.snapshot?.nickname || locationEntry?.name || '');
+              const displayLocationId = worksiteId || dealLocationId;
+              const displayLocationName = worksiteName || loadedLocationName || dealLocationName;
+              const displayCompanyId = jobOrder?.companyId || jobOrder?.deal?.companyId;
+              
+              if (displayLocationName && displayLocationId && displayCompanyId) {
+                return (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <LocationIcon fontSize="small" color="primary" />
+                    <MUILink
+                      underline="hover"
+                      color="primary"
+                      href={`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`);
+                      }}
+                      sx={{ fontSize: '0.8125rem', fontWeight: 500 }}
+                    >
+                      {displayLocationName}
+                    </MUILink>
+                  </Box>
+                );
+              }
+              return null;
+            })()}
+          </Box>
+        </Box>
+
+        {/* Desktop Layout */}
+        <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
             {/* Company Logo/Avatar */}
             <Box sx={{ position: 'relative' }}>
@@ -2556,11 +2733,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 })()}
               </Box>
         
-              {/* Job Order ID / Number */}
-              {/* <Typography variant="h6" color="text.secondary" sx={{ mt: 0.5 }}>
-                {formatJobOrderNumber(jobOrder.jobOrderNumber)}
-              </Typography> */}
-
               {/* Status Row with Job Order Number */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -2923,19 +3095,313 @@ const RecruiterJobOrderDetail: React.FC = () => {
       <TabPanel value={activeTab} index={0}>
         {/* Overview Tab - Job Order Form with Widgets */}
         <Grid container spacing={3}>
-          {/* Left Column - Job Order Form (70%) */}
+          {/* Left Column - Basic Information Card (70%) */}
           <Grid item xs={12} md={8}>
-            <JobOrderForm
-              jobOrderId={jobOrderId}
-              dealId={jobOrder?.dealId}
-              onSave={() => {
-                // Refresh the job order data after save
-                fetchJobOrder();
-              }}
-              onCancel={() => {
-                // Optionally handle cancel
-              }}
-            />
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Basic Information Card */}
+              <Card>
+                <CardHeader 
+                  title="Basic Information" 
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <IconButton
+                      size="small"
+                      onClick={() => setIsEditingJobOrderDetails(!isEditingJobOrderDetails)}
+                      sx={{ 
+                        color: isEditingJobOrderDetails ? 'primary.main' : 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
+                        }
+                      }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {isEditingJobOrderDetails ? (
+                    // Edit Mode - Show JobOrderForm
+                    <JobOrderForm
+                      jobOrderId={jobOrderId}
+                      dealId={jobOrder?.dealId}
+                      onSave={() => {
+                        setIsEditingJobOrderDetails(false);
+                        fetchJobOrder();
+                      }}
+                      onCancel={() => {
+                        setIsEditingJobOrderDetails(false);
+                      }}
+                    />
+                  ) : (
+                    // View Mode - Show as Text with Better Visual Hierarchy
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {/* Basic Details Section */}
+                      <Box>
+                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Basic Details
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {jobOrder?.jobOrderName && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <BriefcaseIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Job Order Name
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {jobOrder.jobOrderName}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+
+                          {jobOrder?.status && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <InfoIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Status
+                                  </Typography>
+                                  <Box sx={{ mt: 0.25 }}>
+                                    <Chip
+                                      label={jobOrder.status}
+                                      size="small"
+                                      color={jobOrder.status === 'open' ? 'success' : jobOrder.status === 'on_hold' ? 'warning' : jobOrder.status === 'cancelled' ? 'error' : 'default'}
+                                      sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                                    />
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+
+                          {jobOrder?.jobType && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Job Type
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                    {jobOrder.jobType === 'gig' ? 'Gig' : jobOrder.jobType === 'career' ? 'Career' : 'Not set'}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+
+                          {(jobOrder?.companyName || company?.companyName || company?.name) && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Company
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {(jobOrder?.companyId || company?.id) ? (
+                                      <MUILink
+                                        href={`/recruiter/companies/${jobOrder?.companyId || company?.id}`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigate(`/recruiter/companies/${jobOrder?.companyId || company?.id}`);
+                                        }}
+                                        color="primary"
+                                        underline="hover"
+                                        sx={{ fontWeight: 500 }}
+                                      >
+                                        {jobOrder?.companyName || company?.companyName || company?.name}
+                                      </MUILink>
+                                    ) : (
+                                      <span style={{ fontWeight: 500 }}>{jobOrder?.companyName || company?.companyName || company?.name}</span>
+                                    )}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+
+                          {jobOrder?.worksiteName && (
+                            <Grid item xs={12} sm={6}>
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    Worksite
+                                  </Typography>
+                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                    {jobOrder.worksiteId && company?.id ? (
+                                      <MUILink
+                                        href={`/recruiter/companies/${company.id}?tab=locations`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          navigate(`/recruiter/companies/${company.id}?tab=locations`);
+                                        }}
+                                        color="primary"
+                                        underline="hover"
+                                        sx={{ fontWeight: 500 }}
+                                      >
+                                        {jobOrder.worksiteName}
+                                      </MUILink>
+                                    ) : (
+                                      <span style={{ fontWeight: 500 }}>{jobOrder.worksiteName}</span>
+                                    )}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+
+                      {/* Job Details Section (Career only) */}
+                      {jobOrder?.jobType === 'career' && (jobOrder?.jobTitle || jobOrder?.workersNeeded || jobOrder?.startDate || jobOrder?.endDate) && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Job Details
+                          </Typography>
+                          <Grid container spacing={2}>
+                            {jobOrder?.jobTitle && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <BriefcaseIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Job Title
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      {jobOrder.jobTitle}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+
+                            {jobOrder?.workersNeeded && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <GroupIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Workers Needed
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      {jobOrder.workersNeeded}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+
+                            {jobOrder?.startDate && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <CalendarIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Start Date
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      {typeof jobOrder.startDate === 'string' 
+                                        ? format(new Date(jobOrder.startDate), 'MMM dd, yyyy')
+                                        : safeToDate(jobOrder.startDate) 
+                                          ? format(safeToDate(jobOrder.startDate)!, 'MMM dd, yyyy')
+                                          : 'Not set'}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+
+                            {jobOrder?.endDate && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <CalendarIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      End Date
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      {typeof jobOrder.endDate === 'string' 
+                                        ? format(new Date(jobOrder.endDate), 'MMM dd, yyyy')
+                                        : safeToDate(jobOrder.endDate) 
+                                          ? format(safeToDate(jobOrder.endDate)!, 'MMM dd, yyyy')
+                                          : 'Not set'}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+                          </Grid>
+                        </Box>
+                      )}
+
+                      {/* Financial Information Section */}
+                      {(jobOrder?.payRate || (jobOrder as any)?.markup || (jobOrder as any)?.billRate) && (
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Financial Information
+                          </Typography>
+                          <Grid container spacing={2}>
+                            {jobOrder?.payRate && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Pay Rate
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      ${parseFloat(jobOrder.payRate.toString()).toFixed(2)}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+
+                            {(jobOrder as any)?.markup && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Markup
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      {(jobOrder as any).markup}%
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+
+                            {(jobOrder as any)?.billRate && (
+                              <Grid item xs={12} sm={6}>
+                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                  <MoneyIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                      Bill Rate
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                      ${parseFloat((jobOrder as any).billRate.toString()).toFixed(2)}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                              </Grid>
+                            )}
+                          </Grid>
+                        </Box>
+                      )}
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+            </Box>
           </Grid>
 
           {/* Right Column - Widgets (30%) */}

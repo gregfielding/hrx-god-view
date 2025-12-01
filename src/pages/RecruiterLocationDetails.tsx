@@ -62,13 +62,13 @@ import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, o
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
-import AddNoteDialog from '../../components/AddNoteDialog';
-import CRMNotesTab from '../../components/CRMNotesTab';
-import ActivityLogTab from '../../components/ActivityLogTab';
-import { BreadcrumbNav } from '../../components/BreadcrumbNav';
-import LocationHeader from '../../components/LocationHeader';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import AddNoteDialog from '../components/AddNoteDialog';
+import CRMNotesTab from '../components/CRMNotesTab';
+import ActivityLogTab from '../components/ActivityLogTab';
+import { BreadcrumbNav } from '../components/BreadcrumbNav';
+import LocationHeader from '../components/LocationHeader';
 
 interface LocationData {
   id: string;
@@ -397,21 +397,21 @@ const LinkForActivity: React.FC<{ it: LocationActivityItem; tenantId: string; co
   let href: string | null = null;
   let label = 'Open';
   if (it.type === 'deal_stage' && it.metadata?.dealId) {
-    href = `/crm/deals/${it.metadata.dealId}`;
+    href = `/recruiter/companies/${companyId}?tab=3`;
     label = 'View Deal';
   } else if (it.type === 'email') {
     const dealId = it.metadata?.dealId;
     const contactId = Array.isArray(it.metadata?.contacts) ? it.metadata.contacts[0] : it.metadata?.contactId;
     if (dealId) {
-      href = `/crm/deals/${dealId}`;
+      href = `/recruiter/companies/${companyId}?tab=3`;
       label = 'View Deal';
     } else if (contactId) {
-      href = `/crm/contacts/${contactId}`;
+      href = `/recruiter/contacts/${contactId}`;
       label = 'View Contact';
     }
   }
   if (!href) {
-    href = `/crm/companies/${companyId}`;
+    href = `/recruiter/companies/${companyId}`;
     label = 'View Company';
   }
   return (
@@ -779,7 +779,7 @@ const LocationActivityTab: React.FC<{ location: LocationData; tenantId: string; 
   );
 };
 
-const LocationDetails: React.FC = () => {
+const RecruiterLocationDetails: React.FC = () => {
   const { companyId, locationId } = useParams<{ companyId: string; locationId: string }>();
   const navigate = useNavigate();
   const { tenantId } = useAuth();
@@ -935,7 +935,7 @@ const LocationDetails: React.FC = () => {
     try {
       const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
       await deleteDoc(locationRef);
-      navigate(`/crm/companies/${companyId}?tab=1`);
+      navigate(`/recruiter/companies/${companyId}?tab=1`);
     } catch (err: any) {
       console.error('Error deleting location:', err);
       setError(err.message || 'Failed to delete location');
@@ -968,18 +968,18 @@ const LocationDetails: React.FC = () => {
     const sourceTab = currentUrl.searchParams.get('sourceTab');
     
     if (sourceTab) {
-      navigate(`/crm/companies/${companyId}?tab=${sourceTab}`);
+      navigate(`/recruiter/companies/${companyId}?tab=${sourceTab}`);
       return;
     }
     
     // Fallback: check referrer for tab information
     const referrer = document.referrer;
-    if (referrer.includes('/crm/companies/') && referrer.includes('tab=')) {
+    if (referrer.includes('/recruiter/companies/') && referrer.includes('tab=')) {
       try {
         const referrerUrl = new URL(referrer);
         const tab = referrerUrl.searchParams.get('tab');
         if (tab) {
-          navigate(`/crm/companies/${companyId}?tab=${tab}`);
+          navigate(`/recruiter/companies/${companyId}?tab=${tab}`);
           return;
         }
       } catch (err) {
@@ -988,7 +988,7 @@ const LocationDetails: React.FC = () => {
     }
     
     // Default to locations tab (tab=1) since this is a location details page
-    navigate(`/crm/companies/${companyId}?tab=1`);
+    navigate(`/recruiter/companies/${companyId}?tab=1`);
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -1043,9 +1043,9 @@ const LocationDetails: React.FC = () => {
       <Box sx={{ mb: 2, pt: 1 }}>
         <BreadcrumbNav
           items={[
-            { label: 'CRM', href: '/crm' },
-            { label: 'Companies', onClick: () => navigate('/crm?tab=companies') },
-            { label: company?.companyName || company?.name || 'Company', href: `/crm/companies/${companyId}` },
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Companies', onClick: () => navigate('/recruiter/companies') },
+            { label: company?.companyName || company?.name || 'Company', href: `/recruiter/companies/${companyId}` },
             { label: location.name },
           ]}
         />
@@ -1056,7 +1056,7 @@ const LocationDetails: React.FC = () => {
         location={location}
         company={company}
         companyId={companyId!}
-        routePrefix="crm"
+        routePrefix="recruiter"
         onAddNote={() => setShowAddNoteDialog(true)}
         ensureUrlProtocol={(url: string) => {
           if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -1445,13 +1445,13 @@ const LocationDetails: React.FC = () => {
                               bgcolor: 'grey.50', 
                               cursor: 'pointer' 
                             }}
-                            onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                            onClick={() => navigate(`/recruiter/companies/${companyId}?tab=3`)}
                             role="button"
                             tabIndex={0}
                             onKeyDown={(e) => { 
                               if (e.key === 'Enter' || e.key === ' ') { 
                                 e.preventDefault(); 
-                                navigate(`/crm/deals/${deal.id}`); 
+                                navigate(`/recruiter/companies/${companyId}?tab=3`); 
                               } 
                             }}
                           >
@@ -1488,10 +1488,10 @@ const LocationDetails: React.FC = () => {
                         <Box
                           key={c.id}
                           sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/crm/contacts/${c.id}`)}
+                          onClick={() => navigate(`/recruiter/contacts/${c.id}`)}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${c.id}`); } }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/contacts/${c.id}`); } }}
                         >
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                             {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}
@@ -1659,13 +1659,13 @@ const LocationDetails: React.FC = () => {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/crm/job-orders/${jobOrder.id}`)}
+                              onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
                               role="button"
                               tabIndex={0}
                               onKeyDown={(e) => { 
                                 if (e.key === 'Enter' || e.key === ' ') { 
                                   e.preventDefault(); 
-                                  navigate(`/crm/job-orders/${jobOrder.id}`); 
+                                  navigate(`/recruiter/job-orders/${jobOrder.id}`); 
                                 } 
                               }}
                             >
@@ -1785,4 +1785,4 @@ const LocationDetails: React.FC = () => {
   );
 };
 
-export default LocationDetails; 
+export default RecruiterLocationDetails; 

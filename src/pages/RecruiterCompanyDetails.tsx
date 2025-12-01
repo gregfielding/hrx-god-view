@@ -573,6 +573,27 @@ const RecruiterCompanyDetails: React.FC = () => {
     }
   };
 
+  // Delete company handler
+  const handleDeleteCompany = async () => {
+    if (!companyId || !tenantId) return;
+    
+    setDeleting(true);
+    try {
+      // Delete the company document
+      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+      await deleteDoc(companyRef);
+      
+      // Navigate back to companies list
+      navigate('/recruiter/companies');
+    } catch (err: any) {
+      console.error('Error deleting company:', err);
+      setError('Failed to delete company. Please try again.');
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+    }
+  };
+
   // Logo delete handler
   const handleLogoDelete = async () => {
     if (!companyId || !tenantId || !company?.logo) return;
@@ -817,6 +838,30 @@ const RecruiterCompanyDetails: React.FC = () => {
         <DefaultsTab company={company} tenantId={tenantId} onSaved={() => setSuccess('Defaults saved')} />
       </TabPanel>
 
+      {/* Delete Company Button - Bottom of page */}
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        mt: 9,
+        pb: 3 
+      }}>
+        <Button 
+          variant="outlined" 
+          color="error"
+          sx={{ 
+            borderColor: 'error.main',
+            '&:hover': {
+              borderColor: 'error.dark',
+              backgroundColor: 'error.light'
+            }
+          }}
+          startIcon={<DeleteIcon />}
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          Delete Company
+        </Button>
+      </Box>
+
       {/* Success Snackbar */}
       <Snackbar
         open={!!success}
@@ -847,6 +892,29 @@ const RecruiterCompanyDetails: React.FC = () => {
         currentUserId={currentUser?.uid || ''}
         tenantId={tenantId || ''}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">Confirm Deletion</DialogTitle>
+        <DialogContent>
+          <Typography id="delete-dialog-description">
+            Are you sure you want to delete this company? This action cannot be undone and will also delete all associated contacts, deals, and locations.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={handleDeleteCompany} color="error" variant="contained" disabled={deleting}>
+            {deleting ? <CircularProgress size={24} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

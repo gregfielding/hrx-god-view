@@ -29,6 +29,7 @@ import PrivacySettingsTab from './components/PrivacySettingsTab';
 import UserGroupsTab from './components/UserGroupsTab';
 import SystemAccessTab from './components/SystemAccessTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
+import QuickInfoBar from './components/QuickInfoBar';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -80,6 +81,7 @@ const UserProfilePage = () => {
   const [accessDenied, setAccessDenied] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const [createdAt, setCreatedAt] = useState<any>(null);
+  const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -380,6 +382,14 @@ const UserProfilePage = () => {
 
   // Handle tab query parameter - must be before early returns
   const availableTabs = getAvailableTabs();
+  
+  // Validate current tab is still available, reset if needed - MUST be before early returns (hook rules)
+  useEffect(() => {
+    if (availableTabs.length > 0 && (!tabValue || !availableTabs.includes(tabValue))) {
+      setTabValue(availableTabs[0]);
+    }
+  }, [availableTabs, tabValue]);
+  
   useEffect(() => {
     const tabParam = searchParams.get('tab');
     if (tabParam === 'licenses') {
@@ -405,6 +415,24 @@ const UserProfilePage = () => {
     }
     const search = params.toString();
     navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
+  };
+
+  // Handler for tab change from header components (e.g., document icons)
+  const handleHeaderTabChange = (tabLabel: string) => {
+    const tabs = getAvailableTabs();
+    if (tabs.includes(tabLabel)) {
+      setTabValue(tabLabel);
+      // Update URL if needed
+      const pathname = window.location.pathname;
+      const params = new URLSearchParams(window.location.search);
+      if (tabLabel === 'Licenses & Certs') {
+        params.set('tab', 'licenses');
+      } else {
+        params.delete('tab');
+      }
+      const search = params.toString();
+      navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
+    }
   };
 
   const handleSkillsUpdate = async (updated: any) => {
@@ -448,11 +476,6 @@ const UserProfilePage = () => {
   }
 
   const currentLabel = tabValue;
-  
-  // If current tab is not available, reset to first available tab
-  if ((!currentLabel || !availableTabs.includes(currentLabel)) && availableTabs.length > 0) {
-    setTabValue(availableTabs[0]);
-  }
 
   // Create breadcrumb path based on current route
   const pathname = window.location.pathname;
@@ -530,9 +553,158 @@ const UserProfilePage = () => {
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
           profileScore={profileScore}
+          resume={skillsData?.resume || null}
+          certifications={skillsData?.certifications || []}
+          workEligibility={skillsData?.workEligibility}
+          backgroundCheckStatus={skillsData?.backgroundCheckStatus}
+          vaccinationStatus={skillsData?.vaccinationStatus}
+          yearsExperience={skillsData?.yearsExperience}
+          primarySkills={(() => {
+            try {
+              if (!Array.isArray(skillsData?.skills)) return [];
+              
+              const skillNames: string[] = [];
+              
+              for (const item of skillsData.skills) {
+                // Skip language objects - they have 'language', 'proficiency', 'isNative' keys
+                if (item && typeof item === 'object') {
+                  // Check for language object structure
+                  if (('language' in item) || (('proficiency' in item) && ('isNative' in item))) {
+                    continue; // Skip language objects completely
+                  }
+                  // Extract skill name from skill object (must have 'name' key)
+                  if ('name' in item) {
+                    const skillName = item.name || item.canonicalId || '';
+                    if (skillName && typeof skillName === 'string') {
+                      const trimmed = String(skillName).trim();
+                      if (trimmed) {
+                        skillNames.push(trimmed);
+                      }
+                    }
+                  }
+                } else if (typeof item === 'string') {
+                  // Direct string skill
+                  const trimmed = item.trim();
+                  if (trimmed) {
+                    skillNames.push(trimmed);
+                  }
+                }
+                
+                // Limit to 5 skills
+                if (skillNames.length >= 5) break;
+              }
+              
+              // Final safety check - ensure all items are strings
+              return skillNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
+            } catch (error) {
+              console.error('Error extracting primary skills:', error);
+              return [];
+            }
+          })()}
+          languages={(() => {
+            try {
+              if (!Array.isArray(skillsData?.languages)) return [];
+              
+              const languageNames: string[] = [];
+              
+              for (const lang of skillsData.languages) {
+                if (typeof lang === 'string') {
+                  languageNames.push(lang);
+                } else if (lang && typeof lang === 'object' && 'language' in lang) {
+                  // Extract language from object
+                  const langName = lang.language || String(lang);
+                  if (langName && typeof langName === 'string') {
+                    languageNames.push(langName.trim());
+                  }
+                }
+                
+                // Limit to top 5 languages
+                if (languageNames.length >= 5) break;
+              }
+              
+              return languageNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
+            } catch (error) {
+              console.error('Error extracting languages:', error);
+              return [];
+            }
+          })()}
+          behavioralTraits={(() => {
+            try {
+              // Extract behavioral traits from traitsProfile if available
+              const traitsProfile = skillsData?.traitsProfile;
+              if (traitsProfile && typeof traitsProfile === 'object') {
+                // Check for common trait fields
+                const traits: string[] = [];
+                
+                // If traitsProfile has a traits array
+                if (Array.isArray(traitsProfile.traits)) {
+                  traits.push(...traitsProfile.traits.slice(0, 5).filter((t: any) => typeof t === 'string'));
+                }
+                
+                // If traitsProfile has individual trait fields
+                if (traitsProfile.topTraits && Array.isArray(traitsProfile.topTraits)) {
+                  traits.push(...traitsProfile.topTraits.slice(0, 5).filter((t: any) => typeof t === 'string'));
+                }
+                
+                return traits.slice(0, 5);
+              }
+              
+              return [];
+            } catch (error) {
+              console.error('Error extracting behavioral traits:', error);
+              return [];
+            }
+          })()}
+          educationLevel={skillsData?.educationLevel}
+          activeApplicationsCount={activeApplicationsCount}
+          resumeCompleteness={skillsData?.resume ? 100 : 0}
+          onTabChange={handleHeaderTabChange}
+          emergencyContact={skillsData?.emergencyContact || null}
+          dateOfBirth={skillsData?.dateOfBirth || null}
+          onEditProfile={() => {
+            // Scroll to overview and focus on edit mode - could be enhanced later
+            setTabValue('Overview');
+          }}
+          onAddNote={() => {
+            setTabValue('Notes');
+          }}
+          onSendApplicationLink={() => {
+            // TODO: Implement send application link functionality
+            console.log('Send application link');
+          }}
+          onPrintProfile={() => {
+            window.print();
+          }}
+          onCreateAssignment={() => {
+            setTabValue('Assignments');
+          }}
+          onCallNow={phone ? () => {
+            window.location.href = `tel:${phone.replace(/\D/g, '')}`;
+          } : undefined}
+          onMessageApplicant={phone ? () => {
+            const digits = phone.replace(/\D/g, '');
+            const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
+            window.open(`sms:${smsNumber}`, '_blank');
+          } : undefined}
+          onViewTimeline={() => {
+            setTabValue('Activity Log');
+          }}
+          hasPhone={!!phone}
         />
 
-        <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
+        <Paper 
+          elevation={1} 
+          sx={{ 
+            mb: 3, 
+            borderRadius: 1,
+            position: 'sticky',
+            top: 0,
+            zIndex: 1000,
+            bgcolor: 'background.paper',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
           <Tabs
             value={tabValue}
             onChange={handleTabChange}
@@ -547,6 +719,123 @@ const UserProfilePage = () => {
             ))}
           </Tabs>
         </Paper>
+
+        {/* Quick Info Bar - Moved below tabs per redesign spec */}
+        {isAdminView && (
+          <Box sx={{ mb: 2, mt: 1 }}>
+            <QuickInfoBar
+              resume={skillsData?.resume || null}
+              certifications={skillsData?.certifications || []}
+              onResumeClick={async () => {
+                const resume = skillsData?.resume;
+                if (!resume) return;
+                try {
+                  if (resume.downloadUrl) {
+                    window.open(resume.downloadUrl, '_blank');
+                  } else if (resume.storagePath) {
+                    const encodedPath = encodeURIComponent(resume.storagePath);
+                    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                    window.open(publicUrl, '_blank');
+                  } else {
+                    setTabValue('Resumé');
+                  }
+                } catch (error) {
+                  console.error('Error opening resume:', error);
+                  setTabValue('Resumé');
+                }
+              }}
+              onCertificationsClick={() => {
+                if (skillsData?.certifications && skillsData.certifications.length > 0) {
+                  setTabValue('Licenses & Certs');
+                } else {
+                  setTabValue('Licenses & Certs');
+                }
+              }}
+              profileScore={profileScore}
+              certificationsCount={skillsData?.certifications?.length || 0}
+              activeApplicationsCount={activeApplicationsCount}
+              yearsExperience={skillsData?.yearsExperience}
+              educationLevel={skillsData?.educationLevel}
+              primarySkills={(() => {
+                try {
+                  if (!Array.isArray(skillsData?.skills)) return [];
+                  const skillNames: string[] = [];
+                  for (const item of skillsData.skills) {
+                    if (item && typeof item === 'object') {
+                      if (('language' in item) || (('proficiency' in item) && ('isNative' in item))) {
+                        continue;
+                      }
+                      if ('name' in item) {
+                        const skillName = item.name || item.canonicalId || '';
+                        if (skillName && typeof skillName === 'string') {
+                          const trimmed = String(skillName).trim();
+                          if (trimmed) skillNames.push(trimmed);
+                        }
+                      }
+                    } else if (typeof item === 'string') {
+                      const trimmed = item.trim();
+                      if (trimmed) skillNames.push(trimmed);
+                    }
+                    if (skillNames.length >= 5) break;
+                  }
+                  return skillNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
+                } catch (error) {
+                  console.error('Error extracting primary skills:', error);
+                  return [];
+                }
+              })()}
+              languages={(() => {
+                try {
+                  if (!Array.isArray(skillsData?.languages)) return [];
+                  const languageNames: string[] = [];
+                  for (const lang of skillsData.languages) {
+                    if (typeof lang === 'string') {
+                      languageNames.push(lang);
+                    } else if (lang && typeof lang === 'object' && 'language' in lang) {
+                      const langName = lang.language || String(lang);
+                      if (langName && typeof langName === 'string') {
+                        languageNames.push(langName.trim());
+                      }
+                    }
+                    if (languageNames.length >= 5) break;
+                  }
+                  return languageNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
+                } catch (error) {
+                  console.error('Error extracting languages:', error);
+                  return [];
+                }
+              })()}
+              behavioralTraits={(() => {
+                try {
+                  const traitsProfile = skillsData?.traitsProfile;
+                  if (traitsProfile && typeof traitsProfile === 'object') {
+                    const traits: string[] = [];
+                    if (Array.isArray(traitsProfile.traits)) {
+                      traits.push(...traitsProfile.traits.slice(0, 5).filter((t: any) => typeof t === 'string'));
+                    }
+                    if (traitsProfile.topTraits && Array.isArray(traitsProfile.topTraits)) {
+                      traits.push(...traitsProfile.topTraits.slice(0, 5).filter((t: any) => typeof t === 'string'));
+                    }
+                    return traits.slice(0, 5);
+                  }
+                  return [];
+                } catch (error) {
+                  console.error('Error extracting behavioral traits:', error);
+                  return [];
+                }
+              })()}
+              onSkillsClick={() => setTabValue('Skills')}
+              workEligibility={skillsData?.workEligibility}
+              backgroundCheckStatus={skillsData?.backgroundCheckStatus}
+              vaccinationStatus={skillsData?.vaccinationStatus}
+              onWorkEligibilityClick={() => setTabValue('Work Eligibility')}
+              onBackgroundCheckClick={() => setTabValue('Background & Vaccination')}
+              onVaccinationClick={() => setTabValue('Background & Vaccination')}
+              onTabChange={handleHeaderTabChange}
+              isAdminView={isAdminView}
+            />
+          </Box>
+        )}
 
         <Box sx={{ mt: 2 }} className="profile-tab-content">
           {(() => {

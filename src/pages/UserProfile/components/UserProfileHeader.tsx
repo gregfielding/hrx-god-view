@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert } from '@mui/material';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
@@ -23,6 +23,19 @@ import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
+import DocumentIconBar from './DocumentIconBar';
+import CertificationsModal from './CertificationsModal';
+import QuickInfoBar from './QuickInfoBar';
+import ContactActionButtons from './ContactActionButtons';
+import MissingItemsAlert from './MissingItemsAlert';
+import CompactMissingItemsBanner from './CompactMissingItemsBanner';
+import QuickActionToolbar from './QuickActionToolbar';
+import ComplianceStatusChips from './ComplianceStatusChips';
+import ProfileQualityMeter from './ProfileQualityMeter';
+import CompactProfileQualityBar from './CompactProfileQualityBar';
+import CompactActionGrid from './CompactActionGrid';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import { detectMissingItems } from '../utils/detectMissingItems';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -54,6 +67,47 @@ interface UserProfileHeaderProps {
   breadcrumbPath?: Array<{ label: string; href?: string }>;
   isAdminView?: boolean; // True if viewer is admin (security >= 5)
   profileScore?: number; // Profile completeness score (0-100)
+  // New props for document access and additional data
+  resume?: {
+    fileName: string;
+    downloadUrl?: string;
+    storagePath?: string;
+  } | null;
+  certifications?: Array<{
+    name: string;
+    fileUrl?: string;
+    fileName?: string;
+    issuer?: string;
+    dateObtained?: string;
+    expirationDate?: string;
+    uploadedAt?: Date;
+  }>;
+  workEligibility?: boolean;
+  backgroundCheckStatus?: string;
+  vaccinationStatus?: string;
+  yearsExperience?: string;
+  primarySkills?: string[];
+  languages?: string[]; // Array of language strings
+  behavioralTraits?: string[]; // Array of behavioral/personality traits
+  educationLevel?: string;
+  activeApplicationsCount?: number;
+  resumeCompleteness?: number;
+  onTabChange?: (tabLabel: string) => void; // Callback to change tabs
+  emergencyContact?: {
+    name?: string;
+    phone?: string;
+    relationship?: string;
+  } | null;
+  dateOfBirth?: Date | string | any;
+  onAddNote?: () => void;
+  onEditProfile?: () => void;
+  onSendApplicationLink?: () => void;
+  onPrintProfile?: () => void;
+  onCreateAssignment?: () => void;
+  onCallNow?: () => void;
+  onMessageApplicant?: () => void;
+  onViewTimeline?: () => void;
+  hasPhone?: boolean;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -86,12 +140,57 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   breadcrumbPath = [],
   isAdminView = false,
   profileScore,
+  resume,
+  certifications = [],
+  workEligibility,
+  backgroundCheckStatus,
+  vaccinationStatus,
+  yearsExperience,
+  primarySkills = [],
+  languages = [],
+  behavioralTraits = [],
+  educationLevel,
+  activeApplicationsCount,
+  resumeCompleteness,
+  onTabChange,
+  emergencyContact,
+  dateOfBirth,
+  onAddNote,
+  onEditProfile,
+  onSendApplicationLink,
+  onPrintProfile,
+  onCreateAssignment,
+  onCallNow,
+  onMessageApplicant,
+  onViewTimeline,
+  hasPhone,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
+  const [showCertificationsModal, setShowCertificationsModal] = useState(false);
+  const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Detect missing items
+  const missingItems = React.useMemo(() => detectMissingItems(
+    {
+      workEligibility,
+      resume: resume ? {
+        ...resume,
+        timestamp: (resume as any).timestamp || null,
+      } : null,
+      certifications,
+      emergencyContact,
+      backgroundCheckStatus,
+      vaccinationStatus,
+      phone,
+      email,
+      dateOfBirth,
+    },
+    onTabChange
+  ), [workEligibility, resume, certifications, emergencyContact, backgroundCheckStatus, vaccinationStatus, phone, email, dateOfBirth, onTabChange]);
 
   const handleAvatarClick = () => {
     if (!canEditAvatar) return;
@@ -267,8 +366,70 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     });
   };
 
+  // Handler for resume click - open resume in new tab
+  const handleResumeClick = async () => {
+    if (!resume) return;
+
+    try {
+      // Try to use downloadUrl if available
+      if (resume.downloadUrl) {
+        window.open(resume.downloadUrl, '_blank');
+        return;
+      }
+
+      // Otherwise construct public URL from storagePath
+      if (resume.storagePath) {
+        const encodedPath = encodeURIComponent(resume.storagePath);
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+        window.open(publicUrl, '_blank');
+        return;
+      }
+
+      // Fallback: navigate to Resumé tab
+      if (onTabChange) {
+        onTabChange('Resumé');
+      }
+    } catch (error) {
+      console.error('Error opening resume:', error);
+      // Fallback: navigate to Resumé tab
+      if (onTabChange) {
+        onTabChange('Resumé');
+      }
+    }
+  };
+
+  // Handler for certifications click
+  const handleCertificationsClick = () => {
+    if (certifications && certifications.length > 0) {
+      setShowCertificationsModal(true);
+    } else if (onTabChange) {
+      onTabChange('Licenses & Certs');
+    }
+  };
+
+  // Handler for work eligibility click
+  const handleWorkEligibilityClick = () => {
+    if (onTabChange) {
+      onTabChange('Work Eligibility');
+    }
+  };
+
+  // Handler for background check click
+  const handleBackgroundCheckClick = () => {
+    if (onTabChange) {
+      onTabChange('Background & Vaccination');
+    }
+  };
+
+  // Handler for vaccination click
+  const handleVaccinationClick = () => {
+    if (onTabChange) {
+      onTabChange('Background & Vaccination');
+    }
+  };
+
   return (
-    <Box mb={3}>
+    <Box mb={2} sx={{ py: 1.5 }}>
       {showBreadcrumbs && breadcrumbPath.length > 0 && (
         <Breadcrumbs 
           separator={<NavigateNextIcon fontSize="small" />} 
@@ -307,69 +468,146 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           ))}
         </Breadcrumbs>
       )}
-      <Box display="flex" alignItems={isMobile ? 'flex-start' : 'center'} justifyContent="space-between" flexDirection={isMobile ? 'column' : 'row'} gap={isMobile ? 2 : 0}>
-        <Box display="flex" alignItems="flex-start" gap={isMobile ? 2 : 3} width="100%">
-        <Box
-          position="relative"
-          onMouseEnter={() => setHover(true)}
-          onMouseLeave={() => setHover(false)}
-        >
-          <Avatar 
-            src={avatarUrl || undefined} 
-            sx={{ width: isMobile ? 96 : 128, height: isMobile ? 96 : 128, fontSize: isMobile ? '1.5rem' : '2rem' }}
-            onError={(e) => {
-              // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
-              console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-            }}
+      
+      {/* Compact Missing Items Banner */}
+      <CompactMissingItemsBanner
+        items={missingItems}
+        isAdminView={isAdminView}
+      />
+
+      {/* Mobile Layout */}
+      <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+        {/* Mobile: Avatar + Action Buttons Row */}
+        <Box sx={{ 
+          display: 'flex', 
+          alignItems: 'flex-start', 
+          justifyContent: 'space-between',
+          mb: 2
+        }}>
+          {/* Avatar */}
+          <Box
+            position="relative"
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
           >
-            {!avatarUrl && initials}
-          </Avatar>
-          <input
-            type="file"
-            accept="image/*"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
-
-          {hover && !avatarUrl && canEditAvatar && (
-            <IconButton
-              size="small"
-              onClick={handleAvatarClick}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
+            <Avatar 
+              src={avatarUrl || undefined} 
+              sx={{ 
+                width: 96, 
+                height: 96, 
+                fontSize: '2rem',
+                fontWeight: 'bold'
+              }}
+              onError={(e) => {
+                console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
               }}
             >
-              <CameraAltIcon fontSize="small" />
-            </IconButton>
-          )}
+              {!avatarUrl && initials}
+            </Avatar>
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+            />
 
-          {hover && avatarUrl && canEditAvatar && (
-            <IconButton
-              size="small"
-              onClick={handleDeleteAvatar}
-              sx={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                backgroundColor: 'white',
-                borderRadius: '50%',
-              }}
-            >
-              <ClearIcon fontSize="small" />
-            </IconButton>
+            {canEditAvatar && (
+              <Box sx={{ 
+                position: 'absolute', 
+                bottom: -8, 
+                right: -8,
+                display: 'flex',
+                gap: 0.5
+              }}>
+                {hover && !avatarUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={handleAvatarClick}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <CameraAltIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+                
+                {hover && avatarUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={handleDeleteAvatar}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <ClearIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+              </Box>
+            )}
+          </Box>
+
+          {/* Quick Action Buttons - Mobile */}
+          {isAdminView && (email || phone) && (
+            <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+              {email && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<EmailOutlinedIcon />}
+                  href={`mailto:${email}`}
+                  component="a"
+                  sx={{
+                    minWidth: 'auto',
+                    px: 1.5,
+                    height: 32,
+                    textTransform: 'none',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Email
+                </Button>
+              )}
+              {phone && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<PhoneOutlinedIcon />}
+                  href={`tel:${phone.replace(/\D/g, '')}`}
+                  component="a"
+                  sx={{
+                    minWidth: 'auto',
+                    px: 1.5,
+                    height: 32,
+                    textTransform: 'none',
+                    textDecoration: 'none',
+                  }}
+                >
+                  Call
+                </Button>
+              )}
+            </Stack>
           )}
         </Box>
 
-        <Box flex={1}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
+        {/* Mobile: Name and Details */}
+        <Box sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>
               {`${firstName} ${lastName}`}
               {preferredName && preferredName !== firstName && ` (${preferredName})`}
             </Typography>
@@ -379,7 +617,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 favoriteType="users"
                 isFavorite={isFavorite}
                 toggleFavorite={toggleFavorite}
-                size="medium"
+                size="small"
                 tooltipText={{
                   favorited: 'Remove from favorites',
                   notFavorited: 'Add to favorites',
@@ -388,159 +626,454 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             )}
           </Box>
           {Boolean(jobTitle) && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 'bold', mt: 0.25 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: 1 }}>
               {jobTitle}
             </Typography>
           )}
-          {(regionName || departmentName || divisionName || locationName || managerName) && (
-            <Stack direction="row" spacing={1} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
-              {regionName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <PublicIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{regionName}</Typography>
-                </Stack>
-              )}
-              {departmentName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{departmentName}</Typography>
-                </Stack>
-              )}
-              {divisionName && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <AccountTreeIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{divisionName}</Typography>
-                </Stack>
-              )}
-              {locationName && (
+          
+          {/* Profile Quality Meter - Mobile */}
+          {isAdminView && profileScore !== undefined && (
+            <ProfileQualityMeter
+              score={profileScore}
+              missingItemsCount={missingItems.filter(item => item.type === 'error' || item.type === 'warning').length}
+              missingItemsSummary={missingItems.slice(0, 3).map(item => item.message.toLowerCase()).join(', ')}
+            />
+          )}
+          
+          {/* Mobile: Compliance Status - High Priority */}
+          {isAdminView && (
+            <Box sx={{ mb: 1 }}>
+              <ComplianceStatusChips
+                workEligibility={workEligibility}
+                backgroundCheckStatus={backgroundCheckStatus}
+                vaccinationStatus={vaccinationStatus}
+                onWorkEligibilityClick={handleWorkEligibilityClick}
+                onBackgroundCheckClick={handleBackgroundCheckClick}
+                onVaccinationClick={handleVaccinationClick}
+                compact
+              />
+            </Box>
+          )}
+
+          {/* Mobile: Contact Info */}
+          {isAdminView && (
+            <Stack spacing={0.5} sx={{ mb: 1 }}>
+              {city && state && (
                 <Stack direction="row" spacing={1} alignItems="center">
                   <LocationOnOutlinedIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">{locationName}</Typography>
-                </Stack>
-              )}
-              {managerName && managerId && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <PersonIcon fontSize="small" color="primary" />
-                  <Link 
-                    component={RouterLink}
-                    to={`/users/${managerId}`} 
-                    underline="hover" 
-                    color="inherit"
-                    sx={{ textDecoration: 'none' }}
-                  >
-                    <Typography variant="body2" color="text.secondary">{managerName}</Typography>
-                  </Link>
-                </Stack>
-              )}
-            </Stack>
-          )}
-          {city && state && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-              <LocationOnOutlinedIcon fontSize="small" color="primary" />
-              <Typography variant="body2" color="text.secondary">
-                {city}, {state}
-              </Typography>
-            </Stack>
-          )}
-          {isAdminView && (
-            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-              {email && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <EmailOutlinedIcon fontSize="small" color="primary" />
-                  <Link href={`mailto:${email}`} underline="hover" color="inherit">
-                    <Typography variant="body2">{email}</Typography>
-                  </Link>
-                </Stack>
-              )}
-              {phone && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <PhoneOutlinedIcon fontSize="small" color="primary" />
-                  <Link href={`tel:${phone.replace(/\D/g, '')}`} underline="hover" color="inherit">
-                    <Typography variant="body2">{formatPhoneNumber(phone)}</Typography>
-                  </Link>
-                </Stack>
-              )}
-              {createdAt && (
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ ml: 2 }}>
                   <Typography variant="body2" color="text.secondary">
-                    Joined: {formatDate(createdAt)}
+                    {city}, {state}
                   </Typography>
                 </Stack>
               )}
+              {phone && (
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+                  <PhoneOutlinedIcon fontSize="small" color="primary" />
+                  <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+                    {formatPhoneNumber(phone)}
+                  </Typography>
+                  <ContactActionButtons phone={phone} email={email} compact />
+                </Stack>
+              )}
+              {email && !phone && (
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+                  <EmailOutlinedIcon fontSize="small" color="primary" />
+                  <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
+                    {email}
+                  </Typography>
+                  <ContactActionButtons phone={phone} email={email} compact />
+                </Stack>
+              )}
+              {createdAt && (
+                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mt: 0.5 }}>
+                  Joined: {formatDate(createdAt)}
+                </Typography>
+              )}
             </Stack>
           )}
-          {linkedinUrl && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
-              <LinkedInIcon fontSize="small" color="primary" />
-              <Link
-                href={normalizeLinkedInUrl(linkedinUrl)}
-                target="_blank"
-                rel="noopener noreferrer"
-                underline="hover"
-                color="inherit"
-              >
-                <Typography variant="body2">{linkedinUrl.replace(/^https?:\/\//i, '')}</Typography>
-              </Link>
-            </Stack>
-          )}
+          {/* Mobile: Status Chips - Cleaner grouped layout */}
           {isAdminView && (workStatus || securityLevel || employmentType) && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75, flexWrap: 'wrap' }}>
+            <Stack spacing={0.5} sx={{ mb: 1 }}>
               {workStatus && (
-                <>
-                  <Typography variant="body2" color="text.secondary">Status:</Typography>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
+                    Status:
+                  </Typography>
                   <Chip
                     size="small"
                     label={workStatus}
                     color={getWorkStatusColor(workStatus)}
+                    sx={{ height: 24 }}
                   />
-                </>
-              )}
-              {getSecurityLabel(securityLevel) && (
-                <>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Security Level:</Typography>
-                  <Chip
-                    size="small"
-                    label={getSecurityLabel(securityLevel)!}
-                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600 }}
-                  />
-                </>
+                </Stack>
               )}
               {employmentType && (
-                <>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Employment Type:</Typography>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
+                    Type:
+                  </Typography>
                   <Chip
                     size="small"
                     label={getEmploymentTypeLabel(employmentType)}
                     color={getEmploymentTypeColor(employmentType)}
+                    sx={{ height: 24 }}
                   />
+                </Stack>
+              )}
+              {getSecurityLabel(securityLevel) && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
+                    Role:
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={getSecurityLabel(securityLevel)!}
+                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600, height: 24 }}
+                  />
+                </Stack>
+              )}
+            </Stack>
+          )}
+          {/* Mobile: Quick Action Toolbar */}
+          {isAdminView && (
+            <Box sx={{ mb: 1.5 }}>
+              <QuickActionToolbar
+                onEdit={onEditProfile}
+                onViewResume={handleResumeClick}
+                onAddNote={onAddNote}
+                onSendLink={onSendApplicationLink}
+                onPrint={onPrintProfile}
+                onCreateAssignment={onCreateAssignment}
+                onCallNow={onCallNow}
+                onMessageApplicant={onMessageApplicant}
+                onViewTimeline={onViewTimeline}
+                hasResume={!!resume}
+                hasPhone={hasPhone}
+                isAdminView={isAdminView}
+                compact
+              />
+            </Box>
+          )}
+
+          {/* Mobile: Quick Info Bar */}
+          {isAdminView && (
+            <QuickInfoBar
+              resume={resume}
+              certifications={certifications}
+              onResumeClick={handleResumeClick}
+              onCertificationsClick={handleCertificationsClick}
+              profileScore={profileScore}
+              certificationsCount={certifications?.length}
+              activeApplicationsCount={activeApplicationsCount}
+              yearsExperience={yearsExperience}
+              educationLevel={educationLevel}
+              primarySkills={primarySkills}
+              languages={languages}
+              behavioralTraits={behavioralTraits}
+              onSkillsClick={() => onTabChange?.('Skills')}
+              workEligibility={workEligibility}
+              backgroundCheckStatus={backgroundCheckStatus}
+              vaccinationStatus={vaccinationStatus}
+              onWorkEligibilityClick={handleWorkEligibilityClick}
+              onBackgroundCheckClick={handleBackgroundCheckClick}
+              onVaccinationClick={handleVaccinationClick}
+              isAdminView={isAdminView}
+            />
+          )}
+        </Box>
+      </Box>
+
+      {/* Desktop Layout - 3-Column Compact Structure */}
+      <Box sx={{ 
+        display: { xs: 'none', md: 'flex' }, 
+        alignItems: 'flex-start', 
+        gap: 3, 
+        width: '100%',
+        py: 1.5,
+        maxHeight: 280,
+      }}>
+        {/* Column A: Photo & Status (~150px) */}
+        <Box sx={{ width: 150, flexShrink: 0 }}>
+          <Box
+            position="relative"
+            onMouseEnter={() => setHover(true)}
+            onMouseLeave={() => setHover(false)}
+            sx={{ mb: 1 }}
+          >
+            <Avatar 
+              src={avatarUrl || undefined} 
+              sx={{ 
+                width: 96, 
+                height: 96, 
+                fontSize: '2rem',
+                fontWeight: 'bold',
+                border: '2px solid',
+                borderColor: 'divider',
+                boxShadow: 'none'
+              }}
+              onError={(e) => {
+                console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+              }}
+            >
+              {!avatarUrl && initials}
+            </Avatar>
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileChange}
+            />
+
+            {canEditAvatar && (
+              <Box sx={{ 
+                position: 'absolute', 
+                bottom: -6, 
+                right: -6,
+                display: 'flex',
+                gap: 0.5
+              }}>
+                {hover && !avatarUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={handleAvatarClick}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <CameraAltIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+                
+                {hover && avatarUrl && (
+                  <IconButton
+                    size="small"
+                    onClick={handleDeleteAvatar}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 24,
+                      height: 24,
+                      '&:hover': {
+                        bgcolor: 'grey.400'
+                      }
+                    }}
+                  >
+                    <ClearIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                )}
+              </Box>
+            )}
+          </Box>
+          
+          {/* Favorite Button */}
+          {isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+            <Box sx={{ mb: 1, display: 'flex', justifyContent: 'center' }}>
+              <FavoriteButton
+                itemId={uid}
+                favoriteType="users"
+                isFavorite={isFavorite}
+                toggleFavorite={toggleFavorite}
+                size="small"
+                tooltipText={{
+                  favorited: 'Remove from favorites',
+                  notFavorited: 'Add to favorites',
+                }}
+              />
+            </Box>
+          )}
+          
+          {/* Status Pills - Compact */}
+          {isAdminView && (
+            <Stack spacing={0.5} sx={{ alignItems: 'flex-start' }}>
+              {workEligibility !== undefined && (
+                <Chip
+                  size="small"
+                  label={workEligibility ? 'Work Eligible' : 'Not Eligible'}
+                  color={workEligibility ? 'success' : 'error'}
+                  sx={{ height: 22, fontSize: '0.7rem' }}
+                />
+              )}
+              {workStatus && (
+                <Chip
+                  size="small"
+                  label={workStatus}
+                  color={getWorkStatusColor(workStatus)}
+                  sx={{ height: 22, fontSize: '0.7rem' }}
+                />
+              )}
+            </Stack>
+          )}
+        </Box>
+
+        {/* Column B: Name & Primary Info (flex 1) */}
+        <Box flex={1} sx={{ minWidth: 0 }}>
+          {/* Name */}
+          <Typography variant="h5" sx={{ fontWeight: 700, fontSize: '1.5rem', mb: 0.25, lineHeight: 1.2 }}>
+            {`${firstName} ${lastName}`}
+            {preferredName && preferredName !== firstName && ` (${preferredName})`}
+          </Typography>
+          
+          {/* City, State - One Line */}
+          {city && state && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', mb: 0.5 }}>
+              {city}, {state}
+            </Typography>
+          )}
+          
+          {/* Contact Row - Phone + Email SAME LINE with Copy Icons */}
+          {isAdminView && (phone || email) && (
+            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 0.5, flexWrap: 'wrap', gap: 1 }}>
+              {phone && (
+                <>
+                  <PhoneOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                  <Typography variant="body2" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                    {formatPhoneNumber(phone)}
+                  </Typography>
+                  <Tooltip title="Copy phone number">
+                    <IconButton
+                      size="small"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(formatPhoneNumber(phone));
+                          setCopySuccess('Phone number copied');
+                          setTimeout(() => setCopySuccess(null), 3000);
+                        } catch (err) {
+                          console.error('Failed to copy:', err);
+                        }
+                      }}
+                      sx={{ p: 0.25, ml: -0.5 }}
+                    >
+                      <ContentCopyIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                    </IconButton>
+                  </Tooltip>
                 </>
               )}
-              {profileScore !== undefined && (
+              {email && (
                 <>
-                  <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>Profile Score:</Typography>
-                  <Tooltip title="Profile completeness score based on resume, skills, certifications, and work history">
-                    <Chip
+                  {phone && <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>•</Typography>}
+                  <EmailOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                  <Typography variant="body2" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                    {email}
+                  </Typography>
+                  <Tooltip title="Copy email">
+                    <IconButton
                       size="small"
-                      label={getScoreLabel(profileScore)}
-                      color={getScoreColor(profileScore)}
-                      sx={{ fontWeight: 600 }}
-                    />
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(email);
+                          setCopySuccess('Email copied');
+                          setTimeout(() => setCopySuccess(null), 3000);
+                        } catch (err) {
+                          console.error('Failed to copy:', err);
+                        }
+                      }}
+                      sx={{ p: 0.25, ml: -0.5 }}
+                    >
+                      <ContentCopyIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                    </IconButton>
                   </Tooltip>
                 </>
               )}
             </Stack>
           )}
+          
+          {/* Employment Row - Status | Applicant Type | Role - One Line */}
+          {isAdminView && (workStatus || employmentType || securityLevel) && (
+            <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
+              {workStatus && (
+                <>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                    Status:
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={workStatus}
+                    color={getWorkStatusColor(workStatus)}
+                    sx={{ height: 20, fontSize: '0.7rem' }}
+                  />
+                </>
+              )}
+              {employmentType && (
+                <>
+                  {workStatus && <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', mx: 0.25 }}>|</Typography>}
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                    Applicant Type:
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={getEmploymentTypeLabel(employmentType)}
+                    color={getEmploymentTypeColor(employmentType)}
+                    sx={{ height: 20, fontSize: '0.7rem' }}
+                  />
+                </>
+              )}
+              {getSecurityLabel(securityLevel) && (
+                <>
+                  {(workStatus || employmentType) && <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', mx: 0.25 }}>|</Typography>}
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                    Role:
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={getSecurityLabel(securityLevel)!}
+                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600, height: 20, fontSize: '0.7rem' }}
+                  />
+                </>
+              )}
+            </Stack>
+          )}
+          
+          {/* Profile Quality Bar - Slim 6px */}
+          {isAdminView && profileScore !== undefined && (
+            <CompactProfileQualityBar score={profileScore} />
+          )}
         </Box>
+        
+        {/* Column C: Action Grid (~300px) */}
+        {isAdminView && (
+          <CompactActionGrid
+            onCallNow={onCallNow}
+            onMessageApplicant={onMessageApplicant}
+            onViewTimeline={onViewTimeline}
+            onViewResume={handleResumeClick}
+            onAddNote={onAddNote}
+            onEditProfile={onEditProfile}
+            onSendLink={onSendApplicationLink}
+            onCreateAssignment={onCreateAssignment}
+            hasResume={!!resume}
+            hasPhone={hasPhone}
+            isAdminView={isAdminView}
+          />
+        )}
       </Box>
 
-        {/* <Stack direction="row" spacing={2} alignItems="center">
-          {showBackButton && (
-            <Button variant="outlined" onClick={onBack}>
-              &larr; Back to Workforce
-            </Button>
-          )}
-        </Stack> */}
-      </Box>
+      {/* Certifications Modal */}
+      <CertificationsModal
+        open={showCertificationsModal}
+        onClose={() => setShowCertificationsModal(false)}
+        certifications={certifications}
+      />
+      
+      {/* Copy Success Snackbar */}
+      <Snackbar
+        open={!!copySuccess}
+        autoHideDuration={3000}
+        onClose={() => setCopySuccess(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setCopySuccess(null)} severity="success" sx={{ width: '100%' }}>
+          {copySuccess}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
