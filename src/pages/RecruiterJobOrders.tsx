@@ -40,7 +40,8 @@ import {
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
-  Schedule as ScheduleIcon
+  Schedule as ScheduleIcon,
+  Clear as ClearIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -375,55 +376,71 @@ const RecruiterJobOrders: React.FC = () => {
 
   return (
     <Box sx={{ p: 0 }}>
-      {/* Filters and Search */}
-      <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-        <TextField
-          placeholder="Search job orders..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          variant="outlined"
-          size="small"
-          sx={{ 
-            flexGrow: 1, 
-            minWidth: 300,
-            height: 36,
-            '& .MuiOutlinedInput-root': {
+      {/* Filter & Toolbar Area */}
+      <Box sx={{ 
+        mb: 2,
+        p: 1.5,
+        backgroundColor: '#F9FAFB',
+        borderRadius: '8px',
+        border: '1px solid #E5E7EB',
+        borderBottom: '1px solid #D1D5DB'
+      }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+          <TextField
+            size="small"
+            variant="outlined"
+            placeholder="Search job orders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ 
+              width: 280,
               height: 36,
-              borderRadius: '6px',
-              backgroundColor: 'white',
-              fontSize: '0.875rem',
-              '& fieldset': {
-                borderColor: '#E5E7EB',
-              },
-              '&:hover fieldset': {
-                borderColor: '#D1D5DB',
-              },
-            }
-          }}
-          InputProps={{
-            startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-            endAdornment: (
-              <InputAdornment position="end">
-                <FavoritesFilter
-                  favoriteType="jobOrders"
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                  sx={{
-                    minWidth: '32px',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    '&:hover': {
-                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                    }
-                  }}
-                />
-              </InputAdornment>
-            ),
-          }}
-        />
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
+            InputProps={{
+              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
+              endAdornment: (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <FavoritesFilter
+                    favoriteType="jobOrders"
+                    showFavoritesOnly={showFavoritesOnly}
+                    onToggle={setShowFavoritesOnly}
+                    showText={false}
+                    size="small"
+                    sx={{
+                      minWidth: '32px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      '&:hover': {
+                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                      }
+                    }}
+                  />
+                  {search && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setSearch('')}
+                      sx={{ mr: 0.5, p: 0.5 }}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
+              ),
+            }}
+          />
         
         <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
           <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
@@ -506,21 +523,22 @@ const RecruiterJobOrders: React.FC = () => {
           </Select>
         </FormControl>
         
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => navigate('/recruiter/job-orders/new')}
-          sx={{
-            height: 36,
-            px: 2,
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            borderRadius: '6px',
-            textTransform: 'none',
-          }}
-        >
-          New Order
-        </Button>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate('/recruiter/job-orders/new')}
+            sx={{
+              height: 36,
+              px: 2,
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              borderRadius: '6px',
+              textTransform: 'none',
+            }}
+          >
+            New Order
+          </Button>
+        </Box>
       </Box>
 
       {/* Job Orders Table */}

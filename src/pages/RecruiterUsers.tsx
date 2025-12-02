@@ -27,6 +27,8 @@ import PhoneIcon from '@mui/icons-material/Phone';
 import StarIcon from '@mui/icons-material/Star';
 import GroupIcon from '@mui/icons-material/Groups';
 import InsightsIcon from '@mui/icons-material/Insights';
+import ClearIcon from '@mui/icons-material/Clear';
+import IconButton from '@mui/material/IconButton';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { SelectChangeEvent } from '@mui/material/Select';
@@ -55,6 +57,7 @@ interface RecruiterUser {
   phone?: string;
   avatar?: string;
   securityLevel: string;
+  state?: string;
   lastLoginAt?: any;
   updatedAt?: any;
   createdAt?: any;
@@ -83,6 +86,7 @@ const RecruiterUsers: React.FC = () => {
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
+  const [stateFilter, setStateFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>('accountCreated');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
@@ -166,6 +170,7 @@ const RecruiterUsers: React.FC = () => {
           aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
           userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
           skills: normalizedSkills,
+          state: userData.state || userData.address?.state || '',
         };
       });
       setUsers(data);
@@ -290,6 +295,10 @@ const RecruiterUsers: React.FC = () => {
           return user.skills?.includes(skillFilter);
         }
 
+        if (stateFilter !== 'all' && user.state !== stateFilter) {
+          return false;
+        }
+
         if (!searchTerm) {
           return true;
         }
@@ -330,6 +339,7 @@ const RecruiterUsers: React.FC = () => {
     securityLevelFilter,
     showFavoritesOnly,
     skillFilter,
+    stateFilter,
     sortBy,
     users,
   ]);
@@ -352,59 +362,71 @@ const RecruiterUsers: React.FC = () => {
 
   return (
     <Box>
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-          All Users
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Search, filter, and compare everyone in your talent network.
-        </Typography>
-      </Box>
-
-      <Box
-        sx={{
-          mb: 3,
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 2,
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <TextField
-          placeholder="Search people..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          variant="outlined"
-          size="small"
-          sx={{
-            flexGrow: 1,
-            minWidth: 280,
-            maxWidth: 480,
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '8px',
-              backgroundColor: 'white',
-            },
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon sx={{ color: 'text.secondary' }} />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <FavoritesFilter
-                  favoriteType="users"
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                />
-              </InputAdornment>
-            ),
-          }}
-        />
+      {/* Filter & Toolbar Area */}
+      <Box sx={{ 
+        mb: 2,
+        p: 1.5,
+        backgroundColor: '#F9FAFB',
+        borderRadius: '8px',
+        border: '1px solid #E5E7EB',
+        borderBottom: '1px solid #D1D5DB'
+      }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+          <TextField
+            size="small"
+            variant="outlined"
+            placeholder="Search people..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            sx={{ 
+              width: 280,
+              height: 36,
+              '& .MuiOutlinedInput-root': {
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& fieldset': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover fieldset': {
+                  borderColor: '#D1D5DB',
+                },
+              }
+            }}
+            InputProps={{
+              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
+              endAdornment: (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <FavoritesFilter
+                    favoriteType="users"
+                    showFavoritesOnly={showFavoritesOnly}
+                    onToggle={setShowFavoritesOnly}
+                    showText={false}
+                    size="small"
+                    sx={{
+                      minWidth: '32px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      '&:hover': {
+                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
+                      }
+                    }}
+                  />
+                  {searchTerm && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setSearchTerm('')}
+                      sx={{ mr: 0.5, p: 0.5 }}
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
+              ),
+            }}
+          />
 
         <FormControl size="small" sx={{ minWidth: 160 }}>
           <InputLabel>Role</InputLabel>
@@ -455,6 +477,44 @@ const RecruiterUsers: React.FC = () => {
           )}
         />
 
+        {/* State Filter */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+            <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
+            <Select
+              value={stateFilter}
+              onChange={(e) => setStateFilter(String(e.target.value))}
+              label="State Filter"
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#D1D5DB',
+                },
+              }}
+            >
+              <MenuItem value="all">All States</MenuItem>
+              {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
+                <MenuItem key={st} value={st}>{st}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <IconButton
+            size="small"
+            aria-label="Clear state filter"
+            onClick={() => setStateFilter('all')}
+            disabled={stateFilter === 'all'}
+            sx={{ height: 36, width: 36, p: 0.75 }}
+          >
+            <ClearIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
         <FormControl size="small" sx={{ minWidth: 180 }}>
           <InputLabel>Sort By</InputLabel>
           <Select
@@ -469,6 +529,7 @@ const RecruiterUsers: React.FC = () => {
             <MenuItem value="name">Name (A-Z)</MenuItem>
           </Select>
         </FormControl>
+        </Box>
       </Box>
 
       <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
