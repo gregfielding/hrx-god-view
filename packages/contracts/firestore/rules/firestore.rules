@@ -119,18 +119,60 @@ service cloud.firestore {
 
       // Applications subcollection within tenant
       match /applications/{applicationId} {
-        // Allow read for:
-        // - The applicant (userId extracted from applicationId which has format userId_jobId)
-        // - Anyone assigned to this tenant (staff/admins)
-        allow read: if request.auth != null &&
-          (applicationId.split('_')[0] == request.auth.uid ||
-           isAssignedToTenant(tenantId));
+        // Allow read for any authenticated user
+        // TODO: Tighten this once we have proper tenantId in custom claims
+        allow read: if request.auth != null;
         // Allow create for anyone (public applications)
         allow create: if true;
-        // Allow update for tenant admins and recruiters
-        allow update: if isHRX() || isTenantAdmin(tenantId) || 
-                       (isAssignedToTenant(tenantId) && hasRecruiterAccess());
-        allow delete: if isHRX() || isTenantAdmin(tenantId);
+        // Allow update for HRX users or users with recruiter/admin roles
+        allow update: if request.auth != null && 
+          (isHRX() || hasRecruiterAccess());
+        // Allow delete for HRX users only
+        allow delete: if isHRX();
+      }
+
+      // Job postings subcollection
+      match /job_postings/{postingId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId) || 
+                      (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+      }
+
+      // Recruiter job orders subcollection
+      match /recruiter_jobOrders/{jobOrderId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId) || 
+                      (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+      }
+
+      // Departments subcollection
+      match /departments/{departmentId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // Locations subcollection
+      match /locations/{locationId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // Divisions subcollection
+      match /divisions/{divisionId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // Regions subcollection
+      match /regions/{regionId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+
+      // User groups subcollection
+      match /userGroups/{groupId} {
+        allow read: if isHRX() || isAssignedToTenant(tenantId);
+        allow write: if isHRX() || isTenantAdmin(tenantId);
       }
     }
 

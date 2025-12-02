@@ -69,7 +69,10 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
       const userData = userSnap.data();
       const applicationIds: string[] = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
 
+      console.log('User applicationIds:', applicationIds);
+
       if (applicationIds.length === 0) {
+        console.log('No applicationIds found for user');
         setApplications([]);
         setLoading(false);
         return;
@@ -81,12 +84,17 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
       for (const appId of applicationIds) {
         try {
           const [appTenantId, jobId] = appId.split('_');
-          if (!appTenantId || !jobId) continue;
+          if (!appTenantId || !jobId) {
+            console.warn('Invalid appId format:', appId);
+            continue;
+          }
 
+          console.log('Attempting to fetch application:', `tenants/${appTenantId}/applications/${userId}_${jobId}`);
           const appRef = doc(db, 'tenants', appTenantId, 'applications', `${userId}_${jobId}`);
           const appSnap = await getDoc(appRef);
 
           if (appSnap.exists()) {
+            console.log('Application data loaded successfully for:', appId);
             const appData = appSnap.data();
             
             // Also fetch job posting details for display
@@ -158,9 +166,13 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
               status: appData.status || 'submitted',
               submittedAt: appData.submittedAt?.toDate() || new Date(),
             });
+          } else {
+            console.warn('Application document does not exist:', `tenants/${appTenantId}/applications/${userId}_${jobId}`);
           }
-        } catch (appErr) {
-          console.warn('Error loading application', appId, appErr);
+        } catch (appErr: any) {
+          console.error('Error loading application', appId, appErr);
+          console.error('Error code:', appErr?.code);
+          console.error('Error message:', appErr?.message);
         }
       }
 
