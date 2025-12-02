@@ -104,21 +104,86 @@ const EditJobPost: React.FC = () => {
 
       // If no results with postId, try jobId
       if (applicationsData.length === 0) {
-        console.log('loadApplications: no results with postId, trying jobId');
+        console.log('loadApplications: no results with postId, trying jobId field');
         const q2 = query(
           applicationsRef,
           where('jobId', '==', postId),
           orderBy('createdAt', 'desc')
         );
         const snapshot2 = await getDocs(q2);
-        console.log('loadApplications: jobId query returned', snapshot2.docs.length, 'documents');
+        console.log('loadApplications: jobId field query returned', snapshot2.docs.length, 'documents');
         applicationsData = snapshot2.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
         }));
       }
 
+      // If still no results, try matching by document ID pattern (userId_postId)
+      if (applicationsData.length === 0) {
+        console.log('loadApplications: trying to match by document ID pattern');
+        const allAppsInTenant = await getDocs(applicationsRef);
+        const matchingApps = allAppsInTenant.docs.filter(doc => {
+          // Document ID format is: userId_jobId
+          // We want to match where jobId === postId
+          const parts = doc.id.split('_');
+          return parts.length === 2 && parts[1] === postId;
+        });
+        console.log('loadApplications: document ID pattern matched', matchingApps.length, 'applications');
+        applicationsData = matchingApps.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        })).sort((a: any, b: any) => {
+          const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+          const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+          return bTime - aTime; // descending
+        });
+      }
+
       console.log('loadApplications: total applications found:', applicationsData.length);
+      
+      // DEBUG: Let's see what's actually in the applications collection
+      if (applicationsData.length === 0) {
+        console.log('DEBUG: No applications found for postId:', postId);
+        console.log('DEBUG: Current post data:', post);
+        
+        const allAppsQuery = query(collection(db, 'tenants', tenantId, 'applications'));
+        const allAppsSnap = await getDocs(allAppsQuery);
+        console.log('DEBUG: Total applications in tenant:', allAppsSnap.size);
+        
+        // Check if this post has a connected job order
+        const postData = post as any;
+        if (postData?.connectedJobOrderId) {
+          console.log('DEBUG: This post is connected to job order:', postData.connectedJobOrderId);
+          // Try querying by jobOrderId
+          const jobOrderQuery = query(
+            applicationsRef,
+            where('jobOrderId', '==', postData.connectedJobOrderId)
+          );
+          const jobOrderSnap = await getDocs(jobOrderQuery);
+          console.log('DEBUG: Applications with matching jobOrderId:', jobOrderSnap.size);
+          if (jobOrderSnap.size > 0) {
+            applicationsData = jobOrderSnap.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+            }));
+            console.log('DEBUG: Found applications via jobOrderId!');
+          }
+        }
+        
+        if (allAppsSnap.size > 0 && applicationsData.length === 0) {
+          console.log('DEBUG: Sample application documents:');
+          allAppsSnap.docs.slice(0, 5).forEach(doc => {
+            const data = doc.data();
+            console.log('  -', doc.id, ':', {
+              postId: data.postId,
+              jobId: data.jobId,
+              jobOrderId: data.jobOrderId,
+              userId: data.userId,
+            });
+          });
+        }
+      }
+      
       setApplications(applicationsData);
       
       // Load user data for applicants who have candidateId/userId
