@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box,
-  Typography,
   Table,
   TableBody,
   TableCell,
@@ -261,9 +260,6 @@ const UserAssignmentsTab: React.FC<{ userId: string }> = ({ userId }) => {
 
   return (
     <Box sx={{ p: 0, width: '100%' }}>
-      <Typography variant="h6" gutterBottom>
-        Assignment History
-      </Typography>
       <AssignmentsTable assignments={assignments} showAgency={showTenant} />
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
         <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>

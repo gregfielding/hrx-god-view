@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert } from '@mui/material';
+import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge } from '@mui/material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { doc, getDoc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs, getCountFromServer } from 'firebase/firestore';
 
 import { db } from '../../firebase'; // adjust path
 import onetSkills from '../../data/onetSkills.json';
@@ -14,22 +14,15 @@ import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
 import SkillsOnlyTab from './components/SkillsOnlyTab';
-import EducationTab from './components/EducationTab';
-import WorkExperienceTab from './components/WorkExperienceTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
-import ResumeTab from './components/ResumeTab';
 import QualificationsTab from './components/QualificationsTab';
-import PreferencesTab from './components/PreferencesTab';
-import LicensesAndCertsTab from './components/LicensesAndCertsTab';
+import InterviewTab from './components/InterviewTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
-import PrivacySettingsTab from './components/PrivacySettingsTab';
-import UserGroupsTab from './components/UserGroupsTab';
 import SystemAccessTab from './components/SystemAccessTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
-import QuickInfoBar from './components/QuickInfoBar';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -62,6 +55,10 @@ const UserProfilePage = () => {
   const [preferredName, setPreferredName] = useState<string>('');
   const [avatarUrl, setAvatarUrl] = useState<string>('');
   const [skillsData, setSkillsData] = useState<any>(null);
+  const [eVerifyOrders, setEVerifyOrders] = useState<Array<{ id: string; dateSubmitted: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>>([]);
+  const [backgroundCheckOrders, setBackgroundCheckOrders] = useState<Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>>([]);
+  const [drugScreeningOrders, setDrugScreeningOrders] = useState<Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>>([]);
+  const [additionalScreeningOrders, setAdditionalScreeningOrders] = useState<Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>>([]);
   const [jobTitle, setJobTitle] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -82,6 +79,10 @@ const UserProfilePage = () => {
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const [createdAt, setCreatedAt] = useState<any>(null);
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
+  const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
+  const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
+  const [notesCount, setNotesCount] = useState<number>(0);
+  const [interviewsCount, setInterviewsCount] = useState<number>(0);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -150,29 +151,21 @@ const UserProfilePage = () => {
     });
 
     const tabs = [
-      { label: 'Overview', available: true },
-      { label: 'Work Eligibility', available: !isWorkforceInternalTeamView },
-      { label: 'Resumé', available: !isWorkforceInternalTeamView },
-      { label: 'Skills', available: !isWorkforceInternalTeamView },
-      { label: 'Education', available: !isWorkforceInternalTeamView },
-      { label: 'Work Experience', available: !isWorkforceInternalTeamView },
-      { label: 'Qualifications', available: !isWorkforceInternalTeamView },
-      { label: 'Preferences', available: !isWorkforceInternalTeamView },
-      { label: 'Licenses & Certs', available: !isWorkforceInternalTeamView },
-      { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'Background & Vaccination', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'Reports & Insights', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'Notes', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'Activity Log', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'User Groups', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView },
-      { label: 'System Access', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView },
-      { label: 'Privacy & Notifications', available: ((isOwnProfile || isAdminViewer) && !isWorkerRoute) && !isWorkforceInternalTeamView },
+      { label: 'Overview', available: true, count: undefined },
+      { label: 'Interview', available: !isWorkforceInternalTeamView, count: interviewsCount },
+      { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
+      { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
+      { label: 'Backgrounds', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Notes', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: notesCount },
+      { label: 'Activity Log', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Reports & Insights', available: false, count: undefined },
+      { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
     ];
 
-    const availableTabLabels = tabs.filter(t => t.available).map(t => t.label);
-    console.log('Available tabs:', availableTabLabels);
-    return availableTabLabels;
+    const availableTabs = tabs.filter(t => t.available);
+    console.log('Available tabs:', availableTabs.map(t => t.label));
+    return availableTabs;
   };
 
   useEffect(() => {
@@ -347,6 +340,56 @@ const UserProfilePage = () => {
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        // Fetch E-Verify orders
+        const eVerifyOrdersArray = Array.isArray(data.eVerifyOrders) ? data.eVerifyOrders : [];
+        setEVerifyOrders(eVerifyOrdersArray.map((o: any) => ({
+          id: o.id || '',
+          dateSubmitted: o.dateSubmitted || '',
+          status: o.status || '',
+          result: o.result,
+          completionDate: o.completionDate,
+          submittedBy: o.submittedBy,
+        })));
+
+        // Fetch Background Check orders
+        const bgOrders = Array.isArray(data.backgroundCheckOrders) ? data.backgroundCheckOrders : [];
+        setBackgroundCheckOrders(bgOrders.map((o: any) => ({
+          id: o.id || '',
+          type: o.type || '',
+          typeLabel: o.typeLabel || o.type || '',
+          dateOrdered: o.dateOrdered || '',
+          status: o.status || '',
+          result: o.result,
+          completionDate: o.completionDate,
+          submittedBy: o.submittedBy,
+        })));
+
+        // Fetch Drug Screening orders
+        const drugOrders = Array.isArray(data.drugScreeningOrders) ? data.drugScreeningOrders : [];
+        setDrugScreeningOrders(drugOrders.map((o: any) => ({
+          id: o.id || '',
+          type: o.type || '',
+          typeLabel: o.typeLabel || o.type || '',
+          dateOrdered: o.dateOrdered || '',
+          status: o.status || '',
+          result: o.result,
+          completionDate: o.completionDate,
+          submittedBy: o.submittedBy,
+        })));
+
+        // Fetch Additional Screening orders
+        const addlOrders = Array.isArray(data.additionalScreeningOrders) ? data.additionalScreeningOrders : [];
+        setAdditionalScreeningOrders(addlOrders.map((o: any) => ({
+          id: o.id || '',
+          type: o.type || '',
+          typeLabel: o.typeLabel || o.type || '',
+          dateOrdered: o.dateOrdered || '',
+          status: o.status || '',
+          result: o.result,
+          completionDate: o.completionDate,
+          submittedBy: o.submittedBy,
+        })));
+
         setSkillsData({
           primaryJobTitle: data.primaryJobTitle || '',
           certifications: data.certifications || [],
@@ -358,9 +401,28 @@ const UserProfilePage = () => {
           vaccinationStatus: data.vaccinationStatus || '',
           specialTraining: data.specialTraining || '',
           resume: data.resume || null,
+          education: data.education || [],
+          workExperience: data.workExperience || data.workHistory || [],
           // New fields from the schema
           preferredName: data.preferredName || '',
-          dateOfBirth: data.dateOfBirth || null,
+          // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
+          dateOfBirth: (() => {
+            const dobValue = data.dob || data.dateOfBirth;
+            if (!dobValue) return null;
+            // Handle Firestore Timestamp
+            if (dobValue?.toDate && typeof dobValue.toDate === 'function') {
+              return dobValue.toDate();
+            }
+            // Handle string or Date
+            if (typeof dobValue === 'string' || dobValue instanceof Date) {
+              return dobValue;
+            }
+            // Handle timestamp number
+            if (typeof dobValue === 'number') {
+              return new Date(dobValue);
+            }
+            return dobValue;
+          })(),
           gender: data.gender || '',
           employmentType: data.employmentType || 'Full-Time',
           departmentId: data.departmentId || '',
@@ -380,39 +442,89 @@ const UserProfilePage = () => {
     return () => unsubscribe();
   }, [uid, user, securityLevel]);
 
+  // Fetch counts for tabs
+  useEffect(() => {
+    if (!uid || !canAccessProfile()) return;
+
+    const fetchCounts = async () => {
+      try {
+        // Applications count - from user's applicationIds array
+        const userRef = doc(db, 'users', uid);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          const applicationIds = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
+          setActiveApplicationsCount(applicationIds.length);
+
+          // User Groups count - from user's userGroupIds array
+          const userGroupIds = Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : [];
+          setUserGroupsCount(userGroupIds.length);
+        }
+
+        // Assignments count
+        try {
+          const assignmentsQuery = query(
+            collection(db, 'assignments'),
+            where('userId', '==', uid)
+          );
+          const assignmentsSnapshot = await getDocs(assignmentsQuery);
+          setAssignmentsCount(assignmentsSnapshot.size);
+        } catch (error) {
+          console.error('Error fetching assignments count:', error);
+          setAssignmentsCount(0);
+        }
+
+        // Notes count - from users/{uid}/notes subcollection
+        try {
+          const notesRef = collection(db, 'users', uid, 'notes');
+          const notesSnapshot = await getDocs(notesRef);
+          setNotesCount(notesSnapshot.size);
+        } catch (error) {
+          console.error('Error fetching notes count:', error);
+          setNotesCount(0);
+        }
+
+        // Interviews count - from users/{uid}/interviews subcollection
+        try {
+          const interviewsRef = collection(db, 'users', uid, 'interviews');
+          const interviewsSnapshot = await getDocs(interviewsRef);
+          setInterviewsCount(interviewsSnapshot.size);
+        } catch (error) {
+          console.error('Error fetching interviews count:', error);
+          setInterviewsCount(0);
+        }
+      } catch (error) {
+        console.error('Error fetching counts:', error);
+      }
+    };
+
+    fetchCounts();
+  }, [uid]);
+
   // Handle tab query parameter - must be before early returns
   const availableTabs = getAvailableTabs();
+  const availableTabLabels = availableTabs.map(t => t.label);
   
   // Validate current tab is still available, reset if needed - MUST be before early returns (hook rules)
   useEffect(() => {
-    if (availableTabs.length > 0 && (!tabValue || !availableTabs.includes(tabValue))) {
-      setTabValue(availableTabs[0]);
+    if (availableTabLabels.length > 0 && (!tabValue || !availableTabLabels.includes(tabValue))) {
+      setTabValue(availableTabLabels[0]);
     }
-  }, [availableTabs, tabValue]);
+  }, [availableTabLabels, tabValue]);
   
   useEffect(() => {
-    const tabParam = searchParams.get('tab');
-    if (tabParam === 'licenses') {
-      const hasLicenses = availableTabs.includes('Licenses & Certs');
-      if (hasLicenses) setTabValue('Licenses & Certs');
-    }
-  }, [searchParams, availableTabs]);
+    // Removed Certs tab handling
+  }, [searchParams, availableTabLabels]);
 
   const handleTabChange = (_: React.SyntheticEvent, newValue: string) => {
     // Only change local state; do not navigate to a different route which
     // causes a remount and resets the tab for worker (level 2) users.
     setTabValue(newValue);
 
-    // Keep the current pathname exactly as-is and only update the search param
-    // when Licenses & Certs is selected, so deep links still work.
-    const selectedLabel = newValue;
+    // Update URL with search params if needed
     const pathname = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
-    if (selectedLabel === 'Licenses & Certs') {
-      params.set('tab', 'licenses');
-    } else {
-      params.delete('tab');
-    }
+    params.delete('tab');
     const search = params.toString();
     navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
   };
@@ -420,16 +532,13 @@ const UserProfilePage = () => {
   // Handler for tab change from header components (e.g., document icons)
   const handleHeaderTabChange = (tabLabel: string) => {
     const tabs = getAvailableTabs();
-    if (tabs.includes(tabLabel)) {
+    const tabLabels = tabs.map(t => t.label);
+    if (tabLabels.includes(tabLabel)) {
       setTabValue(tabLabel);
       // Update URL if needed
       const pathname = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
-      if (tabLabel === 'Licenses & Certs') {
-        params.set('tab', 'licenses');
-      } else {
-        params.delete('tab');
-      }
+      params.delete('tab');
       const search = params.toString();
       navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
     }
@@ -555,6 +664,8 @@ const UserProfilePage = () => {
           profileScore={profileScore}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
+          education={skillsData?.education || []}
+          workExperience={skillsData?.workExperience || []}
           workEligibility={skillsData?.workEligibility}
           backgroundCheckStatus={skillsData?.backgroundCheckStatus}
           vaccinationStatus={skillsData?.vaccinationStatus}
@@ -628,6 +739,10 @@ const UserProfilePage = () => {
               return [];
             }
           })()}
+          eVerifyOrders={eVerifyOrders}
+          backgroundCheckOrders={backgroundCheckOrders}
+          drugScreeningOrders={drugScreeningOrders}
+          additionalScreeningOrders={additionalScreeningOrders}
           behavioralTraits={(() => {
             try {
               // Extract behavioral traits from traitsProfile if available
@@ -714,162 +829,42 @@ const UserProfilePage = () => {
             scrollButtons="auto"
             aria-label="user profile tabs"
           >
-            {availableTabs.map((label, i) => (
-              <Tab key={i} label={label} value={label} />
-            ))}
+            {availableTabs.map((tab, i) => {
+              const hasCount = tab.count !== undefined && tab.count > 0;
+              return (
+                <Tab
+                  key={i}
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {tab.label}
+                      {hasCount && (
+                        <Badge badgeContent={tab.count} color="primary" />
+                      )}
+                    </Box>
+                  }
+                  value={tab.label}
+                />
+              );
+            })}
           </Tabs>
         </Paper>
-
-        {/* Quick Info Bar - Moved below tabs per redesign spec */}
-        {isAdminView && (
-          <Box sx={{ mb: 2, mt: 1 }}>
-            <QuickInfoBar
-              resume={skillsData?.resume || null}
-              certifications={skillsData?.certifications || []}
-              onResumeClick={async () => {
-                const resume = skillsData?.resume;
-                if (!resume) return;
-                try {
-                  if (resume.downloadUrl) {
-                    window.open(resume.downloadUrl, '_blank');
-                  } else if (resume.storagePath) {
-                    const encodedPath = encodeURIComponent(resume.storagePath);
-                    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                    window.open(publicUrl, '_blank');
-                  } else {
-                    setTabValue('Resumé');
-                  }
-                } catch (error) {
-                  console.error('Error opening resume:', error);
-                  setTabValue('Resumé');
-                }
-              }}
-              onCertificationsClick={() => {
-                if (skillsData?.certifications && skillsData.certifications.length > 0) {
-                  setTabValue('Licenses & Certs');
-                } else {
-                  setTabValue('Licenses & Certs');
-                }
-              }}
-              profileScore={profileScore}
-              certificationsCount={skillsData?.certifications?.length || 0}
-              activeApplicationsCount={activeApplicationsCount}
-              yearsExperience={skillsData?.yearsExperience}
-              educationLevel={skillsData?.educationLevel}
-              primarySkills={(() => {
-                try {
-                  if (!Array.isArray(skillsData?.skills)) return [];
-                  const skillNames: string[] = [];
-                  for (const item of skillsData.skills) {
-                    if (item && typeof item === 'object') {
-                      if (('language' in item) || (('proficiency' in item) && ('isNative' in item))) {
-                        continue;
-                      }
-                      if ('name' in item) {
-                        const skillName = item.name || item.canonicalId || '';
-                        if (skillName && typeof skillName === 'string') {
-                          const trimmed = String(skillName).trim();
-                          if (trimmed) skillNames.push(trimmed);
-                        }
-                      }
-                    } else if (typeof item === 'string') {
-                      const trimmed = item.trim();
-                      if (trimmed) skillNames.push(trimmed);
-                    }
-                    if (skillNames.length >= 5) break;
-                  }
-                  return skillNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
-                } catch (error) {
-                  console.error('Error extracting primary skills:', error);
-                  return [];
-                }
-              })()}
-              languages={(() => {
-                try {
-                  if (!Array.isArray(skillsData?.languages)) return [];
-                  const languageNames: string[] = [];
-                  for (const lang of skillsData.languages) {
-                    if (typeof lang === 'string') {
-                      languageNames.push(lang);
-                    } else if (lang && typeof lang === 'object' && 'language' in lang) {
-                      const langName = lang.language || String(lang);
-                      if (langName && typeof langName === 'string') {
-                        languageNames.push(langName.trim());
-                      }
-                    }
-                    if (languageNames.length >= 5) break;
-                  }
-                  return languageNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
-                } catch (error) {
-                  console.error('Error extracting languages:', error);
-                  return [];
-                }
-              })()}
-              behavioralTraits={(() => {
-                try {
-                  const traitsProfile = skillsData?.traitsProfile;
-                  if (traitsProfile && typeof traitsProfile === 'object') {
-                    const traits: string[] = [];
-                    if (Array.isArray(traitsProfile.traits)) {
-                      traits.push(...traitsProfile.traits.slice(0, 5).filter((t: any) => typeof t === 'string'));
-                    }
-                    if (traitsProfile.topTraits && Array.isArray(traitsProfile.topTraits)) {
-                      traits.push(...traitsProfile.topTraits.slice(0, 5).filter((t: any) => typeof t === 'string'));
-                    }
-                    return traits.slice(0, 5);
-                  }
-                  return [];
-                } catch (error) {
-                  console.error('Error extracting behavioral traits:', error);
-                  return [];
-                }
-              })()}
-              onSkillsClick={() => setTabValue('Skills')}
-              workEligibility={skillsData?.workEligibility}
-              backgroundCheckStatus={skillsData?.backgroundCheckStatus}
-              vaccinationStatus={skillsData?.vaccinationStatus}
-              onWorkEligibilityClick={() => setTabValue('Work Eligibility')}
-              onBackgroundCheckClick={() => setTabValue('Background & Vaccination')}
-              onVaccinationClick={() => setTabValue('Background & Vaccination')}
-              onTabChange={handleHeaderTabChange}
-              isAdminView={isAdminView}
-            />
-          </Box>
-        )}
 
         <Box sx={{ mt: 2 }} className="profile-tab-content">
           {(() => {
             const label = currentLabel;
-            if (!label || !availableTabs.includes(label)) return null;
+            if (!label || !availableTabLabels.includes(label)) return null;
             switch (label) {
               case 'Overview':
-                return <ProfileOverview uid={uid} />;
-              case 'Work Eligibility':
-                return skillsData && (
-                  <WorkEligibilityTab
-                    user={skillsData}
-                    onUpdate={handleSkillsUpdate}
-                  />
-                );
-              case 'Resumé':
-                return <ResumeTab uid={uid} />;
-              case 'Skills':
-                return <SkillsOnlyTab uid={uid} />;
-              case 'Education':
-                return <EducationTab uid={uid} />;
-              case 'Work Experience':
-                return <WorkExperienceTab uid={uid} />;
+                return <ProfileOverview uid={uid} onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)} />;
+              case 'Interview':
+                return <InterviewTab uid={uid} />;
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
-              case 'Preferences':
-                return <PreferencesTab uid={uid} />;
-              case 'Licenses & Certs':
-                return <LicensesAndCertsTab uid={uid} />;
               case 'Applications':
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
                 return <UserAssignmentsTab userId={uid} />;
-              case 'Background & Vaccination':
+              case 'Backgrounds':
                 return <CombinedBackgroundAndVaccinationTab uid={uid} />;
               case 'Reports & Insights':
                 return <ReportsAndInsightsTab uid={uid} />;
@@ -877,12 +872,8 @@ const UserProfilePage = () => {
                 return <NotesTab uid={uid} user={user} />;
               case 'Activity Log':
                 return <ActivityLogTab uid={uid} user={user} />;
-              case 'User Groups':
-                return <UserGroupsTab uid={uid} />;
-              case 'System Access':
+              case 'Settings':
                 return <SystemAccessTab uid={uid} />;
-              case 'Privacy & Notifications':
-                return <PrivacySettingsTab uid={uid} />;
               default:
                 return null;
             }

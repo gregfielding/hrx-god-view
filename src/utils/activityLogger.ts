@@ -5,7 +5,7 @@ import { db } from '../firebase';
 export interface ActivityLogData {
   userId: string;
   action: string;
-  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'other';
+  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'note_added' | 'sms_sent' | 'other';
   description: string;
   severity: 'low' | 'medium' | 'high';
   source: 'web' | 'mobile' | 'api' | 'system';
@@ -243,6 +243,64 @@ export const logNotificationActivity = async (
       ...metadata,
       notificationType,
       targetType: 'notification',
+    },
+  });
+};
+
+/**
+ * Log a note added activity (when internal worker adds note)
+ */
+export const logNoteActivity = async (
+  targetUserId: string,
+  noteId: string,
+  authorName: string,
+  authorId: string,
+  category: string,
+  priority: string,
+  metadata?: ActivityLogData['metadata']
+) => {
+  await logUserActivity({
+    userId: targetUserId,
+    action: 'Note Added',
+    actionType: 'note_added',
+    description: `Note added by ${authorName}${category !== 'general' ? ` (${category})` : ''}`,
+    severity: priority === 'urgent' ? 'high' : priority === 'high' ? 'medium' : 'low',
+    source: 'web',
+    metadata: {
+      ...metadata,
+      noteId,
+      authorId,
+      authorName,
+      category,
+      priority,
+      targetType: 'note',
+    },
+  });
+};
+
+/**
+ * Log an SMS sent activity (when internal worker sends SMS)
+ */
+export const logSMSActivity = async (
+  recipientUserId: string,
+  senderName: string,
+  senderId: string,
+  messagePreview: string,
+  metadata?: ActivityLogData['metadata']
+) => {
+  await logUserActivity({
+    userId: recipientUserId,
+    action: 'SMS Sent',
+    actionType: 'sms_sent',
+    description: `SMS sent by ${senderName}`,
+    severity: 'medium',
+    source: 'system',
+    metadata: {
+      ...metadata,
+      senderId,
+      senderName,
+      messagePreview: messagePreview.substring(0, 100), // Truncate for privacy
+      targetType: 'sms',
     },
   });
 };

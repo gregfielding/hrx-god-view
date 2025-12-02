@@ -35,6 +35,42 @@ interface ProfileData {
   dateOfBirth?: Date | string | any;
 }
 
+// Helper function to check if a date value is valid and present
+const hasValidDateOfBirth = (dob: Date | string | any): boolean => {
+  if (!dob) return false;
+  
+  // Handle Firestore Timestamp
+  if (dob?.toDate && typeof dob.toDate === 'function') {
+    const date = dob.toDate();
+    return date instanceof Date && !isNaN(date.getTime());
+  }
+  
+  // Handle Date object
+  if (dob instanceof Date) {
+    return !isNaN(dob.getTime());
+  }
+  
+  // Handle string
+  if (typeof dob === 'string' && dob.trim() !== '') {
+    const date = new Date(dob);
+    return !isNaN(date.getTime());
+  }
+  
+  // Handle timestamp number
+  if (typeof dob === 'number' && dob > 0) {
+    const date = new Date(dob);
+    return !isNaN(date.getTime());
+  }
+  
+  // Handle objects with _seconds (Firestore Timestamp structure)
+  if (dob?._seconds && typeof dob._seconds === 'number') {
+    const date = new Date(dob._seconds * 1000);
+    return !isNaN(date.getTime());
+  }
+  
+  return false;
+};
+
 export const detectMissingItems = (
   profileData: ProfileData,
   onTabChange?: (tab: string) => void
@@ -76,7 +112,8 @@ export const detectMissingItems = (
   }
 
   // Missing Date of Birth (required for eligibility)
-  if (!profileData.dateOfBirth) {
+  // Check if dateOfBirth is valid and present
+  if (!hasValidDateOfBirth(profileData.dateOfBirth)) {
     items.push({
       id: 'missing_dob',
       type: 'warning',
@@ -165,7 +202,7 @@ export const detectMissingItems = (
             message: `Expired Certification: ${cert.name} (${daysAgo} days ago)`,
             action: onTabChange ? {
               label: 'Update Certification',
-              onClick: () => onTabChange('Licenses & Certs'),
+              onClick: () => onTabChange('Qualifications'),
             } : undefined,
           });
         } else {
@@ -180,7 +217,7 @@ export const detectMissingItems = (
               message: `Certification expiring soon: ${cert.name} (${daysUntilExpiration} days)`,
               action: onTabChange ? {
                 label: 'Update Certification',
-                onClick: () => onTabChange('Licenses & Certs'),
+                onClick: () => onTabChange('Certs'),
               } : undefined,
             });
           }
@@ -199,7 +236,7 @@ export const detectMissingItems = (
       message: 'Background Check Not Complete',
       action: onTabChange ? {
         label: 'Start Background Check',
-        onClick: () => onTabChange('Background & Vaccination'),
+        onClick: () => onTabChange('Backgrounds'),
       } : undefined,
     });
   }

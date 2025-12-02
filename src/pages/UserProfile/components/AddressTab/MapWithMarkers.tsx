@@ -35,12 +35,14 @@ const MapWithMarkers: React.FC<Props> = ({
   const [center, setCenter] = useState<LatLng | null>(null);
 
   useEffect(() => {
-    if (homeLat && homeLng) {
+    if (homeLat !== null && homeLat !== undefined && homeLng !== null && homeLng !== undefined) {
       setCenter({ lat: homeLat, lng: homeLng });
-    } else if (workLat && workLng) {
+    } else if (workLat !== null && workLat !== undefined && workLng !== null && workLng !== undefined) {
       setCenter({ lat: workLat, lng: workLng });
-    } else if (currentLat && currentLng) {
+    } else if (currentLat !== null && currentLat !== undefined && currentLng !== null && currentLng !== undefined) {
       setCenter({ lat: currentLat, lng: currentLng });
+    } else {
+      setCenter(null);
     }
   }, [homeLat, homeLng, workLat, workLng, currentLat, currentLng]);
 

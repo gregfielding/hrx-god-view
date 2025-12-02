@@ -6,6 +6,7 @@ import { doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/fires
 
 import { auth, db } from '../firebase';
 import { Role, SecurityLevel, getAccessRole } from '../utils/AccessRoles';
+import { logLoginActivity, logLogoutActivity } from '../utils/activityLogger';
 
 // New claims-based types
 export type ClaimsRole = 'Admin' | 'Recruiter' | 'Manager' | 'Worker' | 'Customer' | 'Tenant' | 'HRX';
@@ -409,6 +410,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           recruiter: false,
           jobsBoard: false, // Module access flag for managers/admins only
           source: 'public_jobs_board',
+          // Default privacy and notification settings
+          locationSettings: {
+            locationSharingEnabled: true,
+            locationGranularity: 'precise',
+            locationUpdateFrequency: 'realtime',
+          },
+          notificationSettings: {
+            pushNotifications: true,
+            emailNotifications: true,
+            smsNotifications: true,
+            companionMessages: true,
+            shiftReminders: true,
+            safetyAlerts: true,
+            performanceUpdates: true,
+            quietHours: {
+              enabled: false,
+              startTime: '22:00',
+              endTime: '08:00',
+            },
+          },
+          privacySettings: {
+            profileVisibility: 'managers',
+            showContactInfo: true,
+            showLocation: true,
+            showPerformanceMetrics: true,
+            allowDataAnalytics: true,
+            allowAIInsights: true,
+          },
         }
       : {
           uid: user.uid,
@@ -476,6 +505,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               hasReportedLoginRef.current = true;
               console.warn('Failed to update user login info:', err);
             }
+          }
+          
+          // Always log login activity (even if login info update was skipped)
+          try {
+            const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+            const deviceType = /Mobile|Android|iPhone/i.test(userAgent) ? 'mobile' : 'desktop';
+            await logLoginActivity(user.uid, {
+              userAgent,
+              deviceType,
+            });
+          } catch (logError) {
+            console.warn('Failed to log login activity:', logError);
+            // Don't block login if activity logging fails
           }
         }
 
@@ -731,6 +773,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const logout = async () => {
+    // Log logout activity before signing out
+    if (currentUser) {
+      try {
+        const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+        await logLogoutActivity(currentUser.uid, {
+          userAgent,
+        });
+      } catch (logError) {
+        console.warn('Failed to log logout activity:', logError);
+        // Don't block logout if activity logging fails
+      }
+    }
+    
     await signOut(auth);
     setCurrentUser(null);
     setRole('Tenant');

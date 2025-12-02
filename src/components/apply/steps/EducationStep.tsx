@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { queueProfileUpdate, flushProfileUpdates } from '../../../utils/userProfileBatching';
 import { 
   Box, 
@@ -20,9 +20,10 @@ import {
   IconButton,
   Alert
 } from '@mui/material';
-import { AddCircle, Delete as DeleteIcon, ExpandMore, School, CalendarToday, Verified, CheckCircle } from '@mui/icons-material';
+import { AddCircle, Delete as DeleteIcon, ExpandMore, School, CalendarToday, Verified, CheckCircle, Upload as UploadIcon, Visibility as ViewIcon } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../../../firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { auth, db, storage } from '../../../firebase';
 import credentialsSeed from '../../../data/credentialsSeed.json';
 
 type Props = {
@@ -32,6 +33,7 @@ type Props = {
   tenantId?: string;
   jobId?: string;
   jobPosting?: any;
+  showOnly?: 'education' | 'certifications' | 'both';
 };
 
 const degreeTypes = [
@@ -80,7 +82,7 @@ const allCertificationOptions = Array.from(new Set([...certificationOptions, ...
 // Generate years from 1970 to 2026 for date picker
 const yearOptions = Array.from({ length: 57 }, (_, i) => 2026 - i);
 
-const EducationStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
+const EducationStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, showOnly = 'both' }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -88,6 +90,8 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   const [certificationDialogOpen, setCertificationDialogOpen] = useState(false);
   const [quickAddEducationValue, setQuickAddEducationValue] = useState<string | null>(null);
   const [quickAddCertificationValue, setQuickAddCertificationValue] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [newEducation, setNewEducation] = useState({
     school: '',
@@ -103,6 +107,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
     issuer: '',
     expirationDate: '',
     showExpiration: false,
+    file: null as File | null,
   });
 
   // Use batched updates, but flush immediately for array operations (education, certifications)
@@ -257,33 +262,81 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       issuer: '',
       expirationDate: '',
       showExpiration: false,
+      file: null,
     });
     setCertificationDialogOpen(true);
   };
 
-  const handleSaveCertification = () => {
-    const entry: any = {
-      name: newCertification.name.trim(),
-    };
-    if (newCertification.issuer) entry.issuer = newCertification.issuer.trim();
-    if (newCertification.showExpiration && newCertification.expirationDate) {
-      entry.expirationDate = newCertification.expirationDate;
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setNewCertification(prev => ({ ...prev, file }));
     }
-    
-    const updated = [...certifications, entry];
-    onChange({ ...value, certifications: updated });
-    const uid = auth.currentUser?.uid;
-    if (uid) {
-      debouncedUpdate(doc(db, 'users', uid), { certifications: updated, updatedAt: serverTimestamp() });
+  };
+
+  const handleSaveCertification = async () => {
+    if (!newCertification.name.trim()) return;
+
+    setUploading(true);
+    try {
+      let fileUrl: string | undefined;
+      let fileName: string | undefined;
+      let uploadedAt: Date | undefined;
+
+      // Upload file if provided
+      const uid = auth.currentUser?.uid;
+      if (newCertification.file && uid) {
+        const certSlug = newCertification.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const path = `users/${uid}/certifications/${certSlug}/${Date.now()}-${newCertification.file.name}`;
+        const fileRef = ref(storage, path);
+        
+        await uploadBytes(fileRef, newCertification.file);
+        fileUrl = await getDownloadURL(fileRef);
+        fileName = newCertification.file.name;
+        uploadedAt = new Date();
+      }
+
+      const entry: any = {
+        name: newCertification.name.trim(),
+      };
+      
+      if (newCertification.issuer) {
+        entry.issuer = newCertification.issuer.trim();
+      }
+      
+      if (newCertification.showExpiration && newCertification.expirationDate) {
+        entry.expirationDate = newCertification.expirationDate;
+      }
+      
+      if (fileUrl) {
+        entry.fileUrl = fileUrl;
+        entry.fileName = fileName;
+        entry.uploadedAt = uploadedAt;
+      }
+      
+      const updated = [...certifications, entry];
+      onChange({ ...value, certifications: updated });
+      
+      if (uid) {
+        // Flush immediately for file uploads
+        await updateDoc(doc(db, 'users', uid), { certifications: updated, updatedAt: serverTimestamp() });
+      }
+      
+      setCertificationDialogOpen(false);
+      setNewCertification({
+        name: '',
+        issuer: '',
+        expirationDate: '',
+        showExpiration: false,
+        file: null,
+      });
+      setQuickAddCertificationValue(null);
+    } catch (error) {
+      console.error('Error saving certification:', error);
+      alert('Failed to save certification');
+    } finally {
+      setUploading(false);
     }
-    setCertificationDialogOpen(false);
-    setNewCertification({
-      name: '',
-      issuer: '',
-      expirationDate: '',
-      showExpiration: false,
-    });
-    setQuickAddCertificationValue(null);
   };
 
   const handleDeleteCertification = (idx: number) => {
@@ -301,6 +354,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       issuer: '',
       expirationDate: '',
       showExpiration: false,
+      file: null,
     });
     setQuickAddCertificationValue(null);
     setCertificationDialogOpen(true);
@@ -309,7 +363,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   return (
     <Box>
       {/* Required Education Section */}
-      {requiredEducation.length > 0 && (
+      {(showOnly === 'both' || showOnly === 'education') && requiredEducation.length > 0 && (
         <Box sx={{ mb: 2.5 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
             🔑 Required Education
@@ -385,6 +439,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       )}
 
       {/* Education Section */}
+      {(showOnly === 'both' || showOnly === 'education') && (
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           🎓 Education
@@ -504,8 +559,10 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           }}
         />
       </Box>
+      )}
 
       {/* Certifications Section */}
+      {(showOnly === 'both' || showOnly === 'certifications') && (
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           ✅ Certifications
@@ -536,7 +593,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
                     }
                   }}
                 >
-                  <Box>
+                  <Box sx={{ flex: 1 }}>
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>
                       {entry.name || 'Certification'}
                       {entry.issuer && ` (${entry.issuer})`}
@@ -546,15 +603,48 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
                         Expires: {entry.expirationDate}
                       </Typography>
                     )}
+                    {entry.fileUrl && entry.fileName && (
+                      <Typography variant="body2" color="text.secondary">
+                        {entry.fileName}
+                        {entry.uploadedAt && (() => {
+                          try {
+                            const date = entry.uploadedAt instanceof Date 
+                              ? entry.uploadedAt 
+                              : entry.uploadedAt?.toDate?.() || new Date(entry.uploadedAt);
+                            const formatted = new Intl.DateTimeFormat('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            }).format(date);
+                            return ` • Uploaded ${formatted}`;
+                          } catch (e) {
+                            return '';
+                          }
+                        })()}
+                      </Typography>
+                    )}
                   </Box>
-                  <IconButton
-                    size="small"
-                    color="error"
-                    onClick={() => handleDeleteCertification(idx)}
-                    sx={{ ml: 1 }}
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
+                  <Stack direction="row" spacing={0.5}>
+                    {entry.fileUrl && (
+                      <Button
+                        size="small"
+                        variant="text"
+                        startIcon={<ViewIcon />}
+                        href={entry.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        View
+                      </Button>
+                    )}
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => handleDeleteCertification(idx)}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
                 </Box>
               ))}
             </Stack>
@@ -685,6 +775,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           }}
         />
       </Box>
+      )}
 
       {/* Education Dialog */}
       <Dialog 
@@ -818,7 +909,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       {/* Certification Dialog */}
       <Dialog 
         open={certificationDialogOpen} 
-        onClose={() => setCertificationDialogOpen(false)}
+        onClose={() => !uploading && setCertificationDialogOpen(false)}
         maxWidth="sm"
         fullWidth
         PaperProps={{
@@ -897,16 +988,49 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
                 />
               </AccordionDetails>
             </Accordion>
+
+            {/* File Upload Section */}
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                Upload Document (Optional)
+              </Typography>
+              <Button
+                variant="outlined"
+                component="label"
+                startIcon={<UploadIcon />}
+                fullWidth
+                disabled={uploading}
+              >
+                {newCertification.file ? newCertification.file.name : 'Choose File'}
+                <input
+                  type="file"
+                  hidden
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={handleFileSelect}
+                  ref={fileInputRef}
+                />
+              </Button>
+              {newCertification.file && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                  Selected: {newCertification.file.name}
+                </Typography>
+              )}
+            </Box>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, pt: 1 }}>
-          <Button onClick={() => setCertificationDialogOpen(false)}>Cancel</Button>
+          <Button 
+            onClick={() => setCertificationDialogOpen(false)} 
+            disabled={uploading}
+          >
+            Cancel
+          </Button>
           <Button 
             variant="contained" 
             onClick={handleSaveCertification}
-            disabled={!newCertification.name}
+            disabled={!newCertification.name || uploading}
           >
-            Save
+            {uploading ? 'Uploading...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>

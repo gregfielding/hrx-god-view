@@ -27,6 +27,7 @@ import {
   InputAdornment,
   Stack,
   Link as MUILink,
+  Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -50,6 +51,7 @@ import {
   Language as LanguageIcon,
   AccountBox as AccountBoxIcon,
   LocalPhone as LocalPhoneIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import type { SvgIconComponent } from '@mui/icons-material';
 import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
@@ -66,13 +68,16 @@ import MapWithMarkers from './AddressTab/MapWithMarkers';
 
 type Props = {
   uid: string;
+  onTabChange?: (tab: string) => void;
 };
 
-const ProfileOverview: React.FC<Props> = ({ uid }) => {
+const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const sectionSpacing = isMobile ? 2 : 3;
-  const cardPadding = isMobile ? 2 : 3;
+  const cardPadding = isMobile ? 1 : 3;
+  const cardContentPadding = isMobile ? 1.5 : 2;
+  const cardHeaderPadding = isMobile ? { px: 1.5, py: 1 } : undefined;
   const coerceToDate = (value: any): Date | null => {
     if (!value) return null;
     try {
@@ -94,6 +99,42 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
     } catch {
       return null;
     }
+  };
+
+  // Helper function to check if a date value is valid and present
+  const hasValidDateOfBirth = (dob: any): boolean => {
+    if (!dob) return false;
+    
+    // Handle Firestore Timestamp
+    if (dob?.toDate && typeof dob.toDate === 'function') {
+      const date = dob.toDate();
+      return date instanceof Date && !isNaN(date.getTime());
+    }
+    
+    // Handle Date object
+    if (dob instanceof Date) {
+      return !isNaN(dob.getTime());
+    }
+    
+    // Handle string
+    if (typeof dob === 'string' && dob.trim() !== '') {
+      const date = new Date(dob);
+      return !isNaN(date.getTime());
+    }
+    
+    // Handle timestamp number
+    if (typeof dob === 'number' && dob > 0) {
+      const date = new Date(dob);
+      return !isNaN(date.getTime());
+    }
+    
+    // Handle objects with _seconds (Firestore Timestamp structure)
+    if (dob?._seconds && typeof dob._seconds === 'number') {
+      const date = new Date(dob._seconds * 1000);
+      return !isNaN(date.getTime());
+    }
+    
+    return false;
   };
   const { tenantId: activeTenantId, user, securityLevel, activeTenant } = useAuth();
   const [form, setForm] = useState<UserProfileForm>({
@@ -136,6 +177,8 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
   const [tenantId, setTenantId] = useState<string>('');
   const [tenantName, setTenantName] = useState<string>('');
   const [customerName, setCustomerName] = useState<string>('');
+  const [userGroups, setUserGroups] = useState<any[]>([]);
+  const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
   const [addressInfo, setAddressInfo] = useState<any>({
@@ -158,6 +201,13 @@ const ProfileOverview: React.FC<Props> = ({ uid }) => {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [isEditingBasicIdentity, setIsEditingBasicIdentity] = useState(false);
   const [isEditingHomeAddress, setIsEditingHomeAddress] = useState(false);
+  const [workEligibilityData, setWorkEligibilityData] = useState({
+    workAuthorized: false,
+    requireSponsorship: false,
+    gender: undefined as string | undefined,
+    veteranStatus: '',
+    disabilityStatus: '',
+  });
 
   // Removed AI insights section
 
@@ -295,6 +345,15 @@ const transportOptions: Array<{
             setForm(newForm);
             setOriginalForm(newForm);
 
+            // Load Work Eligibility data
+            setWorkEligibilityData({
+              workAuthorized: data.workEligibility !== false,
+              requireSponsorship: !!data.requireSponsorship,
+              gender: data.gender || undefined,
+              veteranStatus: data.veteranStatus || '',
+              disabilityStatus: data.disabilityStatus || '',
+            });
+
             // Set phone verification status
             setPhoneVerified(data.phoneVerified === true);
 
@@ -308,7 +367,25 @@ const transportOptions: Array<{
                 (data.locationSettings?.lastLocationUpdate ? new Date(data.locationSettings.lastLocationUpdate) : null),
             });
             
-            setAddressInfo(data.addressInfo || {});
+            // Load addressInfo - check multiple possible locations for address data
+            const addressInfoData = data.addressInfo || {};
+            const addressData = data.address || {};
+            const coordinatesData = addressData.coordinates || {};
+            
+            // Merge addressInfo with fallbacks from address.coordinates
+            setAddressInfo({
+              streetAddress: addressInfoData.streetAddress || addressData.street || '',
+              unitNumber: addressInfoData.unitNumber || addressData.unit || '',
+              city: addressInfoData.city || addressData.city || data.city || '',
+              state: addressInfoData.state || addressData.state || data.state || '',
+              zip: addressInfoData.zip || addressInfoData.zipCode || addressData.zipCode || addressData.zip || '',
+              homeLat: addressInfoData.homeLat ?? coordinatesData.lat ?? null,
+              homeLng: addressInfoData.homeLng ?? coordinatesData.lng ?? null,
+              workLat: addressInfoData.workLat ?? null,
+              workLng: addressInfoData.workLng ?? null,
+              currentLat: addressInfoData.currentLat ?? null,
+              currentLng: addressInfoData.currentLng ?? null,
+            });
 
             // Populate system access info: prefer lastActiveAt, fallback to lastLoginAt
             setSystemAccess({
@@ -421,6 +498,48 @@ const transportOptions: Array<{
       setLocations([]);
       setManagers([]);
     }
+  };
+
+  // Load user groups when tenantId is available
+  useEffect(() => {
+    if (tenantId && uid) {
+      loadUserGroups(tenantId);
+    }
+  }, [tenantId, uid]);
+
+  const loadUserGroups = async (tenantId: string) => {
+    try {
+      // Fetch user groups
+      const gq = collection(db, 'tenants', tenantId, 'userGroups');
+      const gSnap = await getDocs(gq);
+      const groupData = gSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setUserGroups(groupData);
+
+      // Fetch current user's group memberships
+      const userRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        setUserGroupIds(userData.userGroupIds || []);
+      }
+    } catch (error) {
+      console.error('Error loading user groups:', error);
+      setUserGroups([]);
+    }
+  };
+
+  const handleUserGroupsChange = (event: any, newValue: any[]) => {
+    const newGroupIds = newValue.map((group: any) => group.id);
+    setUserGroupIds(newGroupIds);
+    
+    // Persist to Firestore
+    const userRef = doc(db, 'users', uid);
+    updateDoc(userRef, { 
+      userGroupIds: newGroupIds,
+      updatedAt: new Date()
+    }).catch((error) => {
+      console.error('Error updating user groups:', error);
+    });
   };
 
   const handleAddressChange = async (updatedAddressInfo: any) => {
@@ -753,9 +872,65 @@ const transportOptions: Array<{
                     </IconButton>
                   )
                 }
-                sx={{ pb: 0 }}
+                sx={{ pb: 0, ...cardHeaderPadding }}
               />
-              <CardContent sx={{ p: 2, pt: 2 }}>
+              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
+                {/* Missing Items Alerts for Basic Identity */}
+                {!isEditingBasicIdentity && (
+                  <Box sx={{ mb: 2 }}>
+                    {(!form.emergencyContact?.name || !form.emergencyContact?.phone) && (
+                      <Alert 
+                        severity="error" 
+                        sx={{ mb: 1 }}
+                        action={
+                          <Button 
+                            size="small" 
+                            onClick={() => setIsEditingBasicIdentity(true)}
+                            color="inherit"
+                          >
+                            Add
+                          </Button>
+                        }
+                      >
+                        Missing Emergency Contact
+                      </Alert>
+                    )}
+                    {!hasValidDateOfBirth(form.dateOfBirth) && (
+                      <Alert 
+                        severity="warning" 
+                        sx={{ mb: 1 }}
+                        action={
+                          <Button 
+                            size="small" 
+                            onClick={() => setIsEditingBasicIdentity(true)}
+                            color="inherit"
+                          >
+                            Add
+                          </Button>
+                        }
+                      >
+                        Missing Date of Birth
+                      </Alert>
+                    )}
+                    {!form.phone && (
+                      <Alert 
+                        severity="warning" 
+                        sx={{ mb: 1 }}
+                        action={
+                          <Button 
+                            size="small" 
+                            onClick={() => setIsEditingBasicIdentity(true)}
+                            color="inherit"
+                          >
+                            Add
+                          </Button>
+                        }
+                      >
+                        Missing Phone Number
+                      </Alert>
+                    )}
+                  </Box>
+                )}
                 {isEditingBasicIdentity ? (
                   // Edit Mode - Show Input Fields
                   <Grid container spacing={2}>
@@ -1009,16 +1184,44 @@ const transportOptions: Array<{
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                   Email
                                 </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                  <MUILink 
-                                    href={`mailto:${form.email}`} 
-                                    color="primary" 
-                                    underline="hover"
-                                    sx={{ wordBreak: 'break-all' }}
-                                  >
-                                    {form.email}
-                                  </MUILink>
-                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                  <Typography variant="body1">
+                                    <MUILink 
+                                      href={`mailto:${form.email}`} 
+                                      color="primary" 
+                                      underline="hover"
+                                      sx={{ wordBreak: 'break-all' }}
+                                    >
+                                      {form.email}
+                                    </MUILink>
+                                  </Typography>
+                                  <Tooltip title="Copy email">
+                                    <IconButton
+                                      size="small"
+                                      onClick={async () => {
+                                        try {
+                                          await navigator.clipboard.writeText(form.email);
+                                          setMessage('Email copied to clipboard');
+                                          setShowToast(true);
+                                        } catch (err) {
+                                          console.error('Failed to copy email:', err);
+                                          setMessage('Failed to copy email');
+                                          setShowToast(true);
+                                        }
+                                      }}
+                                      sx={{ 
+                                        p: 0.5,
+                                        color: 'text.secondary',
+                                        '&:hover': {
+                                          color: 'primary.main',
+                                          bgcolor: 'action.hover'
+                                        }
+                                      }}
+                                    >
+                                      <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                </Box>
                               </Box>
                             </Box>
                           </Grid>
@@ -1039,6 +1242,33 @@ const transportOptions: Array<{
                                   {phoneVerified && (
                                     <CheckCircleIcon color="success" fontSize="small" titleAccess="Phone Verified" />
                                   )}
+                                  <Tooltip title="Copy phone number">
+                                    <IconButton
+                                      size="small"
+                                      onClick={async () => {
+                                        try {
+                                          const phoneToCopy = formatPhoneNumber(form.phone) || form.phone;
+                                          await navigator.clipboard.writeText(phoneToCopy);
+                                          setMessage('Phone number copied to clipboard');
+                                          setShowToast(true);
+                                        } catch (err) {
+                                          console.error('Failed to copy phone number:', err);
+                                          setMessage('Failed to copy phone number');
+                                          setShowToast(true);
+                                        }
+                                      }}
+                                      sx={{ 
+                                        p: 0.5,
+                                        color: 'text.secondary',
+                                        '&:hover': {
+                                          color: 'primary.main',
+                                          bgcolor: 'action.hover'
+                                        }
+                                      }}
+                                    >
+                                      <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                    </IconButton>
+                                  </Tooltip>
                                 </Box>
                               </Box>
                             </Box>
@@ -1195,6 +1425,204 @@ const transportOptions: Array<{
                     })()}
                   </Box>
                 )}
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Work Eligibility Section */}
+          <Grid item xs={12}>
+            <Card variant="outlined" sx={{ p: cardPadding }}>
+              <CardHeader 
+                title={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <SecurityIcon sx={{ mr: 1 }} color="primary" />
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Work Eligibility</Typography>
+                  </Box>
+                }
+                titleTypographyProps={{ component: 'div' }}
+                action={
+                  canEditProfile() && onTabChange && (
+                    <IconButton
+                      size="small"
+                      onClick={() => onTabChange('Work Eligibility')}
+                      sx={{ 
+                        color: 'text.secondary',
+                        '&:hover': {
+                          bgcolor: 'action.hover'
+                        }
+                      }}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  )
+                }
+                sx={{ pb: 0, ...cardHeaderPadding }}
+              />
+              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
+                {/* Missing Work Eligibility Alert */}
+                {workEligibilityData.workAuthorized === false && (
+                  <Alert 
+                    severity="error" 
+                    sx={{ mb: 2 }}
+                    action={
+                      onTabChange && (
+                        <Button 
+                          size="small" 
+                          onClick={() => onTabChange('Work Eligibility')}
+                          color="inherit"
+                        >
+                          Add
+                        </Button>
+                      )
+                    }
+                  >
+                    Missing Work Eligibility Document
+                  </Alert>
+                )}
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {/* Work Eligibility Information Section */}
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      WORK AUTHORIZATION & EEO
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6}>
+                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                          <CheckCircleIcon sx={{ fontSize: 18, color: workEligibilityData.workAuthorized ? 'success.main' : 'text.disabled', mt: 0.5, flexShrink: 0 }} />
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                              Work Authorization
+                            </Typography>
+                            <Typography variant="body1" sx={{ mt: 0.25 }}>
+                              {workEligibilityData.workAuthorized 
+                                ? 'Authorized to work in the United States' 
+                                : 'Not authorized to work in the United States'}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Grid>
+                      
+                      {workEligibilityData.requireSponsorship && (
+                        <Grid item xs={12} sm={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Sponsorship
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                Requires employer sponsorship
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      
+                      {workEligibilityData.gender && (
+                        <Grid item xs={12} sm={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Gender
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                {workEligibilityData.gender}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      
+                      {workEligibilityData.veteranStatus && (
+                        <Grid item xs={12} sm={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <AccountBoxIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Veteran Status
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                {workEligibilityData.veteranStatus}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      
+                      {workEligibilityData.disabilityStatus && (
+                        <Grid item xs={12} sm={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <AccountBoxIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Disability Status
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                {workEligibilityData.disabilityStatus}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      
+                      {!workEligibilityData.workAuthorized && !workEligibilityData.requireSponsorship && !workEligibilityData.gender && !workEligibilityData.veteranStatus && !workEligibilityData.disabilityStatus && (
+                        <Grid item xs={12}>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                            No additional EEO information provided. Click the edit icon to add optional EEO details.
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* User Groups Section */}
+          <Grid item xs={12}>
+            <Card variant="outlined" sx={{ p: cardPadding }}>
+              <CardHeader 
+                title={
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700 }}>User Groups</Typography>
+                  </Box>
+                }
+                titleTypographyProps={{ component: 'div' }}
+                sx={cardHeaderPadding}
+              />
+              <CardContent sx={{ p: cardContentPadding, pt: 0 }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Manage which user groups this user belongs to. User groups help organize users and control access to specific features.
+                  </Typography>
+                  <Autocomplete
+                    multiple
+                    options={userGroups}
+                    getOptionLabel={(option) => option.title || option.id}
+                    value={userGroups.filter((g) => userGroupIds.includes(g.id))}
+                    onChange={handleUserGroupsChange}
+                    renderInput={(params) => (
+                      <TextField 
+                        {...params} 
+                        label="User Groups" 
+                        placeholder="Select groups" 
+                        fullWidth 
+                      />
+                    )}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          label={option.title || option.id}
+                          {...getTagProps({ index })}
+                          key={option.id}
+                        />
+                      ))
+                    }
+                    isOptionEqualToValue={(option, value) => option.id === value.id}
+                  />
+                </Box>
               </CardContent>
             </Card>
           </Grid>
@@ -1475,9 +1903,9 @@ const transportOptions: Array<{
                     </IconButton>
                   )
                 }
-                sx={{ pb: 0 }}
+                sx={{ pb: 0, ...cardHeaderPadding }}
               />
-              <CardContent sx={{ p: 2, pt: 2 }}>
+              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
                 {isEditingHomeAddress ? (
                   // Edit Mode - Show Address Form and Map
                   <Box>
@@ -1497,50 +1925,23 @@ const transportOptions: Array<{
                   // View Mode - Show as Read-Only Text
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                     {(addressInfo.streetAddress || addressInfo.city || addressInfo.state || addressInfo.zip) && (
-                      <Box>
-                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Address Information
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                        <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                        <Typography variant="body1">
+                          {[
+                            [addressInfo.streetAddress, addressInfo.unitNumber].filter(Boolean).join(', '),
+                            [addressInfo.city, addressInfo.state, addressInfo.zip].filter(Boolean).join(', ')
+                          ]
+                            .filter(Boolean)
+                            .join(', ') || '-'}
                         </Typography>
-                        <Grid container spacing={2}>
-                          {(addressInfo.streetAddress || addressInfo.unitNumber) && (
-                            <Grid item xs={12}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Street Address
-                                  </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {[addressInfo.streetAddress, addressInfo.unitNumber].filter(Boolean).join(', ') || '-'}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-                          
-                          {(addressInfo.city || addressInfo.state || addressInfo.zip) && (
-                            <Grid item xs={12}>
-                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                                <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    City, State, ZIP
-                                  </Typography>
-                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                                    {[addressInfo.city, addressInfo.state, addressInfo.zip]
-                                      .filter(Boolean)
-                                      .join(', ') || '-'}
-                                  </Typography>
-                                </Box>
-                              </Box>
-                            </Grid>
-                          )}
-                        </Grid>
                       </Box>
                     )}
                     
                     {/* Map in View Mode - Show if coordinates exist */}
-                    {(addressInfo.homeLat && addressInfo.homeLng) && (
+                    {((addressInfo.homeLat !== null && addressInfo.homeLat !== undefined && addressInfo.homeLng !== null && addressInfo.homeLng !== undefined) ||
+                      (addressInfo.workLat !== null && addressInfo.workLat !== undefined && addressInfo.workLng !== null && addressInfo.workLng !== undefined) ||
+                      (addressInfo.currentLat !== null && addressInfo.currentLat !== undefined && addressInfo.currentLng !== null && addressInfo.currentLng !== undefined)) && (
                       <Box>
                         <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                           Location Map

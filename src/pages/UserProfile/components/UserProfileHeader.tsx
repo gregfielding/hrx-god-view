@@ -1,15 +1,18 @@
-import React, { useRef, useState } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert } from '@mui/material';
+import React, { useRef, useState, useEffect } from 'react';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge } from '@mui/material';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, getDocs, query } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
+import MessageIcon from '@mui/icons-material/Message';
+import DescriptionIcon from '@mui/icons-material/Description';
+import NoteIcon from '@mui/icons-material/Note';
 import BusinessIcon from '@mui/icons-material/Business';
 import LocationOnOutlinedIcon from '@mui/icons-material/LocationOnOutlined';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
@@ -23,12 +26,11 @@ import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
+import { useAuth } from '../../../contexts/AuthContext';
 import DocumentIconBar from './DocumentIconBar';
 import CertificationsModal from './CertificationsModal';
-import QuickInfoBar from './QuickInfoBar';
 import ContactActionButtons from './ContactActionButtons';
 import MissingItemsAlert from './MissingItemsAlert';
-import CompactMissingItemsBanner from './CompactMissingItemsBanner';
 import QuickActionToolbar from './QuickActionToolbar';
 import ComplianceStatusChips from './ComplianceStatusChips';
 import ProfileQualityMeter from './ProfileQualityMeter';
@@ -36,6 +38,7 @@ import CompactProfileQualityBar from './CompactProfileQualityBar';
 import CompactActionGrid from './CompactActionGrid';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
+import AddUserNoteDialog from './AddUserNoteDialog';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -90,9 +93,15 @@ interface UserProfileHeaderProps {
   languages?: string[]; // Array of language strings
   behavioralTraits?: string[]; // Array of behavioral/personality traits
   educationLevel?: string;
+  education?: Array<{ degree?: string; [key: string]: any }>;
+  workExperience?: Array<{ jobTitle?: string; title?: string; [key: string]: any }>;
   activeApplicationsCount?: number;
   resumeCompleteness?: number;
   onTabChange?: (tabLabel: string) => void; // Callback to change tabs
+  eVerifyOrders?: Array<{ id: string; dateSubmitted: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  backgroundCheckOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  drugScreeningOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
+  additionalScreeningOrders?: Array<{ id: string; type: string; typeLabel: string; dateOrdered: string; status: string; result?: string; completionDate?: string; submittedBy?: string }>;
   emergencyContact?: {
     name?: string;
     phone?: string;
@@ -150,9 +159,15 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   languages = [],
   behavioralTraits = [],
   educationLevel,
+  education = [],
+  workExperience = [],
   activeApplicationsCount,
   resumeCompleteness,
   onTabChange,
+  eVerifyOrders = [],
+  backgroundCheckOrders = [],
+  drugScreeningOrders = [],
+  additionalScreeningOrders = [],
   emergencyContact,
   dateOfBirth,
   onAddNote,
@@ -169,9 +184,31 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const [hover, setHover] = useState(false);
   const [showCertificationsModal, setShowCertificationsModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState<number>(0);
+  const { securityLevel: viewerSecurityLevel } = useAuth();
+  const viewerLevel = parseInt(viewerSecurityLevel || '0');
+  const canViewAdminContent = viewerLevel >= 5;
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  // Load notes count
+  useEffect(() => {
+    const loadNotesCount = async () => {
+      try {
+        const notesRef = collection(db, 'users', uid, 'notes');
+        const notesSnapshot = await getDocs(query(notesRef));
+        setNotesCount(notesSnapshot.size);
+      } catch (error) {
+        console.error('Error loading notes count:', error);
+      }
+    };
+
+    if (uid) {
+      loadNotesCount();
+    }
+  }, [uid]);
 
   // Detect missing items
   const missingItems = React.useMemo(() => detectMissingItems(
@@ -403,78 +440,83 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     if (certifications && certifications.length > 0) {
       setShowCertificationsModal(true);
     } else if (onTabChange) {
-      onTabChange('Licenses & Certs');
+      onTabChange('Qualifications');
     }
   };
 
   // Handler for work eligibility click
   const handleWorkEligibilityClick = () => {
-    if (onTabChange) {
-      onTabChange('Work Eligibility');
-    }
+    // Work Eligibility tab removed - do nothing
   };
 
   // Handler for background check click
   const handleBackgroundCheckClick = () => {
     if (onTabChange) {
-      onTabChange('Background & Vaccination');
+      onTabChange('Backgrounds');
     }
   };
 
   // Handler for vaccination click
   const handleVaccinationClick = () => {
     if (onTabChange) {
-      onTabChange('Background & Vaccination');
+      onTabChange('Backgrounds');
     }
   };
 
   return (
-    <Box mb={2} sx={{ py: 1.5 }}>
-      {showBreadcrumbs && breadcrumbPath.length > 0 && (
-        <Breadcrumbs 
-          separator={<NavigateNextIcon fontSize="small" />} 
-          aria-label="breadcrumb"
-          sx={{ mb: 2 }}
-        >
-          {breadcrumbPath.map((item, index) => (
-            item.href ? (
-              <Link
-                key={index}
-                component={RouterLink}
-                to={item.href}
-                color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
-                underline={index === breadcrumbPath.length - 1 ? "none" : "hover"}
-                sx={{
-                  fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
-                  textDecoration: 'none',
-                  '&:hover': {
-                    textDecoration: index === breadcrumbPath.length - 1 ? 'none' : 'underline'
-                  }
-                }}
-              >
-                {item.label}
-              </Link>
-            ) : (
-              <Typography
-                key={index}
-                color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
-                sx={{
-                  fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
-                }}
-              >
-                {item.label}
-              </Typography>
-            )
-          ))}
-        </Breadcrumbs>
-      )}
+    <Box 
+      mb={2} 
+      sx={{ 
+        p: 3,
+        borderRadius: 2,
+        bgcolor: 'background.paper',
+        border: '1px solid',
+        borderColor: 'divider',
+        boxShadow: 'none'
+      }}
+    >
+      {/* Top Row: Breadcrumbs + Role Chip */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+        {showBreadcrumbs && breadcrumbPath.length > 0 && (
+          <Breadcrumbs 
+            separator={<NavigateNextIcon fontSize="small" />} 
+            aria-label="breadcrumb"
+            sx={{ flex: 1 }}
+          >
+            {breadcrumbPath.map((item, index) => (
+              item.href ? (
+                <Link
+                  key={index}
+                  component={RouterLink}
+                  to={item.href}
+                  color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
+                  underline={index === breadcrumbPath.length - 1 ? "none" : "hover"}
+                  sx={{
+                    fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
+                    textDecoration: 'none',
+                    '&:hover': {
+                      textDecoration: index === breadcrumbPath.length - 1 ? 'none' : 'underline'
+                    }
+                  }}
+                >
+                  {item.label}
+                </Link>
+              ) : (
+                <Typography
+                  key={index}
+                  color={index === breadcrumbPath.length - 1 ? "text.primary" : "inherit"}
+                  sx={{
+                    fontWeight: index === breadcrumbPath.length - 1 ? 600 : 400,
+                  }}
+                >
+                  {item.label}
+                </Typography>
+              )
+            ))}
+          </Breadcrumbs>
+        )}
+      </Box>
       
-      {/* Compact Missing Items Banner */}
-      <CompactMissingItemsBanner
-        items={missingItems}
-        isAdminView={isAdminView}
-      />
-
       {/* Mobile Layout */}
       <Box sx={{ display: { xs: 'block', md: 'none' } }}>
         {/* Mobile: Avatar + Action Buttons Row */}
@@ -561,43 +603,40 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             )}
           </Box>
 
-          {/* Quick Action Buttons - Mobile */}
-          {isAdminView && (email || phone) && (
-            <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-              {email && (
-                <Button
-                  variant="outlined"
+          {/* Role Chip and Start Onboarding Button - Mobile */}
+          {canViewAdminContent && (
+            <Stack direction="column" spacing={0.5} alignItems="flex-end">
+              {securityLevel && getSecurityLabel(securityLevel) && (
+                <Chip
+                  label={getSecurityLabel(securityLevel)}
                   size="small"
-                  startIcon={<EmailOutlinedIcon />}
-                  href={`mailto:${email}`}
-                  component="a"
                   sx={{
-                    minWidth: 'auto',
-                    px: 1.5,
-                    height: 32,
-                    textTransform: 'none',
-                    textDecoration: 'none',
+                    ...getSoftChipSx(getSecurityColor(securityLevel)),
+                    fontWeight: 600,
+                    height: 24,
+                    fontSize: '0.75rem',
+                    px: 1,
                   }}
-                >
-                  Email
-                </Button>
+                />
               )}
-              {phone && (
+              {isAdminView && (
                 <Button
                   variant="outlined"
                   size="small"
-                  startIcon={<PhoneOutlinedIcon />}
-                  href={`tel:${phone.replace(/\D/g, '')}`}
-                  component="a"
                   sx={{
-                    minWidth: 'auto',
+                    borderColor: 'success.main',
+                    color: 'success.main',
+                    fontSize: '0.75rem',
+                    py: 0.5,
                     px: 1.5,
-                    height: 32,
-                    textTransform: 'none',
-                    textDecoration: 'none',
+                    '&:hover': {
+                      borderColor: 'success.dark',
+                      backgroundColor: 'success.light',
+                      color: 'success.dark',
+                    },
                   }}
                 >
-                  Call
+                  Start Onboarding
                 </Button>
               )}
             </Stack>
@@ -611,7 +650,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               {`${firstName} ${lastName}`}
               {preferredName && preferredName !== firstName && ` (${preferredName})`}
             </Typography>
-            {isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+            {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
               <FavoriteButton
                 itemId={uid}
                 favoriteType="users"
@@ -630,156 +669,381 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               {jobTitle}
             </Typography>
           )}
+
+          {/* Mobile: Location */}
+          {city && state && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+              <LocationOnOutlinedIcon fontSize="small" color="primary" />
+              <Typography variant="body2" color="text.secondary">
+                {city}, {state}
+              </Typography>
+            </Stack>
+          )}
+
+          {/* Mobile: Joined Date */}
+          {createdAt && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 1 }}>
+              Joined: {formatDate(createdAt)}
+            </Typography>
+          )}
+
+          {/* Mobile: Contact Icons Row */}
+          {isAdminView && (phone || email || resume) && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1, mt: 1 }}>
+              {phone && (
+                <>
+                  <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={`tel:${phone.replace(/\D/g, '')}`}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={`Send SMS to ${formatPhoneNumber(phone)}`}>
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={(() => {
+                        const digits = phone.replace(/\D/g, '');
+                        const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
+                        return `sms:${smsNumber}`;
+                      })()}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <MessageIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              )}
+              {email && (
+                <Tooltip title={`Email ${email}`}>
+                  <IconButton
+                    size="small"
+                    component="a"
+                    href={`mailto:${email}`}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {resume && resume.fileName && (
+                <Tooltip title={`View Resume: ${resume.fileName}`}>
+                  <IconButton
+                    size="small"
+                    onClick={handleResumeClick}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <DescriptionIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {isAdminView && (
+                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <NoteIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Badge>
+                </Tooltip>
+              )}
+            </Stack>
+          )}
+          
+          {/* Onboarding Pills - Mobile - Above Skills */}
+          {canViewAdminContent && (() => {
+            // Helper function to get pill color for screening orders
+            const getScreeningPillColor = (status: string, result?: string) => {
+              if (status === 'In-Progress') {
+                return '#ff9800'; // Yellow/warning
+              } else if (status === 'Complete') {
+                if (result === 'Passed') {
+                  return '#4caf50'; // Green
+                } else if (result === 'Failed') {
+                  return '#f44336'; // Red/error
+                }
+              }
+              return '#4caf50'; // Default green
+            };
+
+            // Filter and prepare E-Verify orders (newest first, show only newest)
+            const activeEVerifyOrders = eVerifyOrders.filter(order => order.status !== 'Cancelled');
+            const sortedEVerifyOrders = [...activeEVerifyOrders].sort((a, b) => {
+              const dateA = a.dateSubmitted ? new Date(a.dateSubmitted).getTime() : 0;
+              const dateB = b.dateSubmitted ? new Date(b.dateSubmitted).getTime() : 0;
+              return dateB - dateA;
+            });
+            const newestEVerifyOrder = sortedEVerifyOrders.length > 0 ? sortedEVerifyOrders[0] : null;
+
+            // Filter screening orders (exclude cancelled, show all active orders)
+            const activeBackgroundOrders = backgroundCheckOrders.filter(order => order.status !== 'Cancelled');
+            const activeDrugOrders = drugScreeningOrders.filter(order => order.status !== 'Cancelled');
+            const activeAdditionalOrders = additionalScreeningOrders.filter(order => order.status !== 'Cancelled');
+
+            // Combine all pills
+            const allPills: Array<{ label: string; color: string; key: string }> = [];
+
+            // Add E-Verify pill (only newest)
+            if (newestEVerifyOrder) {
+              let eVerifyColor = '#4caf50';
+              if (newestEVerifyOrder.status === 'In-Progress') {
+                eVerifyColor = '#ff9800';
+              } else if (newestEVerifyOrder.status === 'Complete') {
+                eVerifyColor = newestEVerifyOrder.result && newestEVerifyOrder.result !== 'Employment Authorized' 
+                  ? '#f44336' 
+                  : '#4caf50';
+              }
+              allPills.push({ label: 'E-Verify', color: eVerifyColor, key: `everify-${newestEVerifyOrder.id}` });
+            }
+
+            // Add Background Check pills (one per order)
+            activeBackgroundOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Background Check',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `bg-${order.id}`
+              });
+            });
+
+            // Add Drug Screening pills (one per order)
+            activeDrugOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Drug Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `drug-${order.id}`
+              });
+            });
+
+            // Add Additional Screening pills (one per order)
+            activeAdditionalOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Additional Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `addl-${order.id}`
+              });
+            });
+
+            if (allPills.length === 0) return null;
+
+            return (
+              <Box sx={{ mt: 1, mb: 1 }}>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                  {allPills.map((pill) => (
+                    <Chip
+                      key={pill.key}
+                      label={pill.label}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: pill.color,
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            );
+          })()}
+          
+          {/* Skills Chips - Mobile - Above Profile Quality Bar */}
+          {primarySkills && primarySkills.length > 0 && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {primarySkills.slice(0, 5).map((skill, index) => (
+                  <Chip
+                    key={index}
+                    label={skill}
+                    size="small"
+                    sx={{
+                      height: 22,
+                      fontSize: '0.7rem',
+                      fontWeight: 500,
+                      bgcolor: '#2196F3',
+                      color: 'white',
+                      '& .MuiChip-label': {
+                        px: 1,
+                      },
+                    }}
+                  />
+                ))}
+                {primarySkills.length > 5 && (
+                  <Tooltip title={`${primarySkills.length - 5} more skills`}>
+                    <Chip
+                      label={`+${primarySkills.length - 5}`}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: 'grey.200',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  </Tooltip>
+                )}
+              </Stack>
+            </Box>
+          )}
+          
+          {/* Education, Work Experience, and Certs Chips - Mobile - Below Skills */}
+          {(education.length > 0 || workExperience.length > 0 || (certifications && certifications.length > 0)) && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {/* Education Chips - Purple */}
+                {education.slice(0, 3).map((edu, index) => {
+                  const degree = edu?.degree || '';
+                  if (!degree) return null;
+                  return (
+                    <Chip
+                      key={`edu-${index}`}
+                      label={degree}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#9C27B0',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Work Experience Chips - Navy Blue */}
+                {workExperience.slice(0, 3).map((exp, index) => {
+                  const jobTitle = exp?.jobTitle || exp?.title || '';
+                  if (!jobTitle) return null;
+                  return (
+                    <Chip
+                      key={`exp-${index}`}
+                      label={jobTitle}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#1976D2',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Certifications Chips - Black */}
+                {certifications && certifications.slice(0, 3).map((cert, index) => {
+                  const certName = typeof cert === 'string' ? cert : cert?.name || '';
+                  if (!certName) return null;
+                  return (
+                    <Chip
+                      key={`cert-${index}`}
+                      label={certName}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#212121',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+              </Stack>
+            </Box>
+          )}
           
           {/* Profile Quality Meter - Mobile */}
           {isAdminView && profileScore !== undefined && (
-            <ProfileQualityMeter
-              score={profileScore}
-              missingItemsCount={missingItems.filter(item => item.type === 'error' || item.type === 'warning').length}
-              missingItemsSummary={missingItems.slice(0, 3).map(item => item.message.toLowerCase()).join(', ')}
-            />
-          )}
-          
-          {/* Mobile: Compliance Status - High Priority */}
-          {isAdminView && (
-            <Box sx={{ mb: 1 }}>
-              <ComplianceStatusChips
-                workEligibility={workEligibility}
-                backgroundCheckStatus={backgroundCheckStatus}
-                vaccinationStatus={vaccinationStatus}
-                onWorkEligibilityClick={handleWorkEligibilityClick}
-                onBackgroundCheckClick={handleBackgroundCheckClick}
-                onVaccinationClick={handleVaccinationClick}
-                compact
+            <Box sx={{ mt: 1 }}>
+              <ProfileQualityMeter
+                score={profileScore}
+                missingItemsCount={missingItems.filter(item => item.type === 'error' || item.type === 'warning').length}
+                missingItemsSummary={missingItems.slice(0, 3).map(item => item.message.toLowerCase()).join(', ')}
               />
             </Box>
           )}
 
-          {/* Mobile: Contact Info */}
-          {isAdminView && (
-            <Stack spacing={0.5} sx={{ mb: 1 }}>
-              {city && state && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <LocationOnOutlinedIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary">
-                    {city}, {state}
-                  </Typography>
-                </Stack>
-              )}
-              {phone && (
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-                  <PhoneOutlinedIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
-                    {formatPhoneNumber(phone)}
-                  </Typography>
-                  <ContactActionButtons phone={phone} email={email} compact />
-                </Stack>
-              )}
-              {email && !phone && (
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-                  <EmailOutlinedIcon fontSize="small" color="primary" />
-                  <Typography variant="body2" color="text.secondary" sx={{ mr: 1 }}>
-                    {email}
-                  </Typography>
-                  <ContactActionButtons phone={phone} email={email} compact />
-                </Stack>
-              )}
-              {createdAt && (
-                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mt: 0.5 }}>
-                  Joined: {formatDate(createdAt)}
-                </Typography>
-              )}
-            </Stack>
-          )}
-          {/* Mobile: Status Chips - Cleaner grouped layout */}
-          {isAdminView && (workStatus || securityLevel || employmentType) && (
-            <Stack spacing={0.5} sx={{ mb: 1 }}>
-              {workStatus && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
-                    Status:
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={workStatus}
-                    color={getWorkStatusColor(workStatus)}
-                    sx={{ height: 24 }}
-                  />
-                </Stack>
-              )}
-              {employmentType && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
-                    Type:
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={getEmploymentTypeLabel(employmentType)}
-                    color={getEmploymentTypeColor(employmentType)}
-                    sx={{ height: 24 }}
-                  />
-                </Stack>
-              )}
-              {getSecurityLabel(securityLevel) && (
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, minWidth: 60 }}>
-                    Role:
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={getSecurityLabel(securityLevel)!}
-                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600, height: 24 }}
-                  />
-                </Stack>
-              )}
-            </Stack>
-          )}
-          {/* Mobile: Quick Action Toolbar */}
-          {isAdminView && (
-            <Box sx={{ mb: 1.5 }}>
-              <QuickActionToolbar
-                onEdit={onEditProfile}
-                onViewResume={handleResumeClick}
-                onAddNote={onAddNote}
-                onSendLink={onSendApplicationLink}
-                onPrint={onPrintProfile}
-                onCreateAssignment={onCreateAssignment}
-                onCallNow={onCallNow}
-                onMessageApplicant={onMessageApplicant}
-                onViewTimeline={onViewTimeline}
-                hasResume={!!resume}
-                hasPhone={hasPhone}
-                isAdminView={isAdminView}
-                compact
-              />
-            </Box>
-          )}
-
-          {/* Mobile: Quick Info Bar */}
-          {isAdminView && (
-            <QuickInfoBar
-              resume={resume}
-              certifications={certifications}
-              onResumeClick={handleResumeClick}
-              onCertificationsClick={handleCertificationsClick}
-              profileScore={profileScore}
-              certificationsCount={certifications?.length}
-              activeApplicationsCount={activeApplicationsCount}
-              yearsExperience={yearsExperience}
-              educationLevel={educationLevel}
-              primarySkills={primarySkills}
-              languages={languages}
-              behavioralTraits={behavioralTraits}
-              onSkillsClick={() => onTabChange?.('Skills')}
-              workEligibility={workEligibility}
-              backgroundCheckStatus={backgroundCheckStatus}
-              vaccinationStatus={vaccinationStatus}
-              onWorkEligibilityClick={handleWorkEligibilityClick}
-              onBackgroundCheckClick={handleBackgroundCheckClick}
-              onVaccinationClick={handleVaccinationClick}
-              isAdminView={isAdminView}
-            />
-          )}
         </Box>
       </Box>
 
@@ -792,8 +1056,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         py: 1.5,
         maxHeight: 280,
       }}>
-        {/* Column A: Photo & Status (~150px) */}
-        <Box sx={{ width: 150, flexShrink: 0 }}>
+        {/* Column A: Photo & Status */}
+        <Box sx={{ flexShrink: 0 }}>
           <Box
             position="relative"
             onMouseEnter={() => setHover(true)}
@@ -803,9 +1067,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             <Avatar 
               src={avatarUrl || undefined} 
               sx={{ 
-                width: 96, 
-                height: 96, 
-                fontSize: '2rem',
+                width: 120, 
+                height: 120, 
+                fontSize: '2.5rem',
                 fontWeight: 'bold',
                 border: '2px solid',
                 borderColor: 'divider',
@@ -874,9 +1138,18 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             )}
           </Box>
           
-          {/* Favorite Button */}
-          {isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
-            <Box sx={{ mb: 1, display: 'flex', justifyContent: 'center' }}>
+          {/* Status Pills - Removed duplicate Work Eligible and Active chips - they're shown in ComplianceStatusChips and Employment Row */}
+        </Box>
+
+        {/* Column B: Name & Primary Info (flex 1) */}
+        <Box flex={1} sx={{ minWidth: 0 }}>
+          {/* Name with Favorite Button */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
+            <Typography variant="h5" sx={{ fontWeight: 700, fontSize: '1.5rem', lineHeight: 1.2 }}>
+              {`${firstName} ${lastName}`}
+              {preferredName && preferredName !== firstName && ` (${preferredName})`}
+            </Typography>
+            {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
               <FavoriteButton
                 itemId={uid}
                 favoriteType="users"
@@ -888,172 +1161,411 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   notFavorited: 'Add to favorites',
                 }}
               />
-            </Box>
-          )}
-          
-          {/* Status Pills - Compact */}
-          {isAdminView && (
-            <Stack spacing={0.5} sx={{ alignItems: 'flex-start' }}>
-              {workEligibility !== undefined && (
-                <Chip
-                  size="small"
-                  label={workEligibility ? 'Work Eligible' : 'Not Eligible'}
-                  color={workEligibility ? 'success' : 'error'}
-                  sx={{ height: 22, fontSize: '0.7rem' }}
-                />
-              )}
-              {workStatus && (
-                <Chip
-                  size="small"
-                  label={workStatus}
-                  color={getWorkStatusColor(workStatus)}
-                  sx={{ height: 22, fontSize: '0.7rem' }}
-                />
-              )}
-            </Stack>
-          )}
-        </Box>
-
-        {/* Column B: Name & Primary Info (flex 1) */}
-        <Box flex={1} sx={{ minWidth: 0 }}>
-          {/* Name */}
-          <Typography variant="h5" sx={{ fontWeight: 700, fontSize: '1.5rem', mb: 0.25, lineHeight: 1.2 }}>
-            {`${firstName} ${lastName}`}
-            {preferredName && preferredName !== firstName && ` (${preferredName})`}
-          </Typography>
+            )}
+          </Box>
           
           {/* City, State - One Line */}
           {city && state && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', mb: 0.5 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', mb: 0.25 }}>
               {city}, {state}
             </Typography>
           )}
+
+          {/* Joined Date */}
+          {createdAt && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 0.5 }}>
+              Joined: {formatDate(createdAt)}
+            </Typography>
+          )}
           
-          {/* Contact Row - Phone + Email SAME LINE with Copy Icons */}
-          {isAdminView && (phone || email) && (
-            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 0.5, flexWrap: 'wrap', gap: 1 }}>
+          {/* Contact Icons Row - Phone, SMS, Email, Resume (Icon-only buttons) */}
+          {isAdminView && (phone || email || resume) && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 0.5 }}>
               {phone && (
                 <>
-                  <PhoneOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                  <Typography variant="body2" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
-                    {formatPhoneNumber(phone)}
-                  </Typography>
-                  <Tooltip title="Copy phone number">
+                  <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
                     <IconButton
                       size="small"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(formatPhoneNumber(phone));
-                          setCopySuccess('Phone number copied');
-                          setTimeout(() => setCopySuccess(null), 3000);
-                        } catch (err) {
-                          console.error('Failed to copy:', err);
-                        }
+                      component="a"
+                      href={`tel:${phone.replace(/\D/g, '')}`}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
                       }}
-                      sx={{ p: 0.25, ml: -0.5 }}
                     >
-                      <ContentCopyIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                      <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={`Send SMS to ${formatPhoneNumber(phone)}`}>
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={(() => {
+                        const digits = phone.replace(/\D/g, '');
+                        const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
+                        return `sms:${smsNumber}`;
+                      })()}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <MessageIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Tooltip>
                 </>
               )}
               {email && (
-                <>
-                  {phone && <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem' }}>•</Typography>}
-                  <EmailOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                  <Typography variant="body2" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
-                    {email}
-                  </Typography>
-                  <Tooltip title="Copy email">
+                <Tooltip title={`Email ${email}`}>
+                  <IconButton
+                    size="small"
+                    component="a"
+                    href={`mailto:${email}`}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {resume && resume.fileName && (
+                <Tooltip title={`View Resume: ${resume.fileName}`}>
+                  <IconButton
+                    size="small"
+                    onClick={handleResumeClick}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <DescriptionIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {isAdminView && (
+                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
                     <IconButton
                       size="small"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(email);
-                          setCopySuccess('Email copied');
-                          setTimeout(() => setCopySuccess(null), 3000);
-                        } catch (err) {
-                          console.error('Failed to copy:', err);
-                        }
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
                       }}
-                      sx={{ p: 0.25, ml: -0.5 }}
                     >
-                      <ContentCopyIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                      <NoteIcon sx={{ fontSize: 20 }} />
                     </IconButton>
-                  </Tooltip>
-                </>
+                  </Badge>
+                </Tooltip>
               )}
             </Stack>
           )}
           
-          {/* Employment Row - Status | Applicant Type | Role - One Line */}
-          {isAdminView && (workStatus || employmentType || securityLevel) && (
-            <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
-              {workStatus && (
-                <>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                    Status:
-                  </Typography>
+          {/* Onboarding Pills - Above Skills */}
+          {canViewAdminContent && (() => {
+            // Helper function to get pill color for screening orders
+            const getScreeningPillColor = (status: string, result?: string) => {
+              if (status === 'In-Progress') {
+                return '#ff9800'; // Yellow/warning
+              } else if (status === 'Complete') {
+                if (result === 'Passed') {
+                  return '#4caf50'; // Green
+                } else if (result === 'Failed') {
+                  return '#f44336'; // Red/error
+                }
+              }
+              return '#4caf50'; // Default green
+            };
+
+            // Filter and prepare E-Verify orders (newest first, show only newest)
+            const activeEVerifyOrders = eVerifyOrders.filter(order => order.status !== 'Cancelled');
+            const sortedEVerifyOrders = [...activeEVerifyOrders].sort((a, b) => {
+              const dateA = a.dateSubmitted ? new Date(a.dateSubmitted).getTime() : 0;
+              const dateB = b.dateSubmitted ? new Date(b.dateSubmitted).getTime() : 0;
+              return dateB - dateA;
+            });
+            const newestEVerifyOrder = sortedEVerifyOrders.length > 0 ? sortedEVerifyOrders[0] : null;
+
+            // Filter screening orders (exclude cancelled, show all active orders)
+            const activeBackgroundOrders = backgroundCheckOrders.filter(order => order.status !== 'Cancelled');
+            const activeDrugOrders = drugScreeningOrders.filter(order => order.status !== 'Cancelled');
+            const activeAdditionalOrders = additionalScreeningOrders.filter(order => order.status !== 'Cancelled');
+
+            // Combine all pills
+            const allPills: Array<{ label: string; color: string; key: string }> = [];
+
+            // Add E-Verify pill (only newest)
+            if (newestEVerifyOrder) {
+              let eVerifyColor = '#4caf50';
+              if (newestEVerifyOrder.status === 'In-Progress') {
+                eVerifyColor = '#ff9800';
+              } else if (newestEVerifyOrder.status === 'Complete') {
+                eVerifyColor = newestEVerifyOrder.result && newestEVerifyOrder.result !== 'Employment Authorized' 
+                  ? '#f44336' 
+                  : '#4caf50';
+              }
+              allPills.push({ label: 'E-Verify', color: eVerifyColor, key: `everify-${newestEVerifyOrder.id}` });
+            }
+
+            // Add Background Check pills (one per order)
+            activeBackgroundOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Background Check',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `bg-${order.id}`
+              });
+            });
+
+            // Add Drug Screening pills (one per order)
+            activeDrugOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Drug Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `drug-${order.id}`
+              });
+            });
+
+            // Add Additional Screening pills (one per order)
+            activeAdditionalOrders.forEach(order => {
+              allPills.push({
+                label: order.typeLabel || order.type || 'Additional Screening',
+                color: getScreeningPillColor(order.status, order.result),
+                key: `addl-${order.id}`
+              });
+            });
+
+            if (allPills.length === 0) return null;
+
+            return (
+              <Box sx={{ mt: 1, mb: 1 }}>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                  {allPills.map((pill) => (
+                    <Chip
+                      key={pill.key}
+                      label={pill.label}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: pill.color,
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            );
+          })()}
+          
+          {/* Skills Chips - Above Profile Quality Bar */}
+          {primarySkills && primarySkills.length > 0 && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {primarySkills.slice(0, 5).map((skill, index) => (
                   <Chip
+                    key={index}
+                    label={skill}
                     size="small"
-                    label={workStatus}
-                    color={getWorkStatusColor(workStatus)}
-                    sx={{ height: 20, fontSize: '0.7rem' }}
+                    sx={{
+                      height: 22,
+                      fontSize: '0.7rem',
+                      fontWeight: 500,
+                      bgcolor: '#2196F3',
+                      color: 'white',
+                      '& .MuiChip-label': {
+                        px: 1,
+                      },
+                    }}
                   />
-                </>
-              )}
-              {employmentType && (
-                <>
-                  {workStatus && <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', mx: 0.25 }}>|</Typography>}
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                    Applicant Type:
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={getEmploymentTypeLabel(employmentType)}
-                    color={getEmploymentTypeColor(employmentType)}
-                    sx={{ height: 20, fontSize: '0.7rem' }}
-                  />
-                </>
-              )}
-              {getSecurityLabel(securityLevel) && (
-                <>
-                  {(workStatus || employmentType) && <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', mx: 0.25 }}>|</Typography>}
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                    Role:
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={getSecurityLabel(securityLevel)!}
-                    sx={{ ...getSoftChipSx(getSecurityColor(securityLevel)), fontWeight: 600, height: 20, fontSize: '0.7rem' }}
-                  />
-                </>
-              )}
-            </Stack>
+                ))}
+                {primarySkills.length > 5 && (
+                  <Tooltip title={`${primarySkills.length - 5} more skills`}>
+                    <Chip
+                      label={`+${primarySkills.length - 5}`}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: 'grey.200',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  </Tooltip>
+                )}
+              </Stack>
+            </Box>
+          )}
+          
+          {/* Education, Work Experience, and Certs Chips - Below Skills */}
+          {(education.length > 0 || workExperience.length > 0 || (certifications && certifications.length > 0)) && (
+            <Box sx={{ mt: 1, mb: 1 }}>
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+                {/* Education Chips - Purple */}
+                {education.slice(0, 3).map((edu, index) => {
+                  const degree = edu?.degree || '';
+                  if (!degree) return null;
+                  return (
+                    <Chip
+                      key={`edu-${index}`}
+                      label={degree}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#9C27B0',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Work Experience Chips - Navy Blue */}
+                {workExperience.slice(0, 3).map((exp, index) => {
+                  const jobTitle = exp?.jobTitle || exp?.title || '';
+                  if (!jobTitle) return null;
+                  return (
+                    <Chip
+                      key={`exp-${index}`}
+                      label={jobTitle}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#1976D2',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+                {/* Certifications Chips - Black */}
+                {certifications && certifications.slice(0, 3).map((cert, index) => {
+                  const certName = typeof cert === 'string' ? cert : cert?.name || '';
+                  if (!certName) return null;
+                  return (
+                    <Chip
+                      key={`cert-${index}`}
+                      label={certName}
+                      size="small"
+                      sx={{
+                        height: 22,
+                        fontSize: '0.7rem',
+                        fontWeight: 500,
+                        bgcolor: '#212121',
+                        color: 'white',
+                        '& .MuiChip-label': {
+                          px: 1,
+                        },
+                      }}
+                    />
+                  );
+                })}
+              </Stack>
+            </Box>
           )}
           
           {/* Profile Quality Bar - Slim 6px */}
           {isAdminView && profileScore !== undefined && (
-            <CompactProfileQualityBar score={profileScore} />
+            <Box sx={{ mt: 1 }}>
+              <CompactProfileQualityBar score={profileScore} />
+            </Box>
           )}
         </Box>
         
-        {/* Column C: Action Grid (~300px) */}
-        {isAdminView && (
-          <CompactActionGrid
-            onCallNow={onCallNow}
-            onMessageApplicant={onMessageApplicant}
-            onViewTimeline={onViewTimeline}
-            onViewResume={handleResumeClick}
-            onAddNote={onAddNote}
-            onEditProfile={onEditProfile}
-            onSendLink={onSendApplicationLink}
-            onCreateAssignment={onCreateAssignment}
-            hasResume={!!resume}
-            hasPhone={hasPhone}
-            isAdminView={isAdminView}
-          />
-        )}
+        {/* Column C: Right-aligned buttons - Same row as avatar */}
+        <Box sx={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-end', alignSelf: 'flex-start', pt: 0 }}>
+          {securityLevel && getSecurityLabel(securityLevel) && (
+            <Chip
+              label={getSecurityLabel(securityLevel)}
+              size="medium"
+              sx={{
+                ...getSoftChipSx(getSecurityColor(securityLevel)),
+                fontWeight: 600,
+                height: 36,
+                fontSize: '0.875rem',
+                px: 1.5,
+              }}
+            />
+          )}
+          {isAdminView && (
+            <Button
+              variant="outlined"
+              sx={{
+                borderColor: 'success.main',
+                color: 'success.main',
+                '&:hover': {
+                  borderColor: 'success.dark',
+                  backgroundColor: 'success.light',
+                  color: 'success.dark',
+                },
+                px: 2,
+              }}
+            >
+              Start Onboarding
+            </Button>
+          )}
+        </Box>
+        
       </Box>
 
       {/* Certifications Modal */}
@@ -1074,6 +1586,27 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           {copySuccess}
         </Alert>
       </Snackbar>
+
+      {/* Add Note Dialog */}
+      <AddUserNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        userId={uid}
+        userName={`${firstName} ${lastName}`}
+        onNoteAdded={() => {
+          // Reload notes count after adding a note
+          const loadNotesCount = async () => {
+            try {
+              const notesRef = collection(db, 'users', uid, 'notes');
+              const notesSnapshot = await getDocs(query(notesRef));
+              setNotesCount(notesSnapshot.size);
+            } catch (error) {
+              console.error('Error loading notes count:', error);
+            }
+          };
+          loadNotesCount();
+        }}
+      />
     </Box>
   );
 };

@@ -23,6 +23,7 @@ import MilestoneProgress from '../common/MilestoneProgress';
 import EligibilityModal from '../../components/EligibilityModal';
 import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from '../../utils/gigShiftApplicationLimits';
+import { logJobApplicationActivity } from '../../utils/activityLogger';
 
 type WizardProps = {
   tenantId: string;
@@ -1427,6 +1428,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             ...(shiftDate ? { shiftDate } : {}),
             ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
           }, { merge: true });
+          
+          // Log job application activity
+          try {
+            const jobTitle = posting?.jobTitle || posting?.postTitle || 'Unknown Job';
+            await logJobApplicationActivity(
+              effectiveUid!,
+              jobId!,
+              jobTitle,
+              {
+                applicationId: tidAppId,
+                tenantId,
+                jobOrderId: posting?.jobOrderId || null,
+                status: 'submitted',
+                ...(selectedShifts.length > 0 ? { shiftIds: selectedShifts } : {}),
+              }
+            );
+          } catch (logError) {
+            console.warn('Failed to log job application activity:', logError);
+            // Don't block submission if activity logging fails
+          }
           
           // Prepare denormalized application data for quick lookups
           const applicationId = `${tenantId}_${jobId}`;

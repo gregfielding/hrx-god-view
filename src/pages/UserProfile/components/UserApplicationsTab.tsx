@@ -254,10 +254,8 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
                     }
                   }}
                   onClick={() => {
-                    // Navigate to specific job posting
-                    // Use tenantId from application if available, otherwise default to c1
-                    const tenantSlug = app.tenantId || 'c1';
-                    navigate(`/${tenantSlug}/jobs-board/${app.jobId}`);
+                    // Navigate to recruiter backend job board posting
+                    navigate(`/recruiter/jobs-board/edit/${app.jobId}`);
                   }}
                 >
                   <TableCell>

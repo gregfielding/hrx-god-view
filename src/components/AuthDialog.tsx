@@ -287,7 +287,35 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             version: "2025-10-21",
             timestamp: new Date().toISOString()
           }
-        }
+        },
+        // Default privacy and notification settings
+        locationSettings: {
+          locationSharingEnabled: true,
+          locationGranularity: 'precise',
+          locationUpdateFrequency: 'realtime',
+        },
+          notificationSettings: {
+            pushNotifications: true,
+            emailNotifications: true,
+            smsNotifications: true,
+            companionMessages: true,
+            shiftReminders: true,
+            safetyAlerts: true,
+            performanceUpdates: true,
+            quietHours: {
+              enabled: false,
+              startTime: '22:00',
+              endTime: '08:00',
+            },
+          },
+        privacySettings: {
+          profileVisibility: 'managers',
+          showContactInfo: true,
+          showLocation: true,
+          showPerformanceMetrics: true,
+          allowDataAnalytics: true,
+          allowAIInsights: true,
+        },
       };
 
       await setDoc(doc(db, 'users', user.uid), userProfile);

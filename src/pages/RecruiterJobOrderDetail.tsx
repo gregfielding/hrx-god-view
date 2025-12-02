@@ -3147,41 +3147,41 @@ const RecruiterJobOrderDetail: React.FC = () => {
           <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Basic Information Card */}
-              <Card>
-                <CardHeader 
-                  title="Basic Information" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <IconButton
-                      size="small"
-                      onClick={() => setIsEditingJobOrderDetails(!isEditingJobOrderDetails)}
-                      sx={{ 
-                        color: isEditingJobOrderDetails ? 'primary.main' : 'text.secondary',
-                        '&:hover': {
-                          bgcolor: 'action.hover'
-                        }
-                      }}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  }
+              {isEditingJobOrderDetails ? (
+                // Edit Mode - Show JobOrderForm without outer Card wrapper
+                <JobOrderForm
+                  jobOrderId={jobOrderId}
+                  dealId={jobOrder?.dealId}
+                  onSave={() => {
+                    setIsEditingJobOrderDetails(false);
+                    fetchJobOrder();
+                  }}
+                  onCancel={() => {
+                    setIsEditingJobOrderDetails(false);
+                  }}
                 />
-                <CardContent sx={{ p: 2 }}>
-                  {isEditingJobOrderDetails ? (
-                    // Edit Mode - Show JobOrderForm
-                    <JobOrderForm
-                      jobOrderId={jobOrderId}
-                      dealId={jobOrder?.dealId}
-                      onSave={() => {
-                        setIsEditingJobOrderDetails(false);
-                        fetchJobOrder();
-                      }}
-                      onCancel={() => {
-                        setIsEditingJobOrderDetails(false);
-                      }}
-                    />
-                  ) : (
-                    // View Mode - Show as Text with Better Visual Hierarchy
+              ) : (
+                <Card>
+                  <CardHeader 
+                    title="Basic Information" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                    action={
+                      <IconButton
+                        size="small"
+                        onClick={() => setIsEditingJobOrderDetails(!isEditingJobOrderDetails)}
+                        sx={{ 
+                          color: isEditingJobOrderDetails ? 'primary.main' : 'text.secondary',
+                          '&:hover': {
+                            bgcolor: 'action.hover'
+                          }
+                        }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    }
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    {/* View Mode - Show as Text with Better Visual Hierarchy */}
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {/* Basic Details Section */}
                       <Box>
@@ -3446,9 +3446,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         </Box>
                       )}
                     </Box>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
             </Box>
           </Grid>
 

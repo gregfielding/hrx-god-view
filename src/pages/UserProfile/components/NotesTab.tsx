@@ -4,7 +4,9 @@ import {
   Typography,
   TextField,
   Button,
+  Card,
   CardContent,
+  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -42,6 +44,7 @@ import { doc, collection, addDoc, getDocs, query, orderBy, deleteDoc } from 'fir
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { logger } from '../../../utils/logger';
+import { logNoteActivity } from '../../../utils/activityLogger';
 
 
 interface Note {
@@ -69,7 +72,7 @@ interface NotesTabProps {
 }
 
 const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, securityLevel } = useAuth();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
   const [newNote, setNewNote] = useState('');
@@ -176,6 +179,28 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
 
       // Log the note creation
       await logNoteCreation(docRef.id, noteData);
+
+      // Log note activity to user's activity log if author is internal worker (security level 5-7)
+      try {
+        const authorSecurityLevel = parseInt(securityLevel || '0');
+        if (authorSecurityLevel >= 5 && authorSecurityLevel <= 7) {
+          await logNoteActivity(
+            uid,
+            docRef.id,
+            noteData.authorName,
+            noteData.authorId,
+            noteData.category,
+            noteData.priority,
+            {
+              tags: noteData.tags,
+              hasFiles: noteData.files?.length > 0,
+            }
+          );
+        }
+      } catch (activityLogError) {
+        console.warn('Failed to log note activity:', activityLogError);
+        // Don't block note creation if activity logging fails
+      }
 
       // Trigger AI review
       await triggerAIReview(uid, 'note_created', {
@@ -317,20 +342,17 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
   };
 
   return (
-    <Box sx={{ p: 0 }}>
-      <Typography variant="h6" gutterBottom>
-        Worker Notes
-      </Typography>
-      <Typography variant="body1" color="text.secondary" mb={3}>
-        Add notes, observations, and feedback about this worker. All notes trigger AI review for insights.
-      </Typography>
-
-      {/* Add Note Form */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <NoteIcon color="primary" sx={{ mr: 1 }} />
-          <Typography variant="h6">Add New Note</Typography>
-        </Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Add Note Form Card */}
+      <Card>
+        <CardHeader 
+          title="Add New Note" 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
+            Add notes, observations, and feedback about this worker. All notes trigger AI review for insights.
+          </Typography>
           <Grid container spacing={2}>
             <Grid item xs={12}>
               <TextField
@@ -452,15 +474,16 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
               </Button>
             </Grid>
           </Grid>
-        </Box>
+        </CardContent>
+      </Card>
 
-      {/* Notes Table */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <NoteIcon color="primary" sx={{ mr: 1 }} />
-          <Typography variant="h6">Notes History ({notes.length})</Typography>
-        </Box>
-        <CardContent>
+      {/* Notes History Card */}
+      <Card>
+        <CardHeader 
+          title={`Notes History (${notes.length})`}
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
           {loading ? (
             <Typography>Loading notes...</Typography>
           ) : notes.length === 0 ? (
@@ -585,7 +608,7 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
             </TableContainer>
           )}
         </CardContent>
-      </Box>
+      </Card>
 
       {/* View Note Dialog */}
       <Dialog

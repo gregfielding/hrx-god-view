@@ -20,12 +20,13 @@ import {
   Tooltip,
   CircularProgress,
   Alert,
+  Card,
   CardContent,
+  CardHeader,
   Button,
 } from '@mui/material';
 import {
   Search as SearchIcon,
-  FilterList as FilterIcon,
   Refresh as RefreshIcon,
   Info as InfoIcon,
   Login as LoginIcon,
@@ -220,21 +221,18 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
   );
 
   return (
-    <Box sx={{ p: 0 }}>
-      <Typography variant="h6" gutterBottom>
-        Activity Log
-      </Typography>
-      <Typography variant="body1" color="text.secondary" mb={3}>
-        Track user activities, login sessions, profile updates, and system interactions.
-      </Typography>
-
-      {/* Filters and Search */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <FilterIcon color="primary" sx={{ mr: 1 }} />
-          <Typography variant="h6">Filters & Search</Typography>
-        </Box>
-        <Grid container spacing={2} alignItems="center">
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {/* Filters and Search Card */}
+      <Card>
+        <CardHeader 
+          title="Filters & Search" 
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
+            Track user activities, login sessions, profile updates, and system interactions.
+          </Typography>
+          <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
@@ -306,14 +304,16 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
               </Tooltip>
             </Grid>
           </Grid>
-        </Box>
+        </CardContent>
+      </Card>
 
-      {/* Activity Table */}
-      <Box sx={{ pt: 3, pb: 3, mb: 3, borderRadius: 2 }}>
-        <Box display="flex" alignItems="center" mb={2}>
-          <Typography variant="h6">Activity History ({filteredActivities.length} entries)</Typography>
-        </Box>
-        <CardContent>
+      {/* Activity History Card */}
+      <Card>
+        <CardHeader 
+          title={`Activity History (${filteredActivities.length} entries)`}
+          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        />
+        <CardContent sx={{ p: 2 }}>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}
@@ -330,21 +330,47 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
             </Typography>
           ) : (
             <>
-              <TableContainer component={Paper} variant="outlined">
+              <TableContainer 
+                component={Paper} 
+                variant="outlined"
+                sx={{
+                  borderRadius: 1,
+                  border: '1px solid',
+                  borderColor: 'divider'
+                }}
+              >
                 <Table>
                   <TableHead>
-                    <TableRow>
-                      <TableCell>Action</TableCell>
-                      <TableCell>Description</TableCell>
-                      <TableCell>Severity</TableCell>
-                      <TableCell>Source</TableCell>
-                      <TableCell>Timestamp</TableCell>
-                      <TableCell>Details</TableCell>
+                    <TableRow sx={{ bgcolor: 'grey.50' }}>
+                      {['Action', 'Description', 'Severity', 'Source', 'Timestamp', 'Details'].map((header) => (
+                        <TableCell 
+                          key={header}
+                          sx={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            color: 'text.secondary',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            py: 1.5
+                          }}
+                        >
+                          {header}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredActivities.map((activity) => (
-                      <TableRow key={activity.id} hover>
+                      <TableRow 
+                        key={activity.id}
+                        sx={{
+                          '&:hover': {
+                            bgcolor: 'grey.50'
+                          }
+                        }}
+                      >
                         <TableCell>
                           <Box display="flex" alignItems="center" gap={1}>
                             {getActionIcon(activity.actionType)}
@@ -409,7 +435,7 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
             </>
           )}
         </CardContent>
-      </Box>
+      </Card>
     </Box>
   );
 };

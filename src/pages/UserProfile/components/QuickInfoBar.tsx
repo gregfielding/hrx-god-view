@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Box, Typography, Tooltip, Chip, Stack, IconButton, Badge, Collapse } from '@mui/material';
-import DescriptionIcon from '@mui/icons-material/Description';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
@@ -13,7 +12,6 @@ import SchoolIcon from '@mui/icons-material/School';
 import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import ResumePreviewCard from './ResumePreviewCard';
 
 interface QuickInfoBarProps {
   // Document access
@@ -81,9 +79,6 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
   onTabChange,
   isAdminView = false,
 }) => {
-  const hasResume = !!resume;
-  const hasCertifications = certificationsCount > 0;
-
   const getStatusIcon = (status: StatusType) => {
     switch (status) {
       case 'complete':
@@ -136,29 +131,6 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
         borderColor: 'divider',
       }}
     >
-      {/* Documents Section - Enhanced Preview Card */}
-      <Box sx={{ mb: 1.5 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', fontWeight: 500, mb: 0.75, display: 'block' }}>
-          DOCUMENTS ({hasResume ? 1 : 0} {hasResume ? 'Uploaded' : ''} {hasCertifications ? `, ${certificationsCount} Certification${certificationsCount !== 1 ? 's' : ''}` : ''})
-        </Typography>
-        <ResumePreviewCard
-          resume={resume ? {
-            fileName: resume.fileName || 'Resume',
-            timestamp: (resume as any).timestamp || null,
-            downloadUrl: resume.downloadUrl,
-            storagePath: resume.storagePath,
-            size: (resume as any).size,
-            sizeKB: (resume as any).sizeKB,
-          } : null}
-          onView={hasResume ? onResumeClick : undefined}
-          onReplace={hasResume ? () => {
-            // Navigate to Resume tab for replacement
-            if (onTabChange) onTabChange('Resumé');
-          } : undefined}
-          verified={hasResume && resume?.fileName ? true : false}
-        />
-      </Box>
-
       {/* At a Glance Section - Enhanced Tag Board */}
       {(yearsExperience || educationLevel || (primarySkills && primarySkills.length > 0) || (languages && languages.length > 0) || (behavioralTraits && behavioralTraits.length > 0)) && (
         <Box sx={{ mb: 1.5 }}>

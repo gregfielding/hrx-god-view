@@ -280,42 +280,46 @@ const QualificationsStep: React.FC<Props> = ({
         </Card>
       )}
 
-      {/* Education Section */}
-      <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-        <CardHeader 
-          title={<Typography variant="h6">Education</Typography>} 
-          sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
-        />
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-          <EducationSection
-            value={value?.education || []}
-            onChange={(education) => {
-              onChange({ ...value, education });
-              queueUserUpdate({ education, updatedAt: serverTimestamp() });
-            }}
+      {/* Education Section - Hidden in profile context (handled separately) */}
+      {context !== 'profile' && (
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader 
+            title={<Typography variant="h6">Education</Typography>} 
+            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
           />
-        </CardContent>
-      </Card>
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            <EducationSection
+              value={value?.education || []}
+              onChange={(education) => {
+                onChange({ ...value, education });
+                queueUserUpdate({ education, updatedAt: serverTimestamp() });
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Work Experience Section */}
-      <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
-        <CardHeader 
-          title={<Typography variant="h6">Work Experience</Typography>} 
-          sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
-        />
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
-          <WorkExperienceSection
-            value={value?.workExperience || value?.workHistory || []}
-            onChange={(workExperience) => {
-              // Save to both field names for compatibility
-              onChange({ ...value, workExperience, workHistory: workExperience });
-              queueUserUpdate({ workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
-            }}
-            onetSkills={onetSkills as any}
-            onetJobTitles={onetJobTitles as any}
+      {/* Work Experience Section - Hidden in profile context (handled separately) */}
+      {context !== 'profile' && (
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader 
+            title={<Typography variant="h6">Work Experience</Typography>} 
+            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
           />
-        </CardContent>
-      </Card>
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            <WorkExperienceSection
+              value={value?.workExperience || value?.workHistory || []}
+              onChange={(workExperience) => {
+                // Save to both field names for compatibility
+                onChange({ ...value, workExperience, workHistory: workExperience });
+                queueUserUpdate({ workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
+              }}
+              onetSkills={onetSkills as any}
+              onetJobTitles={onetJobTitles as any}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Skills 
          - Keep only core skills here
@@ -334,7 +338,7 @@ const QualificationsStep: React.FC<Props> = ({
 
       {/* Conditional Languages */}
       {showLanguages && (
-        <Card variant="outlined" sx={{ mt: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+        <Card variant="outlined" sx={{ mt: 3, mb: 4, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
           <CardHeader title={<Typography variant="h6">Languages</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
           <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             {languagesHelper && (
