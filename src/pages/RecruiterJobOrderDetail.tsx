@@ -125,6 +125,7 @@ interface ApplicantsTableProps {
   connectedJobPosts: JobsBoardPost[];
   tenantId: string;
   jobOrder: JobOrder | null;
+  onCountChange?: (count: number) => void;
 }
 
 interface Applicant {
@@ -149,12 +150,19 @@ interface Applicant {
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
 }
 
-const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connectedJobPosts, tenantId, jobOrder }) => {
+const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connectedJobPosts, tenantId, jobOrder, onCountChange }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
+  
+  // Notify parent of count changes
+  useEffect(() => {
+    if (onCountChange) {
+      onCountChange(applicants.length);
+    }
+  }, [applicants.length, onCountChange]);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [levelMenuAnchor, setLevelMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [switchJobDialogOpen, setSwitchJobDialogOpen] = useState(false);
@@ -1799,6 +1807,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [selectedRecruiterIds, setSelectedRecruiterIds] = useState<string[]>([]);
   const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
+  const [applicantsCount, setApplicantsCount] = useState<number>(0);
   const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
@@ -3108,7 +3117,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AssignmentIcon fontSize="small" />
-                Applications
+                Applications {applicantsCount > 0 && applicantsCount}
               </Box>
             } 
           />
@@ -3923,6 +3932,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           connectedJobPosts={connectedJobPosts}
           tenantId={tenantId || ''}
           jobOrder={jobOrder}
+          onCountChange={setApplicantsCount}
         />
       </TabPanel>
 
