@@ -111,6 +111,29 @@ service cloud.firestore {
       allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
     }
 
+    // Tenant subcollections
+    match /tenants/{tenantId} {
+      // Tenant document itself
+      allow read: if isHRX() || isAssignedToTenant(tenantId);
+      allow write: if isHRX() || isTenantAdmin(tenantId);
+
+      // Applications subcollection within tenant
+      match /applications/{applicationId} {
+        // Allow read for:
+        // - The applicant (userId extracted from applicationId which has format userId_jobId)
+        // - Anyone assigned to this tenant (staff/admins)
+        allow read: if request.auth != null &&
+          (applicationId.split('_')[0] == request.auth.uid ||
+           isAssignedToTenant(tenantId));
+        // Allow create for anyone (public applications)
+        allow create: if true;
+        // Allow update for tenant admins and recruiters
+        allow update: if isHRX() || isTenantAdmin(tenantId) || 
+                       (isAssignedToTenant(tenantId) && hasRecruiterAccess());
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+      }
+    }
+
     // Generic fallback - deny all other collections
     match /{document=**} {
       allow read, write: if false; // explicit rules per collection only
