@@ -3117,7 +3117,26 @@ const RecruiterJobOrderDetail: React.FC = () => {
             label={
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AssignmentIcon fontSize="small" />
-                Applications {applicantsCount > 0 && applicantsCount}
+                Applications
+                {applicantsCount > 0 && (
+                  <Box
+                    sx={{
+                      backgroundColor: 'primary.main',
+                      color: 'white',
+                      borderRadius: '50%',
+                      width: 20,
+                      height: 20,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      ml: 0.5,
+                    }}
+                  >
+                    {applicantsCount}
+                  </Box>
+                )}
               </Box>
             } 
           />
