@@ -126,8 +126,15 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
       });
       
       setInterviews(interviewsData);
-    } catch (error) {
-      console.error('Error loading interviews:', error);
+    } catch (error: any) {
+      // Silently handle permission errors for lower-level users
+      if (error?.code === 'permission-denied' || 
+          error?.code === 'PERMISSION_DENIED' || 
+          error?.message?.includes('Missing or insufficient permissions')) {
+        setInterviews([]);
+      } else {
+        console.error('Error loading interviews:', error);
+      }
     } finally {
       setLoading(false);
     }

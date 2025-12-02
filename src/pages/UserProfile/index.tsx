@@ -484,8 +484,15 @@ const UserProfilePage = () => {
           );
           const assignmentsSnapshot = await getDocs(assignmentsQuery);
           setAssignmentsCount(assignmentsSnapshot.size);
-        } catch (error) {
-          console.error('Error fetching assignments count:', error);
+        } catch (error: any) {
+          // Silently handle permission errors for lower-level users
+          if (error?.code === 'permission-denied' || 
+              error?.code === 'PERMISSION_DENIED' || 
+              error?.message?.includes('Missing or insufficient permissions')) {
+            setAssignmentsCount(0);
+          } else {
+            console.error('Error fetching assignments count:', error);
+          }
           setAssignmentsCount(0);
         }
 

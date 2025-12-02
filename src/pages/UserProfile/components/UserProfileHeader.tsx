@@ -234,8 +234,15 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         const notesRef = collection(db, 'users', uid, 'notes');
         const notesSnapshot = await getDocs(query(notesRef));
         setNotesCount(notesSnapshot.size);
-      } catch (error) {
-        console.error('Error loading notes count:', error);
+      } catch (error: any) {
+        // Silently handle permission errors for lower-level users
+        if (error?.code === 'permission-denied' || 
+            error?.code === 'PERMISSION_DENIED' || 
+            error?.message?.includes('Missing or insufficient permissions')) {
+          setNotesCount(0);
+        } else {
+          console.error('Error loading notes count:', error);
+        }
       }
     };
 
