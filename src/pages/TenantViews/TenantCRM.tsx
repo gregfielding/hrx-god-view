@@ -717,21 +717,35 @@ const TenantCRM: React.FC = () => {
       const result = await getSalespeople(params);
       const data = result.data as { salespeople: any[] };
       
-      // Also try to get all users in the tenant to ensure we have complete coverage
-      let allUsers: any[] = [];
+      // Also try to get users with crm_sales enabled to ensure we have complete coverage
+      // Only include users with securityLevel 5-7 and crm_sales: true
+      let crmUsers: any[] = [];
       try {
         const usersRef = collection(db, 'users');
-        const usersSnapshot = await getDocs(usersRef);
-        allUsers = usersSnapshot.docs
+        const crmQuery = query(usersRef, where('crm_sales', '==', true));
+        const usersSnapshot = await getDocs(crmQuery);
+        crmUsers = usersSnapshot.docs
           .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((user: any) => user.tenantIds && user.tenantIds[tenantId]);
+          .filter((user: any) => {
+            // Check if user is in this tenant
+            const isInTenant = user.tenantIds && user.tenantIds[tenantId];
+            if (!isInTenant) return false;
+            
+            // Check security level (5-7 only)
+            const tenantSecLevel = user.tenantIds[tenantId]?.securityLevel;
+            const globalSecLevel = user.securityLevel;
+            const effectiveSecLevel = tenantSecLevel || globalSecLevel;
+            const secLevelNum = typeof effectiveSecLevel === 'string' ? parseInt(effectiveSecLevel, 10) : effectiveSecLevel;
+            
+            return secLevelNum >= 5 && secLevelNum <= 7;
+          });
       } catch (error) {
-        console.warn('Could not load all users for name resolution:', error);
+        console.warn('Could not load CRM users:', error);
       }
       
-      // Combine salespeople with all users, prioritizing salespeople
+      // Combine salespeople from function with filtered CRM users, prioritizing function results
       const combinedTeam = [...(data.salespeople || [])];
-      allUsers.forEach(user => {
+      crmUsers.forEach(user => {
         if (!combinedTeam.find(sp => sp.id === user.id)) {
           combinedTeam.push(user);
         }
