@@ -114,7 +114,8 @@ service cloud.firestore {
     // Tenant subcollections
     match /tenants/{tenantId} {
       // Tenant document itself
-      allow read: if isHRX() || isAssignedToTenant(tenantId);
+      // Allow read for any authenticated user (TODO: tighten this with proper tenantId in claims)
+      allow read: if request.auth != null;
       allow write: if isHRX() || isTenantAdmin(tenantId);
 
       // Applications subcollection within tenant
