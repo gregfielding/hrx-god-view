@@ -77,9 +77,13 @@ const EditJobPost: React.FC = () => {
   };
 
   const loadApplications = async () => {
-    if (!tenantId || !postId) return;
+    if (!tenantId || !postId) {
+      console.log('loadApplications: missing tenantId or postId', { tenantId, postId });
+      return;
+    }
 
     try {
+      console.log('loadApplications: fetching for', { tenantId, postId });
       setLoadingApplications(true);
       const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
       
@@ -90,7 +94,9 @@ const EditJobPost: React.FC = () => {
         orderBy('createdAt', 'desc')
       );
       
+      console.log('loadApplications: executing query with postId and orderBy');
       const snapshot = await getDocs(q);
+      console.log('loadApplications: query returned', snapshot.docs.length, 'documents');
       let applicationsData: any[] = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
@@ -98,24 +104,29 @@ const EditJobPost: React.FC = () => {
 
       // If no results with postId, try jobId
       if (applicationsData.length === 0) {
+        console.log('loadApplications: no results with postId, trying jobId');
         const q2 = query(
           applicationsRef,
           where('jobId', '==', postId),
           orderBy('createdAt', 'desc')
         );
         const snapshot2 = await getDocs(q2);
+        console.log('loadApplications: jobId query returned', snapshot2.docs.length, 'documents');
         applicationsData = snapshot2.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
         }));
       }
 
+      console.log('loadApplications: total applications found:', applicationsData.length);
       setApplications(applicationsData);
       
       // Load user data for applicants who have candidateId/userId
       await loadApplicantUsers(applicationsData);
     } catch (err: any) {
-      console.error('Error loading applications:', err);
+      console.error('Error loading applications (will try fallback):', err);
+      console.error('Error code:', err?.code);
+      console.error('Error message:', err?.message);
       // If orderBy fails (no index), try without it
       try {
         const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
