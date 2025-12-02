@@ -9,6 +9,7 @@ import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
+import { isOnboardingInProgress } from './utils/onboardingHelpers';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
@@ -22,11 +23,12 @@ import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import SystemAccessTab from './components/SystemAccessTab';
+import OnboardingTab from './components/OnboardingTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
-  const { user, securityLevel, role } = useAuth();
+  const { user, securityLevel, role, tenantId: authTenantId, activeTenant } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -83,6 +85,8 @@ const UserProfilePage = () => {
   const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
   const [notesCount, setNotesCount] = useState<number>(0);
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
+  const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
+  const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -136,6 +140,9 @@ const UserProfilePage = () => {
     // For internal team members (5-7) viewed from Workforce route, only show Overview and System Access
     const isWorkforceInternalTeamView = isWorkforceRoute && isInternalTeamMember;
     
+    // Determine if the current viewer can see admin-specific content (securityLevel 5-7)
+    const canViewAdminContent = viewerSecurityLevel >= 5;
+    
     // Debug logging to understand what's happening
     console.log('Tab availability check:', {
       securityLevel,
@@ -150,15 +157,19 @@ const UserProfilePage = () => {
       isWorkforceInternalTeamView
     });
 
+    // Check if onboarding is in progress
+    const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+    
     const tabs = [
       { label: 'Overview', available: true, count: undefined },
-      { label: 'Interview', available: !isWorkforceInternalTeamView, count: interviewsCount },
+      { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount }, // Hidden for 0-4
       { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
-      { label: 'Backgrounds', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Notes', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: notesCount },
-      { label: 'Activity Log', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
+      { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount }, // Hidden for 0-4
+      { label: 'Activity Log', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Reports & Insights', available: false, count: undefined },
       { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
     ];
@@ -197,7 +208,7 @@ const UserProfilePage = () => {
           setCity(data.city || data.address?.city || '');
           setState(data.state || data.address?.state || '');
           setLinkedinUrl(data.linkedinUrl || '');
-          setCustomerId(data.tenantId || null);
+          setCustomerId(effectiveTenantId || null);
           // Provide sensible defaults so header chips render consistently
           setWorkStatus(tenantData.workStatus || data.workStatus || 'Active');
           setEmploymentType(tenantData.employmentType || data.employmentType || 'Full-Time');
@@ -437,6 +448,10 @@ const UserProfilePage = () => {
           emergencyContact: data.emergencyContact || null,
           transportMethod: data.transportMethod || null,
         });
+        
+        // Load onboarding status
+        setEmployeeOnboardStatus(data.employeeOnboardStatus);
+        setContractorOnboardStatus(data.contractorOnboardStatus);
       }
     });
     return () => unsubscribe();
@@ -474,23 +489,51 @@ const UserProfilePage = () => {
           setAssignmentsCount(0);
         }
 
+        // Only fetch notes and interviews counts if viewer has admin access (securityLevel >= 5)
+        const viewerSecurityLevel = typeof securityLevel === 'number' ? securityLevel : parseInt(securityLevel || '0', 10);
+        const canViewAdminContent = viewerSecurityLevel >= 5;
+
         // Notes count - from users/{uid}/notes subcollection
-        try {
-          const notesRef = collection(db, 'users', uid, 'notes');
-          const notesSnapshot = await getDocs(notesRef);
-          setNotesCount(notesSnapshot.size);
-        } catch (error) {
-          console.error('Error fetching notes count:', error);
+        if (canViewAdminContent) {
+          try {
+            const notesRef = collection(db, 'users', uid, 'notes');
+            const notesSnapshot = await getDocs(notesRef);
+            setNotesCount(notesSnapshot.size);
+          } catch (error: any) {
+            // Silently handle permission errors - Firestore rules may restrict access
+            const isPermissionError = 
+              error?.code === 'permission-denied' || 
+              error?.code === 'PERMISSION_DENIED' ||
+              error?.message?.includes('Missing or insufficient permissions') ||
+              error?.message?.includes('permission');
+            if (!isPermissionError) {
+              console.error('Error fetching notes count:', error);
+            }
+            setNotesCount(0);
+          }
+        } else {
           setNotesCount(0);
         }
 
         // Interviews count - from users/{uid}/interviews subcollection
-        try {
-          const interviewsRef = collection(db, 'users', uid, 'interviews');
-          const interviewsSnapshot = await getDocs(interviewsRef);
-          setInterviewsCount(interviewsSnapshot.size);
-        } catch (error) {
-          console.error('Error fetching interviews count:', error);
+        if (canViewAdminContent) {
+          try {
+            const interviewsRef = collection(db, 'users', uid, 'interviews');
+            const interviewsSnapshot = await getDocs(interviewsRef);
+            setInterviewsCount(interviewsSnapshot.size);
+          } catch (error: any) {
+            // Silently handle permission errors - Firestore rules may restrict access
+            const isPermissionError = 
+              error?.code === 'permission-denied' || 
+              error?.code === 'PERMISSION_DENIED' ||
+              error?.message?.includes('Missing or insufficient permissions') ||
+              error?.message?.includes('permission');
+            if (!isPermissionError) {
+              console.error('Error fetching interviews count:', error);
+            }
+            setInterviewsCount(0);
+          }
+        } else {
           setInterviewsCount(0);
         }
       } catch (error) {
@@ -499,7 +542,7 @@ const UserProfilePage = () => {
     };
 
     fetchCounts();
-  }, [uid]);
+  }, [uid, securityLevel]);
 
   // Handle tab query parameter - must be before early returns
   const availableTabs = getAvailableTabs();
@@ -805,6 +848,19 @@ const UserProfilePage = () => {
             setTabValue('Activity Log');
           }}
           hasPhone={!!phone}
+          employeeOnboardStatus={employeeOnboardStatus}
+          contractorOnboardStatus={contractorOnboardStatus}
+          tenantId={tenantId || authTenantId || activeTenant?.id || undefined}
+          onOnboardingStarted={async () => {
+            // Reload onboarding status from Firestore
+            const userRef = doc(db, 'users', uid!);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+              const data = userSnap.data();
+              setEmployeeOnboardStatus(data.employeeOnboardStatus);
+              setContractorOnboardStatus(data.contractorOnboardStatus);
+            }
+          }}
         />
 
         <Paper 
@@ -864,6 +920,8 @@ const UserProfilePage = () => {
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
                 return <UserAssignmentsTab userId={uid} />;
+              case 'Onboarding':
+                return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
               case 'Backgrounds':
                 return <CombinedBackgroundAndVaccinationTab uid={uid} />;
               case 'Reports & Insights':

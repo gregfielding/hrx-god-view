@@ -24,7 +24,12 @@ if (process.env.NODE_ENV === 'development') {
       'Content Security Policy directive: "frame-ancestors',
       'Refused to frame',
       "frame-ancestors 'self'",
-      'Report Only'
+      'Report Only',
+      // Firebase permission errors that are handled gracefully
+      'Missing or insufficient permissions',
+      'permission-denied',
+      'Error fetching interviews count',
+      'Error fetching notes count'
     ];
     return args.some((a) => argContains(a, needles)) || argContains(args?.map?.(String)?.join(' '), needles);
   };

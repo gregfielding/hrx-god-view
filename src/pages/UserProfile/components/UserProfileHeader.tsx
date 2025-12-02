@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles } from '@mui/material';
+import { keyframes } from '@emotion/react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
@@ -39,6 +40,8 @@ import CompactActionGrid from './CompactActionGrid';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
+import StartOnboardingDialog from './StartOnboardingDialog';
+import { isOnboardingInProgress } from '../utils/onboardingHelpers';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -117,6 +120,10 @@ interface UserProfileHeaderProps {
   onMessageApplicant?: () => void;
   onViewTimeline?: () => void;
   hasPhone?: boolean;
+  employeeOnboardStatus?: string;
+  contractorOnboardStatus?: string;
+  tenantId?: string;
+  onOnboardingStarted?: () => void;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -179,19 +186,46 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   onMessageApplicant,
   onViewTimeline,
   hasPhone,
+  employeeOnboardStatus,
+  contractorOnboardStatus,
+  tenantId,
+  onOnboardingStarted,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
   const [showCertificationsModal, setShowCertificationsModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [notesCount, setNotesCount] = useState<number>(0);
-  const { securityLevel: viewerSecurityLevel } = useAuth();
+  const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant } = useAuth();
   const viewerLevel = parseInt(viewerSecurityLevel || '0');
   const canViewAdminContent = viewerLevel >= 5;
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
+  // Check if onboarding is in progress
+  const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  
+  // Keyframe animation for onboarding button - golden shimmer only
+  const goldenShimmer = keyframes`
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  `;
+  
+  // Animated onboarding button styles - solid golden background with shimmer
+  const animatedButtonSx = {
+    background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FFD700 100%)',
+    backgroundSize: '200% 200%',
+    animation: `${goldenShimmer} 3s ease-in-out infinite`,
+    color: '#000',
+    fontWeight: 600,
+  };
 
   // Load notes count
   useEffect(() => {
@@ -620,24 +654,44 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 />
               )}
               {isAdminView && (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  sx={{
-                    borderColor: 'success.main',
-                    color: 'success.main',
-                    fontSize: '0.75rem',
-                    py: 0.5,
-                    px: 1.5,
-                    '&:hover': {
-                      borderColor: 'success.dark',
-                      backgroundColor: 'success.light',
-                      color: 'success.dark',
-                    },
-                  }}
-                >
-                  Start Onboarding
-                </Button>
+                onboardingInProgress ? (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    disabled
+                    sx={{
+                      fontSize: '0.75rem',
+                      py: 0.5,
+                      px: 1.5,
+                      ...animatedButtonSx,
+                    }}
+                  >
+                    Onboarding
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    sx={{
+                      borderColor: 'success.main',
+                      color: 'success.main',
+                      fontSize: '0.75rem',
+                      py: 0.5,
+                      px: 1.5,
+                      '&:hover': {
+                        borderColor: 'success.dark',
+                        backgroundColor: 'success.light',
+                        color: 'success.dark',
+                      },
+                    }}
+                    onClick={() => {
+                      console.log('Start Onboarding clicked - tenantId:', tenantId || authTenantId || activeTenant?.id);
+                      setShowStartOnboardingDialog(true);
+                    }}
+                  >
+                    Start Onboarding
+                  </Button>
+                )
               )}
             </Stack>
           )}
@@ -1548,21 +1602,35 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             />
           )}
           {isAdminView && (
-            <Button
-              variant="outlined"
-              sx={{
-                borderColor: 'success.main',
-                color: 'success.main',
-                '&:hover': {
-                  borderColor: 'success.dark',
-                  backgroundColor: 'success.light',
-                  color: 'success.dark',
-                },
-                px: 2,
-              }}
-            >
-              Start Onboarding
-            </Button>
+            onboardingInProgress ? (
+              <Button
+                variant="contained"
+                disabled
+                sx={{
+                  px: 2,
+                  ...animatedButtonSx,
+                }}
+              >
+                Onboarding
+              </Button>
+            ) : (
+              <Button
+                variant="outlined"
+                sx={{
+                  borderColor: 'success.main',
+                  color: 'success.main',
+                  '&:hover': {
+                    borderColor: 'success.dark',
+                    backgroundColor: 'success.light',
+                    color: 'success.dark',
+                  },
+                  px: 2,
+                }}
+                onClick={() => setShowStartOnboardingDialog(true)}
+              >
+                Start Onboarding
+              </Button>
+            )
           )}
         </Box>
         
@@ -1605,6 +1673,25 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             }
           };
           loadNotesCount();
+        }}
+      />
+
+      {/* Start Onboarding Dialog */}
+      <StartOnboardingDialog
+        open={showStartOnboardingDialog}
+        onClose={() => setShowStartOnboardingDialog(false)}
+        userId={uid}
+          tenantId={tenantId || authTenantId || activeTenant?.id || ''}
+        employeeOnboardStatus={employeeOnboardStatus}
+        contractorOnboardStatus={contractorOnboardStatus}
+        onOnboardingStarted={() => {
+          if (onOnboardingStarted) {
+            onOnboardingStarted();
+          }
+          // Navigate to onboarding tab
+          if (onTabChange) {
+            onTabChange('Onboarding');
+          }
         }}
       />
     </Box>
