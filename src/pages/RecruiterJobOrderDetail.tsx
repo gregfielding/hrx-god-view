@@ -367,38 +367,53 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
     try {
       console.log('🔄 Changing applicant level:', { 
         uid: applicant.uid, 
-        oldLevel: applicant.applicationData?.candidateStatus ? 'candidate' : 'applicant',
+        applicationId: applicant.applicationData?.id,
+        oldLevel: applicant.applicationData?.candidate ? 'candidate' : 'applicant',
         newLevel 
       });
 
-      // Find the application ID
-      const applicationId = Object.keys(applicant.applicationData)[0] || 
-        `${tenantId}_${applicant.applicationData.jobId}`;
+      if (!applicant.applicationData?.id) {
+        console.error('❌ No application ID found for applicant');
+        return;
+      }
 
       const isCandidateNow = newLevel === 'candidate';
 
-      // Update the candidateStatus in the user's applicationData
-      const userRef = doc(db, 'users', applicant.uid);
+      // Update the candidate field directly on the APPLICATION DOCUMENT
+      // This makes candidate status specific to this application
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicant.applicationData.id);
       const updateData: any = {
-        [`applicationData.${applicationId}.candidateStatus`]: isCandidateNow,
-        [`applicationData.${applicationId}.updatedAt`]: new Date()
+        candidate: isCandidateNow,
+        updatedAt: serverTimestamp()
       };
 
       if (isCandidateNow) {
-        updateData[`applicationData.${applicationId}.vettedBy`] = user?.uid;
-        updateData[`applicationData.${applicationId}.vettedAt`] = new Date();
+        updateData.vettedBy = user?.uid || 'unknown';
+        updateData.vettedAt = serverTimestamp();
+      } else {
+        // Remove vetted fields when demoting back to applicant
+        updateData.vettedBy = null;
+        updateData.vettedAt = null;
       }
 
-      await updateDoc(userRef, updateData);
+      await updateDoc(applicationRef, updateData);
 
       // TODO: Log activity
-      console.log(`✅ Level changed to ${newLevel}`);
+      console.log(`✅ Level changed to ${newLevel} for application ${applicant.applicationData.id}`);
 
-      // Update local state
+      // Update local state to reflect the change
       setApplicants(prev => 
         prev.map(a => 
           a.uid === applicant.uid 
-            ? { ...a, applicationData: { ...a.applicationData, candidateStatus: isCandidateNow } }
+            ? { 
+                ...a, 
+                applicationData: { 
+                  ...a.applicationData, 
+                  candidate: isCandidateNow,
+                  vettedBy: isCandidateNow ? (user?.uid || 'unknown') : null,
+                  vettedAt: isCandidateNow ? new Date() : null
+                } 
+              }
             : a
         )
       );
@@ -584,7 +599,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
         payRate: targetJobOrder.payRate || 0,
         startDate: targetJobOrder.startDate || null,
         status: 'submitted',
-        candidateStatus: false,
+        candidate: false,
         appliedAt: new Date(),
         updatedAt: new Date(),
         source: 'job_switch',
@@ -705,7 +720,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
         payRate: jobOrder.payRate || 0,
         startDate: jobOrder.startDate || null,
         status: 'submitted',
-        candidateStatus: false,
+        candidate: false,
         appliedAt: new Date(),
         updatedAt: new Date(),
         source: 'manual_add',
@@ -992,9 +1007,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
                   </TableCell>
                   <TableCell>
                     <Chip 
-                      label={applicant.applicationData?.candidateStatus ? '⭐ Candidate' : 'Applicant'}
+                      label={applicant.applicationData?.candidate ? '⭐ Candidate' : 'Applicant'}
                       size="small"
-                      color={applicant.applicationData?.candidateStatus ? 'primary' : 'default'}
+                      color={applicant.applicationData?.candidate ? 'primary' : 'default'}
                       onClick={(e) => handleOpenLevelMenu(e, applicant.uid)}
                       sx={{ 
                         cursor: 'pointer',

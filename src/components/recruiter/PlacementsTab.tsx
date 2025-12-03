@@ -451,39 +451,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           
         } else if (selectedWorkforce === 'candidates') {
           // Load candidates for this job order
-          // Candidates are users with candidateStatus set in their applicationData
+          // Candidates are applicants who have been marked as candidates (shortlist)
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
           const applicationsQuery = query(
             applicationsRef,
-            where('jobOrderId', '==', jobOrderId)
+            where('jobOrderId', '==', jobOrderId),
+            where('candidate', '==', true)  // Filter for applications marked as candidates
           );
           const applicationsSnap = await getDocs(applicationsQuery);
           
-          // Get user IDs where candidateStatus is true
+          // Get unique user IDs from candidate applications
           const candidateUserIds = new Set<string>();
           applicationsSnap.docs.forEach(doc => {
             const data = doc.data();
-            // Check if this application has candidateStatus
-            // This might be stored in applicationData on the user document
             if (data.userId && data.status !== 'rejected') {
               candidateUserIds.add(data.userId);
             }
           });
           
-          // Load user documents and check for candidate status
+          // Load user documents with full profile data
           const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
             if (userSnap.exists()) {
-              const userData = userSnap.data();
-              const applicationData = userData.applicationData || {};
-              const appKey = `${tenantId}_${jobOrderId}`;
-              const appData = applicationData[appKey];
-              
-              // Check if marked as candidate
-              if (appData?.candidateStatus) {
-                return extractWorkerData(userData, userId);
-              }
+              return extractWorkerData(userSnap.data(), userId);
             }
             return null;
           });
