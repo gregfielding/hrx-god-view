@@ -52,10 +52,11 @@ tenants/{tenantId}/
     ├── payRate: number (decimal, tenant currency)
     ├── billRate?: number (decimal, tenant currency)
     ├── timesheetMode: 'mobile' | 'kiosk' | 'paper'
-    ├── createdBy: string (userId)
-    ├── createdAt: Timestamp
-    ├── updatedAt: Timestamp
-    ├── updatedBy?: string (userId)
+    ├── createdBy: string (userId - required)
+    ├── createdAt: Timestamp (required - Firestore serverTimestamp())
+    ├── updatedAt: Timestamp (required - Firestore serverTimestamp())
+    ├── updatedBy?: string (userId - optional, set on updates)
+    ├── assignedAt?: Timestamp (optional - when assignment was made, can differ from createdAt)
     ├── notes?: string
     └── [denormalized fields for performance - REQUIRED]
         ├── Worker Information:
@@ -75,6 +76,7 @@ tenants/{tenantId}/
         │   ├── latitude?: number (for distance calculations)
         │   └── longitude?: number (for distance calculations)
         ├── Job Information:
+        │   ├── jobOrderType: 'career' | 'gig' (required - determines scheduling/timesheet behavior)
         │   ├── jobTitle?: string
         │   └── shiftTitle?: string
 ```
@@ -100,14 +102,16 @@ tenants/{tenantId}/
 - `status` - Current assignment status
 - `startDate` - When assignment begins
 - `payRate` - Compensation rate
-- `createdBy` - Audit trail
-- `createdAt` - Timestamp
+- `createdBy` - Audit trail (who created the assignment)
+- `createdAt` - Timestamp (Firestore serverTimestamp() - when record created)
+- `updatedAt` - Timestamp (Firestore serverTimestamp() - when record last updated)
 
 **Required Denormalized Fields (Must populate at creation):**
 - `firstName`, `lastName` - Worker name snapshot
 - `companyId`, `companyName` - Company reference and name
 - `locationId`, `locationNickname` (or `worksiteName`) - Primary worksite reference and name
 - `latitude`, `longitude` - Location coordinates (for distance calculations, maps, check-ins)
+- `jobOrderType` - 'career' or 'gig' (determines scheduling behavior, timesheet rules, shift handling)
 
 **Optional Denormalized Fields:**
 - `email`, `phone` - Worker contact info
