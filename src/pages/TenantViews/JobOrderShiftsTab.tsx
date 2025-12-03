@@ -259,50 +259,108 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
         setLoading(false);
         return;
       }
+      
       // Fetch shift details
       const shiftRef = doc(db, 'shifts', shiftId);
       const shiftSnap = await getDoc(shiftRef);
-      let shiftData: any = {};
-      let worksiteName = '';
-      if (shiftSnap.exists()) {
-        shiftData = shiftSnap.data();
-        // Fetch worksite nickname from the shift's tenantId and worksiteId/locationId
-        const worksiteId = shiftData.worksiteId || shiftData.locationId;
-        if (shiftData.tenantId && worksiteId) {
-          const worksiteSnap = await getDoc(
-            doc(db, 'tenants', shiftData.tenantId, 'locations', worksiteId),
-          );
-          worksiteName = worksiteSnap.exists()
-            ? worksiteSnap.data().nickname || worksiteSnap.data().title
-            : worksiteId;
-        }
+      if (!shiftSnap.exists()) {
+        throw new Error('Shift not found');
       }
-      await addDoc(collection(db, 'assignments'), {
-        userId: worker.id,
+      const shiftData = shiftSnap.data();
+      
+      // Fetch job order to get company info and job order type
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      if (!jobOrderSnap.exists()) {
+        throw new Error('Job order not found');
+      }
+      const jobOrderData = jobOrderSnap.data();
+      
+      // Fetch location/worksite details
+      const worksiteId = shiftData.worksiteId || shiftData.locationId;
+      if (!worksiteId) {
+        throw new Error('Shift missing worksite/location ID');
+      }
+      
+      const worksiteSnap = await getDoc(
+        doc(db, 'tenants', tenantId, 'locations', worksiteId)
+      );
+      const worksiteData = worksiteSnap.exists() ? worksiteSnap.data() : {};
+      const worksiteName = worksiteData.nickname || worksiteData.title || worksiteId;
+      const latitude = worksiteData.latitude || worksiteData.lat || null;
+      const longitude = worksiteData.longitude || worksiteData.lng || null;
+      
+      // Validate required location coords
+      if (!latitude || !longitude) {
+        console.warn('Location missing coordinates:', worksiteId);
+      }
+      
+      // Create assignment with ALL required denormalized fields
+      await addDoc(collection(db, 'tenants', tenantId, 'assignments'), {
+        // Core references
         tenantId,
         jobOrderId,
         shiftId,
-        firstName: worker.firstName,
-        lastName: worker.lastName,
-        email: worker.email,
-        phone: worker.phone,
+        candidateId: worker.id,
+        userId: worker.id,
+        
+        // Status and dates
+        status: 'proposed', // Use proper status instead of 'Unconfirmed'
+        startDate: shiftData.startDate || '',
+        endDate: shiftData.endDate || '',
+        
+        // Rates
+        payRate: shiftData.payRate || jobOrderData.payRate || 0,
+        billRate: shiftData.billRate || jobOrderData.billRate || 0,
+        
+        // Timesheet mode
+        timesheetMode: jobOrderData.timesheetMode || 'mobile',
+        
+        // Worker information (denormalized - required)
+        firstName: worker.firstName || '',
+        lastName: worker.lastName || '',
+        email: worker.email || '',
+        phone: worker.phone || '',
+        
+        // Company information (denormalized - required)
+        companyId: jobOrderData.companyId || '',
+        companyName: jobOrderData.companyName || '',
+        companyTitle: jobOrderData.companyName || '', // Can be different if needed
+        
+        // Location information (denormalized - required)
+        locationId: worksiteId,
+        locationIds: shiftData.locationIds || [worksiteId],
+        locationNickname: worksiteName,
+        worksiteName: worksiteName,
+        latitude: latitude,
+        longitude: longitude,
+        
+        // Job information (denormalized - required)
+        jobOrderType: jobOrderData.jobType || 'career',
+        jobTitle: shiftData.jobTitle || jobOrderData.jobTitle || '',
+        shiftTitle: shiftData.title || '',
+        
+        // Audit fields
+        createdBy: worker.id, // TODO: Get actual current user ID
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        assignedAt: serverTimestamp(),
+        
+        // Legacy/optional fields
         role: worker.role,
         securityLevel: worker.securityLevel,
         departmentId: worker.departmentId,
-        locationIds: shiftData.locationIds || (shiftData.worksiteId ? [shiftData.worksiteId] : []),
-        status: 'Unconfirmed',
-        assignedAt: serverTimestamp(),
-        shiftTitle: shiftData.title || '',
-        startDate: shiftData.startDate || '',
-        endDate: shiftData.endDate || '',
-        jobTitle: shiftData.jobTitle || '',
-        worksiteName,
       });
+      
+      console.log(`✅ Assignment created for worker ${worker.id} on shift ${shiftId}`);
       setSuccess(true);
       fetchShifts();
       setSelectedWorker(null);
     } catch (err: any) {
+      console.error('Error adding assignment:', err);
       setError(err.message || 'Failed to add assignment');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -316,7 +374,7 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
     }
     try {
       const q = query(
-        collection(db, 'assignments'),
+        collection(db, 'tenants', tenantId, 'assignments'),
         where('shiftId', '==', shiftId),
         where('userId', '==', userId),
       );

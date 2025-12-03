@@ -213,6 +213,7 @@ export interface Timesheet {
 export interface AssignmentFilters {
   status?: AssignmentStatus;
   candidateId?: string;
+  jobOrderId?: string;
   worksite?: string;
   shiftTemplateId?: string;
   dateRange?: {

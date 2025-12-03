@@ -72,6 +72,71 @@ service cloud.firestore {
         // Only admins and recruiters can write
         allow write: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
       }
+      
+      // Assignments subcollection - BULLETPROOF RULES
+      match /assignments/{assignmentId} {
+        // READ Rules: Worker can read own assignments, tenant members can read all tenant assignments
+        allow read: if request.auth != null && (
+          // Worker can read their own assignments
+          resource.data.userId == request.auth.uid ||
+          resource.data.candidateId == request.auth.uid ||
+          // HRX can read all assignments
+          isHRX() ||
+          // Users with role in this tenant can read assignments
+          hasTenantRole(tenantId, request.auth.token.roles)
+        );
+        
+        // CREATE Rules: Only recruiters/managers/admins can create assignments
+        allow create: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        ) &&
+        // Validate tenantId matches path
+        request.resource.data.tenantId == tenantId &&
+        // Validate required denormalized fields exist
+        request.resource.data.userId != null &&
+        request.resource.data.candidateId != null &&
+        request.resource.data.firstName != null &&
+        request.resource.data.lastName != null &&
+        request.resource.data.companyId != null &&
+        request.resource.data.companyName != null &&
+        request.resource.data.locationId != null &&
+        (request.resource.data.locationNickname != null || request.resource.data.worksiteName != null) &&
+        request.resource.data.latitude != null &&
+        request.resource.data.longitude != null &&
+        request.resource.data.jobOrderType != null &&
+        request.resource.data.status != null &&
+        request.resource.data.startDate != null &&
+        request.resource.data.payRate != null &&
+        request.resource.data.timesheetMode != null &&
+        request.resource.data.createdBy != null &&
+        request.resource.data.createdAt != null;
+        
+        // UPDATE Rules: Recruiters/managers/admins can update, workers can only update own status when active
+        allow update: if request.auth != null && (
+          // Recruiters/Managers/Admins can update anything
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']) ||
+          // Workers can only update status and notes on their own assignments when active
+          (resource.data.userId == request.auth.uid &&
+           resource.data.status == 'active' &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'updatedAt', 'updatedBy']))
+        ) &&
+        // Always enforce tenantId cannot be changed
+        request.resource.data.tenantId == resource.data.tenantId;
+        
+        // DELETE Rules: Only admins can delete assignments
+        allow delete: if request.auth != null && (
+          isHRX() ||
+          (request.auth.token.roles != null && 
+           tenantId in request.auth.token.roles && 
+           request.auth.token.roles[tenantId].role == 'Admin')
+        );
+      }
     }
 
     // ============================================================================

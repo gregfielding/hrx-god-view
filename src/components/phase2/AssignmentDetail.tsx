@@ -129,7 +129,6 @@ const AssignmentDetail: React.FC<AssignmentDetailProps> = ({
       
       await assignmentService.updateAssignment(
         tenantId,
-        assignment.jobOrderId,
         assignment.id,
         {
           candidateId: editedAssignment.candidateId,
@@ -163,7 +162,6 @@ const AssignmentDetail: React.FC<AssignmentDetailProps> = ({
       
       await assignmentService.updateAssignmentStatus(
         tenantId,
-        assignment.jobOrderId,
         assignment.id,
         newStatus,
         'current-user' // TODO: Get actual user ID
