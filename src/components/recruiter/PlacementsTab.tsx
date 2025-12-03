@@ -42,6 +42,7 @@ import {
   doc,
   updateDoc,
   serverTimestamp,
+  addDoc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
@@ -724,6 +725,90 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       }
       
       await updateDoc(applicationRef, updateData);
+      
+      // ========================================================================
+      // CREATE ACTUAL ASSIGNMENT DOCUMENT with all required denormalized fields
+      // ========================================================================
+      
+      // Fetch job order to get company info and location
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      if (!jobOrderSnap.exists()) {
+        throw new Error('Job order not found');
+      }
+      const jobOrderData = jobOrderSnap.data();
+      
+      // Fetch location details for coords and nickname
+      const locationId = jobOrder?.worksiteId || jobOrderData.worksiteId || jobOrderData.locationId;
+      if (!locationId) {
+        throw new Error('Job order missing location/worksite ID');
+      }
+      
+      const locationRef = doc(db, 'tenants', tenantId, 'locations', locationId);
+      const locationSnap = await getDoc(locationRef);
+      const locationData = locationSnap.exists() ? locationSnap.data() : {};
+      const locationNickname = locationData.nickname || locationData.title || locationId;
+      const latitude = locationData.latitude || locationData.lat || null;
+      const longitude = locationData.longitude || locationData.lng || null;
+      
+      if (!latitude || !longitude) {
+        console.warn('Location missing coordinates:', locationId);
+      }
+      
+      // Create assignment document with ALL required fields
+      await addDoc(collection(db, 'tenants', tenantId, 'assignments'), {
+        // Core references
+        tenantId,
+        jobOrderId,
+        shiftId: shift.id,
+        candidateId: worker.id,
+        userId: worker.id,
+        applicationId: applicationDoc.id,
+        
+        // Status and dates
+        status: 'confirmed', // Placements start as confirmed
+        startDate: shift.shiftDate || '',
+        endDate: shift.shiftDate || '', // Gig jobs typically single-day
+        
+        // Rates (from shift or job order)
+        payRate: (shift as any).payRate || jobOrderData.payRate || 0,
+        billRate: (shift as any).billRate || jobOrderData.billRate || 0,
+        
+        // Timesheet mode
+        timesheetMode: jobOrderData.timesheetMode || 'mobile',
+        
+        // Worker information (denormalized - required)
+        firstName: worker.firstName || worker.displayName?.split(' ')[0] || '',
+        lastName: worker.lastName || worker.displayName?.split(' ').slice(1).join(' ') || '',
+        email: worker.email || '',
+        phone: worker.phone || '',
+        
+        // Company information (denormalized - required)
+        companyId: jobOrderData.companyId || '',
+        companyName: jobOrderData.companyName || '',
+        companyTitle: jobOrderData.companyName || '',
+        
+        // Location information (denormalized - required)
+        locationId: locationId,
+        locationIds: [locationId],
+        locationNickname: locationNickname,
+        worksiteName: locationNickname,
+        latitude: latitude,
+        longitude: longitude,
+        
+        // Job information (denormalized - required)
+        jobOrderType: jobOrderData.jobType || 'gig',
+        jobTitle: (shift as any).defaultJobTitle || jobOrderData.jobTitle || '',
+        shiftTitle: (shift as any).shiftTitle || '',
+        
+        // Audit fields
+        createdBy: 'system', // TODO: Get actual current user ID
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        assignedAt: serverTimestamp(),
+      });
+      
+      console.log(`✅ Assignment created for worker ${worker.id} on shift ${shift.id}`);
 
       // Get shift details for SMS
       const shiftDate: any = shift.shiftDate;
