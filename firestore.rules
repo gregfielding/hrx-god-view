@@ -734,9 +734,10 @@ service cloud.firestore {
     
     // --- ASSIGNMENTS ---
     match /assignments/{assignmentId} {
-      allow read, write: if isHRX() || isTenantAdmin(resource.data.tenantId);
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
-      allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+      // Temporarily allow all authenticated users to read assignments
+      // TODO: Tighten this once we verify tenantId is always set on assignments
+      allow read: if isAuthenticated();
+      allow write: if isHRX() || isTenantAdmin(resource.data.tenantId);
     }
     
     // --- SHIFTS ---
