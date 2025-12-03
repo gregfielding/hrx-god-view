@@ -102,16 +102,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const storageKey = `placements_filters_${tenantId}_${jobOrderId}`;
   
   // Helper to load persisted filters from localStorage
-  const loadPersistedFilters = (): { date: string; shiftId: string; workforce: string } => {
+  const loadPersistedFilters = (): { shiftId: string; workforce: string } => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Format today's date as YYYY-MM-DD for fallback
-        const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
         return {
-          date: parsed.date || todayStr,
           shiftId: parsed.shiftId || '',
           workforce: parsed.workforce || '',
         };
@@ -120,16 +116,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       console.error('Error loading persisted filters:', err);
     }
     // Default values
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    return { date: todayStr, shiftId: '', workforce: '' };
+    return { shiftId: '', workforce: '' };
   };
 
   // Load initial state from localStorage
   const persistedFilters = loadPersistedFilters();
   
-  // Filter state
-  const [selectedDate, setSelectedDate] = useState<string>(persistedFilters.date);
+  // Filter state (removed date picker - will show all upcoming shifts)
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
   const [selectedWorkforce, setSelectedWorkforce] = useState<string>(persistedFilters.workforce);
   
@@ -241,14 +234,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify({
-        date: selectedDate,
         shiftId: selectedShiftId,
         workforce: selectedWorkforce,
       }));
     } catch (err) {
       console.error('Error saving filters to localStorage:', err);
     }
-  }, [selectedDate, selectedShiftId, selectedWorkforce, storageKey]);
+  }, [selectedShiftId, selectedWorkforce, storageKey]);
 
   // Load confirmed applications count for selected shift
   useEffect(() => {
@@ -296,10 +288,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     loadConfirmedApplications();
   }, [tenantId, selectedShiftId]);
 
-  // Load shifts for selected date
+  // Load all upcoming shifts (from today forward)
   useEffect(() => {
     const loadShifts = async () => {
-      if (!tenantId || !jobOrderId || !selectedDate) {
+      if (!tenantId || !jobOrderId) {
         setShifts([]);
         setSelectedShiftId('');
         return;
@@ -308,10 +300,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setLoading(true);
       setError(null);
       try {
-        // selectedDate is already in YYYY-MM-DD format
-        const dateStr = selectedDate;
+        // Get today's date in YYYY-MM-DD format
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0];
         
-        // Load job order to get pay rate information
+        // Load job order to get pay rate information (using canonical path)
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
         const jobOrderSnap = await getDoc(jobOrderRef);
         const jobOrderData = jobOrderSnap.exists() ? jobOrderSnap.data() : null;
@@ -339,12 +332,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return defaultPayRate;
         };
         
-        // Query shifts for this job order and date
+        // Query all shifts for this job order
         // For gig jobs, shifts are in tenants/{tenantId}/job_orders/{jobOrderId}/shifts
         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
         const shiftsSnap = await getDocs(shiftsRef);
         
-        // Filter shifts by date (client-side since Firestore doesn't support date string queries easily)
+        // Filter shifts from today forward and enrich with pay rate
         const allShifts = shiftsSnap.docs.map(doc => {
           const shiftData: any = {
             id: doc.id,
@@ -362,9 +355,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return shiftData;
         });
         
-        const shiftsForDate = allShifts.filter(shift => {
+        // Filter for shifts from today forward
+        const upcomingShifts = allShifts.filter(shift => {
           const shiftDate: any = shift.shiftDate;
           if (!shiftDate) return false;
+          
           // Handle both YYYY-MM-DD strings and Date objects/Timestamps
           let shiftDateStr: string;
           if (typeof shiftDate === 'string') {
@@ -383,13 +378,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           } else {
             return false;
           }
-          return shiftDateStr === dateStr;
+          
+          // Include shifts from today forward
+          return shiftDateStr >= todayStr;
+        }).sort((a, b) => {
+          // Sort by date ascending (earliest first)
+          const dateA = typeof a.shiftDate === 'string' ? a.shiftDate : a.shiftDate?.toDate?.()?.toISOString?.() || '';
+          const dateB = typeof b.shiftDate === 'string' ? b.shiftDate : b.shiftDate?.toDate?.()?.toISOString?.() || '';
+          return dateA.localeCompare(dateB);
         });
         
-        setShifts(shiftsForDate);
+        setShifts(upcomingShifts);
         
         // Reset selected shift if it's not in the new list
-        if (selectedShiftId && !shiftsForDate.find(s => s.id === selectedShiftId)) {
+        if (selectedShiftId && !upcomingShifts.find(s => s.id === selectedShiftId)) {
           setSelectedShiftId('');
         }
       } catch (err: any) {
@@ -401,7 +403,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadShifts();
-  }, [tenantId, jobOrderId, selectedDate, selectedShiftId]);
+  }, [tenantId, jobOrderId, selectedShiftId]);
 
   // Load workforce based on selected option
   useEffect(() => {
@@ -516,96 +518,60 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         
         // Check assignment status for each worker if a shift is selected
         if (selectedShiftId && workforceUsers.length > 0) {
-          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          // PRIMARY METHOD: Check assignments collection (source of truth)
+          const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
           
-          // Get job posting ID to find applications
-          const jobPostingsRef = collection(db, 'tenants', tenantId, 'job_postings');
-          const jobPostingsQuery = query(
-            jobPostingsRef,
-            where('jobOrderId', '==', jobOrderId)
+          // Query all assignments for this shift
+          const assignmentsQuery = query(
+            assignmentsRef,
+            where('shiftId', '==', selectedShiftId)
           );
-          const jobPostingsSnapshot = await getDocs(jobPostingsQuery);
           
-          if (!jobPostingsSnapshot.empty) {
-            const jobPostId = jobPostingsSnapshot.docs[0].id;
+          try {
+            const assignmentsSnapshot = await getDocs(assignmentsQuery);
+            const assignmentsMap = new Map<string, { status: string; assignmentId: string }>();
             
-            // Check each worker's assignment status
-            const assignmentChecks = workforceUsers.map(async (worker) => {
-              let isAssigned = false;
-              let confirmationStatus: 'accepted' | 'confirmed' | undefined = undefined;
-              
-              // Method 1: Check applications collection
-              const applicationId = `${worker.id}_${jobPostId}`;
-              const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
-              const applicationDoc = await getDoc(applicationRef);
-              
-              if (applicationDoc.exists()) {
-                const appData = applicationDoc.data();
-                // Check if status is 'accepted' or 'confirmed' and shiftId matches or shiftIds contains the shift
-                if (appData.status === 'accepted' || appData.status === 'confirmed') {
-                  if (appData.shiftId === selectedShiftId) {
-                    isAssigned = true;
-                    confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
-                  } else if (Array.isArray(appData.shiftIds) && appData.shiftIds.includes(selectedShiftId)) {
-                    isAssigned = true;
-                    confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
-                  }
-                }
-              } else {
-                // Also check by userId and jobOrderId
-                const applicationQuery = query(
-                  applicationsRef,
-                  where('userId', '==', worker.id),
-                  where('jobOrderId', '==', jobOrderId)
-                );
-                const applicationSnapshot = await getDocs(applicationQuery);
-                
-                if (!applicationSnapshot.empty) {
-                  const appDoc = applicationSnapshot.docs[0];
-                  const appData = appDoc.data();
-                  if (appData.status === 'accepted' || appData.status === 'confirmed') {
-                    if (appData.shiftId === selectedShiftId) {
-                      isAssigned = true;
-                      confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
-                    } else if (Array.isArray(appData.shiftIds) && appData.shiftIds.includes(selectedShiftId)) {
-                      isAssigned = true;
-                      confirmationStatus = appData.status === 'confirmed' ? 'confirmed' : 'accepted';
-                    }
-                  }
-                }
+            // Build map of userId -> assignment status
+            assignmentsSnapshot.docs.forEach(doc => {
+              const assignmentData = doc.data();
+              const userId = assignmentData.userId || assignmentData.candidateId;
+              if (userId) {
+                assignmentsMap.set(userId, {
+                  status: assignmentData.status || 'proposed',
+                  assignmentId: doc.id
+                });
               }
-              
-              // Method 2: Also check user's applicationData.shiftAssignments (if not already found)
-              if (!isAssigned) {
-                const userRef = doc(db, 'users', worker.id);
-                const userDoc = await getDoc(userRef);
-                if (userDoc.exists()) {
-                  const userData = userDoc.data();
-                  const applicationData = userData.applicationData || {};
-                  const appKey = `${tenantId}_${jobPostId}`;
-                  const appData = applicationData[appKey];
-                  
-                  if (appData?.shiftAssignments) {
-                    const shiftAssignmentStatus = appData.shiftAssignments[selectedShiftId];
-                    // Consider 'pending', 'accepted', or 'confirmed' as assigned
-                    if (shiftAssignmentStatus && ['pending', 'accepted', 'confirmed'].includes(shiftAssignmentStatus)) {
-                      isAssigned = true;
-                      if (shiftAssignmentStatus === 'confirmed') {
-                        confirmationStatus = 'confirmed';
-                      } else if (shiftAssignmentStatus === 'accepted') {
-                        confirmationStatus = 'accepted';
-                      }
-                    }
-                  }
-                }
-              }
-              
-              return { ...worker, isAssignedToShift: isAssigned, confirmationStatus };
             });
             
-            const workersWithAssignments = await Promise.all(assignmentChecks);
+            // Check each worker's assignment status from assignments collection
+            const workersWithAssignments = workforceUsers.map((worker) => {
+              const assignment = assignmentsMap.get(worker.id);
+              if (assignment) {
+                const status = assignment.status;
+                let confirmationStatus: 'accepted' | 'confirmed' | undefined = undefined;
+                
+                // Map assignment statuses to confirmation status
+                if (status === 'confirmed' || status === 'active') {
+                  confirmationStatus = 'confirmed';
+                } else if (status === 'proposed' || status === 'accepted') {
+                  confirmationStatus = 'accepted';
+                }
+                
+                return {
+                  ...worker,
+                  isAssignedToShift: true,
+                  confirmationStatus
+                };
+              }
+              
+              // If not found in assignments, check applications as fallback
+              return { ...worker, isAssignedToShift: false, confirmationStatus: undefined };
+            });
+            
             setWorkers(workersWithAssignments);
-          } else {
+          } catch (assignmentErr: any) {
+            console.warn('Error checking assignments collection, falling back to applications:', assignmentErr);
+            // Fallback: Keep existing application-based check logic
             setWorkers(workforceUsers);
           }
         } else {
@@ -727,11 +693,29 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       await updateDoc(applicationRef, updateData);
       
       // ========================================================================
+      // CHECK FOR DUPLICATE ASSIGNMENT BEFORE CREATING
+      // ========================================================================
+      const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+      const duplicateCheckQuery = query(
+        assignmentsRef,
+        where('userId', '==', worker.id),
+        where('shiftId', '==', shift.id)
+      );
+      const duplicateSnapshot = await getDocs(duplicateCheckQuery);
+      
+      if (!duplicateSnapshot.empty) {
+        console.warn(`Assignment already exists for worker ${worker.id} on shift ${shift.id}`);
+        setError(`Worker ${worker.displayName} is already assigned to this shift.`);
+        setLoading(false);
+        return;
+      }
+      
+      // ========================================================================
       // CREATE ACTUAL ASSIGNMENT DOCUMENT with all required denormalized fields
       // ========================================================================
       
-      // Fetch job order to get company info and location
-      const jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
+      // Fetch job order to get company info and location (using canonical path)
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
       const jobOrderSnap = await getDoc(jobOrderRef);
       if (!jobOrderSnap.exists()) {
         throw new Error('Job order not found');
@@ -982,9 +966,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   }, [selectedShift]);
 
-  // Convert date string to Date for display
-  const selectedDateObj = selectedDate ? new Date(selectedDate) : null;
-
   return (
     <Box>
       <Typography variant="h6" gutterBottom sx={{ fontWeight: 700, mb: 3 }}>
@@ -995,26 +976,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-            Select filters to view and manage placements
+            Select a shift and workforce to view and manage placements
           </Typography>
           <Grid container spacing={2} sx={{ mt: 1 }}>
-            {/* Date Picker */}
-            <Grid item xs={12} sm={4}>
-              <TextField
-                label="Date"
-                type="date"
-                fullWidth
-                value={selectedDate}
-                onChange={(e) => {
-                  setSelectedDate(e.target.value);
-                  setSelectedShiftId(''); // Reset shift when date changes
-                }}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-
-              {/* Shift Picker */}
-              <Grid item xs={12} sm={4}>
+              {/* Shift Picker - Shows all upcoming shifts */}
+              <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Shift</InputLabel>
                   <Select
@@ -1025,29 +991,62 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   >
                     {shifts.length === 0 ? (
                       <MenuItem disabled>
-                        {loading ? 'Loading shifts...' : 'No shifts available for this date'}
+                        {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
                       </MenuItem>
                     ) : (
-                      shifts.map((shift) => (
-                        <MenuItem key={shift.id} value={shift.id}>
-                          {shift.shiftTitle || 'Shift'} - {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
-                          {shift.spotsRemaining !== undefined && (
-                            <Chip 
-                              size="small" 
-                              label={`${shift.spotsRemaining} spots`} 
-                              sx={{ ml: 1 }}
-                              color={shift.spotsRemaining > 0 ? 'success' : 'default'}
-                            />
-                          )}
-                        </MenuItem>
-                      ))
+                      shifts.map((shift) => {
+                        // Format the date for display
+                        const shiftDate: any = shift.shiftDate;
+                        let formattedDate = '';
+                        if (shiftDate) {
+                          let date: Date;
+                          if (typeof shiftDate === 'string') {
+                            date = new Date(shiftDate);
+                          } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
+                            date = shiftDate.toDate();
+                          } else if (shiftDate instanceof Date) {
+                            date = shiftDate;
+                          } else {
+                            date = new Date();
+                          }
+                          formattedDate = date.toLocaleDateString('en-US', { 
+                            weekday: 'short', 
+                            month: 'short', 
+                            day: 'numeric',
+                            year: 'numeric'
+                          });
+                        }
+                        
+                        return (
+                          <MenuItem key={shift.id} value={shift.id}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {formattedDate}
+                                </Typography>
+                                {shift.spotsRemaining !== undefined && (
+                                  <Chip 
+                                    size="small" 
+                                    label={`${shift.spotsRemaining} spots`} 
+                                    sx={{ ml: 1 }}
+                                    color={shift.spotsRemaining > 0 ? 'success' : 'default'}
+                                  />
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        );
+                      })
                     )}
                   </Select>
                 </FormControl>
               </Grid>
 
               {/* Workforce Dropdown */}
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Workforce</InputLabel>
                   <Select
@@ -1119,12 +1118,28 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           Date & Time
                         </Typography>
                         <Typography variant="body2">
-                          {selectedDateObj ? selectedDateObj.toLocaleDateString('en-US', { 
-                            weekday: 'short', 
-                            month: 'short', 
-                            day: 'numeric',
-                            year: 'numeric'
-                          }) : selectedDate}
+                          {(() => {
+                            const shiftDate: any = selectedShift.shiftDate;
+                            if (shiftDate) {
+                              let date: Date;
+                              if (typeof shiftDate === 'string') {
+                                date = new Date(shiftDate);
+                              } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
+                                date = shiftDate.toDate();
+                              } else if (shiftDate instanceof Date) {
+                                date = shiftDate;
+                              } else {
+                                return 'Unknown date';
+                              }
+                              return date.toLocaleDateString('en-US', { 
+                                weekday: 'short', 
+                                month: 'short', 
+                                day: 'numeric',
+                                year: 'numeric'
+                              });
+                            }
+                            return 'No date';
+                          })()}
                         </Typography>
                         {(() => {
                           // Check for startTime in various possible field names
@@ -1574,7 +1589,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         {/* Empty State */}
         {!loading && !showContent && !error && (
           <Alert severity="info">
-            Please select a date, shift, and workforce option to view placements.
+            Please select a shift and workforce option to view placements.
           </Alert>
         )}
 
