@@ -89,6 +89,7 @@ import ShiftSetupTab from '../components/recruiter/ShiftSetupTab';
 import CRMNotesTab from '../components/CRMNotesTab';
 import GigJobsBoardToggle from '../components/recruiter/GigJobsBoardToggle';
 import PlacementsTab from '../components/recruiter/PlacementsTab';
+import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
@@ -1384,6 +1385,18 @@ const JobOrderDefaultsTab: React.FC<{
         </Grid>
         
         <Grid item xs={12} md={5}>
+          {/* Labor Pool Selector */}
+          <Card sx={{ mb: 3 }}>
+            <LaborPoolSelector
+              jobOrderId={jobOrder?.id || ''}
+              tenantId={tenantId}
+              currentLaborPoolGroups={(jobOrder as any)?.laborPoolGroups || []}
+              onUpdate={() => {
+                if (onSaved) onSaved();
+              }}
+            />
+          </Card>
+          
           <Card sx={{ mb: 3 }}>
             <CardHeader title="E-Verify" />
             <CardContent>

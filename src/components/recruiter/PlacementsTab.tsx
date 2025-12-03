@@ -601,20 +601,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     loadWorkforce();
   }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId]);
 
-  // Build workforce options based on job order visibility settings
+  // Build workforce options based on job order labor pool and visibility settings
   const getWorkforceOptions = () => {
     const options: Array<{ value: string; label: string }> = [
       { value: 'applicants', label: 'Applicants' },
       { value: 'candidates', label: 'Candidates' },
     ];
     
-    // Add group options if job order has group restrictions
-    // Check both visibility field and jobsBoardVisibility field for compatibility
+    // Get labor pool groups from job order (preferred)
+    // This is the dedicated "Labor Pool" setting for the job order
+    const laborPoolGroups = (jobOrder as any)?.laborPoolGroups || [];
+    
+    // Also check legacy job posting visibility groups for backwards compatibility
     const visibility = jobOrder?.visibility || (jobOrder as any)?.jobsBoardVisibility;
     const restrictedGroups = jobOrder?.restrictedGroups || [];
     
-    if (visibility === 'group_restricted' && restrictedGroups.length > 0) {
-      restrictedGroups.forEach((groupId: string) => {
+    // Combine both sources of groups (labor pool + posting visibility)
+    const allGroupIds = new Set<string>([
+      ...laborPoolGroups,
+      ...(visibility === 'group_restricted' ? restrictedGroups : [])
+    ]);
+    
+    // Add each unique group to the options
+    if (allGroupIds.size > 0) {
+      allGroupIds.forEach((groupId: string) => {
         const group = userGroups.find(g => g.id === groupId);
         if (group) {
           options.push({
