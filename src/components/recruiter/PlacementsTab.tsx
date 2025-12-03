@@ -419,7 +419,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         let workforceUsers: Worker[] = [];
 
         if (selectedWorkforce === 'applicants') {
-          // Load applicants for this job order
+          // Load applicants for this job order AND this specific shift
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
           const applicationsQuery = query(
             applicationsRef,
@@ -427,30 +427,41 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           );
           const applicationsSnap = await getDocs(applicationsQuery);
           
-          // Get unique user IDs from applications
+          // Filter applications to only those who applied for this specific shift
           const userIds = new Set<string>();
           applicationsSnap.docs.forEach(doc => {
             const data = doc.data();
-            if (data.userId) {
+            if (!data.userId) return;
+            
+            // Check if this applicant applied for the selected shift
+            // Applications can have shiftId (single) or shiftIds (array) or selectedShifts (array)
+            const hasShift = 
+              data.shiftId === selectedShiftId ||
+              (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) ||
+              (Array.isArray(data.selectedShifts) && data.selectedShifts.some((s: any) => 
+                s.shiftId === selectedShiftId || s.id === selectedShiftId
+              ));
+            
+            if (hasShift) {
               userIds.add(data.userId);
             }
           });
           
-                                          // Load user documents with full profile data
-                const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
-                  const userRef = doc(db, 'users', userId);
-                  const userSnap = await getDoc(userRef);
-                  if (userSnap.exists()) {
-                    return extractWorkerData(userSnap.data(), userId);
-                  }
-                  return null;
-                });
+          // Load user documents with full profile data
+          const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
+            const userRef = doc(db, 'users', userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+              return extractWorkerData(userSnap.data(), userId);
+            }
+            return null;
+          });
           
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
           
         } else if (selectedWorkforce === 'candidates') {
-          // Load candidates for this job order
+          // Load candidates for this job order AND this specific shift
           // Candidates are applicants who have been marked as candidates (shortlist)
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
           const applicationsQuery = query(
@@ -460,11 +471,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           );
           const applicationsSnap = await getDocs(applicationsQuery);
           
-          // Get unique user IDs from candidate applications
+          // Filter candidates to only those who applied for this specific shift
           const candidateUserIds = new Set<string>();
           applicationsSnap.docs.forEach(doc => {
             const data = doc.data();
-            if (data.userId && data.status !== 'rejected') {
+            if (!data.userId || data.status === 'rejected') return;
+            
+            // Check if this candidate applied for the selected shift
+            // Applications can have shiftId (single) or shiftIds (array) or selectedShifts (array)
+            const hasShift = 
+              data.shiftId === selectedShiftId ||
+              (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) ||
+              (Array.isArray(data.selectedShifts) && data.selectedShifts.some((s: any) => 
+                s.shiftId === selectedShiftId || s.id === selectedShiftId
+              ));
+            
+            if (hasShift) {
               candidateUserIds.add(data.userId);
             }
           });
