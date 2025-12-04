@@ -4,6 +4,7 @@ import {
   Avatar,
   Autocomplete,
   Box,
+  Button,
   Chip,
   CircularProgress,
   FormControl,
@@ -30,7 +31,7 @@ import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
@@ -80,7 +81,13 @@ const RecruiterUsers: React.FC = () => {
   const [users, setUsers] = useState<RecruiterUser[]>([]);
   const [groups, setGroups] = useState<TenantUserGroup[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Pagination state
+  const [lastVisibleDoc, setLastVisibleDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const PAGE_SIZE = 50; // Load 50 users at a time
 
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
@@ -98,12 +105,17 @@ const RecruiterUsers: React.FC = () => {
     return map;
   }, [groups]);
 
+  // Reset pagination when filters change
   useEffect(() => {
     if (!activeTenant?.id) return;
 
     loadGroups(activeTenant.id);
-    loadUsers(activeTenant.id);
-  }, [activeTenant?.id]);
+    // Reset and load fresh data when filters/search/sort change
+    setUsers([]);
+    setLastVisibleDoc(null);
+    setHasMore(true);
+    loadUsers(activeTenant.id, true);
+  }, [activeTenant?.id, searchTerm, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
   const loadGroups = async (tenantId: string) => {
     try {
@@ -116,18 +128,51 @@ const RecruiterUsers: React.FC = () => {
     }
   };
 
-  const loadUsers = async (tenantId: string) => {
-    setLoading(true);
+  const loadUsers = async (tenantId: string, isInitialLoad = false) => {
+    if (isInitialLoad) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
     setError(null);
 
     try {
       const usersRef = collection(db, 'users');
-      const q = query(
+      
+      // Build base query
+      let q = query(
         usersRef,
         where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
       );
 
+      // Add ordering for pagination (required for startAfter)
+      q = query(q, orderBy('createdAt', 'desc'));
+      
+      // When search or filters are active, load more aggressively (up to 500 users)
+      // This ensures search/filters query the full collection
+      const hasActiveFilters = searchTerm || 
+        securityLevelFilter !== 'all' || 
+        groupFilter !== 'all' || 
+        skillFilter !== 'all' || 
+        stateFilter !== 'all';
+      
+      const effectivePageSize = hasActiveFilters ? 500 : PAGE_SIZE;
+      
+      // Add limit
+      q = query(q, limit(effectivePageSize));
+      
+      // If loading more, start after last document
+      if (!isInitialLoad && lastVisibleDoc) {
+        q = query(q, startAfter(lastVisibleDoc));
+      }
+
       const snapshot = await getDocs(q);
+      
+      // Track last document for pagination
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      setLastVisibleDoc(lastDoc || null);
+      setHasMore(snapshot.docs.length === effectivePageSize);
+
       const data: RecruiterUser[] = snapshot.docs.map((userDoc) => {
         const userData = userDoc.data() as any;
         const tenantData = userData.tenantIds?.[tenantId] || {};
@@ -173,13 +218,26 @@ const RecruiterUsers: React.FC = () => {
           state: userData.state || userData.address?.state || '',
         };
       });
-      setUsers(data);
+      
+      // If initial load, replace users; if loading more, append
+      if (isInitialLoad) {
+        setUsers(data);
+      } else {
+        setUsers(prev => [...prev, ...data]);
+      }
     } catch (err) {
       console.error('RecruiterUsers: Failed to load users', err);
       setError('Unable to load users. Please try again.');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
+  };
+  
+  // Load more users when clicking "Load More"
+  const loadMoreUsers = () => {
+    if (!activeTenant?.id || loadingMore || !hasMore) return;
+    loadUsers(activeTenant.id, false);
   };
 
   const getSecurityLevelLabel = (level: string): string => {
@@ -693,9 +751,25 @@ const RecruiterUsers: React.FC = () => {
         </TableContainer>
       </Paper>
 
+      {/* Load More Button */}
+      {hasMore && !loading && (
+        <Box sx={{ mt: 3, textAlign: 'center' }}>
+          <Button
+            variant="outlined"
+            size="large"
+            onClick={loadMoreUsers}
+            disabled={loadingMore}
+            startIcon={loadingMore ? <CircularProgress size={16} /> : null}
+          >
+            {loadingMore ? 'Loading More Users...' : 'Load More Users'}
+          </Button>
+        </Box>
+      )}
+
       <Box sx={{ mt: 2, textAlign: 'center', color: 'text.secondary' }}>
         <Typography variant="body2">
-          Showing {filteredUsers.length} of {users.length} user{users.length !== 1 ? 's' : ''}
+          Showing {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''}
+          {hasMore && ' (click "Load More" to see additional users)'}
         </Typography>
       </Box>
     </Box>

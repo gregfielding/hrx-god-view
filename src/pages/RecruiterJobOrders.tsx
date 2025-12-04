@@ -75,6 +75,7 @@ const RecruiterJobOrders: React.FC = () => {
   // State
   const [jobOrders, setJobOrders] = useState<JobOrderWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [lastDoc, setLastDoc] = useState<any>(null);
@@ -104,17 +105,30 @@ const RecruiterJobOrders: React.FC = () => {
     console.log('showFavoritesOnly:', showFavoritesOnly);
   }, [favorites, showFavoritesOnly]);
 
-  const fetchJobOrders = useCallback(async (startDoc: any = null) => {
+  const fetchJobOrders = useCallback(async (startDoc: any = null, isInitialLoad = false) => {
     if (!tenantId) return;
     
     console.log('🔍 RecruiterJobOrders: Fetching job orders for tenant:', tenantId);
-    setLoading(true);
+    if (isInitialLoad) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
     try {
       // Use the tenant-scoped job_orders collection
       const baseRef = collection(db, p.jobOrders(tenantId));
+      
+      // When search or filters are active, load more aggressively (up to 200 job orders)
+      // This ensures search/filters query a larger dataset from Firestore
+      const hasActiveFilters = search || 
+        statusFilter || 
+        companyFilter !== 'all';
+      
+      const effectivePageSize = hasActiveFilters ? 200 : PAGE_SIZE;
+      
       const constraints: any[] = [
         orderBy(sortField, sortDirection),
-        limit(PAGE_SIZE)
+        limit(effectivePageSize)
       ];
 
       // Add status filter if selected
@@ -252,7 +266,7 @@ const RecruiterJobOrders: React.FC = () => {
         });
       }
 
-      if (newJobOrders.length < PAGE_SIZE) {
+      if (newJobOrders.length < effectivePageSize) {
         setIsEnd(true);
       } else {
         setLastDoc(snap.docs[snap.docs.length - 1]);
@@ -261,18 +275,43 @@ const RecruiterJobOrders: React.FC = () => {
       console.error('❌ RecruiterJobOrders: Error fetching job orders:', error);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [tenantId, statusFilter, sortField, sortDirection]);
 
-  // Load job orders
+  // Reset and reload when filters/search/sort change
   useEffect(() => {
     if (tenantId) {
-      fetchJobOrders();
+      // Reset pagination state
+      setJobOrders([]);
+      setLastDoc(null);
+      setIsEnd(false);
+      firstLoadRef.current = true;
+      // Load fresh data
+      fetchJobOrders(null, true);
     }
-  }, [tenantId, fetchJobOrders]);
+  }, [tenantId, statusFilter, sortField, sortDirection]);
+  
+  // Debounce search to avoid too many queries
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    const timeoutId = setTimeout(() => {
+      // Reset pagination when search changes
+      setJobOrders([]);
+      setLastDoc(null);
+      setIsEnd(false);
+      firstLoadRef.current = true;
+      fetchJobOrders(null, true);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [search, tenantId]);
 
   const handleLoadMore = () => {
-    fetchJobOrders(lastDoc);
+    if (!loadingMore && !isEnd) {
+      fetchJobOrders(lastDoc, false);
+    }
   };
 
   // Client-side filtering for real-time search and other filters
@@ -707,8 +746,14 @@ const RecruiterJobOrders: React.FC = () => {
           {/* Load More */}
           {!isEnd && (
             <Box sx={{ mt: 3, textAlign: 'center' }}>
-              <Button onClick={handleLoadMore} disabled={loading} variant="outlined">
-                {loading ? <CircularProgress size={20} /> : 'Load More'}
+              <Button 
+                onClick={handleLoadMore} 
+                disabled={loadingMore || loading}
+                variant="outlined"
+                size="large"
+                startIcon={loadingMore && <CircularProgress size={16} />}
+              >
+                {loadingMore ? 'Loading More...' : 'Load More Job Orders'}
               </Button>
             </Box>
           )}
