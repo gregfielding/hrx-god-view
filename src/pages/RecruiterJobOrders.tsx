@@ -290,7 +290,7 @@ const RecruiterJobOrders: React.FC = () => {
       // Load fresh data
       fetchJobOrders(null, true);
     }
-  }, [tenantId, statusFilter, sortField, sortDirection]);
+  }, [tenantId, statusFilter, sortField, sortDirection, companyFilter]);
   
   // Debounce search to avoid too many queries
   useEffect(() => {
