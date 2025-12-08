@@ -1,6 +1,7 @@
 import * as functions from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { logger } from './utils/logger';
 import nlp from 'compromise';
 import OpenAI from 'openai';
 import { z } from 'zod';
@@ -1709,7 +1710,7 @@ function calculateTotalExperience(experience: WorkExperience[]): number {
 /**
  * Log AI action for analytics
  */
-async function logger.aiEvent(data: any) {
+async function logAiEvent(data: any) {
   try {
     await db.collection('aiLogs').add({
       ...data,

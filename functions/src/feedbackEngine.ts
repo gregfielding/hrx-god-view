@@ -892,7 +892,7 @@ const SAFE_EXTRA_FIELDS = [
   'versionTag',
 ];
 
-export async function logger.aiEvent(log: Record<string, any>) {
+export async function logAiEvent(log: Record<string, any>) {
   if (!log) return;
   const summaryParts = [
     log.actionType || log.eventType || log.sourceModule || 'AI action',

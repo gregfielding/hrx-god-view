@@ -2,6 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { google } from 'googleapis';
 import { defineString } from 'firebase-functions/params';
+import { logger } from './utils/logger';
 
 const db = getFirestore();
 
@@ -480,14 +481,4 @@ export const refreshCalendarWatch = onRequest({
   }
 });
 
-// Helper function for AI logging (import from your existing utils)
-async function logger.aiEvent(data: any) {
-  try {
-    await db.collection('aiLogs').add({
-      ...data,
-      timestamp: new Date()
-    });
-  } catch (error) {
-    console.error('Error logging AI action:', error);
-  }
-}
+// Note: Using logger from utils/logger for AI logging

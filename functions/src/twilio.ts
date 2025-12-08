@@ -256,7 +256,177 @@ export const checkOtp = onCall(
 });
 
 /**
- * Send worker message via Twilio Programmable Messaging
+ * Internal helper to send SMS via Twilio (for use in Firestore triggers and scheduled functions)
+ * This version doesn't require authentication context
+ */
+export async function sendWorkerMessageInternal(
+  to: string,
+  messageContent: string,
+  context?: {
+    systemContext?: boolean;
+    source?: string;
+    sourceId?: string;
+  }
+): Promise<{ success: boolean; messageId: string | null; status: string; error?: string; errorCode?: string }> {
+  // Validate inputs
+  if (!to || !/^\+[1-9]\d{7,14}$/.test(to)) {
+    logger.error('Invalid recipient phone number format:', to);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: 'Invalid recipient phone number format'
+    };
+  }
+
+  if (!messageContent || messageContent.trim() === '') {
+    logger.error('Message content is required');
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: 'Message content is required'
+    };
+  }
+
+  try {
+    // Check SMS opt-in for recipient
+    const usersQuery = await db.collection('users')
+      .where('phoneE164', '==', to)
+      .limit(1)
+      .get();
+    
+    if (!usersQuery.empty) {
+      const recipientUserDoc = usersQuery.docs[0];
+      const recipientUserData = recipientUserDoc.data();
+      
+      // Check SMS opt-in - if field exists and is false, skip SMS
+      if (recipientUserData?.smsOptIn === false) {
+        logger.info(`Skipping SMS to ${to} - user has opted out`);
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'Recipient has opted out of SMS messages'
+        };
+      }
+      
+      // Check if phone is verified (preferred but not required)
+      if (!recipientUserData?.phoneVerified) {
+        logger.warn(`Sending SMS to unverified phone: ${to}`);
+      }
+    }
+
+    // Get Twilio configuration
+    let client;
+    let messagingPhoneNumber;
+    let a2pCampaign;
+    
+    try {
+      client = getTwilioClient();
+      messagingPhoneNumber = getMessagingPhoneNumber();
+      a2pCampaign = getA2PCampaign();
+    } catch (configError: any) {
+      logger.error('Failed to load Twilio configuration:', configError);
+      return {
+        success: false,
+        messageId: null,
+        status: 'failed',
+        error: `Twilio configuration error: ${configError.message}`
+      };
+    }
+    
+    // Send SMS via Twilio
+    const messageParams: any = {
+      to: to,
+      body: messageContent,
+    };
+    
+    if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+      messageParams.from = messagingPhoneNumber;
+      logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
+    } else if (a2pCampaign && a2pCampaign.trim() !== '') {
+      messageParams.messagingServiceSid = a2pCampaign;
+      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
+    } else {
+      logger.error('Twilio messaging configuration is missing');
+      return {
+        success: false,
+        messageId: null,
+        status: 'failed',
+        error: 'Twilio messaging configuration is missing'
+      };
+    }
+    
+    let messageResult;
+    try {
+      messageResult = await client.messages.create(messageParams);
+    } catch (twilioError: any) {
+      // Handle A2P 10DLC registration errors
+      if (twilioError.code === 30034) {
+        logger.error(`A2P 10DLC registration required. SMS not sent to ${to}. Error: ${twilioError.message}`);
+        return {
+          success: false,
+          messageId: null,
+          status: 'failed',
+          error: 'SMS delivery failed: A2P 10DLC registration required',
+          errorCode: '30034'
+        };
+      }
+      throw twilioError;
+    }
+
+    // Log message to Firestore for audit trail
+    await db.collection('sms_messages').add({
+      messageId: messageResult.sid,
+      from: context?.source || 'system',
+      sourceId: context?.sourceId || null,
+      to: to,
+      content: messageContent,
+      template: null,
+      status: messageResult.status,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      systemContext: context?.systemContext || false,
+    });
+
+    logger.info(`SMS sent internally: ${messageResult.sid} to ${to}`);
+    return { 
+      success: true, 
+      messageId: messageResult.sid,
+      status: messageResult.status 
+    };
+  } catch (error: any) {
+    logger.error('Failed to send SMS internally:', error);
+    
+    // Handle specific Twilio errors
+    if (error.code === 21211 || error.code === 21614) {
+      return {
+        success: false,
+        messageId: null,
+        status: 'failed',
+        error: 'Invalid phone number format or not SMS capable'
+      };
+    } else if (error.code === 21617) {
+      return {
+        success: false,
+        messageId: null,
+        status: 'failed',
+        error: 'Recipient has opted out of SMS messages'
+      };
+    }
+    
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Send worker message via Twilio Programmable Messaging (Callable function with auth)
  */
 export const sendWorkerMessage = onCall(
   {

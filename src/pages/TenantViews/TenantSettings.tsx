@@ -11,6 +11,7 @@ import DepartmentsTab from '../AgencyProfile/components/DepartmentsTab';
 import OrgChartTab from './OrgChartTab';
 import BrandingTab from './BrandingTab';
 import CompanyDefaultsTab from './CompanyDefaultsTab';
+import MessagingTab from './MessagingTab';
 
 const TenantSettings: React.FC = () => {
   const { tenantId } = useAuth();
@@ -45,6 +46,7 @@ const TenantSettings: React.FC = () => {
           <Tab label="Divisions" />
           <Tab label="Departments" />
           <Tab label="Locations" />
+          <Tab label="Messaging" />
           {/* <Tab label="Org Chart" /> */}
           {/* <Tab label="Defaults" /> */}
           {/* <Tab label="Company Defaults" /> */}
@@ -83,10 +85,15 @@ const TenantSettings: React.FC = () => {
       )}
       {tabValue === 6 && (
         <Box sx={{ p: 0 }}>
-          <OrgChartTab tenantId={tenantId} />
+          <MessagingTab tenantId={tenantId} />
         </Box>
       )}
       {tabValue === 7 && (
+        <Box sx={{ p: 0 }}>
+          <OrgChartTab tenantId={tenantId} />
+        </Box>
+      )}
+      {tabValue === 8 && (
         <Box sx={{ p: 0 }}>
           <CompanyDefaultsTab tenantId={tenantId} />
         </Box>

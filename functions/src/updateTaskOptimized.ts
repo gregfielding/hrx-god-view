@@ -1,6 +1,7 @@
 import { onCall } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { logger } from './utils/logger';
 
 if (!admin.apps.length) {
   admin.initializeApp();

@@ -444,7 +444,6 @@ export const createTask = onCall(
       // Log AI action if this is an AI-suggested task
       if (validatedData.aiSuggested) {
         await logAiEventSafely(
-          await logAiEventSafely(
           taskRef.id,
           validatedData.title,
           validatedData.type || 'unknown',

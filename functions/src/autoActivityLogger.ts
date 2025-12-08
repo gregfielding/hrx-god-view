@@ -1,3 +1,4 @@
+import * as admin from 'firebase-admin';
 import { logger } from './utils/logger';
 
 /**
@@ -25,8 +26,28 @@ export const autoLogActivity = async (logData: AutoActivityLogData): Promise<str
   try {
     console.log(`🔄 Auto-logging activity: ${logData.eventType} for ${logData.targetType}:${logData.targetId}`);
     
-    // Create AI log entry
-    const aiLogId = await logger.aiEvent({
+    // Create AI log entry directly in Firestore
+    const docRef = await admin.firestore().collection('ai_logs').add({
+      eventType: logData.eventType || 'activity.auto_logged',
+      actionType: logData.eventType || 'auto_activity',
+      sourceModule: 'AutoActivityLogger',
+      reason: logData.reason || 'Auto-logged activity',
+      contextType: 'activity',
+      aiTags: logData.aiTags || [logData.eventType.split('.')[0]],
+      urgencyScore: logData.urgencyScore || 3,
+      tenantId: logData.tenantId,
+      userId: logData.userId,
+      associations: logData.associations || {},
+      metadata: logData.metadata || {},
+      success: true,
+      latencyMs: 0, // Auto-logged activities don't have latency
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const aiLogId = docRef.id;
+    
+    // Also log via logger for consistency
+    await logger.aiEvent({
       eventType: logData.eventType,
       targetType: logData.targetType,
       targetId: logData.targetId,
@@ -39,7 +60,7 @@ export const autoLogActivity = async (logData: AutoActivityLogData): Promise<str
       associations: logData.associations || {},
       metadata: logData.metadata || {},
       success: true,
-      latencyMs: 0, // Auto-logged activities don't have latency
+      latencyMs: 0,
     });
 
     console.log(`✅ Auto-activity logged: ${aiLogId}`);

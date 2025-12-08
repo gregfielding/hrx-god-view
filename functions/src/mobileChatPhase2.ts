@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
+import { logger } from './utils/logger';
 
 const db = admin.firestore();
 
@@ -848,7 +849,7 @@ async function translateContent(params: any) {
   return { translatedContent: params.content };
 }
 
-async function logger.aiEvent(params: any) {
+async function logAiEvent(params: any) {
   // This should be imported from the main index.ts
   // For now, we'll create a placeholder
   console.log('AI Action logged:', params);

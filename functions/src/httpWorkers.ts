@@ -1,5 +1,4 @@
 import { onRequest } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { logger } from './utils/logger';
 
