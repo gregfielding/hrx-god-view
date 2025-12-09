@@ -290,15 +290,19 @@ export async function sendWorkerMessageInternal(
   }
 
   try {
-    // Check SMS opt-in for recipient
+    // Check SMS opt-in for recipient and get userId for activity log
     const usersQuery = await db.collection('users')
       .where('phoneE164', '==', to)
       .limit(1)
       .get();
     
+    let recipientUserId: string | null = null;
+    let recipientUserData: any = null;
+    
     if (!usersQuery.empty) {
       const recipientUserDoc = usersQuery.docs[0];
-      const recipientUserData = recipientUserDoc.data();
+      recipientUserId = recipientUserDoc.id;
+      recipientUserData = recipientUserDoc.data();
       
       // Check SMS opt-in - if field exists and is false, skip SMS
       if (recipientUserData?.smsOptIn === false) {
@@ -384,11 +388,47 @@ export async function sendWorkerMessageInternal(
       to: to,
       content: messageContent,
       template: null,
-      status: messageResult.status,
+      status: messageResult.status, // Twilio status: queued, sent, delivered, failed, undelivered
+      errorCode: messageResult.errorCode || null,
+      errorMessage: messageResult.errorMessage || null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       sentAt: admin.firestore.FieldValue.serverTimestamp(),
       systemContext: context?.systemContext || false,
     });
+
+    // Log to user's activity log if user exists
+    if (recipientUserId) {
+      try {
+        const activityLogData = {
+          action: 'SMS Sent',
+          actionType: 'sms_sent' as const,
+          description: context?.source 
+            ? `SMS sent via ${context.source}` 
+            : 'SMS notification received',
+          severity: 'medium' as const,
+          source: 'system' as const,
+          metadata: {
+            messageId: messageResult.sid,
+            phoneNumber: to,
+            messagePreview: messageContent.substring(0, 100), // Truncate for privacy
+            source: context?.source || 'system',
+            sourceId: context?.sourceId || null,
+            targetType: 'sms',
+          },
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        await db.collection('users').doc(recipientUserId)
+          .collection('activityLogs')
+          .add(activityLogData);
+        
+        logger.info(`Activity log created for SMS to user ${recipientUserId}`);
+      } catch (activityLogError: any) {
+        // Don't fail SMS send if activity log fails
+        logger.warn(`Failed to create activity log for SMS: ${activityLogError.message}`);
+      }
+    }
 
     logger.info(`SMS sent internally: ${messageResult.sid} to ${to}`);
     return { 

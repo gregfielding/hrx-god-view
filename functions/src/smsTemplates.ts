@@ -114,13 +114,19 @@ export const createSmsTemplate = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'tenantId and template are required');
   }
 
-  // Check permissions (Admin or Manager)
+  // Check permissions (Admin or Manager - security level 5+)
   const userDoc = await db.doc(`users/${request.auth.uid}`).get();
   const userData = userDoc.data();
-  const securityLevel = parseInt(userData?.securityLevel || '0');
   
-  if (securityLevel < 5) {
-    throw new HttpsError('permission-denied', 'Only admins and managers can create templates');
+  // Check tenant-specific security level first, then fallback to root
+  const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+  const rootSecurityLevel = userData?.securityLevel;
+  const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+  const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
+  
+  // Security levels 5, 6, 7 are Admin/Manager levels
+  if (!securityLevel || securityLevel < 5) {
+    throw new HttpsError('permission-denied', 'Only admins and managers (security level 5+) can create templates');
   }
 
   try {
@@ -169,13 +175,19 @@ export const updateSmsTemplate = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'tenantId, templateId, and updates are required');
   }
 
-  // Check permissions
+  // Check permissions (Admin or Manager - security level 5+)
   const userDoc = await db.doc(`users/${request.auth.uid}`).get();
   const userData = userDoc.data();
-  const securityLevel = parseInt(userData?.securityLevel || '0');
   
-  if (securityLevel < 5) {
-    throw new HttpsError('permission-denied', 'Only admins and managers can update templates');
+  // Check tenant-specific security level first, then fallback to root
+  const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+  const rootSecurityLevel = userData?.securityLevel;
+  const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+  const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
+  
+  // Security levels 5, 6, 7 are Admin/Manager levels
+  if (!securityLevel || securityLevel < 5) {
+    throw new HttpsError('permission-denied', 'Only admins and managers (security level 5+) can update templates');
   }
 
   try {
@@ -219,13 +231,19 @@ export const deleteSmsTemplate = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'tenantId and templateId are required');
   }
 
-  // Check permissions
+  // Check permissions (Admin or Manager - security level 5+)
   const userDoc = await db.doc(`users/${request.auth.uid}`).get();
   const userData = userDoc.data();
-  const securityLevel = parseInt(userData?.securityLevel || '0');
   
-  if (securityLevel < 5) {
-    throw new HttpsError('permission-denied', 'Only admins and managers can delete templates');
+  // Check tenant-specific security level first, then fallback to root
+  const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+  const rootSecurityLevel = userData?.securityLevel;
+  const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+  const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
+  
+  // Security levels 5, 6, 7 are Admin/Manager levels
+  if (!securityLevel || securityLevel < 5) {
+    throw new HttpsError('permission-denied', 'Only admins and managers (security level 5+) can delete templates');
   }
 
   try {
@@ -258,15 +276,54 @@ export const previewSmsTemplate = onCall(async (request) => {
   }
 
   try {
-    // Default sample data
+    // Default sample data (matches standardized variables)
     const defaults: Record<string, any> = {
+      // User variables
       firstName: 'John',
       lastName: 'Doe',
+      fullName: 'John Doe',
+      email: 'john.doe@example.com',
+      phone: '+17025550147',
+      
+      // Job variables
       jobTitle: 'Server',
+      jobOrderId: 'JO-12345',
+      jobOrderName: 'Q4 Server Staffing',
+      jobPostId: 'POST-67890',
+      jobPostTitle: 'Server Position - Las Vegas',
+      
+      // Location variables
       locationCity: 'Las Vegas',
+      locationState: 'NV',
       locationName: 'Main Location',
+      locationAddress: '123 Main St, Las Vegas, NV',
+      locationZipCode: '89101',
+      
+      // Company variables
+      companyName: 'Acme Restaurant Group',
+      
+      // Application variables
+      applicationId: 'APP-001',
       applicationStatus: 'Screened',
+      applicationDate: new Date().toLocaleDateString(),
+      
+      // Assignment variables
+      assignmentId: 'ASSIGN-001',
+      assignmentStatus: 'Confirmed',
+      assignmentDate: new Date().toLocaleDateString(),
+      assignmentTimeRange: '9:00 AM - 5:00 PM',
+      
+      // Shift variables
+      shiftId: 'SHIFT-001',
+      shiftDate: new Date().toLocaleDateString(),
+      shiftTimeRange: '8:00 AM - 4:00 PM',
+      shiftStartTime: '8:00 AM',
+      shiftEndTime: '4:00 PM',
+      
+      // Tenant variables
       tenantName: 'HRX Staffing',
+      
+      // Allow custom overrides
       ...sampleData,
     };
 

@@ -11167,7 +11167,7 @@ export {
 } from './twilio';
 
 // Application SMS Triggers
-export { onApplicationStatusChanged } from './applicationSmsTriggers';
+export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';
 
 // Group Messaging
 export { sendGroupMessage } from './groupMessaging';
@@ -11183,9 +11183,14 @@ export {
   extractVariables
 } from './smsTemplates';
 
+// Export variable resolver utilities
+export { getAvailableVariables } from './utils/templateVariableResolver';
+
 // Recruiter Number Management
 export {
   getAvailableTwilioNumbers,
+  searchAvailableTwilioNumbers,
+  purchaseTwilioNumber,
   assignRecruiterNumber,
   releaseRecruiterNumber,
   getRecruiterNumbers

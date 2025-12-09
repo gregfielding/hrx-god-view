@@ -150,8 +150,15 @@ export const LoggableTextField: React.FC<{
   urgencyScore,
   description
 }) => {
-  // Ensure value is always defined to prevent controlled/uncontrolled input warning
-  const safeValue = value ?? '';
+  // For multiline text areas, use local state to update on change but save on blur
+  const [localValue, setLocalValue] = React.useState(value ?? '');
+  
+  // Sync local value when external value changes
+  React.useEffect(() => {
+    setLocalValue(value ?? '');
+  }, [value]);
+
+  const safeValue = multiline ? localValue : (value ?? '');
   
   return (
     <LoggableField
@@ -176,7 +183,14 @@ export const LoggableTextField: React.FC<{
         {multiline ? (
           <textarea
             value={safeValue}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              // Update local state for responsive typing, don't trigger save
+              setLocalValue(e.target.value);
+            }}
+            onBlur={(e) => {
+              // Trigger onChange on blur for multiline text areas (which may save)
+              onChange(e.target.value);
+            }}
             placeholder={placeholder}
             rows={rows}
             disabled={disabled}

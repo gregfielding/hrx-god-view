@@ -35,6 +35,9 @@ import {
   CircularProgress,
   Tooltip,
   Stack,
+  FormHelperText,
+  Grid,
+  Link,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -46,6 +49,7 @@ import { functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { getAvailableTriggersForCategory, getTriggerDefinition } from '../../utils/smsTriggerRegistry';
 
 interface MessagingTabProps {
   tenantId: string;
@@ -55,7 +59,7 @@ interface SmsTemplate {
   id: string;
   name: string;
   category: 'application' | 'assignment' | 'shift' | 'bulk' | 'semiAutomated' | 'fullyAutomated';
-  triggerType?: 'applicationStatusChange' | 'applicationCreated' | 'assignmentCreated' | 'shiftCreated' | 'manual';
+  triggerType?: string; // Flexible - registry handles validation
   triggerStatus?: string;
   messageTemplate: string;
   variables: string[];
@@ -71,13 +75,7 @@ const categoryLabels: Record<SmsTemplate['category'], string> = {
   fullyAutomated: 'Fully-Automated',
 };
 
-const triggerTypeLabels: Record<string, string> = {
-  applicationStatusChange: 'Application Status Change',
-  applicationCreated: 'Application Created',
-  assignmentCreated: 'Assignment Created',
-  shiftCreated: 'Shift Created',
-  manual: 'Manual',
-};
+// Trigger labels now come from registry
 
 const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   const { user } = useAuth();
@@ -189,6 +187,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       updatePreview();
     }, 500);
     return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateForm.messageTemplate]);
 
   const handleSaveTemplate = async () => {
@@ -331,7 +330,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                       <TableCell>
                         {template.triggerType && (
                           <Typography variant="body2" color="text.secondary">
-                            {triggerTypeLabels[template.triggerType]}
+                            {getTriggerDefinition(template.triggerType)?.label || template.triggerType}
                             {template.triggerStatus && ` (${template.triggerStatus})`}
                           </Typography>
                         )}
@@ -448,29 +447,69 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               <Select
                 value={templateForm.triggerType || 'manual'}
                 label="Trigger Type"
-                onChange={(e) =>
-                  setTemplateForm({ ...templateForm, triggerType: e.target.value as any })
-                }
+                onChange={(e) => {
+                  const triggerType = e.target.value;
+                  const triggerDef = getTriggerDefinition(triggerType);
+                  
+                  setTemplateForm({ 
+                    ...templateForm, 
+                    triggerType,
+                    // Clear triggerStatus if trigger doesn't require it
+                    triggerStatus: triggerDef?.requiresStatus ? templateForm.triggerStatus : undefined
+                  });
+                }}
               >
-                {Object.entries(triggerTypeLabels).map(([value, label]) => (
-                  <MenuItem key={value} value={value}>
-                    {label}
+                {getAvailableTriggersForCategory(templateForm.category).map((trigger) => (
+                  <MenuItem key={trigger.id} value={trigger.id}>
+                    <Box>
+                      <Typography variant="body2">{trigger.label}</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {trigger.description}
+                      </Typography>
+                    </Box>
                   </MenuItem>
                 ))}
               </Select>
+              {templateForm.triggerType && getTriggerDefinition(templateForm.triggerType) && (
+                <FormHelperText>
+                  {getTriggerDefinition(templateForm.triggerType)!.description}
+                </FormHelperText>
+              )}
             </FormControl>
 
-            {templateForm.triggerType === 'applicationStatusChange' && (
-              <TextField
-                label="Trigger Status"
-                value={templateForm.triggerStatus || ''}
-                onChange={(e) =>
-                  setTemplateForm({ ...templateForm, triggerStatus: e.target.value })
-                }
-                fullWidth
-                placeholder="e.g., screened, advanced, hired"
-                helperText="Application status that triggers this template"
-              />
+            {/* Show status field only if trigger requires it */}
+            {templateForm.triggerType && getTriggerDefinition(templateForm.triggerType)?.requiresStatus && (
+              <FormControl fullWidth>
+                {getTriggerDefinition(templateForm.triggerType)?.statusOptions ? (
+                  <>
+                    <InputLabel>Trigger Status</InputLabel>
+                    <Select
+                      label="Trigger Status"
+                      value={templateForm.triggerStatus || ''}
+                      onChange={(e) =>
+                        setTemplateForm({ ...templateForm, triggerStatus: e.target.value })
+                      }
+                    >
+                      {getTriggerDefinition(templateForm.triggerType)!.statusOptions!.map((status) => (
+                        <MenuItem key={status} value={status}>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </>
+                ) : (
+                  <TextField
+                    label="Trigger Status"
+                    value={templateForm.triggerStatus || ''}
+                    onChange={(e) =>
+                      setTemplateForm({ ...templateForm, triggerStatus: e.target.value })
+                    }
+                    fullWidth
+                    placeholder={getTriggerDefinition(templateForm.triggerType)?.statusPlaceholder || 'e.g., screened, advanced, hired'}
+                    helperText={getTriggerDefinition(templateForm.triggerType)?.statusPlaceholder || "Status value that triggers this template"}
+                  />
+                )}
+              </FormControl>
             )}
 
             <TextField
@@ -561,17 +600,24 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [purchaseDialogOpen, setPurchaseDialogOpen] = useState(false);
   const [selectedRecruiterId, setSelectedRecruiterId] = useState('');
   const [selectedNumberSid, setSelectedNumberSid] = useState('');
+  const [searchAreaCode, setSearchAreaCode] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ phoneNumber: string; friendlyName: string; locality?: string; region?: string; capabilities: { voice: boolean; sms: boolean; mms: boolean } }>>([]);
+  const [searching, setSearching] = useState(false);
 
   // Firebase functions
   const getRecruiterNumbersFn = httpsCallable(functions, 'getRecruiterNumbers');
   const getAvailableTwilioNumbersFn = httpsCallable(functions, 'getAvailableTwilioNumbers');
+  const searchAvailableTwilioNumbersFn = httpsCallable(functions, 'searchAvailableTwilioNumbers');
+  const purchaseTwilioNumberFn = httpsCallable(functions, 'purchaseTwilioNumber');
   const assignRecruiterNumberFn = httpsCallable(functions, 'assignRecruiterNumber');
   const releaseRecruiterNumberFn = httpsCallable(functions, 'releaseRecruiterNumber');
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
   const loadData = async () => {
@@ -592,18 +638,73 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
         setAvailableNumbers(numbersData.available);
       }
 
-      // Load recruiters (security level 5+)
-      const recruitersQuery = query(
+      // Load recruiters: must have tenant ID, security level 5-7, and recruiter: true
+      // Get all users and filter client-side to avoid index requirements
+      const allUsersQuery = query(
         collection(db, 'users'),
-        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7']),
-        limit(100)
+        limit(500)
       );
-      const recruitersSnapshot = await getDocs(recruitersQuery);
-      const recruitersList = recruitersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        name: `${doc.data().firstName || ''} ${doc.data().lastName || ''}`.trim() || doc.data().email,
-        email: doc.data().email,
-      }));
+      const allUsersSnapshot = await getDocs(allUsersQuery);
+      
+      console.log(`Loading recruiters for tenant ${tenantId}, total users: ${allUsersSnapshot.docs.length}`);
+      
+      // Filter to recruiters with:
+      // 1. User has this tenant ID
+      // 2. Security level 5-7 (check both root and tenant-specific)
+      // 3. recruiter: true
+      const recruitersList = allUsersSnapshot.docs
+        .filter(doc => {
+          const data = doc.data();
+          
+          // Check if user has access to this tenant
+          const hasTenantAccess = 
+            data.tenantId === tenantId ||
+            data.activeTenantId === tenantId ||
+            (data.tenantIds && (
+              (Array.isArray(data.tenantIds) && data.tenantIds.includes(tenantId)) ||
+              (typeof data.tenantIds === 'object' && tenantId in data.tenantIds)
+            ));
+          
+          if (!hasTenantAccess) {
+            return false;
+          }
+          
+          // Check security level (5-7)
+          const rootSecurityLevel = parseInt(data.securityLevel || '0');
+          const tenantSecurityLevel = data.tenantIds?.[tenantId]?.securityLevel 
+            ? parseInt(String(data.tenantIds[tenantId].securityLevel)) 
+            : null;
+          
+          // Include if security level is between 5-7 (either root or tenant-specific)
+          const effectiveSecurityLevel = tenantSecurityLevel !== null ? tenantSecurityLevel : rootSecurityLevel;
+          const hasValidSecurityLevel = effectiveSecurityLevel >= 5 && effectiveSecurityLevel <= 7;
+          
+          if (!hasValidSecurityLevel) {
+            console.log(`User ${data.email} filtered out: security level ${effectiveSecurityLevel} not in range 5-7`);
+            return false;
+          }
+          
+          // Check recruiter flag - must be explicitly true
+          // But also check if recruiter field might be stored as string 'true' or boolean true
+          const isRecruiter = data.recruiter === true || data.recruiter === 'true';
+          
+          if (!isRecruiter) {
+            console.log(`User ${data.email} filtered out: recruiter flag is ${data.recruiter} (expected true)`);
+            return false;
+          }
+          
+          return true;
+        })
+        .map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            name: `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.email,
+            email: data.email,
+          };
+        });
+      
+      console.log(`Found ${recruitersList.length} recruiters for tenant ${tenantId}:`, recruitersList.map(r => `${r.name} (${r.email})`));
       setRecruiters(recruitersList);
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -662,13 +763,22 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">Recruiter Phone Numbers</Typography>
-        <Button
-          variant="contained"
-          startIcon={<PhoneIcon />}
-          onClick={() => setAssignDialogOpen(true)}
-        >
-          Assign Number
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={<PhoneIcon />}
+            onClick={() => setPurchaseDialogOpen(true)}
+          >
+            Search & Purchase
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<PhoneIcon />}
+            onClick={() => setAssignDialogOpen(true)}
+          >
+            Assign Number
+          </Button>
+        </Box>
       </Box>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -772,7 +882,7 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
 
             {availableNumbers.length === 0 && (
               <Alert severity="warning">
-                No available numbers found. You may need to purchase additional numbers in Twilio, or use the main number.
+                No available numbers found. <Link href="#" onClick={(e) => { e.preventDefault(); setPurchaseDialogOpen(true); setAssignDialogOpen(false); }}>Search & Purchase Numbers</Link> or use the main number.
               </Alert>
             )}
           </Stack>
@@ -785,6 +895,152 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
             disabled={loading || !selectedRecruiterId}
           >
             {loading ? <CircularProgress size={20} /> : 'Assign'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Purchase Number Dialog */}
+      <Dialog open={purchaseDialogOpen} onClose={() => { setPurchaseDialogOpen(false); setSearchResults([]); setSearchAreaCode(''); }} maxWidth="md" fullWidth>
+        <DialogTitle>Search & Purchase Phone Number</DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} sx={{ mt: 1 }}>
+            <Alert severity="info">
+              Search for available phone numbers to purchase from Twilio. Numbers cost approximately $1/month plus per-message fees.
+            </Alert>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Area Code (Optional)"
+                  placeholder="e.g., 415"
+                  value={searchAreaCode}
+                  onChange={(e) => setSearchAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                  helperText="Leave empty to search all US numbers"
+                  inputProps={{ maxLength: 3, pattern: '[0-9]*' }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  onClick={async () => {
+                    setSearching(true);
+                    setError(null);
+                    try {
+                      const result = await searchAvailableTwilioNumbersFn({
+                        areaCode: searchAreaCode || undefined,
+                        country: 'US',
+                        limit: 20,
+                      });
+                      const data = result.data as { success: boolean; numbers: any[] };
+                      if (data.success) {
+                        setSearchResults(data.numbers);
+                      }
+                    } catch (err: any) {
+                      setError(err.message || 'Failed to search numbers');
+                    } finally {
+                      setSearching(false);
+                    }
+                  }}
+                  disabled={searching}
+                  sx={{ height: '56px' }}
+                >
+                  {searching ? <CircularProgress size={20} /> : 'Search Numbers'}
+                </Button>
+              </Grid>
+            </Grid>
+
+            {searchResults.length > 0 && (
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                  Available Numbers ({searchResults.length})
+                </Typography>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Phone Number</TableCell>
+                        <TableCell>Location</TableCell>
+                        <TableCell>Capabilities</TableCell>
+                        <TableCell align="right">Action</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {searchResults.map((number) => (
+                        <TableRow key={number.phoneNumber}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>
+                              {number.phoneNumber}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            {number.locality && number.region ? (
+                              <Typography variant="body2" color="text.secondary">
+                                {number.locality}, {number.region}
+                              </Typography>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">
+                                -
+                              </Typography>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', gap: 0.5 }}>
+                              {number.capabilities.sms && (
+                                <Chip label="SMS" size="small" color="primary" variant="outlined" />
+                              )}
+                              {number.capabilities.voice && (
+                                <Chip label="Voice" size="small" color="secondary" variant="outlined" />
+                              )}
+                              {number.capabilities.mms && (
+                                <Chip label="MMS" size="small" color="success" variant="outlined" />
+                              )}
+                            </Box>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Button
+                              size="small"
+                              variant="contained"
+                              onClick={async () => {
+                                setLoading(true);
+                                setError(null);
+                                try {
+                                  await purchaseTwilioNumberFn({ phoneNumber: number.phoneNumber });
+                                  setSuccess(true);
+                                  setPurchaseDialogOpen(false);
+                                  setSearchResults([]);
+                                  setSearchAreaCode('');
+                                  loadData(); // Reload to show new number
+                                } catch (err: any) {
+                                  setError(err.message || 'Failed to purchase number');
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              disabled={loading}
+                            >
+                              {loading ? <CircularProgress size={16} /> : 'Purchase'}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            )}
+
+            {searchResults.length === 0 && !searching && (
+              <Alert severity="info">
+                Enter an area code (optional) and click "Search Numbers" to find available phone numbers.
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setPurchaseDialogOpen(false); setSearchResults([]); setSearchAreaCode(''); }}>
+            Close
           </Button>
         </DialogActions>
       </Dialog>

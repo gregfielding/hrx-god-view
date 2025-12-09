@@ -144,6 +144,9 @@ const VaccinationStatusTab = ({ uid }: { uid: string }) => {
               minRows={2}
               value={entry.notes}
               onChange={(e) => handleFieldChange(idx, 'notes', e.target.value)}
+              onBlur={() => {
+                // Save is handled by the Save button, but onBlur can be used for auto-save if needed
+              }}
             />
           </Grid>
           <Grid item xs={12} sm={1} display="flex" alignItems="center">

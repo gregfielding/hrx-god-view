@@ -58,6 +58,13 @@ const WorkExperienceSection = ({
   }, [value]);
 
   const handleFieldChange = (idx: number, field: string, val: any) => {
+    // Only update local state on change, don't trigger save
+    const updated = work.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
+    setWork(updated);
+  };
+
+  const handleFieldBlur = (idx: number, field: string, val: any) => {
+    // Save to parent on blur (triggers save to Firestore)
     const updated = work.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setWork(updated);
     onChange(updated);
@@ -164,6 +171,7 @@ const WorkExperienceSection = ({
                   minRows={2}
                   value={entry.responsibilities}
                   onChange={(e) => handleFieldChange(idx, 'responsibilities', e.target.value)}
+                  onBlur={(e) => handleFieldBlur(idx, 'responsibilities', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12}>

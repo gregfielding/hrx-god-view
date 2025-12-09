@@ -41,14 +41,21 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
   }, []);
 
   const handleBioChange = (newBio: string) => {
+    // Only update local state on change, don't save yet
     setBio(newBio);
     onChange({ ...value, professionalBio: newBio });
-    // Queue update for batched save (saves on navigation/blur/10min)
+  };
+
+  const handleBioBlur = (newBio: string) => {
+    // Save to Firestore only on blur
     queueProfileUpdate('professionalBio', newBio);
   };
 
   const handleSampleClick = (sample: string) => {
-    handleBioChange(sample);
+    setBio(sample);
+    onChange({ ...value, professionalBio: sample });
+    // Save immediately when clicking a sample
+    queueProfileUpdate('professionalBio', sample);
   };
 
   return (
@@ -83,7 +90,7 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
           maxRows={8}
           value={bio}
           onChange={(e) => handleBioChange(e.target.value)}
-          onBlur={(e) => queueProfileUpdate('professionalBio', e.target.value)}
+          onBlur={(e) => handleBioBlur(e.target.value)}
           placeholder="In 1–3 sentences, tell us something about yourself — your personality, goals, or what you're proud of. (This helps hiring managers remember you.)"
           sx={{ mb: 2 }}
         />

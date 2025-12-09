@@ -51,9 +51,27 @@ export const getAvailableTwilioNumbers = onCall(
     // Check permissions
     const userDoc = await db.doc(`users/${request.auth.uid}`).get();
     const userData = userDoc.data();
-    const securityLevel = parseInt(userData?.securityLevel || '0');
-
-    if (securityLevel < 5) {
+    
+    // Check root security level
+    const rootSecurityLevel = parseInt(userData?.securityLevel || '0');
+    
+    // Also check if user has admin access in any tenant
+    let hasTenantAdminAccess = false;
+    if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+      const tenantIds = userData.tenantIds;
+      for (const tenantId in tenantIds) {
+        const tenantData = tenantIds[tenantId];
+        const tenantSecurityLevel = typeof tenantData === 'object' && tenantData?.securityLevel
+          ? parseInt(String(tenantData.securityLevel))
+          : 0;
+        if (tenantSecurityLevel >= 5) {
+          hasTenantAdminAccess = true;
+          break;
+        }
+      }
+    }
+    
+    if (rootSecurityLevel < 5 && !hasTenantAdminAccess) {
       throw new HttpsError('permission-denied', 'Only admins can view available numbers');
     }
 
@@ -64,18 +82,32 @@ export const getAvailableTwilioNumbers = onCall(
       const numbers = await client.incomingPhoneNumbers.list({ limit: 100 });
 
       // Get all assigned numbers from Firestore
-      const assignedNumbersSnapshot = await db
-        .collectionGroup('recruiterNumbers')
-        .where('twilioNumber', '!=', null)
-        .get();
-
+      // Note: collectionGroup queries require an index, but we'll try to get all assignments
+      // For now, we'll search within tenant subcollections
+      // TODO: Create Firestore index for collectionGroup query if needed
       const assignedNumbers = new Set<string>();
-      assignedNumbersSnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.twilioNumber) {
-          assignedNumbers.add(data.twilioNumber);
+      
+      // Get assignments from all tenants (iterate through tenants)
+      // Alternative: Use a more specific query if we know tenantIds
+      try {
+        const tenantsSnapshot = await db.collection('tenants').limit(100).get();
+        for (const tenantDoc of tenantsSnapshot.docs) {
+          const assignmentsSnapshot = await db
+            .collection(`tenants/${tenantDoc.id}/recruiterNumbers`)
+            .where('twilioNumber', '!=', null)
+            .get();
+          
+          assignmentsSnapshot.forEach((doc) => {
+            const data = doc.data();
+            if (data.twilioNumber) {
+              assignedNumbers.add(data.twilioNumber);
+            }
+          });
         }
-      });
+      } catch (error) {
+        // If collectionGroup query fails, log warning but continue
+        logger.warn('Could not fetch all assigned numbers, some numbers may appear available');
+      }
 
       // Filter to available numbers
       const available = numbers
@@ -95,6 +127,182 @@ export const getAvailableTwilioNumbers = onCall(
     } catch (error: any) {
       logger.error('Error fetching available Twilio numbers:', error);
       throw new HttpsError('internal', `Failed to fetch numbers: ${error.message}`);
+    }
+  }
+);
+
+/**
+ * Search for available phone numbers to purchase from Twilio
+ */
+export const searchAvailableTwilioNumbers = onCall(
+  {
+    secrets: [twilioAccountSid, twilioAuthToken],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Must be signed in');
+    }
+
+    // Check permissions
+    const userDoc = await db.doc(`users/${request.auth.uid}`).get();
+    const userData = userDoc.data();
+    
+    // Check root security level
+    const rootSecurityLevel = parseInt(userData?.securityLevel || '0');
+    
+    // Also check if user has admin access in any tenant
+    let hasTenantAdminAccess = false;
+    if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+      const tenantIds = userData.tenantIds;
+      for (const tenantId in tenantIds) {
+        const tenantData = tenantIds[tenantId];
+        const tenantSecurityLevel = typeof tenantData === 'object' && tenantData?.securityLevel
+          ? parseInt(String(tenantData.securityLevel))
+          : 0;
+        if (tenantSecurityLevel >= 5) {
+          hasTenantAdminAccess = true;
+          break;
+        }
+      }
+    }
+    
+    if (rootSecurityLevel < 5 && !hasTenantAdminAccess) {
+      throw new HttpsError('permission-denied', 'Only admins can search for numbers');
+    }
+
+    const { areaCode, country, limit = 20 } = request.data as {
+      areaCode?: string;
+      country?: string;
+      limit?: number;
+    };
+
+    try {
+      const client = getTwilioClient();
+
+      // Search for available numbers
+      const searchParams: any = {
+        limit: Math.min(limit, 50), // Max 50 results
+      };
+
+      if (areaCode) {
+        searchParams.areaCode = parseInt(areaCode);
+      } else {
+        searchParams.areaCode = undefined;
+      }
+
+      if (country) {
+        searchParams.country = country;
+      } else {
+        searchParams.country = 'US';
+      }
+
+      // Search for local numbers (SMS capable)
+      const availableNumbers = await client.availablePhoneNumbers(country || 'US')
+        .local
+        .list({
+          ...searchParams,
+          smsEnabled: true,
+          voiceEnabled: true, // Usually required for SMS
+        });
+
+      return {
+        success: true,
+        numbers: availableNumbers.map((num) => ({
+          phoneNumber: num.phoneNumber,
+          friendlyName: num.friendlyName || num.phoneNumber,
+          locality: num.locality,
+          region: num.region,
+          postalCode: num.postalCode,
+          isoCountry: num.isoCountry,
+          capabilities: {
+            voice: num.capabilities?.voice || false,
+            sms: num.capabilities?.sms || false,
+            mms: num.capabilities?.mms || false,
+          },
+        })),
+        count: availableNumbers.length,
+      };
+    } catch (error: any) {
+      logger.error('Error searching for available Twilio numbers:', error);
+      throw new HttpsError('internal', `Failed to search numbers: ${error.message}`);
+    }
+  }
+);
+
+/**
+ * Purchase a Twilio phone number
+ */
+export const purchaseTwilioNumber = onCall(
+  {
+    secrets: [twilioAccountSid, twilioAuthToken],
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Must be signed in');
+    }
+
+    // Check permissions
+    const userDoc = await db.doc(`users/${request.auth.uid}`).get();
+    const userData = userDoc.data();
+    
+    // Check root security level
+    const rootSecurityLevel = parseInt(userData?.securityLevel || '0');
+    
+    // Also check if user has admin access in any tenant
+    let hasTenantAdminAccess = false;
+    if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+      const tenantIds = userData.tenantIds;
+      for (const tenantId in tenantIds) {
+        const tenantData = tenantIds[tenantId];
+        const tenantSecurityLevel = typeof tenantData === 'object' && tenantData?.securityLevel
+          ? parseInt(String(tenantData.securityLevel))
+          : 0;
+        if (tenantSecurityLevel >= 5) {
+          hasTenantAdminAccess = true;
+          break;
+        }
+      }
+    }
+    
+    if (rootSecurityLevel < 5 && !hasTenantAdminAccess) {
+      throw new HttpsError('permission-denied', 'Only admins can purchase numbers');
+    }
+
+    const { phoneNumber } = request.data as { phoneNumber: string };
+
+    if (!phoneNumber) {
+      throw new HttpsError('invalid-argument', 'phoneNumber is required');
+    }
+
+    try {
+      const client = getTwilioClient();
+
+      // Purchase the number
+      const purchasedNumber = await client.incomingPhoneNumbers.create({
+        phoneNumber: phoneNumber,
+        smsUrl: `https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms`,
+        smsMethod: 'POST',
+      });
+
+      logger.info(`Purchased Twilio number: ${purchasedNumber.phoneNumber} (${purchasedNumber.sid})`);
+
+      return {
+        success: true,
+        phoneNumber: purchasedNumber.phoneNumber,
+        sid: purchasedNumber.sid,
+        friendlyName: purchasedNumber.friendlyName,
+      };
+    } catch (error: any) {
+      logger.error('Error purchasing Twilio number:', error);
+      
+      // Handle specific Twilio errors
+      if (error.code === 21217) {
+        throw new HttpsError('invalid-argument', 'Phone number is not available for purchase');
+      } else if (error.code === 21216) {
+        throw new HttpsError('permission-denied', 'Insufficient account balance to purchase number');
+      }
+      
+      throw new HttpsError('internal', `Failed to purchase number: ${error.message}`);
     }
   }
 );
@@ -125,9 +333,14 @@ export const assignRecruiterNumber = onCall(
     // Check permissions
     const userDoc = await db.doc(`users/${request.auth.uid}`).get();
     const userData = userDoc.data();
-    const securityLevel = parseInt(userData?.securityLevel || '0');
+    
+    // Check tenant-specific security level first, then fallback to root
+    const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+    const rootSecurityLevel = userData?.securityLevel;
+    const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+    const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
 
-    if (securityLevel < 5) {
+    if (!securityLevel || securityLevel < 5) {
       throw new HttpsError('permission-denied', 'Only admins can assign numbers');
     }
 
@@ -140,22 +353,50 @@ export const assignRecruiterNumber = onCall(
         throw new HttpsError('not-found', 'Recruiter not found');
       }
 
-      const recruiterSecurityLevel = parseInt(recruiterData.securityLevel || '0');
-      const isRecruiter = recruiterSecurityLevel >= 5 || recruiterData.recruiter === true;
+      // Check if user has access to this tenant
+      const hasTenantAccess = 
+        recruiterData.tenantId === tenantId ||
+        recruiterData.activeTenantId === tenantId ||
+        (recruiterData.tenantIds && (
+          (Array.isArray(recruiterData.tenantIds) && recruiterData.tenantIds.includes(tenantId)) ||
+          (typeof recruiterData.tenantIds === 'object' && tenantId in recruiterData.tenantIds)
+        ));
 
-      if (!isRecruiter) {
-        throw new HttpsError('invalid-argument', 'User is not a recruiter');
+      if (!hasTenantAccess) {
+        throw new HttpsError('invalid-argument', 'Recruiter does not have access to this tenant');
+      }
+
+      // Check recruiter flag
+      if (recruiterData.recruiter !== true) {
+        throw new HttpsError('invalid-argument', 'User is not marked as a recruiter');
+      }
+
+      // Check security level (5-7)
+      const rootSecurityLevel = parseInt(recruiterData.securityLevel || '0');
+      const tenantSecurityLevel = recruiterData.tenantIds?.[tenantId]?.securityLevel
+        ? parseInt(String(recruiterData.tenantIds[tenantId].securityLevel))
+        : null;
+      
+      const effectiveSecurityLevel = tenantSecurityLevel !== null ? tenantSecurityLevel : rootSecurityLevel;
+
+      if (effectiveSecurityLevel < 5 || effectiveSecurityLevel > 7) {
+        throw new HttpsError('invalid-argument', 'Recruiter must have security level 5-7');
       }
 
       // Check if number is already assigned
       if (twilioNumberSid) {
-        const existingAssignment = await db
-          .collectionGroup('recruiterNumbers')
-          .where('twilioNumberSid', '==', twilioNumberSid)
-          .get();
+        // Check across all tenants for this number
+        const tenantsSnapshot = await db.collection('tenants').limit(100).get();
+        for (const tenantDoc of tenantsSnapshot.docs) {
+          const existingAssignment = await db
+            .collection(`tenants/${tenantDoc.id}/recruiterNumbers`)
+            .where('twilioNumberSid', '==', twilioNumberSid)
+            .limit(1)
+            .get();
 
-        if (!existingAssignment.empty) {
-          throw new HttpsError('already-exists', 'This number is already assigned to another recruiter');
+          if (!existingAssignment.empty) {
+            throw new HttpsError('already-exists', 'This number is already assigned to another recruiter');
+          }
         }
 
         // Get number details from Twilio
@@ -245,9 +486,14 @@ export const releaseRecruiterNumber = onCall(
     // Check permissions
     const userDoc = await db.doc(`users/${request.auth.uid}`).get();
     const userData = userDoc.data();
-    const securityLevel = parseInt(userData?.securityLevel || '0');
+    
+    // Check tenant-specific security level first, then fallback to root
+    const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+    const rootSecurityLevel = userData?.securityLevel;
+    const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+    const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
 
-    if (securityLevel < 5) {
+    if (!securityLevel || securityLevel < 5) {
       throw new HttpsError('permission-denied', 'Only admins can release numbers');
     }
 
@@ -310,9 +556,14 @@ export const getRecruiterNumbers = onCall(async (request) => {
   // Check permissions
   const userDoc = await db.doc(`users/${request.auth.uid}`).get();
   const userData = userDoc.data();
-  const securityLevel = parseInt(userData?.securityLevel || '0');
+  
+  // Check tenant-specific security level first, then fallback to root
+  const tenantSecurityLevel = userData?.tenantIds?.[tenantId]?.securityLevel;
+  const rootSecurityLevel = userData?.securityLevel;
+  const securityLevelStr = tenantSecurityLevel || rootSecurityLevel || '0';
+  const securityLevel = typeof securityLevelStr === 'string' ? parseInt(securityLevelStr) : securityLevelStr;
 
-  if (securityLevel < 5) {
+  if (!securityLevel || securityLevel < 5) {
     throw new HttpsError('permission-denied', 'Only admins can view recruiter numbers');
   }
 

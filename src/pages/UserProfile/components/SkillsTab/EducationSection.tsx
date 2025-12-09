@@ -53,6 +53,13 @@ const EducationSection = ({
   }, [value]);
 
   const handleFieldChange = (idx: number, field: string, val: string) => {
+    // Only update local state on change, don't trigger save
+    const updated = education.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
+    setEducation(updated);
+  };
+
+  const handleFieldBlur = (idx: number, field: string, val: string) => {
+    // Save to parent on blur (triggers save to Firestore)
     const updated = education.map((entry, i) => (i === idx ? { ...entry, [field]: val } : entry));
     setEducation(updated);
     onChange(updated);
@@ -166,6 +173,7 @@ const EducationSection = ({
                   minRows={2}
                   value={entry.notes}
                   onChange={(e) => handleFieldChange(idx, 'notes', e.target.value)}
+                  onBlur={(e) => handleFieldBlur(idx, 'notes', e.target.value)}
                 />
               </Grid>
             </Grid>
