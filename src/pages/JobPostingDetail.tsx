@@ -806,13 +806,12 @@ const JobPostingDetail: React.FC = () => {
                 </Box>
               )}
               
-              {posting.worksiteName && (
+              {posting.worksiteAddress?.city && posting.worksiteAddress?.state && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <LocationIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
                   <Typography variant={isMobile ? 'body2' : 'body1'} color="text.secondary">
-                    {posting.worksiteName}
-                    {posting.worksiteAddress?.city && `, ${posting.worksiteAddress.city}`}
-                    {posting.worksiteAddress?.state && `, ${posting.worksiteAddress.state}`}
+                    {posting.worksiteAddress.city}, {posting.worksiteAddress.state}
+                    {posting.worksiteAddress.zipCode && ` ${posting.worksiteAddress.zipCode}`}
                   </Typography>
                 </Box>
               )}

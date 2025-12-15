@@ -1501,8 +1501,6 @@ const PublicJobsBoard: React.FC = () => {
                       {job.worksiteAddress?.city && job.worksiteAddress?.state && 
                        job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim() ? (
                         `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
-                      ) : job.worksiteName ? (
-                        job.worksiteName
                       ) : (
                         'Location TBD'
                       )}
@@ -1770,7 +1768,7 @@ const PublicJobsBoard: React.FC = () => {
                        selectedJob.worksiteAddress.city.trim() && selectedJob.worksiteAddress.state.trim() ? (
                         `${selectedJob.worksiteAddress.city}, ${selectedJob.worksiteAddress.state}${selectedJob.worksiteAddress.zipCode ? ` ${selectedJob.worksiteAddress.zipCode}` : ''}`
                       ) : (
-                        selectedJob.worksiteName
+                        'Location TBD'
                       )}
                     </Typography>
                   </Stack>
