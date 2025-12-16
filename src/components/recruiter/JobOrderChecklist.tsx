@@ -1,13 +1,17 @@
-import React from 'react';
-import { Box, Typography, Stack, Checkbox, Chip, Button, Tooltip } from '@mui/material';
+import React, { useEffect, useState } from 'react';
+import { Box, Typography, Stack, Checkbox, Chip, Button, Tooltip, TextField } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
   RadioButtonUnchecked as RadioButtonUncheckedIcon,
   LocationOn as LocationIcon,
   Contacts as ContactsIcon,
-  People as PeopleIcon
+  People as PeopleIcon,
+  Description as DescriptionIcon,
 } from '@mui/icons-material';
 import { JobOrder } from '../../types/recruiter/jobOrder';
+import type { JobsBoardPost } from '../../services/recruiter/jobsBoardService';
+import { db } from '../../firebase';
+import { doc, updateDoc } from 'firebase/firestore';
 
 interface JobOrderChecklistProps {
   jobOrder: JobOrder | null;
@@ -17,6 +21,11 @@ interface JobOrderChecklistProps {
   onEditContacts?: () => void;
   recruiterUsers?: Array<{ id: string }>;
   onEditRecruiters?: () => void;
+  jobPosts?: JobsBoardPost[];
+  onOpenJobBoard?: () => void;
+  tenantId: string;
+  jobOrderId: string;
+  onJobOrderUpdated?: (updates: Partial<JobOrder>) => void;
 }
 
 type ChecklistStatus = 'complete' | 'missing';
@@ -130,7 +139,65 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   onEditContacts,
   recruiterUsers = [],
   onEditRecruiters,
+  jobPosts = [],
+  onOpenJobBoard,
+  tenantId,
+  jobOrderId,
+  onJobOrderUpdated,
 }) => {
+  const [indeedUrl, setIndeedUrl] = useState<string>('');
+  const [craigslistUrl, setCraigslistUrl] = useState<string>('');
+  const [savingExternal, setSavingExternal] = useState(false);
+  const [externalError, setExternalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const currentIndeed = (jobOrder as any)?.indeedUrl || '';
+    const currentCraigslist = (jobOrder as any)?.craigslistUrl || '';
+    setIndeedUrl(currentIndeed);
+    setCraigslistUrl(currentCraigslist);
+  }, [jobOrder?.id, (jobOrder as any)?.indeedUrl, (jobOrder as any)?.craigslistUrl]);
+
+  const isValidUrl = (value: string, kind: 'indeed' | 'craigslist'): boolean => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return false;
+    try {
+      const url = new URL(trimmed);
+      if (!['http:', 'https:'].includes(url.protocol)) return false;
+      const host = url.hostname.toLowerCase();
+      if (kind === 'indeed') return host.includes('indeed.');
+      if (kind === 'craigslist') return host.includes('craigslist.');
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleSaveExternalUrls = async (nextIndeed: string, nextCraigslist: string) => {
+    if (!tenantId || !jobOrderId) return;
+    setSavingExternal(true);
+    setExternalError(null);
+    try {
+      const cleanedIndeed = nextIndeed.trim();
+      const cleanedCraigslist = nextCraigslist.trim();
+
+      const updates: any = {
+        indeedUrl: cleanedIndeed || '',
+        craigslistUrl: cleanedCraigslist || '',
+      };
+
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      await updateDoc(jobOrderRef, updates);
+
+      if (onJobOrderUpdated) {
+        onJobOrderUpdated(updates);
+      }
+    } catch (err: any) {
+      console.error('Error saving external job board URLs:', err);
+      setExternalError(err?.message || 'Failed to save external job board URLs');
+    } finally {
+      setSavingExternal(false);
+    }
+  };
   // Auto-computed status: does this job order have a worksite / location?
   const hasLocation = (() => {
     if (!jobOrder) return false;
@@ -157,6 +224,36 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   const hasRecruiterAssigned =
     (Array.isArray((jobOrder as any)?.assignedRecruiters) && (jobOrder as any).assignedRecruiters.length > 0) ||
     (Array.isArray(recruiterUsers) && recruiterUsers.length > 0);
+
+  // Auto-computed status: has the client's job description been added?
+  const hasClientDescription = (() => {
+    if (!jobOrder) return false;
+    const text = (jobOrder as any).jobDescriptionFromClient;
+    if (!text || typeof text !== 'string') return false;
+    return text.trim().length > 0;
+  })();
+
+  // Auto-computed status: at least one jobs board post exists for this job order
+  const hasJobBoardPost = Array.isArray(jobPosts) && jobPosts.length > 0;
+
+  // Auto-computed status: at least one jobs board post has a full description (AI or manual)
+  const hasAiJobDescription =
+    Array.isArray(jobPosts) &&
+    jobPosts.some((post) => typeof post.jobDescription === 'string' && post.jobDescription.trim().length > 0);
+
+  // Auto-computed status: at least one auto-add user group is configured
+  const hasAutoAddUserGroup =
+    Array.isArray(jobPosts) &&
+    jobPosts.some(
+      (post) =>
+        (Array.isArray(post.autoAddToUserGroups) && post.autoAddToUserGroups.length > 0) ||
+        (typeof (post as any).autoAddToUserGroup === 'string' &&
+          (post as any).autoAddToUserGroup.trim().length > 0)
+    );
+
+  const hasIndeedUrl = isValidUrl(indeedUrl, 'indeed');
+  const hasCraigslistUrl = isValidUrl(craigslistUrl, 'craigslist');
+  const hasExternalJobPost = hasIndeedUrl || hasCraigslistUrl;
 
   const items: ChecklistItem[] = [
     {
@@ -195,6 +292,62 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       onAction: hasRecruiterAssigned ? undefined : onEditRecruiters,
       actionLabel: 'Assign recruiter',
     },
+    {
+      id: 'clientJobDescription',
+      label: 'Client job description added',
+      description: hasClientDescription
+        ? "Client's original job description is saved with this job order."
+        : 'Paste the job description from the client so recruiters and AI have full context.',
+      status: hasClientDescription ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
+    {
+      id: 'jobBoardPost',
+      label: 'Job board posting created',
+      description: hasJobBoardPost
+        ? 'This job order has at least one connected jobs board posting.'
+        : 'Create a public posting so applicants can discover and apply for this job.',
+      status: hasJobBoardPost ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+      onAction: hasJobBoardPost ? undefined : onOpenJobBoard,
+      actionLabel: 'Open Jobs Board',
+    },
+    {
+      id: 'aiJobDescription',
+      label: 'AI job description generated',
+      description: hasAiJobDescription
+        ? 'An AI-ready job description is saved on at least one jobs board posting.'
+        : 'Use the AI generator on the Jobs Board tab to create a compelling description.',
+      status: hasAiJobDescription ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+      onAction: hasAiJobDescription ? undefined : onOpenJobBoard,
+      actionLabel: 'Generate with AI',
+    },
+    {
+      id: 'autoAddUserGroups',
+      label: 'Auto-add user group selected',
+      description: hasAutoAddUserGroup
+        ? 'Applicants from this posting are automatically added to at least one user group.'
+        : 'Select one or more user groups to auto-add new applicants from this posting.',
+      status: hasAutoAddUserGroup ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+      onAction: hasAutoAddUserGroup ? undefined : onOpenJobBoard,
+      actionLabel: 'Configure auto-add',
+    },
+    {
+      id: 'externalJobBoards',
+      label: 'External job board postings linked',
+      description: hasExternalJobPost
+        ? 'At least one external posting (Indeed or Craigslist) is linked to this job order.'
+        : 'Add links to external job board postings (Indeed, Craigslist) so recruiters can jump out quickly.',
+      status: hasExternalJobPost ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
   ];
 
   return (
@@ -208,8 +361,56 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       </Typography>
 
       <Stack spacing={1.5}>
-        {items.map(item => (
-          <ChecklistRow key={item.id} item={item} />
+        {items.map((item) => (
+          <Box key={item.id}>
+            <ChecklistRow item={item} />
+            {item.id === 'externalJobBoards' && (
+              <Box sx={{ mt: 1.5, ml: 5 }}>
+                <Stack spacing={1.5}>
+                  <TextField
+                    label="Indeed posting URL"
+                    size="small"
+                    fullWidth
+                    value={indeedUrl}
+                    onChange={(e) => setIndeedUrl(e.target.value)}
+                    onBlur={() => handleSaveExternalUrls(indeedUrl, craigslistUrl)}
+                    placeholder="https://www.indeed.com/viewjob?..."
+                    error={!!indeedUrl && !hasIndeedUrl}
+                    helperText={
+                      indeedUrl && !hasIndeedUrl
+                        ? 'Enter a valid Indeed URL (https://www.indeed.com/...)'
+                        : 'Optional: link to this job on Indeed'
+                    }
+                  />
+                  <TextField
+                    label="Craigslist posting URL"
+                    size="small"
+                    fullWidth
+                    value={craigslistUrl}
+                    onChange={(e) => setCraigslistUrl(e.target.value)}
+                    onBlur={() => handleSaveExternalUrls(indeedUrl, craigslistUrl)}
+                    placeholder="https://city.craigslist.org/..."
+                    error={!!craigslistUrl && !hasCraigslistUrl}
+                    helperText={
+                      craigslistUrl && !hasCraigslistUrl
+                        ? 'Enter a valid Craigslist URL (https://<city>.craigslist.org/...)'
+                        : 'Optional: link to this job on Craigslist'
+                    }
+                  />
+                  {externalError && (
+                    <Typography variant="caption" color="error">
+                      {externalError}
+                    </Typography>
+                  )}
+                  {savingExternal && (
+                    <Typography variant="caption" color="text.secondary">
+                      Saving external job board links…
+                    </Typography>
+                  )}
+                </Stack>
+              </Box>
+            )}
+          </Box>
         ))}
       </Stack>
     </Box>

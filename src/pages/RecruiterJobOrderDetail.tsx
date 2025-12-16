@@ -70,7 +70,8 @@ import {
   Settings as SettingsIcon,
   Save as SaveIcon,
   Edit as EditIcon,
-  ContentCopy as ContentCopyIcon
+  ContentCopy as ContentCopyIcon,
+  Language as ExternalLinkIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -2854,6 +2855,40 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     size="small"
                   />
                 </Box>
+
+                {/* External Job Board Links */}
+                {((jobOrder as any).indeedUrl && String((jobOrder as any).indeedUrl).trim()) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Tooltip title="Open Indeed posting">
+                      <Chip
+                        component="a"
+                        href={String((jobOrder as any).indeedUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        label="Indeed"
+                        size="small"
+                        icon={<ExternalLinkIcon sx={{ fontSize: 16 }} />}
+                        clickable
+                      />
+                    </Tooltip>
+                  </Box>
+                )}
+                {((jobOrder as any).craigslistUrl && String((jobOrder as any).craigslistUrl).trim()) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Tooltip title="Open Craigslist posting">
+                      <Chip
+                        component="a"
+                        href={String((jobOrder as any).craigslistUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        label="Craigslist"
+                        size="small"
+                        icon={<ExternalLinkIcon sx={{ fontSize: 16 }} />}
+                        clickable
+                      />
+                    </Tooltip>
+                  </Box>
+                )}
                 
                 {location && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -3829,9 +3864,16 @@ const RecruiterJobOrderDetail: React.FC = () => {
           location={location}
           associatedContacts={associatedContacts}
           recruiterUsers={recruiterUsers}
+          jobPosts={connectedJobPosts}
+          tenantId={tenantId || ''}
+          jobOrderId={jobOrderId || ''}
           onEditLocation={handleEditLocation}
           onEditContacts={() => setManageContactsOpen(true)}
           onEditRecruiters={handleOpenManageRecruiters}
+          onOpenJobBoard={() => setActiveTab(4)}
+          onJobOrderUpdated={(updates) =>
+            setJobOrder((prev) => (prev ? { ...prev, ...updates } : prev))
+          }
         />
       </TabPanel>
 

@@ -31,6 +31,8 @@ export interface JobOrder {
   jobDescription?: string;
   uniformRequirements?: string;
   assignedRecruiters: string[]; // User IDs
+  indeedUrl?: string; // External job posting links
+  craigslistUrl?: string;
   payRate: number;
   billRate: number;
   workersNeeded: number;
