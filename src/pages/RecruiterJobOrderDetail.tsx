@@ -129,6 +129,7 @@ interface ApplicantsTableProps {
   tenantId: string;
   jobOrder: JobOrder | null;
   onCountChange?: (count: number) => void;
+  onCandidateCountChange?: (count: number) => void;
 }
 
 interface Applicant {
@@ -153,7 +154,14 @@ interface Applicant {
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
 }
 
-const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connectedJobPosts, tenantId, jobOrder, onCountChange }) => {
+const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
+  jobOrderId,
+  connectedJobPosts,
+  tenantId,
+  jobOrder,
+  onCountChange,
+  onCandidateCountChange,
+}) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [applicants, setApplicants] = useState<Applicant[]>([]);
@@ -166,6 +174,15 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({ jobOrderId, connected
       onCountChange(applicants.length);
     }
   }, [applicants.length, onCountChange]);
+  // Notify parent of candidate count changes
+  useEffect(() => {
+    if (onCandidateCountChange) {
+      const candidateCount = applicants.filter(
+        (a) => a.applicationData?.candidate === true
+      ).length;
+      onCandidateCountChange(candidateCount);
+    }
+  }, [applicants, onCandidateCountChange]);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [levelMenuAnchor, setLevelMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [switchJobDialogOpen, setSwitchJobDialogOpen] = useState(false);
@@ -1838,6 +1855,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [loadingRecruiters, setLoadingRecruiters] = useState(false);
   const [shifts, setShifts] = useState<any[]>([]);
   const [applicantsCount, setApplicantsCount] = useState<number>(0);
+  const [candidateCount, setCandidateCount] = useState<number>(0);
+  const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
   const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
@@ -1852,10 +1871,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   }, [jobOrderId, tenantId]);
 
-  // Load shifts for Gig jobs
+  // Load shifts for this job order
   useEffect(() => {
     const fetchShifts = async () => {
-      if (!jobOrder || !jobOrderId || !tenantId || (jobOrder as any).jobType !== 'gig') {
+      if (!jobOrder || !jobOrderId || !tenantId) {
         setShifts([]);
         return;
       }
@@ -1885,6 +1904,32 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
     fetchShifts();
   }, [jobOrder, jobOrderId, tenantId]);
+
+  // Load assignments count for this job order
+  useEffect(() => {
+    const fetchAssignmentsCount = async () => {
+      if (!tenantId || !jobOrderId) {
+        setAssignmentsCount(0);
+        return;
+      }
+      try {
+        const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+        const q = query(assignmentsRef, where('jobOrderId', '==', jobOrderId));
+        const snapshot = await getDocs(q);
+        const activeCount = snapshot.docs.filter((docSnap) => {
+          const data: any = docSnap.data();
+          const status = data.status || 'proposed';
+          return status !== 'canceled';
+        }).length;
+        setAssignmentsCount(activeCount);
+      } catch (error) {
+        console.error('Error fetching assignments for checklist:', error);
+        setAssignmentsCount(0);
+      }
+    };
+
+    fetchAssignmentsCount();
+  }, [tenantId, jobOrderId]);
 
   const loadCompanyData = async (companyId: string) => {
     if (!companyId || !tenantId) return;
@@ -3867,6 +3912,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
           jobPosts={connectedJobPosts}
           tenantId={tenantId || ''}
           jobOrderId={jobOrderId || ''}
+          applicantsCount={applicantsCount}
+          candidateCount={candidateCount}
+          shiftsCount={shifts.length}
+          assignmentsCount={assignmentsCount}
           onEditLocation={handleEditLocation}
           onEditContacts={() => setManageContactsOpen(true)}
           onEditRecruiters={handleOpenManageRecruiters}
@@ -4045,6 +4094,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           tenantId={tenantId || ''}
           jobOrder={jobOrder}
           onCountChange={setApplicantsCount}
+          onCandidateCountChange={setCandidateCount}
         />
       </TabPanel>
 

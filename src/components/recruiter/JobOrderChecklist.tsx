@@ -26,6 +26,10 @@ interface JobOrderChecklistProps {
   tenantId: string;
   jobOrderId: string;
   onJobOrderUpdated?: (updates: Partial<JobOrder>) => void;
+  applicantsCount?: number;
+  candidateCount?: number;
+  shiftsCount?: number;
+  assignmentsCount?: number;
 }
 
 type ChecklistStatus = 'complete' | 'missing';
@@ -144,6 +148,10 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   tenantId,
   jobOrderId,
   onJobOrderUpdated,
+  applicantsCount = 0,
+  candidateCount = 0,
+  shiftsCount = 0,
+  assignmentsCount = 0,
 }) => {
   const [indeedUrl, setIndeedUrl] = useState<string>('');
   const [craigslistUrl, setCraigslistUrl] = useState<string>('');
@@ -255,6 +263,15 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
   const hasCraigslistUrl = isValidUrl(craigslistUrl, 'craigslist');
   const hasExternalJobPost = hasIndeedUrl || hasCraigslistUrl;
 
+  const hasFirstApplicant = applicantsCount > 0;
+  const hasCandidate = candidateCount > 0;
+  const hasShiftCreated = shiftsCount > 0;
+  const requiredWorkers = (jobOrder as any)?.workersNeeded ?? 0;
+  const hasAssignmentsForAllPositions =
+    typeof requiredWorkers === 'number' &&
+    requiredWorkers > 0 &&
+    assignmentsCount >= requiredWorkers;
+
   const items: ChecklistItem[] = [
     {
       id: 'worksite',
@@ -345,6 +362,49 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
         ? 'At least one external posting (Indeed or Craigslist) is linked to this job order.'
         : 'Add links to external job board postings (Indeed, Craigslist) so recruiters can jump out quickly.',
       status: hasExternalJobPost ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
+    {
+      id: 'shiftCreated',
+      label: 'Shift created',
+      description: hasShiftCreated
+        ? 'At least one shift has been set up for this job order.'
+        : 'Use the Shift Setup tab to create the first shift schedule.',
+      status: hasShiftCreated ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
+    {
+      id: 'firstApplicant',
+      label: 'First applicant has applied',
+      description: hasFirstApplicant
+        ? 'At least one candidate has applied to this job order.'
+        : 'Once the first user applies, this step will complete automatically.',
+      status: hasFirstApplicant ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
+    {
+      id: 'firstCandidate',
+      label: 'First applicant marked as Candidate',
+      description: hasCandidate
+        ? 'At least one applicant has been promoted to Candidate status.'
+        : 'Use the Applications tab to mark a strong applicant as a Candidate.',
+      status: hasCandidate ? 'complete' : 'missing',
+      auto: true,
+      icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
+    },
+    {
+      id: 'assignmentsFull',
+      label: 'Assignments created for all positions',
+      description:
+        requiredWorkers > 0
+          ? hasAssignmentsForAllPositions
+            ? `Assignments match or exceed the requested headcount (${assignmentsCount}/${requiredWorkers}).`
+            : `Create ${requiredWorkers - assignmentsCount} more assignment(s) to fully staff this job.`
+          : 'Set the number of workers needed on the job order to enable this step.',
+      status: requiredWorkers > 0 && hasAssignmentsForAllPositions ? 'complete' : 'missing',
       auto: true,
       icon: <DescriptionIcon sx={{ fontSize: 18 }} />,
     },
