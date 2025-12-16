@@ -97,6 +97,7 @@ import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/ap
 import { BreadcrumbNav } from '../components/BreadcrumbNav';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
+import JobOrderChecklist from '../components/recruiter/JobOrderChecklist';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -2395,6 +2396,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
     setAnchorEl(null);
   };
 
+  const handleEditLocation = () => {
+    // TODO: Open manage location dialog
+    console.log('Manage location for job order');
+  };
+
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -3071,7 +3077,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </Box>
 
       {/* Tabs */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
+      <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
         <Tabs
           value={activeTab}
           onChange={(_, newValue) => {
@@ -3096,6 +3102,14 @@ const RecruiterJobOrderDetail: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <InfoIcon fontSize="small" />
                 Overview
+              </Box>
+            } 
+          />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CheckCircleIcon fontSize="small" />
+                Checklist
               </Box>
             } 
           />
@@ -3728,10 +3742,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    // TODO: Open manage location dialog
-                    console.log('Manage location for job order');
-                  }}
+                  onClick={handleEditLocation}
                   sx={{ 
                     minWidth: 'auto',
                     px: 1,
@@ -3813,6 +3824,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </TabPanel>
 
       <TabPanel value={activeTab} index={1}>
+        <JobOrderChecklist
+          jobOrder={jobOrder}
+          location={location}
+          associatedContacts={associatedContacts}
+          recruiterUsers={recruiterUsers}
+          onEditLocation={handleEditLocation}
+          onEditContacts={() => setManageContactsOpen(true)}
+          onEditRecruiters={handleOpenManageRecruiters}
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={2}>
         <JobOrderDefaultsTab 
           jobOrder={jobOrder}
           tenantId={tenantId || ''}
@@ -3822,7 +3845,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={2}>
+      <TabPanel value={activeTab} index={3}>
         {/* Staff Instructions Tab */}
         <Grid container spacing={3}>
           {/* First Day Instructions */}
@@ -3932,7 +3955,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Grid>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={3}>
+      <TabPanel value={activeTab} index={4}>
         {/* Jobs Board Tab */}
         {jobOrder && (
           <JobOrderJobsBoardTab
@@ -3947,7 +3970,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         )}
       </TabPanel>
 
-      <TabPanel value={activeTab} index={4}>
+      <TabPanel value={activeTab} index={5}>
         {/* Shift Setup Tab */}
         <ShiftSetupTab 
           tenantId={tenantId}
@@ -3958,7 +3981,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
       {/* Job Board Visibility Tab - Only for Gig jobs */}
       {jobOrder?.jobType === 'gig' && (
-        <TabPanel value={activeTab} index={5}>
+        <TabPanel value={activeTab} index={6}>
           <Box sx={{ maxWidth: 800, mx: 'auto', mt: 3 }}>
             <GigJobsBoardToggle
               jobOrder={jobOrder}
@@ -3972,7 +3995,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </TabPanel>
       )}
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 6 : 5}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 7 : 6}>
         {/* Applications Tab */}
         <ApplicantsTable 
           jobOrderId={jobOrderId || ''} 
@@ -3983,7 +4006,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 7 : 6}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 8 : 7}>
         {/* Placements Tab */}
         <PlacementsTab
           tenantId={tenantId || ''}
@@ -3992,7 +4015,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 8 : 7}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 9 : 8}>
         {/* Notes Tab */}
         <CRMNotesTab
           entityId={jobOrderId || ''}
@@ -4002,7 +4025,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 9 : 8}>
+      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 10 : 9}>
         {/* Activity Tab */}
         <Card>
           <CardContent>
