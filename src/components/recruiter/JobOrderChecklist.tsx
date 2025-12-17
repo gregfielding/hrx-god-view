@@ -7,11 +7,13 @@ import {
   Contacts as ContactsIcon,
   People as PeopleIcon,
   Description as DescriptionIcon,
+  Work as BriefcaseIcon,
 } from '@mui/icons-material';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 import type { JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { db } from '../../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+import jobTitlesList from '../../data/onetJobTitles.json';
 
 interface JobOrderChecklistProps {
   jobOrder: JobOrder | null;
@@ -44,6 +46,8 @@ interface ChecklistItem {
   onAction?: () => void;
   actionLabel?: string;
 }
+
+const normalizedJobTitles = (jobTitlesList as string[]).map((title) => title.toLowerCase());
 
 const ChecklistRow: React.FC<{ item: ChecklistItem }> = ({ item }) => {
   const isComplete = item.status === 'complete';
@@ -165,6 +169,13 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
     setCraigslistUrl(currentCraigslist);
   }, [jobOrder?.id, (jobOrder as any)?.indeedUrl, (jobOrder as any)?.craigslistUrl]);
 
+  const isStandardJobTitle = (title?: string | null): boolean => {
+    if (!title || typeof title !== 'string') return false;
+    const trimmed = title.trim();
+    if (!trimmed) return false;
+    return normalizedJobTitles.includes(trimmed.toLowerCase());
+  };
+
   const isValidUrl = (value: string, kind: 'indeed' | 'craigslist'): boolean => {
     const trimmed = (value || '').trim();
     if (!trimmed) return false;
@@ -206,6 +217,23 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       setSavingExternal(false);
     }
   };
+  // Auto-computed status: has a standardized job title been selected from the list?
+  const hasStandardJobTitle = (() => {
+    if (!jobOrder) return false;
+
+    // Career jobs: use the single jobTitle field
+    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitle((jobOrder as any).jobTitle)) {
+      return true;
+    }
+
+    // Gig jobs: check gigPositions array if present
+    const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
+    if (Array.isArray(gigPositions)) {
+      return gigPositions.some((pos) => isStandardJobTitle(pos.jobTitle || ''));
+    }
+
+    return false;
+  })();
   // Auto-computed status: does this job order have a worksite / location?
   const hasLocation = (() => {
     if (!jobOrder) return false;
@@ -308,6 +336,16 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
       icon: <PeopleIcon sx={{ fontSize: 18 }} />,
       onAction: hasRecruiterAssigned ? undefined : onEditRecruiters,
       actionLabel: 'Assign recruiter',
+    },
+    {
+      id: 'jobTitleSelected',
+      label: 'Job title selected',
+      description: hasStandardJobTitle
+        ? 'Job title is selected from the standard job titles list.'
+        : 'Choose a job title from the standard list so analytics and matching work best.',
+      status: hasStandardJobTitle ? 'complete' : 'missing',
+      auto: true,
+      icon: <BriefcaseIcon sx={{ fontSize: 18 }} />,
     },
     {
       id: 'clientJobDescription',
