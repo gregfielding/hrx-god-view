@@ -87,7 +87,7 @@ const RecruiterUsers: React.FC = () => {
   // Pagination state
   const [lastVisibleDoc, setLastVisibleDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = useState(true);
-  const PAGE_SIZE = 50; // Load 50 users at a time
+  const PAGE_SIZE = 500; // Load up to 500 users at a time so search can filter locally without reloads
 
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
@@ -105,17 +105,17 @@ const RecruiterUsers: React.FC = () => {
     return map;
   }, [groups]);
 
-  // Reset pagination when filters change
+  // Reset pagination when core filters (excluding search) change
   useEffect(() => {
     if (!activeTenant?.id) return;
 
     loadGroups(activeTenant.id);
-    // Reset and load fresh data when filters/search/sort change
+    // Reset and load fresh data when filters/sort change
     setUsers([]);
     setLastVisibleDoc(null);
     setHasMore(true);
     loadUsers(activeTenant.id, true);
-  }, [activeTenant?.id, searchTerm, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
+  }, [activeTenant?.id, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
   const loadGroups = async (tenantId: string) => {
     try {
@@ -402,14 +402,6 @@ const RecruiterUsers: React.FC = () => {
     users,
   ]);
 
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   if (error) {
     return (
       <Alert severity="error" sx={{ maxWidth: 640 }}>
@@ -420,6 +412,12 @@ const RecruiterUsers: React.FC = () => {
 
   return (
     <Box>
+      {/* Initial loading indicator, but keep header and filters visible */}
+      {loading && users.length === 0 && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 80, mb: 2 }}>
+          <CircularProgress size={24} />
+        </Box>
+      )}
       {/* Filter & Toolbar Area */}
       <Box sx={{ 
         mb: 2,

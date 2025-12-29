@@ -35,7 +35,7 @@ const asItems = (titles: string[]): OptionItem[] => titles.map(t => ({ title: t 
 const emptyDefaults: Defaults = {
   screeningPanels: asItems(['4-Panel', '5-Panel', '7-Panel', '10-Panel']),
   backgroundPackages: asItems(['County 7-year', 'Federal + County', 'Statewide']),
-  languages: asItems(['English', 'Spanish', 'French', 'German', 'Mandarin', 'Portuguese']),
+  languages: asItems(['English', 'Spanish', 'French', 'German', 'Mandarin', 'Portuguese', 'Polish']),
   skills: asItems(['Forklift', 'Packing', 'Shipping/Receiving', 'Data Entry']),
   ppe: asItems(['Hard Hat', 'Safety Glasses', 'Steel Toe Boots', 'Gloves']),
   licenses: asItems(['Driver License', 'Forklift Certification', 'TWIC Card']),

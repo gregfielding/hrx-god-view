@@ -37,6 +37,7 @@ import { auth, db } from '../firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
+import { formatPhoneNumber } from '../utils/formatPhone';
 
 interface AuthDialogProps {
   open: boolean;
@@ -63,6 +64,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
   const [recaptchaLoading, setRecaptchaLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [smsConsent, setSmsConsent] = useState(false);
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -102,12 +105,15 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setConfirmPassword('');
     setFirstName('');
     setLastName('');
+    setPhone('');
     setError(null);
     setSuccess(null);
     setShowPassword(false);
     setShowConfirmPassword(false);
     setRecaptchaToken(null);
     setRecaptchaLoading(false);
+    setAgreedToTerms(false);
+    setSmsConsent(false);
     setActiveTab(0);
     onClose();
   };
@@ -157,8 +163,15 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setSuccess(null);
 
     // Validation
-    if (!email || !password || !firstName || !lastName) {
+    if (!email || !password || !firstName || !lastName || !phone) {
       setError('All fields are required');
+      return;
+    }
+
+    // Validate phone number (should be 10 digits)
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length !== 10) {
+      setError('Please enter a valid 10-digit phone number');
       return;
     }
 
@@ -225,7 +238,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         },
         isActive: true,
         avatar: null,
-        phone: '',
+        phone: phone.replace(/\D/g, ''),
+        phoneE164: `+1${phone.replace(/\D/g, '')}`,
         address: {
           street: '',
           city: '',
@@ -237,7 +251,6 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         workStatus: 'Active',
         workEligibility: false, // Gate that must be verified before job applications
         dob: null, // Date of birth in YYYY-MM-DD format (nullable until provided)
-        phoneE164: null, // Phone number in E.164 format (nullable until provided)
         phoneVerified: false, // Phone verification status
         // Employment details
         employmentType: null as string | null, // Use null; Firestore rejects undefined
@@ -278,9 +291,9 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             timestamp: new Date().toISOString()
           },
           smsConsent: {
-            agreed: true,
+            agreed: smsConsent,
             version: "2025-10-21",
-            timestamp: new Date().toISOString()
+            timestamp: smsConsent ? new Date().toISOString() : null
           },
           privacyPolicy: {
             acknowledged: true,
@@ -673,6 +686,57 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               />
             )}
 
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label="Phone Number"
+                type="tel"
+                value={phone}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, '');
+                  if (digits.length <= 10) {
+                    const formatted = digits.length === 10 
+                      ? formatPhoneNumber(digits)
+                      : digits;
+                    setPhone(formatted);
+                  }
+                }}
+                disabled={loading}
+                required
+                onKeyPress={handleKeyPress}
+                size={isMobile ? 'medium' : 'medium'}
+                placeholder="(555) 123-4567"
+                helperText="We'll use this to send you job updates and verification codes"
+              />
+            )}
+
+          {activeTab === 0 && (
+            <Box sx={{ mt: isMobile ? 1 : 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={smsConsent}
+                    onChange={(e) => setSmsConsent(e.target.checked)}
+                    required
+                    size={isMobile ? 'medium' : 'small'}
+                  />
+                }
+                label={
+                  <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
+                    I agree to receive SMS messages as described above.
+                  </Typography>
+                }
+              />
+              <Typography 
+                variant="body2" 
+                color="text.secondary" 
+                sx={{ mt: 1, ml: isMobile ? 5 : 4, fontSize: isMobile ? '0.75rem' : '0.8rem', lineHeight: 1.5 }}
+              >
+                By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to jobs, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+              </Typography>
+            </Box>
+          )}
+
           {activeTab === 0 && (
             <Box sx={{ mt: isMobile ? 1 : 2 }}>
               <FormControlLabel
@@ -686,7 +750,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 }
                 label={
                   <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
-                    I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and the <Link href="/consent" target="_blank" rel="noopener">SMS & Mobile Communications Consent</Link>.
+                    I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>.
                   </Typography>
                 }
               />
@@ -753,7 +817,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             disabled={
               loading || 
               recaptchaLoading || 
-              (activeTab === 0 && (!agreedToTerms || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || password !== confirmPassword))
+              (activeTab === 0 && (!agreedToTerms || !smsConsent || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || !phone.trim() || password !== confirmPassword))
             }
             startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
             fullWidth={isMobile}
