@@ -25,6 +25,8 @@ import UserAssignmentsTab from './components/UserAssignmentsTab';
 import SystemAccessTab from './components/SystemAccessTab';
 import OnboardingTab from './components/OnboardingTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
+import MessagesTab from './components/MessagesTab';
+import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -87,6 +89,7 @@ const UserProfilePage = () => {
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
   const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
   const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -169,6 +172,7 @@ const UserProfilePage = () => {
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount }, // Hidden for 0-4
+      { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Activity Log', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Reports & Insights', available: false, count: undefined },
       { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
@@ -846,11 +850,7 @@ const UserProfilePage = () => {
           onCallNow={phone ? () => {
             window.location.href = `tel:${phone.replace(/\D/g, '')}`;
           } : undefined}
-          onMessageApplicant={phone ? () => {
-            const digits = phone.replace(/\D/g, '');
-            const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
-            window.open(`sms:${smsNumber}`, '_blank');
-          } : undefined}
+          onMessageApplicant={() => setMessageDrawerOpen(true)}
           onViewTimeline={() => {
             setTabValue('Activity Log');
           }}
@@ -935,6 +935,8 @@ const UserProfilePage = () => {
                 return <ReportsAndInsightsTab uid={uid} />;
               case 'Notes':
                 return <NotesTab uid={uid} user={user} />;
+              case 'Messages':
+                return <MessagesTab uid={uid} tenantId={tenantId || undefined} />;
               case 'Activity Log':
                 return <ActivityLogTab uid={uid} user={user} />;
               case 'Settings':
@@ -946,6 +948,26 @@ const UserProfilePage = () => {
         </Box>
       </Box>
       {/* <ChatUI workerId={uid} tenantId={tenantId || undefined} showFAQ={true} /> */}
+
+      {/* Message Drawer */}
+      {uid && tenantId && (
+        <MessageDrawer
+          open={messageDrawerOpen}
+          onClose={() => setMessageDrawerOpen(false)}
+          recipients={[{
+            userId: uid,
+            name: `${firstName} ${lastName}`.trim() || preferredName || 'User',
+            email: email || undefined,
+            phone: phone || undefined,
+            avatar: avatarUrl || undefined,
+          }]}
+          tenantId={tenantId}
+          onSend={(result) => {
+            console.log('Message sent:', result);
+            // Could show a success snackbar here
+          }}
+        />
+      )}
     </Box>
   );
 };

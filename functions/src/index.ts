@@ -3881,15 +3881,15 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
             try {
               const message = aiPrompts ? `${aiPrompts}\n\n${broadcast.message}` : broadcast.message;
               
-              const result = await sendWorkerMessageInternal(
-                recipient.phoneE164,
+              // PHASE 3: Route through orchestrator instead of direct Twilio call
+              const { sendLegacyBroadcastMessage } = await import('./messaging/legacyMessageHelpers');
+              const result = await sendLegacyBroadcastMessage({
+                tenantId: broadcast.tenantId,
+                userId: recipient.id,
+                phoneE164: recipient.phoneE164,
                 message,
-                {
-                  systemContext: true,
-                  source: 'broadcast',
-                  sourceId: broadcastId
-                }
-              );
+                broadcastId,
+              });
               
               if (result.success) {
                 smsSent++;
@@ -8459,18 +8459,24 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
           
           const message = `Hi ${firstName}, you've been assigned to ${jobTitle}${dateTimeInfo}${locationText}. Please confirm your availability.`;
           
-          // Send SMS
-          await sendWorkerMessageInternal(
-            userData.phoneE164,
+          // PHASE 3: Route through orchestrator instead of direct Twilio call
+          const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+          const result = await sendLegacyAssignmentMessage({
+            tenantId,
+            userId: assignment.userId,
+            phoneE164: userData.phoneE164,
             message,
-            {
-              systemContext: true,
-              source: 'assignment_created',
-              sourceId: assignmentId
-            }
-          );
+            messageTypeId: 'assignment_created',
+            source: 'assignment_created',
+            sourceId: assignmentId,
+            assignmentId,
+          });
           
-          logger.info(`SMS sent for assignment ${assignmentId} to ${userData.phoneE164}`);
+          if (result.success) {
+            logger.info(`SMS sent for assignment ${assignmentId} to ${userData.phoneE164}`);
+          } else {
+            logger.warn(`SMS failed for assignment ${assignmentId} to ${userData.phoneE164}: ${result.error}`);
+          }
         } else {
           logger.info(`Skipping SMS for assignment ${assignmentId} - user ${assignment.userId} has no verified phone`);
         }
@@ -8534,17 +8540,30 @@ export const logAssignmentUpdated = onDocumentUpdated('tenants/{tenantId}/assign
           }
           
           if (message) {
-            await sendWorkerMessageInternal(
-              userData.phoneE164,
-              message,
-              {
-                systemContext: true,
-                source: 'assignment_status_update',
-                sourceId: assignmentId
-              }
-            );
+            // PHASE 3: Route through orchestrator instead of direct Twilio call
+            const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+            let messageTypeId = 'assignment_status_update';
+            if (after.status === 'confirmed') messageTypeId = 'assignment_confirmed';
+            else if (after.status === 'active') messageTypeId = 'assignment_active';
+            else if (after.status === 'completed') messageTypeId = 'assignment_completed';
+            else if (after.status === 'cancelled' || after.status === 'canceled') messageTypeId = 'assignment_cancelled';
             
-            logger.info(`SMS sent for assignment status update ${assignmentId} to ${userData.phoneE164}`);
+            const result = await sendLegacyAssignmentMessage({
+              tenantId,
+              userId: after.userId,
+              phoneE164: userData.phoneE164,
+              message,
+              messageTypeId,
+              source: 'assignment_status_update',
+              sourceId: assignmentId,
+              assignmentId,
+            });
+            
+            if (result.success) {
+              logger.info(`SMS sent for assignment status update ${assignmentId} to ${userData.phoneE164}`);
+            } else {
+              logger.warn(`SMS failed for assignment status update ${assignmentId} to ${userData.phoneE164}: ${result.error}`);
+            }
           }
         }
       } catch (smsError: any) {
@@ -11186,6 +11205,147 @@ export {
 // Export variable resolver utilities
 export { getAvailableVariables } from './utils/templateVariableResolver';
 
+// Unified Messaging Framework - Message Types Registry
+export {
+  getMessageTypes,
+  getMessageType,
+  updateMessageTypeConfig,
+  initializeMessageTypesForTenant,
+  getMessageTypesByCategoryFn
+} from './messaging/messageTypesFunctions';
+
+// Unified Messaging Framework - Routing & Delivery
+export { sendUnifiedMessage } from './messaging/routingFunctions';
+
+// Unified Messaging Framework - STOP/HELP Handling
+export { handleInboundSms } from './messaging/inboundSmsWebhook';
+export { processInboundSms, handleStopKeyword, handleHelpKeyword, handleStartKeyword } from './messaging/stopHelpHandler';
+
+// Unified Messaging Framework - Template Engine
+export {
+  getMessageTemplate,
+  createMessageTemplate,
+  updateMessageTemplate,
+  getMessageTemplates,
+  previewMessageTemplate
+} from './messaging/templateFunctions';
+
+// Unified Messaging Framework - Two-Way Messaging
+export {
+  sendRecruiterMessage,
+  getThread,
+  getThreads,
+  updateThread,
+  createThread
+} from './messaging/twoWayMessagingFunctions';
+
+// Unified Messaging Framework - HTTP API Routes
+export {
+  sendMessageApi,
+  testRenderApi
+} from './messaging/messagingApi';
+
+export {
+  listTemplatesApi,
+  getTemplateApi,
+  createTemplateApi,
+  updateTemplateApi,
+  deleteTemplateApi,
+  listMessageTypesApi
+} from './messaging/templatesApi';
+
+export {
+  listThreadsApi,
+  getThreadApi,
+  sendThreadMessageApi,
+  createThreadApi
+} from './messaging/threadsApi';
+
+// Unified Messaging Framework - Webhooks
+export {
+  twilioInboundSmsWebhook,
+  twilioStatusCallback
+} from './messaging/webhooksApi';
+
+// Unified Messaging Framework - Automations
+export {
+  profileIncompleteAutomation,
+  shiftConfirmationsAutomation,
+  retryFailedMessagesAutomation
+} from './messaging/automationsApi';
+
+// Unified Messaging Framework - AI Assist
+export {
+  classifyInboundApi,
+  suggestReplyApi,
+  translateApi
+} from './messaging/aiAssistApi';
+
+// Unified Messaging Framework - Admin Logging
+export {
+  listMessageLogsApi,
+  getConsentHistoryApi
+} from './messaging/adminApi';
+
+// Unified Messaging Framework - Analytics
+export {
+  getMessagingSummary,
+  getUserMessageHistory,
+  getOptOuts
+} from './messaging/analyticsApi';
+
+// Unified Messaging Framework - Email Threads
+export {
+  listEmailThreadsApi,
+  getEmailThreadApi,
+  sendEmailReplyApi,
+  sendNewEmailApi,
+  updateEmailThreadApi,
+  archiveEmailThreadApi,
+  unarchiveEmailThreadApi,
+  starEmailThreadApi,
+  bulkUpdateEmailThreadsApi
+} from './messaging/emailThreadsApi';
+
+// Email Migration
+export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads';
+
+// Email Thread Search
+export { searchEmailThreadsApi } from './messaging/searchApi';
+
+// Internal Messaging (Slack-style)
+export {
+  getInternalMessageCountsApi,
+  getDirectMessagesApi,
+  getChannelsApi,
+  getConversationMessagesApi,
+  sendInternalMessageApi,
+  markInternalMessagesReadApi,
+  createChannelApi,
+  addReactionToMessageApi,
+} from './messaging/internalMessagingApi';
+
+export {
+  updateSlackUserMappingApi,
+  updateSlackChannelMappingApi,
+  getSlackMappingsApi,
+} from './messaging/slackMappingApi';
+
+// Slack Integration
+export { slackEvents } from './slackEvents';
+export { sendMessageToSlackApi } from './messaging/sendMessageToSlack';
+export { backfillSlackChannels } from './slack/backfillSlackChannels';
+export { onSlackMessageActivity } from './slack/onSlackMessageActivity';
+export { sendSlackChannelMessage } from './slack/sendSlackChannelMessage';
+
+// Unified Messaging Framework - Email Provider
+export { getEmailProvider } from './messaging/emailProviderFactory';
+export { SendGridEmailProvider } from './messaging/sendGridEmailProvider';
+export type { EmailProvider, SendEmailOptions, EmailSendResult } from './messaging/EmailProvider';
+
+// Unified Messaging Framework - SendGrid Webhook
+export { sendGridWebhook } from './messaging/sendGridWebhook';
+
 // Recruiter Number Management
 export {
   getAvailableTwilioNumbers,
@@ -11195,6 +11355,13 @@ export {
   releaseRecruiterNumber,
   getRecruiterNumbers
 } from './recruiterNumbers';
+
+// Sender Verification
+export {
+  verifyTwilioNumber,
+  verifyGmailConnection,
+  testSenderIdentity
+} from './messaging/senderVerification';
 
 // HTTP Workers for Cloud Tasks
 export {

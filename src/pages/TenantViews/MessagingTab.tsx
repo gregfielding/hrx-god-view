@@ -1,6 +1,6 @@
 /**
  * Messaging Settings Tab
- * Manage SMS templates and recruiter phone numbers
+ * Manage SMS and Email templates and recruiter phone numbers
  */
 
 import React, { useState, useEffect } from 'react';
@@ -38,84 +38,159 @@ import {
   FormHelperText,
   Grid,
   Link,
+  Autocomplete,
+  ToggleButton,
+  ToggleButtonGroup,
+  ButtonGroup,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import PreviewIcon from '@mui/icons-material/Preview';
 import PhoneIcon from '@mui/icons-material/Phone';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../../firebase';
+import EmailIcon from '@mui/icons-material/Email';
+import SmsIcon from '@mui/icons-material/Sms';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
+import ComputerIcon from '@mui/icons-material/Computer';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { getAvailableTriggersForCategory, getTriggerDefinition } from '../../utils/smsTriggerRegistry';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../../firebase';
+import {
+  listTemplates,
+  createTemplate,
+  updateTemplate,
+  deleteTemplate,
+  getMessageTypes,
+  testRenderTemplate,
+  extractVariables,
+  sendTestMessage,
+  type UnifiedMessageTemplate,
+  type MessageTypeConfig,
+  type Channel,
+  type LanguageCode,
+} from '../../utils/templateApi';
+import EmailTemplateEditor from '../../components/EmailTemplateEditor';
 
 interface MessagingTabProps {
   tenantId: string;
 }
 
-interface SmsTemplate {
-  id: string;
-  name: string;
-  category: 'application' | 'assignment' | 'shift' | 'bulk' | 'semiAutomated' | 'fullyAutomated';
-  triggerType?: string; // Flexible - registry handles validation
-  triggerStatus?: string;
-  messageTemplate: string;
-  variables: string[];
-  enabled: boolean;
-}
-
-const categoryLabels: Record<SmsTemplate['category'], string> = {
-  application: 'Application',
-  assignment: 'Assignment',
-  shift: 'Shift',
-  bulk: 'Bulk',
-  semiAutomated: 'Semi-Automated',
-  fullyAutomated: 'Fully-Automated',
-};
-
-// Trigger labels now come from registry
-
 const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   const { user } = useAuth();
-  const [subTab, setSubTab] = useState(0);
-  const [templates, setTemplates] = useState<SmsTemplate[]>([]);
+  const [subTab, setSubTab] = useState(0); // 0: Templates, 1: Recruiter Numbers
+  const [channelTab, setChannelTab] = useState<Channel>('sms'); // For templates tab
+  const [templates, setTemplates] = useState<UnifiedMessageTemplate[]>([]);
+  const [messageTypes, setMessageTypes] = useState<MessageTypeConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   
   // Template dialog state
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<SmsTemplate | null>(null);
-  const [templateForm, setTemplateForm] = useState<Partial<SmsTemplate>>({
+  const [editingTemplate, setEditingTemplate] = useState<UnifiedMessageTemplate | null>(null);
+  const [templateForm, setTemplateForm] = useState<Partial<UnifiedMessageTemplate>>({
     name: '',
-    category: 'application',
-    triggerType: 'manual',
-    messageTemplate: '',
-    enabled: true,
+    messageTypeId: '',
+    channel: 'sms',
+    language: 'en',
+    body: '',
+    subject: '',
+    htmlBody: '',
+    variables: [],
+    includeStopFooter: false,
+    active: true,
   });
   const [previewText, setPreviewText] = useState('');
-
-  // Firebase functions
-  const getSmsTemplatesFn = httpsCallable(functions, 'getSmsTemplates');
-  const createSmsTemplateFn = httpsCallable(functions, 'createSmsTemplate');
-  const updateSmsTemplateFn = httpsCallable(functions, 'updateSmsTemplate');
-  const deleteSmsTemplateFn = httpsCallable(functions, 'deleteSmsTemplate');
-  const previewSmsTemplateFn = httpsCallable(functions, 'previewSmsTemplate');
+  const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
+  
+  // Test send dialog state
+  const [testSendDialogOpen, setTestSendDialogOpen] = useState(false);
+  const [testRecipients, setTestRecipients] = useState<Array<{ id: string; name: string; email?: string; phone?: string; securityLevel?: number; securityLevelLabel?: string }>>([]);
+  const [selectedTestRecipient, setSelectedTestRecipient] = useState<string>('');
+  const [testSending, setTestSending] = useState(false);
+  const [testSendResult, setTestSendResult] = useState<{ success: boolean; message?: string } | null>(null);
 
   useEffect(() => {
+    if (tenantId) {
     loadTemplates();
-  }, [tenantId]);
+      loadMessageTypes();
+      loadTestRecipients();
+    }
+  }, [tenantId, channelTab]);
+
+  const loadTestRecipients = async () => {
+    try {
+      // Load ALL users from the tenant for test sending (all security levels)
+      // Query all users and filter client-side to include all security levels
+      const usersQuery = query(
+        collection(db, 'users'),
+        limit(500) // Increased limit to get more users
+      );
+      const snapshot = await getDocs(usersQuery);
+      
+      // Security level labels for display
+      const securityLevelLabels: Record<number, string> = {
+        0: 'Applicant',
+        1: 'Applicant Verified',
+        2: 'Candidate',
+        3: 'Hired Staff',
+        4: 'Worker',
+        5: 'Staff Manager',
+        6: 'Manager',
+        7: 'Admin',
+      };
+      
+      const recipients = snapshot.docs
+        .map(doc => {
+          const data = doc.data();
+          
+          // Check if user belongs to this tenant
+          if (!data.tenantIds || !data.tenantIds[tenantId]) {
+            return null;
+          }
+          
+          const name = `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.displayName || data.email || 'Unknown';
+          const tenantData = data.tenantIds[tenantId] || {};
+          const securityLevel = parseInt(tenantData.securityLevel || data.securityLevel || '0');
+          
+          return {
+            id: doc.id,
+            name,
+            email: data.email,
+            phone: data.phone || data.phoneE164,
+            securityLevel,
+            securityLevelLabel: securityLevelLabels[securityLevel] || `Level ${securityLevel}`,
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null && (r.email || r.phone)) // Only include users with email or phone
+        .sort((a, b) => {
+          // Sort by name, but group by security level
+          if (a.securityLevel !== b.securityLevel) {
+            return a.securityLevel - b.securityLevel;
+          }
+          return a.name.localeCompare(b.name);
+        });
+      
+      setTestRecipients(recipients);
+    } catch (err) {
+      console.error('Failed to load test recipients:', err);
+      setTestRecipients([]);
+    }
+  };
 
   const loadTemplates = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await getSmsTemplatesFn({ tenantId });
-      const data = result.data as { success: boolean; templates: SmsTemplate[] };
-      if (data.success) {
-        setTemplates(data.templates);
+      const result = await listTemplates(tenantId, {
+        channel: channelTab,
+        active: undefined, // Get all templates
+      });
+      if (result.success) {
+        setTemplates(result.data);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load templates');
@@ -124,25 +199,49 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }
   };
 
-  const handleOpenTemplateDialog = (template?: SmsTemplate) => {
+  const loadMessageTypes = async () => {
+    try {
+      const result = await getMessageTypes(tenantId);
+      if (result.success) {
+        // Filter to only types that support the current channel
+        const filtered = result.data.filter(type => 
+          type.enabled && type.defaultChannels.includes(channelTab)
+        );
+        setMessageTypes(filtered);
+      }
+    } catch (err: any) {
+      console.error('Failed to load message types:', err);
+    }
+  };
+
+  const handleOpenTemplateDialog = (template?: UnifiedMessageTemplate) => {
     if (template) {
       setEditingTemplate(template);
       setTemplateForm({
         name: template.name,
-        category: template.category,
-        triggerType: template.triggerType,
-        triggerStatus: template.triggerStatus,
-        messageTemplate: template.messageTemplate,
-        enabled: template.enabled,
+        messageTypeId: template.messageTypeId,
+        channel: template.channel,
+        language: template.language,
+        body: template.body,
+        subject: template.subject || '',
+        htmlBody: template.htmlBody || '',
+        variables: template.variables,
+        includeStopFooter: template.includeStopFooter,
+        active: template.active,
       });
     } else {
       setEditingTemplate(null);
       setTemplateForm({
         name: '',
-        category: 'application',
-        triggerType: 'manual',
-        messageTemplate: '',
-        enabled: true,
+        messageTypeId: '',
+        channel: channelTab,
+        language: 'en',
+        body: '',
+        subject: '',
+        htmlBody: '',
+        variables: [],
+        includeStopFooter: channelTab === 'sms',
+        active: true,
       });
     }
     setTemplateDialogOpen(true);
@@ -154,31 +253,59 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setEditingTemplate(null);
     setTemplateForm({
       name: '',
-      category: 'application',
-      triggerType: 'manual',
-      messageTemplate: '',
-      enabled: true,
+      messageTypeId: '',
+      channel: channelTab,
+      language: 'en',
+      body: '',
+      subject: '',
+      htmlBody: '',
+      variables: [],
+      includeStopFooter: channelTab === 'sms',
+      active: true,
     });
     setPreviewText('');
   };
 
-  const updatePreview = async () => {
-    if (!templateForm.messageTemplate) {
+  const updatePreview = () => {
+    if (!templateForm.messageTypeId || (!templateForm.body && !templateForm.htmlBody)) {
       setPreviewText('');
       return;
     }
 
-    try {
-      const result = await previewSmsTemplateFn({
-        template: templateForm.messageTemplate,
+    // Enhanced sample data for preview
+    const sampleContext: Record<string, any> = {
+      firstName: 'John',
+      lastName: 'Doe',
+      fullName: 'John Doe',
+      jobTitle: 'Warehouse Worker',
+      locationCity: 'San Francisco',
+      locationState: 'CA',
+      locationName: 'Main Warehouse',
+      shiftDate: '2025-01-15',
+      shiftTime: '9:00 AM',
+      shiftEndTime: '5:00 PM',
+      companyName: 'Acme Corporation',
+      email: 'john.doe@example.com',
+      phone: '+1 (555) 123-4567',
+      applicationStatus: 'Screened',
+      assignmentStatus: 'Assigned',
+    };
+
+    // Render locally from form data (no API calls for preview)
+    // This works immediately and doesn't require the template to be saved
+    const renderLocal = (template: string): string => {
+      let rendered = template;
+      Object.entries(sampleContext).forEach(([key, value]) => {
+        rendered = rendered.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), String(value));
       });
-      const data = result.data as { success: boolean; preview: string };
-      if (data.success) {
-        setPreviewText(data.preview);
-      }
-    } catch (err) {
-      // Preview failed, show template as-is
-      setPreviewText(templateForm.messageTemplate);
+      return rendered;
+    };
+
+    // Local rendering from form data
+    if (templateForm.channel === 'email' && templateForm.htmlBody) {
+      setPreviewText(renderLocal(templateForm.htmlBody));
+    } else {
+      setPreviewText(renderLocal(templateForm.body || ''));
     }
   };
 
@@ -188,11 +315,21 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }, 500);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateForm.messageTemplate]);
+  }, [templateForm.body, templateForm.htmlBody, templateForm.subject, templateForm.messageTypeId]);
 
   const handleSaveTemplate = async () => {
-    if (!templateForm.name || !templateForm.messageTemplate) {
-      setError('Name and message template are required');
+    if (!templateForm.name || !templateForm.messageTypeId) {
+      setError('Name and message type are required');
+      return;
+    }
+
+    if (!templateForm.body && !templateForm.htmlBody) {
+      setError('Template body is required');
+      return;
+    }
+
+    if (templateForm.channel === 'email' && !templateForm.subject) {
+      setError('Subject is required for email templates');
       return;
     }
 
@@ -200,20 +337,38 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setError(null);
 
     try {
+      // Extract variables from body, htmlBody, and subject
+      const allText = [
+        templateForm.body,
+        templateForm.htmlBody,
+        templateForm.subject,
+      ].filter(Boolean).join(' ');
+      const variables = extractVariables(allText);
+
+      const templateData: Omit<UnifiedMessageTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'> = {
+        messageTypeId: templateForm.messageTypeId,
+        channel: templateForm.channel || channelTab,
+        language: templateForm.language || 'en',
+        name: templateForm.name,
+        body: templateForm.body || templateForm.htmlBody || '',
+        subject: templateForm.subject,
+        htmlBody: templateForm.htmlBody,
+        variables,
+        includeStopFooter: templateForm.includeStopFooter || false,
+        active: templateForm.active !== false,
+      };
+
       if (editingTemplate) {
-        await updateSmsTemplateFn({
-          tenantId,
-          templateId: editingTemplate.id,
-          updates: templateForm,
+        await updateTemplate(tenantId, editingTemplate.id!, {
+          ...templateData,
+          createdBy: editingTemplate.createdBy,
         });
         setSuccess(true);
       } else {
-        await createSmsTemplateFn({
+        await createTemplate({
+          ...templateData,
           tenantId,
-          template: {
-            ...templateForm,
-            createdBy: user?.uid || '',
-          },
+          createdBy: user?.uid || 'system',
         });
         setSuccess(true);
       }
@@ -235,7 +390,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setError(null);
 
     try {
-      await deleteSmsTemplateFn({ tenantId, templateId });
+      await deleteTemplate(tenantId, templateId);
       setSuccess(true);
       loadTemplates();
     } catch (err: any) {
@@ -245,15 +400,13 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }
   };
 
-  const handleToggleTemplate = async (template: SmsTemplate) => {
+  const handleToggleTemplate = async (template: UnifiedMessageTemplate) => {
     setLoading(true);
     setError(null);
 
     try {
-      await updateSmsTemplateFn({
-        tenantId,
-        templateId: template.id,
-        updates: { enabled: !template.enabled },
+      await updateTemplate(tenantId, template.id!, {
+        active: !template.active,
       });
       loadTemplates();
     } catch (err: any) {
@@ -263,31 +416,182 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }
   };
 
+  const handleDuplicateTemplate = async (template: UnifiedMessageTemplate) => {
+    try {
+      const duplicatedTemplate: Omit<UnifiedMessageTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'> = {
+        messageTypeId: template.messageTypeId,
+        channel: template.channel,
+        language: template.language,
+        name: `${template.name} (Copy)`,
+        body: template.body,
+        subject: template.subject,
+        htmlBody: template.htmlBody,
+        variables: template.variables,
+        includeStopFooter: template.includeStopFooter,
+        active: false, // Start as inactive so user can review
+      };
+
+      await createTemplate({
+        ...duplicatedTemplate,
+        tenantId,
+        createdBy: user?.uid || 'system',
+      });
+      setSuccess(true);
+      loadTemplates();
+    } catch (err: any) {
+      setError(err.message || 'Failed to duplicate template');
+    }
+  };
+
+  const getMessageTypeLabel = (messageTypeId: string): string => {
+    const type = messageTypes.find(t => t.id === messageTypeId);
+    return type?.label || messageTypeId;
+  };
+
+  const handleTestSend = async () => {
+    if (!selectedTestRecipient || !templateForm.messageTypeId) {
+      setError('Please select a recipient');
+      return;
+    }
+
+    // Warn if template is not saved yet
+    if (!editingTemplate?.id) {
+      const shouldContinue = window.confirm(
+        'This template has not been saved yet. The test will use the template data from the form. Do you want to continue?'
+      );
+      if (!shouldContinue) {
+        return;
+      }
+    }
+
+    setTestSending(true);
+    setTestSendResult(null);
+    setError(null);
+
+    try {
+      // Build context with sample data
+      const sampleContext: Record<string, any> = {
+        firstName: 'John',
+        lastName: 'Doe',
+        fullName: 'John Doe',
+        jobTitle: 'Warehouse Worker',
+        locationCity: 'San Francisco',
+        locationState: 'CA',
+        locationName: 'Main Warehouse',
+        shiftDate: '2025-01-15',
+        shiftTime: '9:00 AM',
+        shiftEndTime: '5:00 PM',
+        companyName: 'Test Company',
+        email: testRecipients.find(r => r.id === selectedTestRecipient)?.email || '',
+        phone: testRecipients.find(r => r.id === selectedTestRecipient)?.phone || '',
+      };
+
+      const result = await sendTestMessage(
+        tenantId,
+        selectedTestRecipient,
+        templateForm.messageTypeId,
+        sampleContext,
+        templateForm.channel ? [templateForm.channel] : undefined
+      );
+
+      if (result.success) {
+        setTestSendResult({
+          success: true,
+          message: `Test message sent successfully via ${result.dispatchedChannels?.join(', ') || 'selected channel'}`,
+        });
+        setSuccess(true);
+      } else {
+        const errorMsg = result.warnings?.join(', ') || 'Failed to send test message. Please check that the template exists and is active.';
+        setTestSendResult({
+          success: false,
+          message: errorMsg,
+        });
+        setError(errorMsg);
+      }
+    } catch (err: any) {
+      const errorMessage = err.message || 'Failed to send test message';
+      setError(errorMessage);
+      setTestSendResult({
+        success: false,
+        message: errorMessage.includes('index') 
+          ? 'Template lookup failed. A Firestore index may need to be created. Check the console for details.'
+          : errorMessage,
+      });
+    } finally {
+      setTestSending(false);
+    }
+  };
+
   return (
     <Box sx={{ width: '100%', p: 0 }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Manage SMS message templates and recruiter phone number assignments. Templates support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
+        Manage SMS and Email message templates and recruiter phone number assignments. Templates support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
       </Typography>
 
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
-        <Tabs
-          value={subTab}
-          onChange={(e, newValue) => setSubTab(newValue)}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-        >
-          <Tab label="SMS Templates" />
-          <Tab label="Recruiter Numbers" />
-        </Tabs>
-      </Paper>
+      {/* Main Section Selector - Using Button Group */}
+      <Box sx={{ mb: 3 }}>
+        <ButtonGroup variant="outlined" aria-label="main section selector">
+          <Button
+            variant={subTab === 0 ? 'contained' : 'outlined'}
+            startIcon={<SmsIcon />}
+            onClick={() => setSubTab(0)}
+            sx={{ 
+              textTransform: 'none',
+              px: 3,
+              ...(subTab === 0 && { 
+                bgcolor: 'primary.main',
+                color: 'white',
+                '&:hover': { bgcolor: 'primary.dark' }
+              })
+            }}
+          >
+            Templates
+          </Button>
+          <Button
+            variant={subTab === 1 ? 'contained' : 'outlined'}
+            startIcon={<PhoneIcon />}
+            onClick={() => setSubTab(1)}
+            sx={{ 
+              textTransform: 'none',
+              px: 3,
+              ...(subTab === 1 && { 
+                bgcolor: 'primary.main',
+                color: 'white',
+                '&:hover': { bgcolor: 'primary.dark' }
+              })
+            }}
+          >
+            Recruiter Numbers
+          </Button>
+        </ButtonGroup>
+      </Box>
 
-      {/* SMS Templates Tab */}
+      {/* Templates Tab */}
       {subTab === 0 && (
         <Box>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">SMS Templates</Typography>
+          {/* Channel Selector - Using Toggle Buttons */}
+          <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <ToggleButtonGroup
+              value={channelTab}
+              exclusive
+              onChange={(e, newValue) => {
+                if (newValue !== null) {
+                  setChannelTab(newValue as Channel);
+                }
+              }}
+              aria-label="channel selector"
+              sx={{ height: 40 }}
+            >
+              <ToggleButton value="sms" aria-label="SMS templates">
+                <SmsIcon sx={{ mr: 1 }} />
+                SMS Templates
+              </ToggleButton>
+              <ToggleButton value="email" aria-label="Email templates">
+                <EmailIcon sx={{ mr: 1 }} />
+                Email Templates
+              </ToggleButton>
+            </ToggleButtonGroup>
+            
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -297,21 +601,33 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             </Button>
           </Box>
 
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              {channelTab === 'sms' ? 'SMS' : 'Email'} Templates
+            </Typography>
+          </Box>
+
           {loading && templates.length === 0 ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
               <CircularProgress />
             </Box>
           ) : templates.length === 0 ? (
-            <Alert severity="info">No templates found. Create your first template to get started.</Alert>
+            <Alert severity="info">
+              No {channelTab === 'sms' ? 'SMS' : 'email'} templates found. Create your first template to get started.
+            </Alert>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
+            <TableContainer 
+              component={Paper} 
+              variant="outlined"
+              sx={{ overflowX: 'auto' }}
+            >
               <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1 } }}>
                 <TableHead>
                   <TableRow>
                     <TableCell>Name</TableCell>
-                    <TableCell>Category</TableCell>
-                    <TableCell>Trigger</TableCell>
-                    <TableCell>Template Preview</TableCell>
+                    <TableCell>Message Type</TableCell>
+                    <TableCell>Language</TableCell>
+                    <TableCell>Preview</TableCell>
                     <TableCell>Status</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -325,18 +641,17 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Chip label={categoryLabels[template.category]} size="small" />
+                        <Chip 
+                          label={getMessageTypeLabel(template.messageTypeId)} 
+                          size="small" 
+                          variant="outlined"
+                        />
                       </TableCell>
                       <TableCell>
-                        {template.triggerType && (
-                          <Typography variant="body2" color="text.secondary">
-                            {getTriggerDefinition(template.triggerType)?.label || template.triggerType}
-                            {template.triggerStatus && ` (${template.triggerStatus})`}
-                          </Typography>
-                        )}
+                        <Chip label={template.language.toUpperCase()} size="small" />
                       </TableCell>
                       <TableCell>
-                        <Tooltip title={template.messageTemplate}>
+                        <Tooltip title={template.body || template.htmlBody || ''}>
                           <Typography
                             variant="body2"
                             sx={{
@@ -346,7 +661,12 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            {template.messageTemplate.substring(0, 60)}...
+                            {template.channel === 'email' && template.subject ? (
+                              <strong>{template.subject}</strong>
+                            ) : (
+                              (template.body || template.htmlBody || '').substring(0, 60)
+                            )}
+                            ...
                           </Typography>
                         </Tooltip>
                       </TableCell>
@@ -354,24 +674,16 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         <FormControlLabel
                           control={
                             <Switch
-                              checked={template.enabled}
+                              checked={template.active}
                               onChange={() => handleToggleTemplate(template)}
                               size="small"
                             />
                           }
-                          label={template.enabled ? 'Enabled' : 'Disabled'}
+                          label={template.active ? 'Active' : 'Inactive'}
                         />
                       </TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <Tooltip title="Preview">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleOpenTemplateDialog(template)}
-                            >
-                              <PreviewIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
                           <Tooltip title="Edit">
                             <IconButton
                               size="small"
@@ -380,11 +692,19 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                               <EditIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          <Tooltip title="Duplicate">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDuplicateTemplate(template)}
+                            >
+                              <ContentCopyIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                           <Tooltip title="Delete">
                             <IconButton
                               size="small"
                               color="error"
-                              onClick={() => handleDeleteTemplate(template.id)}
+                              onClick={() => handleDeleteTemplate(template.id!)}
                             >
                               <DeleteIcon fontSize="small" />
                             </IconButton>
@@ -425,140 +745,315 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               required
             />
 
-            <FormControl fullWidth>
-              <InputLabel>Category</InputLabel>
+            <FormControl fullWidth required>
+              <InputLabel>Message Type</InputLabel>
               <Select
-                value={templateForm.category}
-                label="Category"
-                onChange={(e) =>
-                  setTemplateForm({ ...templateForm, category: e.target.value as SmsTemplate['category'] })
-                }
+                value={templateForm.messageTypeId}
+                label="Message Type"
+                onChange={(e) => setTemplateForm({ ...templateForm, messageTypeId: e.target.value })}
               >
-                {Object.entries(categoryLabels).map(([value, label]) => (
-                  <MenuItem key={value} value={value}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+                {(() => {
+                  // Group message types by category
+                  const grouped = messageTypes.reduce((acc, type) => {
+                    if (!acc[type.category]) {
+                      acc[type.category] = [];
+                    }
+                    acc[type.category].push(type);
+                    return acc;
+                  }, {} as Record<string, MessageTypeConfig[]>);
 
-            <FormControl fullWidth>
-              <InputLabel>Trigger Type</InputLabel>
-              <Select
-                value={templateForm.triggerType || 'manual'}
-                label="Trigger Type"
-                onChange={(e) => {
-                  const triggerType = e.target.value;
-                  const triggerDef = getTriggerDefinition(triggerType);
-                  
-                  setTemplateForm({ 
-                    ...templateForm, 
-                    triggerType,
-                    // Clear triggerStatus if trigger doesn't require it
-                    triggerStatus: triggerDef?.requiresStatus ? templateForm.triggerStatus : undefined
-                  });
-                }}
-              >
-                {getAvailableTriggersForCategory(templateForm.category).map((trigger) => (
-                  <MenuItem key={trigger.id} value={trigger.id}>
+                  const categoryOrder = ['system', 'transactional', 'compliance', 'engagement', 'chat', 'marketing'];
+                  const categoryLabels: Record<string, string> = {
+                    system: 'System',
+                    transactional: 'Transactional',
+                    compliance: 'Compliance',
+                    engagement: 'Engagement',
+                    chat: 'Chat',
+                    marketing: 'Marketing',
+                  };
+
+                  return categoryOrder.map(category => {
+                    const types = grouped[category] || [];
+                    if (types.length === 0) return null;
+                    
+                    return [
+                      <MenuItem key={`category-${category}`} disabled sx={{ fontWeight: 600 }}>
+                        {categoryLabels[category] || category}
+                      </MenuItem>,
+                      ...types.map((type) => (
+                        <MenuItem key={type.id} value={type.id} sx={{ pl: 3 }}>
                     <Box>
-                      <Typography variant="body2">{trigger.label}</Typography>
+                            <Typography variant="body2">{type.label}</Typography>
+                            {type.description && (
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                        {trigger.description}
+                                {type.description}
                       </Typography>
+                            )}
                     </Box>
                   </MenuItem>
-                ))}
+                      )),
+                    ];
+                  }).flat().filter(Boolean);
+                })()}
               </Select>
-              {templateForm.triggerType && getTriggerDefinition(templateForm.triggerType) && (
-                <FormHelperText>
-                  {getTriggerDefinition(templateForm.triggerType)!.description}
-                </FormHelperText>
-              )}
             </FormControl>
 
-            {/* Show status field only if trigger requires it */}
-            {templateForm.triggerType && getTriggerDefinition(templateForm.triggerType)?.requiresStatus && (
+            <Grid container spacing={2}>
+              <Grid item xs={6}>
               <FormControl fullWidth>
-                {getTriggerDefinition(templateForm.triggerType)?.statusOptions ? (
-                  <>
-                    <InputLabel>Trigger Status</InputLabel>
+                  <InputLabel>Channel</InputLabel>
                     <Select
-                      label="Trigger Status"
-                      value={templateForm.triggerStatus || ''}
-                      onChange={(e) =>
-                        setTemplateForm({ ...templateForm, triggerStatus: e.target.value })
-                      }
-                    >
-                      {getTriggerDefinition(templateForm.triggerType)!.statusOptions!.map((status) => (
-                        <MenuItem key={status} value={status}>
-                          {status.charAt(0).toUpperCase() + status.slice(1)}
-                        </MenuItem>
-                      ))}
+                    value={templateForm.channel || channelTab}
+                    label="Channel"
+                    onChange={(e) => setTemplateForm({ ...templateForm, channel: e.target.value as Channel })}
+                  >
+                    <MenuItem value="sms">SMS</MenuItem>
+                    <MenuItem value="email">Email</MenuItem>
                     </Select>
-                  </>
-                ) : (
+                </FormControl>
+              </Grid>
+              <Grid item xs={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Language</InputLabel>
+                  <Select
+                    value={templateForm.language || 'en'}
+                    label="Language"
+                    onChange={(e) => setTemplateForm({ ...templateForm, language: e.target.value as LanguageCode })}
+                  >
+                    <MenuItem value="en">English</MenuItem>
+                    <MenuItem value="es">Spanish</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
+
+            {/* Email Subject Field */}
+            {templateForm.channel === 'email' && (
                   <TextField
-                    label="Trigger Status"
-                    value={templateForm.triggerStatus || ''}
-                    onChange={(e) =>
-                      setTemplateForm({ ...templateForm, triggerStatus: e.target.value })
-                    }
+                label="Email Subject"
+                value={templateForm.subject || ''}
+                onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })}
                     fullWidth
-                    placeholder={getTriggerDefinition(templateForm.triggerType)?.statusPlaceholder || 'e.g., screened, advanced, hired'}
-                    helperText={getTriggerDefinition(templateForm.triggerType)?.statusPlaceholder || "Status value that triggers this template"}
-                  />
-                )}
-              </FormControl>
+                required
+                helperText="Subject line for the email"
+              />
             )}
 
+            {/* Template Body */}
+            {templateForm.channel === 'email' ? (
+              /* Email HTML Body with Rich Text Editor */
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Email Body
+                </Typography>
+                <EmailTemplateEditor
+                  key={`email-editor-${editingTemplate?.id || 'new'}-${templateForm.htmlBody?.substring(0, 50) || ''}`}
+                  htmlBody={templateForm.htmlBody || templateForm.body || ''}
+                  onChange={(newHtmlBody) => {
+                    setTemplateForm({ ...templateForm, htmlBody: newHtmlBody, body: newHtmlBody });
+                    // Auto-extract variables
+                    const allText = [newHtmlBody, templateForm.subject].filter(Boolean).join(' ');
+                    setTemplateForm(prev => ({ ...prev, variables: extractVariables(allText) }));
+                  }}
+                  variables={templateForm.variables || []}
+                  onVariablesChange={(variables) => {
+                    setTemplateForm(prev => ({ ...prev, variables }));
+                  }}
+                  availableVariables={[
+                    'firstName',
+                    'lastName',
+                    'fullName',
+                    'email',
+                    'phone',
+                    'jobTitle',
+                    'locationCity',
+                    'locationState',
+                    'locationName',
+                    'shiftDate',
+                    'shiftTime',
+                    'shiftEndTime',
+                    'companyName',
+                    'applicationStatus',
+                    'assignmentStatus',
+                  ]}
+                  onVariableInsert={(variable) => {
+                    // Variable inserted, variables already updated via onChange
+                  }}
+                />
+              </Box>
+            ) : (
+              /* SMS Template Body */
             <TextField
               label="Message Template"
-              value={templateForm.messageTemplate}
-              onChange={(e) =>
-                setTemplateForm({ ...templateForm, messageTemplate: e.target.value })
-              }
+                value={templateForm.body}
+                onChange={(e) => {
+                  const newBody = e.target.value;
+                  setTemplateForm({ ...templateForm, body: newBody });
+                  // Auto-extract variables
+                  const allText = [newBody, templateForm.subject].filter(Boolean).join(' ');
+                  setTemplateForm(prev => ({ ...prev, variables: extractVariables(allText) }));
+                }}
               fullWidth
               required
               multiline
               rows={4}
-              helperText="Use variables like {firstName}, {jobTitle}, {locationCity}, etc."
-              placeholder="Hi {firstName}. Thank you for applying to be a {jobTitle} in {locationCity}."
+                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, etc."
+                placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}."
             />
+            )}
 
-            {previewText && (
+            {/* Variables Display */}
+            {templateForm.variables && templateForm.variables.length > 0 && (
               <Box>
                 <Typography variant="subtitle2" gutterBottom>
-                  Preview:
+                  Detected Variables:
                 </Typography>
-                <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                  <Typography variant="body2">{previewText}</Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" gap={1}>
+                  {templateForm.variables.map((variable) => (
+                    <Chip
+                      key={variable}
+                      label={`{{${variable}}}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {/* Enhanced Preview */}
+            {previewText && (
+              <Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    Preview
+                  </Typography>
+                  {templateForm.channel === 'email' && (
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant={previewMode === 'desktop' ? 'contained' : 'outlined'}
+                        startIcon={<ComputerIcon />}
+                        onClick={() => setPreviewMode('desktop')}
+                      >
+                        Desktop
+                      </Button>
+                      <Button
+                        size="small"
+                        variant={previewMode === 'mobile' ? 'contained' : 'outlined'}
+                        startIcon={<PhoneAndroidIcon />}
+                        onClick={() => setPreviewMode('mobile')}
+                      >
+                        Mobile
+                      </Button>
+                    </Stack>
+                  )}
+                </Box>
+                <Paper 
+                  variant="outlined" 
+                  sx={{ 
+                    p: 2, 
+                    bgcolor: 'grey.50',
+                    maxWidth: previewMode === 'mobile' ? '375px' : '100%',
+                    mx: previewMode === 'mobile' ? 'auto' : 0,
+                    border: previewMode === 'mobile' ? '2px solid #1976d2' : '1px solid #e0e0e0',
+                  }}
+                >
+                  {templateForm.channel === 'email' && templateForm.subject && (
+                    <Box sx={{ mb: 2, pb: 1, borderBottom: '1px solid #e0e0e0' }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                        Subject:
+                      </Typography>
+                      <Typography variant="subtitle1" fontWeight={600}>
+                        {templateForm.subject}
+                      </Typography>
+                    </Box>
+                  )}
+                  <Box
+                    sx={{
+                      '& *': {
+                        maxWidth: '100%',
+                      },
+                    }}
+                    dangerouslySetInnerHTML={
+                      templateForm.channel === 'email' && templateForm.htmlBody 
+                        ? { __html: previewText } 
+                        : undefined
+                    }
+                  >
+                    {templateForm.channel !== 'email' || !templateForm.htmlBody ? (
+                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {previewText}
+                      </Typography>
+                    ) : null}
+                  </Box>
                 </Paper>
               </Box>
+            )}
+
+            {/* Include STOP Footer (SMS only) */}
+            {templateForm.channel === 'sms' && (
+            <FormControlLabel
+              control={
+                <Switch
+                    checked={templateForm.includeStopFooter ?? false}
+                  onChange={(e) =>
+                      setTemplateForm({ ...templateForm, includeStopFooter: e.target.checked })
+                    }
+                  />
+                }
+                label="Include STOP/HELP footer"
+              />
             )}
 
             <FormControlLabel
               control={
                 <Switch
-                  checked={templateForm.enabled ?? true}
+                  checked={templateForm.active ?? true}
                   onChange={(e) =>
-                    setTemplateForm({ ...templateForm, enabled: e.target.checked })
+                    setTemplateForm({ ...templateForm, active: e.target.checked })
                   }
                 />
               }
-              label="Enabled"
+              label="Active"
             />
           </Stack>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ gap: 1, justifyContent: 'space-between' }}>
           <Button onClick={handleCloseTemplateDialog}>Cancel</Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              onClick={() => {
+                // Load recipients when opening test dialog
+                if (testRecipients.length === 0) {
+                  loadTestRecipients();
+                }
+                setTestSendDialogOpen(true);
+              }}
+              variant="outlined"
+              disabled={
+                !templateForm.messageTypeId ||
+                (!templateForm.body && !templateForm.htmlBody) ||
+                (templateForm.channel === 'email' && !templateForm.subject)
+              }
+              sx={{ minWidth: 120 }}
+            >
+              Send Test
+            </Button>
           <Button
             onClick={handleSaveTemplate}
             variant="contained"
-            disabled={loading || !templateForm.name || !templateForm.messageTemplate}
+              disabled={
+                loading ||
+                !templateForm.name ||
+                !templateForm.messageTypeId ||
+                (!templateForm.body && !templateForm.htmlBody) ||
+                (templateForm.channel === 'email' && !templateForm.subject)
+              }
           >
             {loading ? <CircularProgress size={20} /> : editingTemplate ? 'Update' : 'Create'}
           </Button>
+          </Box>
         </DialogActions>
       </Dialog>
 
@@ -573,6 +1068,114 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           Template {editingTemplate ? 'updated' : 'created'} successfully!
         </Alert>
       </Snackbar>
+
+      {/* Test Send Dialog */}
+      <Dialog
+        open={testSendDialogOpen}
+        onClose={() => {
+          setTestSendDialogOpen(false);
+          setSelectedTestRecipient('');
+          setTestSendResult(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Send Test Message</DialogTitle>
+        <DialogContent>
+          <Stack spacing={3} sx={{ mt: 1 }}>
+            <Alert severity="info">
+              Send a test message to verify your template. The message will use sample data for variables.
+            </Alert>
+
+            <Autocomplete
+              options={testRecipients}
+              getOptionLabel={(option) => option.name || 'Unknown'}
+              value={testRecipients.find(r => r.id === selectedTestRecipient) || null}
+              onChange={(_, newValue) => setSelectedTestRecipient(newValue?.id || '')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Recipient *"
+                  placeholder="Search by name, email, or phone..."
+                  required
+                />
+              )}
+              renderOption={(props, option) => (
+                <Box component="li" {...props} key={option.id}>
+                  <Box sx={{ width: '100%' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                      <Typography variant="body2" component="span">
+                        {option.name}
+                      </Typography>
+                      {option.securityLevelLabel && (
+                        <Chip
+                          label={option.securityLevelLabel}
+                          size="small"
+                          sx={{ height: 20, fontSize: '0.7rem' }}
+                        />
+                      )}
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      {option.email && option.phone
+                        ? `${option.email} • ${option.phone}`
+                        : option.email || option.phone}
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+              filterOptions={(options, { inputValue }) => {
+                const searchTerm = inputValue.toLowerCase();
+                return options.filter(option =>
+                  option.name.toLowerCase().includes(searchTerm) ||
+                  option.email?.toLowerCase().includes(searchTerm) ||
+                  option.phone?.includes(searchTerm) ||
+                  option.securityLevelLabel?.toLowerCase().includes(searchTerm)
+                );
+              }}
+              noOptionsText={testRecipients.length === 0 ? "No recipients found. Users must have an email or phone number." : "No matching recipients"}
+              loading={testRecipients.length === 0}
+            />
+
+            {templateForm.channel && (
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Channel
+                </Typography>
+                <Chip
+                  label={templateForm.channel.toUpperCase()}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                />
+              </Box>
+            )}
+
+            {testSendResult && (
+              <Alert severity={testSendResult.success ? 'success' : 'error'}>
+                {testSendResult.message}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setTestSendDialogOpen(false);
+              setSelectedTestRecipient('');
+              setTestSendResult(null);
+            }}
+          >
+            Close
+          </Button>
+          <Button
+            onClick={handleTestSend}
+            variant="contained"
+            disabled={testSending || !selectedTestRecipient || testRecipients.length === 0}
+          >
+            {testSending ? <CircularProgress size={20} /> : 'Send Test Message'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
@@ -792,7 +1395,11 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       ) : assignments.length === 0 ? (
         <Alert severity="info">No number assignments found. Assign a number to get started.</Alert>
       ) : (
-        <TableContainer component={Paper} variant="outlined">
+        <TableContainer 
+          component={Paper} 
+          variant="outlined"
+          sx={{ overflowX: 'auto' }}
+        >
           <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1 } }}>
             <TableHead>
               <TableRow>
@@ -956,7 +1563,11 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                   Available Numbers ({searchResults.length})
                 </Typography>
-                <TableContainer component={Paper} variant="outlined">
+                <TableContainer 
+                  component={Paper} 
+                  variant="outlined"
+                  sx={{ overflowX: 'auto' }}
+                >
                   <Table size="small">
                     <TableHead>
                       <TableRow>
@@ -1049,4 +1660,3 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
 };
 
 export default MessagingTab;
-

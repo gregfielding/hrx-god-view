@@ -4,6 +4,8 @@ import { getFirestore } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
 import { google } from 'googleapis';
 import { logger } from './utils/logger';
+import { logMessage } from './messaging/messageLogging';
+import { findOrCreateEmailThread, addMessageToThread } from './messaging/emailThreading';
 
 
 const db = getFirestore();
@@ -218,10 +220,13 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
  * Sync emails from Gmail for a user
  */
 export const syncGmailEmails = onCall({
-  cors: true
+  cors: true,
+  memory: '1GiB',          // Avoid OOM while processing message bodies
+  concurrency: 10          // Reduce per-instance load to prevent memory spikes
 }, async (request) => {
   try {
-    const { userId, tenantId, maxResults = 50 } = request.data;
+    // Default to 1000 emails per sync
+    const { userId, tenantId, maxResults = 1000 } = request.data;
 
     if (!userId || !tenantId) {
       throw new Error('Missing required fields: userId, tenantId');
@@ -243,30 +248,156 @@ export const syncGmailEmails = onCall({
     // Set up Gmail API client
     oauth2Client.setCredentials(gmailTokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    
+    // Test Gmail API access and verify which account we're querying
+    try {
+      const profile = await gmail.users.getProfile({ userId: 'me' });
+      const connectedEmail = profile.data.emailAddress;
+      logger.info(`Gmail API access confirmed for ${connectedEmail}`);
+      logger.info(`User's email in database: ${userData?.email || 'not set'}`);
+      
+      // Check if there's a mismatch
+      if (userData?.email && userData.email.toLowerCase() !== connectedEmail?.toLowerCase()) {
+        logger.warn(`Email mismatch: Database has ${userData.email}, but Gmail API is connected to ${connectedEmail}`);
+      }
+      
+      // Try a simple query to see if we can access any messages at all
+      const testQuery = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: 1,
+        q: '', // Empty query to get any message
+      });
+      logger.info(`Test query (empty) returned ${testQuery.data.messages?.length || 0} messages (resultSizeEstimate: ${testQuery.data.resultSizeEstimate})`);
+      
+      // Try querying inbox specifically
+      const inboxQuery = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: 1,
+        q: 'in:inbox',
+      });
+      logger.info(`Inbox query returned ${inboxQuery.data.messages?.length || 0} messages (resultSizeEstimate: ${inboxQuery.data.resultSizeEstimate})`);
+      
+    } catch (profileError: any) {
+      logger.error(`Gmail API access failed: ${profileError.message}`);
+      throw new Error(`Gmail API access failed: ${profileError.message}`);
+    }
+    
+    // Get recent messages - prioritize unread, then recent emails
+    // Use pagination to fetch all emails in batches
+    const allMessages: any[] = [];
+    let nextPageToken: string | undefined = undefined;
+    let totalFetched = 0;
+    const maxTotalResults = Math.min(maxResults, 5000); // Cap at 5000 emails per sync (increased from 1000)
 
-    // Get recent messages
-    const messagesResponse = await gmail.users.messages.list({
-      userId: 'me',
-      maxResults,
-      q: 'is:email' // Only emails, not chats
-    });
+    // First, try to get unread emails with pagination
+    // Note: Removed 'is:email' filter as it was too restrictive - test queries show messages exist without it
+    logger.info(`Querying Gmail for unread emails (maxResults: ${maxTotalResults})`);
+    do {
+      const query = 'is:unread';
+      logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+      
+      const messagesResponse = await gmail.users.messages.list({
+        userId: 'me',
+        maxResults: Math.min(500, maxTotalResults - totalFetched), // Gmail API max is 500 per request
+        q: query, // Unread messages first
+        pageToken: nextPageToken,
+      });
 
-    const messages = messagesResponse.data.messages || [];
+      const batchMessages = messagesResponse.data.messages || [];
+      logger.info(`Gmail API returned ${batchMessages.length} messages (resultSizeEstimate: ${messagesResponse.data.resultSizeEstimate})`);
+      allMessages.push(...batchMessages);
+      totalFetched += batchMessages.length;
+      nextPageToken = messagesResponse.data.nextPageToken;
+
+      // Stop if we've reached the max or no more pages
+      if (totalFetched >= maxTotalResults || !nextPageToken) {
+        break;
+      }
+    } while (nextPageToken && totalFetched < maxTotalResults);
+
+    // If we haven't reached the max, get more emails from inbox (including old emails)
+    // This ensures we sync historical emails, not just unread ones
+    if (totalFetched < maxTotalResults) {
+      logger.info(`Fetching inbox messages to reach ${maxTotalResults} total (already have ${totalFetched} unread)...`);
+      nextPageToken = undefined;
+      do {
+        const query = 'in:inbox';
+        logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+        
+        const messagesResponse = await gmail.users.messages.list({
+          userId: 'me',
+          maxResults: Math.min(500, maxTotalResults - totalFetched),
+          q: query, // All inbox messages (including old ones)
+          pageToken: nextPageToken,
+        });
+
+        const batchMessages = messagesResponse.data.messages || [];
+        logger.info(`Gmail API returned ${batchMessages.length} messages (resultSizeEstimate: ${messagesResponse.data.resultSizeEstimate})`);
+        
+        // Add messages, avoiding duplicates (unread messages might also be in inbox)
+        const existingIds = new Set(allMessages.map(m => m.id));
+        const newMessages = batchMessages.filter(m => !existingIds.has(m.id));
+        allMessages.push(...newMessages);
+        totalFetched += newMessages.length;
+        nextPageToken = messagesResponse.data.nextPageToken;
+
+        // Stop if we've reached the max or no more pages
+        if (totalFetched >= maxTotalResults || !nextPageToken) {
+          break;
+        }
+      } while (nextPageToken && totalFetched < maxTotalResults);
+    }
+
+    // Cap processing to avoid long runtimes
+    const processingLimit = Math.min(allMessages.length, maxTotalResults);
+    const messages = allMessages.slice(0, processingLimit);
+    logger.info(`Found ${messages.length} messages to process for user ${userId}`);
+    
     let syncedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
     const newEmails = [];
 
     // Process each message
     for (const message of messages) {
       try {
-        // Check if email already exists
-        const existingEmail = await db.collection('tenants').doc(tenantId)
+        // Check if email already exists in email_logs
+        const existingEmailLog = await db.collection('tenants').doc(tenantId)
           .collection('email_logs')
           .where('messageId', '==', message.id)
           .limit(1)
           .get();
 
-        if (!existingEmail.empty) {
-          continue; // Skip if already synced
+        // Check if message exists in emailThreads (check by gmailMessageId in messages subcollection)
+        // We'll check this by looking for threads with this gmailThreadId and then checking messages
+        const threadQuery = await db.collection('tenants').doc(tenantId)
+          .collection('emailThreads')
+          .where('gmailThreadId', '==', message.threadId)
+          .limit(1)
+          .get();
+
+        let messageExistsInThread = false;
+        if (!threadQuery.empty) {
+          const threadId = threadQuery.docs[0].id;
+          const messageQuery = await db.collection('tenants').doc(tenantId)
+            .collection('emailThreads').doc(threadId)
+            .collection('messages')
+            .where('gmailMessageId', '==', message.id)
+            .limit(1)
+            .get();
+          messageExistsInThread = !messageQuery.empty;
+        }
+
+        // Only skip if BOTH email_logs entry exists AND message exists in thread
+        // This ensures we create threads even if email_logs entry exists but thread doesn't
+        if (!existingEmailLog.empty && messageExistsInThread) {
+          skippedCount++;
+          continue; // Skip if already fully synced
+        }
+        
+        // If email_logs exists but thread doesn't, we'll still process it to create the thread
+        if (!existingEmailLog.empty && !messageExistsInThread) {
+          logger.info(`Email ${message.id} exists in email_logs but not in thread, creating thread...`);
         }
 
         // Get full message details
@@ -276,6 +407,13 @@ export const syncGmailEmails = onCall({
         });
 
         const messageData = messageResponse.data;
+        
+        // Skip chat messages (Gmail chats have "CHAT" label)
+        if (messageData.labelIds?.includes('CHAT')) {
+          skippedCount++;
+          continue;
+        }
+        
         const headers = messageData.payload?.headers || [];
         
         // Extract email data
@@ -343,6 +481,16 @@ export const syncGmailEmails = onCall({
         }
 
         // Create email log
+        // Robust timestamp: use Date header if valid, else Gmail internalDate
+        const parsedDate = date ? new Date(date) : undefined;
+        const internalDateMillis = messageData.internalDate ? Number(messageData.internalDate) : undefined;
+        const timestamp =
+          parsedDate && !isNaN(parsedDate.getTime())
+            ? parsedDate
+            : internalDateMillis
+              ? new Date(internalDateMillis)
+              : new Date();
+
         const emailLog = {
           messageId: message.id!,
           threadId: messageData.threadId!,
@@ -351,7 +499,7 @@ export const syncGmailEmails = onCall({
           to: to.split(',').map(e => e.trim()).filter(Boolean),
           cc: cc.split(',').map(e => e.trim()).filter(Boolean),
           bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
-          timestamp: new Date(date),
+          timestamp,
           bodySnippet: bodySnippet.substring(0, 250),
           bodyHtml,
           direction,
@@ -364,23 +512,104 @@ export const syncGmailEmails = onCall({
           updatedAt: new Date()
         };
 
-        // Save to Firestore
+        // Save to Firestore (legacy email_logs for CRM integration)
         await db.collection('tenants').doc(tenantId)
           .collection('email_logs')
           .add(emailLog);
 
+        // Create or find email thread and add message
+        try {
+          const thread = await findOrCreateEmailThread(tenantId, {
+            subject,
+            from,
+            to: to.split(',').map(e => e.trim()).filter(Boolean),
+            cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+            gmailThreadId: messageData.threadId,
+            gmailLabelIds: messageData.labelIds,
+          }, {
+            userId: direction === 'inbound' ? userId : undefined,
+          });
+
+          if (thread.id) {
+            try {
+              const messageId = await addMessageToThread(thread.id, tenantId, {
+                direction,
+                from,
+                fromUserId: direction === 'outbound' ? userId : undefined,
+                to: to.split(',').map(e => e.trim()).filter(Boolean),
+                cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                subject,
+                bodyHtml,
+                bodyPlain: bodySnippet,
+                bodySnippet: bodySnippet.substring(0, 200),
+                status: 'delivered',
+                providerMessageId: message.id!,
+                gmailMessageId: message.id!,
+                read: direction === 'outbound', // Outbound messages are auto-read
+                createdAt: timestamp, // Use the original email timestamp
+              });
+              logger.info(`Added message ${messageId} to thread ${thread.id} for email ${message.id}`);
+            } catch (messageError: any) {
+              logger.error(`Failed to add message to thread ${thread.id}: ${messageError.message || messageError}`);
+              // Continue processing other messages even if this one fails
+            }
+          }
+        } catch (threadError) {
+          // Don't fail sync if threading fails
+          logger.error(`Failed to create email thread: ${threadError}`);
+        }
+
+        // Also log to unified messageLogs for inbox visibility
+        // For inbound emails, userId is the recipient (the logged-in user)
+        // For outbound emails, we'd need to determine the recipient from the 'to' field
+        if (direction === 'inbound') {
+          // Inbound email: logged-in user received it
+          try {
+            await logMessage({
+              userId: userId, // The user who received the email
+              tenantId,
+              messageTypeId: 'inbound_message',
+              channel: 'email',
+              direction: 'inbound',
+              fromIdentity: 'candidate', // Could be 'recruiter' or 'candidate' - defaulting to candidate
+              contentOriginal: bodyHtml || bodySnippet,
+              contentSent: bodySnippet.substring(0, 500), // Truncate for display
+              language: null, // Could extract from email headers if needed
+              status: 'delivered',
+              providerMessageId: message.id!,
+            });
+          } catch (logError) {
+            // Don't fail sync if logging fails
+            logger.error(`Failed to log inbound email to messageLogs: ${logError}`);
+          }
+        } else {
+          // Outbound email: need to find recipient from 'to' field
+          // For now, we'll skip logging outbound emails here since they should be logged
+          // when sent through the orchestrator. But we could add logic to find the recipient user.
+        }
+
         newEmails.push(emailLog);
         syncedCount++;
+        
+        if (syncedCount % 10 === 0) {
+          logger.info(`Processed ${syncedCount} emails so far...`);
+        }
 
-      } catch (messageError) {
-        console.error(`Error processing message ${message.id}:`, messageError);
+      } catch (messageError: any) {
+        errorCount++;
+        logger.error(`Error processing message ${message.id}:`, messageError);
         // Continue with next message
       }
     }
 
+    logger.info(`Sync completed: ${syncedCount} synced, ${skippedCount} skipped, ${errorCount} errors`);
+
     return {
       success: true,
       syncedCount,
+      skippedCount,
+      errorCount,
+      totalProcessed: messages.length,
       newEmails: newEmails.length
     };
 
@@ -1694,6 +1923,64 @@ async function monitorGmailForContactEmailsInternal(userId: string, tenantId: st
             await db.collection('tenants').doc(tenantId)
               .collection('email_logs')
               .add(contactEmailLog);
+
+            // Create or find email thread and add message
+            try {
+              const thread = await findOrCreateEmailThread(tenantId, {
+                subject,
+                from,
+                to: to.split(',').map(e => e.trim()).filter(Boolean),
+                cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                gmailThreadId: messageData.threadId,
+                gmailLabelIds: messageData.labelIds,
+              }, {
+                userId: !isOutbound ? userId : undefined,
+              });
+
+              if (thread.id) {
+                await addMessageToThread(thread.id, tenantId, {
+                  direction: isOutbound ? 'outbound' : 'inbound',
+                  from,
+                  fromUserId: isOutbound ? userId : undefined,
+                  to: to.split(',').map(e => e.trim()).filter(Boolean),
+                  cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                  subject,
+                  bodyPlain: bodySnippet,
+                  bodySnippet: bodySnippet.substring(0, 200),
+                  status: 'delivered',
+                  providerMessageId: message.id,
+                  gmailMessageId: message.id,
+                  read: isOutbound, // Outbound messages are auto-read
+                  createdAt: emailDate, // Use the original email timestamp
+                });
+              }
+            } catch (threadError) {
+              // Don't fail sync if threading fails
+              logger.error(`Failed to create email thread: ${threadError}`);
+            }
+
+            // Also log to unified messageLogs for inbox visibility (only for inbound emails to the logged-in user)
+            if (!isOutbound) {
+              // Inbound email: logged-in user received it
+              try {
+                await logMessage({
+                  userId: userId, // The user who received the email
+                  tenantId,
+                  messageTypeId: 'inbound_message',
+                  channel: 'email',
+                  direction: 'inbound',
+                  fromIdentity: 'candidate', // Could be 'recruiter' or 'candidate' - defaulting to candidate
+                  contentOriginal: bodySnippet, // Use bodySnippet since bodyHtml isn't extracted in this function
+                  contentSent: bodySnippet.substring(0, 500), // Truncate for display
+                  language: null, // Could extract from email headers if needed
+                  status: 'delivered',
+                  providerMessageId: message.id,
+                });
+              } catch (logError) {
+                // Don't fail sync if logging fails
+                logger.error(`Failed to log inbound email to messageLogs: ${logError}`);
+              }
+            }
 
             // Create email logs for associated companies
             for (const companyId of associatedEntities.companies) {

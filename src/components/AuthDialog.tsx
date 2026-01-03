@@ -35,6 +35,7 @@ import {
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 import { useAuth } from '../contexts/AuthContext';
 import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
 import { formatPhoneNumber } from '../utils/formatPhone';
@@ -706,7 +707,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 onKeyPress={handleKeyPress}
                 size={isMobile ? 'medium' : 'medium'}
                 placeholder="(555) 123-4567"
-                helperText="We'll use this to send you job updates and verification codes"
+                helperText="We'll use this to send you job updates and verification codes."
               />
             )}
 
@@ -723,17 +724,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 }
                 label={
                   <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
-                    I agree to receive SMS messages as described above.
+                    By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to job applications, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
                   </Typography>
                 }
               />
-              <Typography 
-                variant="body2" 
-                color="text.secondary" 
-                sx={{ mt: 1, ml: isMobile ? 5 : 4, fontSize: isMobile ? '0.75rem' : '0.8rem', lineHeight: 1.5 }}
-              >
-                By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to jobs, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
-              </Typography>
             </Box>
           )}
 
@@ -829,6 +823,15 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             {recaptchaLoading ? 'Verifying...' : loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
           </Button>
         </Box>
+
+        {/* Optional statement for SMS consent */}
+        {activeTab === 0 && (
+          <Box sx={{ textAlign: 'center', width: '100%', pt: 1 }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.75rem' : '0.8rem' }}>
+              Consent to receive text messages is not a condition of employment.
+            </Typography>
+          </Box>
+        )}
 
         {/* Footer microcopy */}
         <Box sx={{ textAlign: 'center', width: '100%', pt: isMobile ? 1 : 0 }}>

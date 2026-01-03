@@ -7,7 +7,7 @@ import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/fire
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { defineSecret } from 'firebase-functions/params';
-import { sendWorkerMessageInternal } from './twilio';
+import { sendLegacyApplicationStatusMessage } from './messaging/legacyMessageHelpers';
 import { resolveTemplate } from './smsTemplates';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext } from './utils/templateVariableResolver';
@@ -95,18 +95,20 @@ export const onApplicationCreated = onDocumentCreated(
         let templateFound = false;
 
         try {
-          const templatesSnapshot = await db
-            .collection(`tenants/${tenantId}/smsTemplates`)
-            .where('category', '==', 'application')
-            .where('triggerType', '==', 'applicationCreated')
-            .where('enabled', '==', true)
-            .limit(1)
-            .get();
+          // PHASE 2.1: Use new template engine with legacy fallback
+          const { getTemplateWithLegacyFallback } = await import('./messaging/templateMigration');
+          const { renderTemplate } = await import('./messaging/templateEngine');
+          
+          const templateResult = await getTemplateWithLegacyFallback(
+            tenantId,
+            'application_received',
+            'sms',
+            (userData.preferredLanguage || 'en') as 'en' | 'es',
+            'application',
+            'applicationCreated'
+          );
 
-          if (!templatesSnapshot.empty) {
-            const templateDoc = templatesSnapshot.docs[0];
-            const template = templateDoc.data();
-
+          if (templateResult) {
             // Build context for variable resolution
             const context: TemplateVariableContext = {
               userId: userId,
@@ -122,9 +124,10 @@ export const onApplicationCreated = onDocumentCreated(
             // Resolve all variables using standardized resolver
             const variables = await resolveTemplateVariables(context);
 
-            message = resolveTemplate(template.messageTemplate, variables);
+            // Render template (new engine handles STOP footer automatically)
+            message = await renderTemplate(templateResult.template, variables, tenantId);
             templateFound = true;
-            logger.info(`Using template ${templateDoc.id} for application ${applicationId}`);
+            logger.info(`Using ${templateResult.source} template for application ${applicationId}`);
           }
         } catch (templateError: any) {
           logger.warn(`Failed to fetch template for application ${applicationId}:`, templateError);
@@ -161,16 +164,17 @@ export const onApplicationCreated = onDocumentCreated(
             return { success: true };
           }
 
-          // Send SMS
-          const result = await sendWorkerMessageInternal(
-            userData.phoneE164,
+          // PHASE 3: Route through orchestrator instead of direct Twilio call
+          const result = await sendLegacyApplicationStatusMessage({
+            tenantId,
+            userId,
+            phoneE164: userData.phoneE164,
             message,
-            {
-              systemContext: true,
-              source: 'application_created',
-              sourceId: applicationId
-            }
-          );
+            source: 'application_created',
+            sourceId: applicationId,
+            applicationId,
+            status: applicationData.status || 'submitted',
+          });
 
           if (result.success) {
             logger.info(`SMS sent for new application ${applicationId} to ${userData.phoneE164}. Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
@@ -254,19 +258,28 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         let templateFound = false;
 
         try {
-          const templatesSnapshot = await db
-            .collection(`tenants/${tenantId}/smsTemplates`)
-            .where('category', '==', 'application')
-            .where('triggerType', '==', 'applicationStatusChange')
-            .where('triggerStatus', '==', newStatus)
-            .where('enabled', '==', true)
-            .limit(1)
-            .get();
+          // PHASE 2.1: Use new template engine with legacy fallback
+          // Map status to message type
+          let messageTypeId = 'application_status_update';
+          if (newStatus === 'screened') messageTypeId = 'application_screened';
+          else if (newStatus === 'advanced') messageTypeId = 'application_advanced';
+          else if (newStatus === 'hired') messageTypeId = 'application_hired';
+          else if (newStatus === 'rejected') messageTypeId = 'application_rejected';
+          
+          const { getTemplateWithLegacyFallback } = await import('./messaging/templateMigration');
+          const { renderTemplate } = await import('./messaging/templateEngine');
+          
+          const templateResult = await getTemplateWithLegacyFallback(
+            tenantId,
+            messageTypeId,
+            'sms',
+            (userData.preferredLanguage || 'en') as 'en' | 'es',
+            'application',
+            'applicationStatusChange',
+            newStatus
+          );
 
-          if (!templatesSnapshot.empty) {
-            const templateDoc = templatesSnapshot.docs[0];
-            const template = templateDoc.data();
-
+          if (templateResult) {
             // Build context for variable resolution
             const context: TemplateVariableContext = {
               userId: userId,
@@ -282,9 +295,10 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             // Resolve all variables using standardized resolver
             const variables = await resolveTemplateVariables(context);
 
-            message = resolveTemplate(template.messageTemplate, variables);
+            // Render template (new engine handles STOP footer automatically)
+            message = await renderTemplate(templateResult.template, variables, tenantId);
             templateFound = true;
-            logger.info(`Using template ${templateDoc.id} for application ${applicationId} status change`);
+            logger.info(`Using ${templateResult.source} template for application ${applicationId} status change to ${newStatus}`);
           }
         } catch (templateError: any) {
           logger.warn(`Failed to fetch template for application ${applicationId}:`, templateError);
@@ -349,16 +363,17 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             return { success: true };
           }
 
-          // Send SMS
-          const result = await sendWorkerMessageInternal(
-            userData.phoneE164,
+          // PHASE 3: Route through orchestrator instead of direct Twilio call
+          const result = await sendLegacyApplicationStatusMessage({
+            tenantId,
+            userId,
+            phoneE164: userData.phoneE164,
             message,
-            {
-              systemContext: true,
-              source: 'application_status_changed',
-              sourceId: applicationId
-            }
-          );
+            source: 'application_status_changed',
+            sourceId: applicationId,
+            applicationId,
+            status: newStatus,
+          });
 
           if (result.success) {
             logger.info(`SMS sent for application status change ${applicationId} (${oldStatus} → ${newStatus}) to ${userData.phoneE164}`);

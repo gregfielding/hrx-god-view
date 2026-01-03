@@ -8,6 +8,7 @@ import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout'
 import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
 import AIDashboard from './pages/TenantViews/AIDashboard';
+import ChatGPT from './pages/TenantViews/ChatGPT';
 import UserProfile from './pages/UserProfile';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
@@ -15,7 +16,9 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import { SalespeopleProvider } from './contexts/SalespeopleContext';
+import { DirectMessengerProvider } from './contexts/DirectMessengerContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import SlackProtectedRoute from './components/SlackProtectedRoute';
 import { Box, Typography } from '@mui/material';
 import TenantsTable from './pages/Admin/TenantsTable';
 import AgencyProfile from './pages/AgencyProfile';
@@ -26,6 +29,10 @@ import AddWorkers from './pages/TenantViews/AddWorkers';
 import PendingInvites from './pages/TenantViews/PendingInvites';
 import WorkforcePageWrapper from './pages/TenantViews/WorkforcePageWrapper';
 import TenantSettings from './pages/TenantViews/TenantSettings';
+import SettingsLanding from './pages/TenantViews/SettingsLanding';
+import CompanySetup from './pages/TenantViews/CompanySetup';
+import MessagingTab from './pages/TenantViews/MessagingTab';
+import SenderManagementPage from './pages/TenantViews/SenderManagementPage';
 import CompanyDefaults from './pages/TenantViews/CompanyDefaults';
 import TenantLocations from './pages/TenantViews/TenantLocations';
 import TenantUserGroups from './pages/TenantViews/TenantUserGroups';
@@ -44,6 +51,8 @@ import AssignmentDetails from './pages/AssignmentDetails';
 import Communications from './pages/Communications';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import SMSPrivacy from './pages/SMSPrivacy';
+import Apply from './pages/Apply';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
@@ -94,6 +103,7 @@ import AutoDevOpsMonitoring from './pages/Admin/AutoDevOpsMonitoring';
 import AutoDevOpsPipeline from './pages/Admin/AutoDevOpsPipeline';
 import MotivationLibrarySeeder from './pages/Admin/MotivationLibrarySeeder';
 import HelloMessageConfig from './pages/Admin/HelloMessageConfig';
+import SlackAdminPage from './pages/Admin/SlackAdminPage';
 import MobileAppErrors from './pages/Admin/MobileAppErrors';
 import ResumeManagement from './pages/ResumeManagement';
 import Reports from './pages/Reports';
@@ -120,6 +130,10 @@ import RecruiterLocationDetails from './pages/RecruiterLocationDetails';
 import NewJobOrder from './pages/NewJobOrder';
 import RecruiterUserGroups from './pages/RecruiterUserGroups';
 import RecruiterUserGroupDetails from './pages/RecruiterUserGroupDetails';
+import UserInboxPage from './pages/UserInboxPage';
+import MessagesPage from './pages/MessagesPage';
+import TextMessagesPage from './pages/TextMessagesPage';
+import SlackPage from './pages/SlackPage';
 
 import InsightReports from './pages/InsightReports';
 
@@ -215,6 +229,12 @@ const IntegrationsTabWrapper: React.FC = () => {
   return tenantId ? <IntegrationsTab tenantId={tenantId} /> : null;
 };
 
+// Wrapper component for MessagingTab to provide tenantId
+const MessagingTabWrapper: React.FC = () => {
+  const { tenantId } = useAuth();
+  return tenantId ? <MessagingTab tenantId={tenantId} /> : null;
+};
+
 function App() {
   logger.debug('App rendered');
   useEffect(() => {
@@ -233,9 +253,11 @@ function App() {
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
+      <Route path="/c1/apply" element={<Apply />} />
       <Route path="/consent" element={<Communications />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/sms-privacy" element={<SMSPrivacy />} />
       
       {/* Public Jobs Board routes with conditional layout */}
       <Route element={<ConditionalJobsBoardLayout />}>
@@ -264,8 +286,29 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
-        <Route path="dashboard" element={<AIDashboard />} />
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="chatgpt" element={<ChatGPT />} />
+        <Route path="inbox" element={
+          <ProtectedRoute>
+            <UserInboxPage />
+          </ProtectedRoute>
+        } />
+        <Route path="text-messages" element={
+          <ProtectedRoute>
+            <TextMessagesPage />
+          </ProtectedRoute>
+        } />
+        <Route path="slack" element={
+          <SlackProtectedRoute>
+            <SlackPage />
+          </SlackProtectedRoute>
+        } />
+        <Route path="messages" element={
+          <SlackProtectedRoute>
+            <MessagesPage />
+          </SlackProtectedRoute>
+        } />
         <Route path="profile" element={<ProfileRedirect />} />
 
         {/* Admin/Manager only routes */}
@@ -410,7 +453,22 @@ function App() {
         } />
         <Route path="settings" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <TenantSettings />
+            <SettingsLanding />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/company-setup" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <CompanySetup />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/messaging" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <MessagingTabWrapper />
+          </ProtectedRoute>
+        } />
+        <Route path="settings/senders" element={
+          <ProtectedRoute requiredSecurityLevel="4">
+            <SenderManagementPage />
           </ProtectedRoute>
         } />
         <Route path="company-defaults" element={
@@ -544,6 +602,14 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="5">
               <DataOperations />
             </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/slack"
+          element={
+            <SlackProtectedRoute>
+              <SlackAdminPage />
+            </SlackProtectedRoute>
           }
         />
         <Route
@@ -843,8 +909,9 @@ function App() {
       <Router>
         <PageViewTracker />
         <AuthProvider>
-          <AssociationsCacheProvider>
-            <SalespeopleProvider>
+          <DirectMessengerProvider>
+            <AssociationsCacheProvider>
+              <SalespeopleProvider>
               {googleMapsApiKey ? (
                 <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
                   {routes}
@@ -854,8 +921,9 @@ function App() {
                   {routes}
                 </div>
               )}
-            </SalespeopleProvider>
-          </AssociationsCacheProvider>
+              </SalespeopleProvider>
+            </AssociationsCacheProvider>
+          </DirectMessengerProvider>
         </AuthProvider>
       </Router>
     </Box>

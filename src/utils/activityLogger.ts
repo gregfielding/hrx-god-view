@@ -59,7 +59,13 @@ export const logUserActivity = async (activityData: ActivityLogData): Promise<vo
       timestamp: serverTimestamp(),
       createdAt: serverTimestamp(),
     });
-  } catch (error) {
+  } catch (error: any) {
+    // If document already exists, that's okay - it means the activity was already logged
+    // This can happen due to race conditions or retries
+    if (error?.code === 'already-exists' || error?.message?.includes('already exists')) {
+      // Silently ignore - activity was already logged
+      return;
+    }
     console.error('Error logging user activity:', error);
     // Don't throw error to prevent breaking main functionality
   }

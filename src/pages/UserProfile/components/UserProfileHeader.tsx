@@ -5,7 +5,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 import { Link as RouterLink } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { doc, updateDoc, collection, getDocs, query } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, query } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ClearIcon from '@mui/icons-material/Clear';
@@ -31,6 +31,9 @@ import { useAuth } from '../../../contexts/AuthContext';
 import DocumentIconBar from './DocumentIconBar';
 import CertificationsModal from './CertificationsModal';
 import ContactActionButtons from './ContactActionButtons';
+import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
+import { functions } from '../../../firebase';
+import { httpsCallable } from 'firebase/functions';
 import MissingItemsAlert from './MissingItemsAlert';
 import QuickActionToolbar from './QuickActionToolbar';
 import ComplianceStatusChips from './ComplianceStatusChips';
@@ -198,12 +201,17 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [notesCount, setNotesCount] = useState<number>(0);
-  const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant } = useAuth();
+  const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant, user } = useAuth();
+  const effectiveTenantId = tenantId || authTenantId || activeTenant?.id || '';
   const viewerLevel = parseInt(viewerSecurityLevel || '0');
   const canViewAdminContent = viewerLevel >= 5;
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
+  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
   
   // Check if onboarding is in progress
   const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
@@ -775,32 +783,29 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Tooltip>
-                  <Tooltip title={`Send SMS to ${formatPhoneNumber(phone)}`}>
-                    <IconButton
-                      size="small"
-                      component="a"
-                      href={(() => {
-                        const digits = phone.replace(/\D/g, '');
-                        const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
-                        return `sms:${smsNumber}`;
-                      })()}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <MessageIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
+                  {onMessageApplicant && (
+                    <Tooltip title="Send Message">
+                      <IconButton
+                        size="small"
+                        onClick={onMessageApplicant}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <MessageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                 </>
               )}
               {email && (
@@ -1266,40 +1271,72 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Tooltip>
-                  <Tooltip title={`Send SMS to ${formatPhoneNumber(phone)}`}>
-                    <IconButton
-                      size="small"
-                      component="a"
-                      href={(() => {
-                        const digits = phone.replace(/\D/g, '');
-                        const smsNumber = digits.length === 10 ? `+1${digits}` : digits.length === 11 && digits.startsWith('1') ? `+${digits}` : phone;
-                        return `sms:${smsNumber}`;
-                      })()}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <MessageIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
+                  {onMessageApplicant ? (
+                    <Tooltip title="Send Message">
+                      <IconButton
+                        size="small"
+                        onClick={onMessageApplicant}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <MessageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  ) : phone && (
+                    <Tooltip title="Send SMS">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (hasTwilioNumber) {
+                            setMessageDrawerChannel('sms');
+                            setMessageDrawerOpen(true);
+                          } else {
+                            window.open(`sms:${phone.replace(/\D/g, '')}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <MessageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                 </>
               )}
               {email && (
                 <Tooltip title={`Email ${email}`}>
                   <IconButton
                     size="small"
-                    component="a"
-                    href={`mailto:${email}`}
+                    onClick={() => {
+                      if (gmailConnected) {
+                        setMessageDrawerChannel('email');
+                        setMessageDrawerOpen(true);
+                      } else {
+                        window.open(`mailto:${email}`, '_blank');
+                      }
+                    }}
                     sx={{ 
                       p: 1,
                       color: 'primary.main',
@@ -1699,6 +1736,34 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           if (onTabChange) {
             onTabChange('Onboarding');
           }
+        }}
+      />
+
+      {/* Message Drawer */}
+      <MessageDrawer
+        open={messageDrawerOpen}
+        onClose={() => setMessageDrawerOpen(false)}
+        recipients={(() => {
+          const recipients: MessageRecipient[] = [];
+          if (messageDrawerChannel === 'email' && email) {
+            recipients.push({
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || email.split('@')[0],
+              email: email,
+            });
+          } else if (messageDrawerChannel === 'sms' && phone) {
+            recipients.push({
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || phone,
+              phone: phone,
+            });
+          }
+          return recipients;
+        })()}
+        tenantId={effectiveTenantId}
+        defaultChannels={[messageDrawerChannel]}
+        onSend={() => {
+          setMessageDrawerOpen(false);
         }}
       />
     </Box>

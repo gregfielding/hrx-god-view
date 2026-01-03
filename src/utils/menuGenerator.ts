@@ -126,16 +126,42 @@ export async function generateMenuItems(
 
   if (!isHRX) {
     // Add basic menu items that don't require specific roles (for users without claims)
-    // Only show Dashboard for security levels 5+ (Worker, Manager, Admin)
+    // Only show ChatGPT for security levels 5+ (Worker, Manager, Admin)
     if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
       menuItems.push(
         {
-          text: 'Dashboard',
-          to: '/dashboard',
-          icon: 'dashboard',
+          text: 'ChatGPT',
+          to: '/chatgpt',
+          icon: 'chatgpt',
           // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
         },
       );
+    }
+
+    // Inbox - available to all users (email-only per decoupling spec)
+    menuItems.push({
+      text: 'Inbox',
+      to: '/inbox',
+      icon: 'inbox',
+      // Available to all security levels
+    });
+
+    // Text Messages - available to all users (SMS-only per decoupling spec)
+    menuItems.push({
+      text: 'Text Messages',
+      to: '/text-messages',
+      icon: 'sms',
+      // Available to all security levels
+    });
+
+    // Slack Channels - requires security level 5+ (per decoupling spec)
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
+      menuItems.push({
+        text: 'Slack Channels',
+        to: '/slack',
+        icon: 'chat',
+        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
+      });
     }
     // {
     //   text: 'My Profile',
@@ -218,9 +244,9 @@ export async function generateMenuItems(
       },
 
       {
-        text: 'Company Setup',
+        text: 'Settings',
         to: '/settings',
-        icon: 'architecture',
+        icon: 'settings',
         requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
       // Only show Company Defaults if Staffing, Flex, or Recruiting modules are enabled AND user is Manager/Admin
@@ -283,13 +309,13 @@ export async function generateMenuItems(
 
   if (isHRX) {
     // Add basic menu items for HRX users (no role requirements)
-    // Only show Dashboard for security levels 5+ (Worker, Manager, Admin)
+    // Only show ChatGPT for security levels 5+ (Worker, Manager, Admin)
     if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
       menuItems.push(
         {
-          text: 'Dashboard',
-          to: '/dashboard',
-          icon: 'dashboard',
+          text: 'ChatGPT',
+          to: '/chatgpt',
+          icon: 'chatgpt',
           // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
         },
       );

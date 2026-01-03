@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where } from 'firebase/firestore';
 import {
   Avatar,
   Box,
@@ -14,6 +14,7 @@ import {
   Drawer,
   Typography,
   IconButton,
+  Badge,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -38,8 +39,20 @@ import PhoneIphoneIcon from '@mui/icons-material/PhoneIphone';
 import LogoutIcon from '@mui/icons-material/Logout';
 import WorkIcon from '@mui/icons-material/Work';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
+import InboxIcon from '@mui/icons-material/Inbox';
+import ChatIcon from '@mui/icons-material/Chat';
+import SmsIcon from '@mui/icons-material/Sms';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import Divider from '@mui/material/Divider';
+import Tooltip from '@mui/material/Tooltip';
+import { SlackHashIcon } from './icons/SlackHashIcon';
 
 import { db } from '../firebase';
+import { functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
@@ -49,6 +62,8 @@ import { Role, SecurityLevel } from '../utils/AccessRoles';
 import TenantSwitcher from './TenantSwitcher';
 import GoogleConnectionChip from './GoogleConnectionChip';
 import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
+import MessengerIconButton from './messenger/MessengerIconButton';
+import MessengerDrawer from './messenger/MessengerDrawer';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -81,10 +96,36 @@ const Layout: React.FC = React.memo(function Layout() {
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();
+  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
+  const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
+  const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
+  const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
+  const [avatarMenuAnchorEl, setAvatarMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
 
   // Function to get page title based on current route
   const getPageTitle = () => {
     const pathname = location.pathname;
+    
+    // ChatGPT route
+    if (pathname.includes('/chatgpt')) {
+      return 'ChatGPT';
+    }
+    
+    // Slack Channels route
+    if (pathname.includes('/slack')) {
+      return 'Slack Channels';
+    }
+    
+    // SMS Messaging route
+    if (pathname.includes('/text-messages')) {
+      return 'SMS Messaging';
+    }
+    
+    // Inbox route
+    if (pathname.includes('/inbox')) {
+      return 'Inbox';
+    }
     
     // Jobs Board routes
     if (pathname.includes('/recruiter/jobs-board')) {
@@ -104,9 +145,13 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'User Details';
     }
     
-    // Workforce user record routes - check if path includes /workforce/users/ anywhere
-    if (pathname.includes('/workforce/users/') && pathname.split('/workforce/users/').length > 1) {
-      return 'User Details';
+    // Workforce routes
+    if (pathname.includes('/workforce')) {
+      // Workforce user record routes - check if path includes /workforce/users/ anywhere
+      if (pathname.includes('/workforce/users/') && pathname.split('/workforce/users/').length > 1) {
+        return 'User Details';
+      }
+      return 'Workforce Management';
     }
     
     // User Profile routes - check if viewing someone else's profile
@@ -141,6 +186,11 @@ const Layout: React.FC = React.memo(function Layout() {
     // Dashboard routes
     if (pathname.includes('/dashboard') || pathname === '/') {
       return 'Dashboard';
+    }
+    
+    // Slack Integration route
+    if (pathname.includes('/admin/slack')) {
+      return 'Slack Integration';
     }
     
     // Settings routes
@@ -191,7 +241,8 @@ const Layout: React.FC = React.memo(function Layout() {
   // Add a ref to track if we've already set the initial tenant
   const hasSetInitialTenant = useRef(false);
 
-  const drawerWidth = open ? drawerFullWidth : drawerCollapsedWidth;
+  // Always use collapsed width for dark shell (64-72px)
+  const drawerWidth = 76; // Fixed width for always-collapsed sidebar (per logo spec)
   const isMenuOpen = Boolean(menuAnchorEl);
 
   // Use development values for testing, fallback to real values
@@ -229,6 +280,122 @@ const Layout: React.FC = React.memo(function Layout() {
   const setShowChatWithLog = (value) => { console.log('setShowChat', value); setShowChat(value); };
 
   const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
+
+  // Fetch unread email thread count for inbox badge
+  useEffect(() => {
+    if (!user?.uid || !activeTenant?.id || !user?.email) {
+      setInboxUnreadCount(0);
+      return;
+    }
+
+    const loadUnreadCount = async () => {
+      try {
+        const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+          'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+
+        const response = await fetch(
+          `${API_BASE_URL}/listEmailThreadsApi?tenantId=${encodeURIComponent(activeTenant.id)}&userId=${encodeURIComponent(user.uid)}&unreadOnly=true&limit=100`
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            // When unreadOnly=true, the backend filters for unread threads
+            // But add a safety check to verify each thread actually has unreadCount > 0
+            const threadsWithUnread = (data.threads || [])
+              .filter((thread: any) => (thread.unreadCount || 0) > 0);
+            const unreadThreadCount = threadsWithUnread.length;
+            const totalReturned = (data.threads || []).length;
+            
+            // If we got exactly the limit back, there might be more unread threads
+            // Show 99+ to indicate there are many unread threads
+            const displayCount = (totalReturned >= 100 && unreadThreadCount >= 100) ? 99 : unreadThreadCount;
+            
+            // Always set the count, even if it's 0, to ensure UI updates
+            setInboxUnreadCount(displayCount);
+            console.log('[Inbox Count] Unread threads:', unreadThreadCount, 'Display count:', displayCount, 'Total returned:', totalReturned);
+          } else {
+            // If API call failed, reset to 0
+            setInboxUnreadCount(0);
+          }
+        } else {
+          // If response not ok, reset to 0
+          setInboxUnreadCount(0);
+        }
+      } catch (err) {
+        // Silently fail - badge is not critical
+        console.warn('Failed to load inbox unread count:', err);
+        // Reset to 0 on error to ensure badge doesn't show stale data
+        setInboxUnreadCount(0);
+      }
+    };
+
+    loadUnreadCount();
+    // Refresh every 30 seconds
+    const interval = setInterval(loadUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [user?.uid, activeTenant?.id, user?.email]);
+
+  // Real-time listener for unread internal message count
+  useEffect(() => {
+    if (!user?.uid || !activeTenant?.id) {
+      setMessagesUnreadCount(0);
+      return;
+    }
+
+    let dmsUnread = 0;
+    let channelsUnread = 0;
+
+    const updateTotal = () => {
+      setMessagesUnreadCount(dmsUnread + channelsUnread);
+    };
+
+    // Listen to DMs
+    const dmsRef = collection(db, 'tenants', activeTenant.id, 'internalDMs');
+    const dmsQuery = query(dmsRef, where('participants', 'array-contains', user.uid));
+    
+    const unsubscribeDMs = onSnapshot(
+      dmsQuery,
+      (snapshot) => {
+        dmsUnread = 0;
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          dmsUnread += data.unreadCounts?.[user.uid] || 0;
+        });
+        updateTotal();
+      },
+      (err) => {
+        console.warn('Error listening to DMs for unread count:', err);
+      }
+    );
+
+    // Listen to Channels
+    const channelsRef = collection(db, 'tenants', activeTenant.id, 'internalChannels');
+    const channelsQuery = query(channelsRef, where('memberIds', 'array-contains', user.uid));
+    
+    const unsubscribeChannels = onSnapshot(
+      channelsQuery,
+      (snapshot) => {
+        channelsUnread = 0;
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Don't count if user muted this channel
+          if (!data.mutedBy?.includes(user.uid)) {
+            channelsUnread += data.unreadCounts?.[user.uid] || 0;
+          }
+        });
+        updateTotal();
+      },
+      (err) => {
+        console.warn('Error listening to channels for unread count:', err);
+      }
+    );
+
+    return () => {
+      unsubscribeDMs();
+      unsubscribeChannels();
+    };
+  }, [user?.uid, activeTenant?.id]);
 
   useEffect(() => {
     setOpen(!isMobile);
@@ -630,6 +797,7 @@ const Layout: React.FC = React.memo(function Layout() {
   const menuItemsWithIcons = filteredMenuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
       'Dashboard': <RocketLaunchIcon />, 
+      'ChatGPT': <RocketLaunchIcon />,
       'Chat GPT': <RocketLaunchIcon />, 
       'Customers': <BusinessIcon />, 
       'Agencies': <GroupWorkIcon />,
@@ -655,9 +823,13 @@ const Layout: React.FC = React.memo(function Layout() {
       'Reviews': <SettingsIcon />,
       'Check-ins': <NotificationsIcon />,
       'Messages': <NotificationsIcon />,
+      'Inbox': <InboxIcon />,
+      'Text Messages': <SmsIcon />,
+      'Slack Channels': <SlackHashIcon active={location.pathname.startsWith('/slack')} />,
       'Notifications': <NotificationsIcon />,
       'Privacy & Notifications': <NotificationsIcon />,
       'Modules': <AppsIcon />,
+      'Settings': <SettingsIcon />,
       'Company Setup': <ArchitectureIcon />,
       'Company Defaults': <BusinessIcon />,
       'AI Launchpad': <RocketLaunchIcon />,
@@ -672,13 +844,9 @@ const Layout: React.FC = React.memo(function Layout() {
       'Log out': <LogoutIcon />,
     };
     
-    // Only show ChatGPT for security levels 5, 6, 7 (Worker, Manager, Admin)
-    const shouldShowChatGPT = currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel);
-    
     return {
       ...item,
-      text: (item.text === 'Dashboard' && shouldShowChatGPT) ? 'Chat GPT' : item.text,
-      icon: iconMap[(item.text === 'Dashboard' && shouldShowChatGPT) ? 'Chat GPT' : item.text] || <SettingsIcon />,
+      icon: iconMap[item.text] || <SettingsIcon />,
     };
   });
 
@@ -705,48 +873,172 @@ const Layout: React.FC = React.memo(function Layout() {
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
 
-      {/* Navigation Drawer (sidebar menu) */}
+      {/* Navigation Drawer (sidebar menu) - Always collapsed dark shell */}
       <Drawer
         variant={isMobile ? 'temporary' : 'permanent'}
-        open={open}
+        open={isMobile ? open : true} // Use open state on mobile, always open on desktop
         onClose={toggleDrawer}
+        hideBackdrop={isMobile && !open}
         sx={{
           width: drawerWidth,
           flexShrink: 0,
           [`& .MuiDrawer-paper`]: {
             width: drawerWidth,
+            minWidth: drawerWidth,
+            maxWidth: drawerWidth,
             boxSizing: 'border-box',
             position: 'fixed',
-            top: 0,
+            top: 64, // Start below top bar
             left: 0,
-            height: '100vh',
+            height: 'calc(100vh - 64px)', // Full height minus top bar
             overflowX: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'flex-start',
-            backgroundColor: '#FFFFFF',
-            borderRight: '1px solid rgba(0,0,0,.06)',
+            backgroundColor: '#2E2E2E', // Dark shell background (per style guide)
+            borderRight: 'none', // Remove border
             boxShadow: 'none',
-            transition: (theme) =>
-              theme.transitions.create('width', {
-                easing: theme.transitions.easing.sharp,
-                duration: theme.transitions.duration.enteringScreen,
-              }),
+            transition: 'none', // Disable any transitions that might cause expansion
+          },
+          '&:hover': {
+            width: drawerWidth, // Ensure width stays fixed on hover
+            [`& .MuiDrawer-paper`]: {
+              width: drawerWidth, // Ensure paper width stays fixed on hover
+            },
+          },
+          // Hide backdrop when drawer is closed on mobile to prevent blocking interactions
+          '& .MuiBackdrop-root': {
+            ...(isMobile && !open && {
+              display: 'none',
+              pointerEvents: 'none',
+            }),
           },
         }}
       >
-        {/* TenantSwitcher at the very top of the Drawer */}
-        <Box sx={{ px: 2, pt: 2, pb: 1 }}>
-          <TenantSwitcher
-            tenants={tenants}
-            activeTenant={activeTenant}
-            setActiveTenant={handleSetActiveTenant}
-            loading={tenantsLoading}
-            open={open}
-          />
-        </Box>
-        {/* Removed avatar/welcome and divider here */}
+        {/* Logo removed - now in top bar */}
         <List sx={{ flexGrow: 1, pb: '80px' }}>
+          {/* Dashboard shortcut for security levels 5-7 (at the top) */}
+          {(() => {
+            const secLevel = currentClaimsSecurityLevel || securityLevel;
+            const isHighLevel = secLevel && ['5','6','7'].includes(secLevel);
+            if (!isHighLevel) return null;
+            const dashboardPath = '/dashboard';
+            const isSelected = location.pathname === dashboardPath || location.pathname.startsWith(dashboardPath + '/');
+            
+            // Clone icon to add color prop directly - same as other menu items
+            const dashboardIcon = <DashboardIcon />;
+            const iconWithColor = React.isValidElement(dashboardIcon) 
+              ? React.cloneElement(dashboardIcon as React.ReactElement<any>, { 
+                  color: 'inherit',
+                  sx: { 
+                    ...(dashboardIcon as any).props?.sx,
+                    color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                    fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                    '& path': {
+                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                    },
+                    '& .MuiSvgIcon-root': {
+                      color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                    },
+                  }
+                })
+              : dashboardIcon;
+            
+            return (
+              <ListItem disablePadding sx={{ display: 'block' }}>
+                <Tooltip title="Dashboard" arrow placement="right" enterDelay={150}>
+                  <ListItemButton
+                    component={Link}
+                    to={dashboardPath}
+                    onClick={() => {
+                      if (isMobile) setOpen(false);
+                    }}
+                    sx={{
+                      minHeight: 48,
+                      px: 1.5,
+                      py: 1,
+                      justifyContent: 'center',
+                      borderRadius: '9999px',
+                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
+                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      '& svg': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& path': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& g': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '&:hover': {
+                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
+                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        },
+                      },
+                      transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
+                      '&.Mui-focusVisible': {
+                        backgroundColor: 'transparent !important',
+                      },
+                      '&.Mui-selected': {
+                        backgroundColor: isSelected ? '#0057B8 !important' : 'transparent !important',
+                        color: isSelected ? '#FFFFFF !important' : '#FFD700',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF !important' : '#FFD700 !important',
+                        },
+                        '&:hover': {
+                          backgroundColor: isSelected ? '#0057B8 !important' : 'transparent !important',
+                          color: isSelected ? '#FFFFFF !important' : '#FFD700',
+                          '& svg': {
+                            fill: isSelected ? '#FFFFFF !important' : '#FFD700 !important',
+                          },
+                        },
+                      },
+                      transition: 'color 0.15s ease',
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        minWidth: 0,
+                        justifyContent: 'center',
+                        display: 'flex',
+                        color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& .MuiSvgIcon-root': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& path': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          stroke: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& g': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& *': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                      }}
+                    >
+                      {iconWithColor}
+                    </ListItemIcon>
+                  </ListItemButton>
+                </Tooltip>
+              </ListItem>
+            );
+          })()}
           {/* Jobs Board shortcut for security levels 0-4 (above My Profile) */}
           {(() => {
             const secLevel = currentClaimsSecurityLevel || securityLevel;
@@ -757,94 +1049,57 @@ const Layout: React.FC = React.memo(function Layout() {
             const isSelected = location.pathname.startsWith(jobsPath);
             return (
               <ListItem disablePadding sx={{ display: 'block' }}>
-                <ListItemButton
-                  component={Link}
-                  to={jobsPath}
-                  selected={isSelected}
-                  sx={{
-                    backgroundColor: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'inherit',
-                    '&.Mui-selected': {
-                      borderLeft: '4px solid #FFD700',
-                      backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                    },
-                    px: open ? 2.5 : 0,
-                    py: 1,
-                    justifyContent: open ? 'initial' : 'center',
-                  }}
-                >
-                  <ListItemIcon
-                    sx={open ? { minWidth: 0, mr: 3, color: 'inherit' } : { minWidth: 0, width: '100%', mr: 0, justifyContent: 'center', display: 'flex', color: 'inherit' }}
+                <Tooltip title="Jobs Board" arrow placement="right" enterDelay={150}>
+                  <ListItemButton
+                    component={Link}
+                    to={jobsPath}
+                    onClick={() => {
+                      if (isMobile) setOpen(false);
+                    }}
+                    sx={{
+                      minHeight: 48,
+                      px: 1.5,
+                      py: 1,
+                      justifyContent: 'center',
+                      borderRadius: '9999px',
+                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
+                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      '& svg': {
+                        fill: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)',
+                      },
+                      '&:hover': {
+                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
+                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        },
+                      },
+                      transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
+                      '&.Mui-focusVisible': {
+                        backgroundColor: 'transparent !important',
+                      },
+                      transition: 'color 0.15s ease',
+                    }}
                   >
-                    <WorkIcon />
-                  </ListItemIcon>
-                  {open && <ListItemText primary="Jobs Board" />}
-                </ListItemButton>
+                    <ListItemIcon
+                      sx={{
+                        minWidth: 0,
+                        justifyContent: 'center',
+                        display: 'flex',
+                        color: 'inherit',
+                        '& svg': {
+                          fill: 'inherit',
+                        },
+                      }}
+                    >
+                      <WorkIcon />
+                    </ListItemIcon>
+                  </ListItemButton>
+                </Tooltip>
               </ListItem>
             );
           })()}
-          {/* My Profile menu item at the top */}
-          {user && (() => {
-            // Workers (security levels 1-4) use tenant-specific URL: /c1/users/{uid}
-            // Admins/managers (security levels 5+) use global URL: /users/{uid}
-            const effectiveSecurityLevel = currentClaimsSecurityLevel || securityLevel;
-            const isWorker = effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel);
-            const tenantSlug = activeTenant?.slug || 'c1';
-            const profilePath = isWorker ? `/${tenantSlug}/users/${user.uid}` : `/users/${user.uid}`;
-            const isSelected = location.pathname === profilePath || location.pathname === `/users/${user.uid}` || location.pathname.includes(`/${tenantSlug}/users/${user.uid}`);
-            
-            return (
-            <ListItem disablePadding sx={{ display: 'block' }}>
-              <ListItemButton
-                component={Link}
-                to={profilePath}
-                selected={isSelected}
-                sx={{
-                  backgroundColor: isSelected
-                    ? 'rgba(255, 255, 255, 0.08)'
-                    : 'inherit',
-                  '&.Mui-selected': {
-                    borderLeft: '4px solid #FFD700',
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                  },
-                  px: open ? 2.5 : 0,
-                  py: 1,
-                  justifyContent: open ? 'initial' : 'center',
-                }}
-              >
-                <ListItemIcon
-                  sx={open ? {
-                    minWidth: 0,
-                    mr: 3,
-                    color: 'inherit',
-                  } : {
-                    minWidth: 0,
-                    width: '100%',
-                    mr: 0,
-                    justifyContent: 'center',
-                    display: 'flex',
-                    color: 'inherit',
-                  }}
-                >
-                  <Avatar 
-                    alt={`${firstName} ${lastName}`} 
-                    src={avatarUrl || undefined} 
-                    sx={{ width: open ? 28 : 24, height: open ? 28 : 24 }}
-                    onError={(e) => {
-                      // Handle broken image URLs (like LinkedIn profile photos that no longer exist)
-                      console.log('Avatar image failed to load, falling back to initials:', avatarUrl);
-                      const target = e.target as HTMLImageElement;
-                      target.style.display = 'none';
-                    }}
-                  >
-                    {!avatarUrl && initials}
-                  </Avatar>
-                </ListItemIcon>
-                {open && <ListItemText primary="My Profile" />}
-              </ListItemButton>
-            </ListItem>
-            );
-          })()}
-          {/* All other menu items */}
+          {/* All menu items */}
           {menuLoading ? (
             <ListItem disablePadding sx={{ display: 'block' }}>
               <ListItemButton disabled>
@@ -855,39 +1110,154 @@ const Layout: React.FC = React.memo(function Layout() {
               </ListItemButton>
             </ListItem>
           ) : (
-            menuItemsWithIcons.map(({ text, to, icon }) => (
-            <ListItem key={text} disablePadding sx={{ display: 'block' }}>
-                <ListItemButton
-                component={text === 'Log out' ? 'button' : Link}
-                {...(text !== 'Log out' ? { to } : {})}
-                  {...(text !== 'Log out' ? { selected: (location.pathname === to) || location.pathname.startsWith(to + '/') } : {})}
-                onClick={text === 'Log out' ? async () => { await logout(); } : undefined}
-                sx={{
-                  backgroundColor: location.pathname.startsWith(to)
-                    ? 'rgba(255, 255, 255, 0.08)'
-                    : 'inherit',
-                  '&.Mui-selected': {
-                    borderLeft: '4px solid #FFD700',
-                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                  },
-                  px: open ? 2.5 : 0,
-                  py: 0.75,
-                  justifyContent: open ? 'initial' : 'center',
-                }}
-              >
-                <ListItemIcon
-                  sx={
-                    open
-                      ? { minWidth: 0, mr: 3, color: 'inherit' }
-                      : { minWidth: 0, width: '100%', mr: 0, justifyContent: 'center', display: 'flex', color: 'inherit' }
-                  }
-                >
-                  {icon}
-                </ListItemIcon>
-                {open && <ListItemText primary={text} />}
-              </ListItemButton>
-            </ListItem>
-          ))
+            menuItemsWithIcons
+              .filter(({ text }) => text !== 'Log out') // Remove Logout from sidebar
+              .map(({ text, to, icon }) => {
+              const isInbox = text === 'Inbox';
+              const showBadge = isInbox && inboxUnreadCount > 0;
+              // Only mark as selected if pathname exactly matches or starts with the route
+              // Don't mark ChatGPT as active when on dashboard
+              const isSelected = to && (
+                location.pathname === to || 
+                (location.pathname.startsWith(to + '/') && !(text === 'ChatGPT' && location.pathname.startsWith('/dashboard')))
+              );
+              
+              // Clone icon to add color prop directly - MUI icons inherit color from parent
+              const iconWithColor = React.isValidElement(icon) 
+                ? React.cloneElement(icon as React.ReactElement<any>, { 
+                    color: 'inherit', // Inherit from parent ListItemIcon color
+                    sx: { 
+                      ...(icon as any).props?.sx,
+                      color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      '& path': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                    }
+                  })
+                : icon;
+              
+              return (
+              <ListItem key={text} disablePadding sx={{ display: 'block' }}>
+                <Tooltip title={text} arrow placement="right" enterDelay={150}>
+                  <ListItemButton
+                    component={text === 'Log out' ? 'button' : Link}
+                    {...(text !== 'Log out' ? { to } : {})}
+                    onClick={text === 'Log out' 
+                      ? async () => { await logout(); } 
+                      : () => {
+                          if (isMobile) setOpen(false);
+                        }
+                    }
+                    sx={{
+                      minHeight: 48,
+                      px: 1.5,
+                      py: 1,
+                      justifyContent: 'center',
+                      borderRadius: '9999px',
+                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
+                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      '& svg': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& path': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& g': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '&:hover': {
+                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
+                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        },
+                      },
+                      transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
+                      '&.Mui-focusVisible': {
+                        backgroundColor: 'transparent !important',
+                      },
+                      '&.Mui-selected': {
+                        backgroundColor: isSelected ? '#0057B8 !important' : 'transparent !important',
+                        color: isSelected ? '#FFFFFF !important' : '#FFD700',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF !important' : '#FFD700 !important',
+                        },
+                        '&:hover': {
+                          backgroundColor: isSelected ? '#0057B8 !important' : 'transparent !important',
+                          color: isSelected ? '#FFFFFF !important' : '#FFD700',
+                          '& svg': {
+                            fill: isSelected ? '#FFFFFF !important' : '#FFD700 !important',
+                          },
+                        },
+                      },
+                      transition: 'color 0.15s ease',
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        minWidth: 0,
+                        justifyContent: 'center',
+                        display: 'flex',
+                        color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        '& svg': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& .MuiSvgIcon-root': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& path': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          stroke: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& g': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& *': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                      }}
+                    >
+                      {/* Show badge on icon - only when count > 0 */}
+                      {showBadge && inboxUnreadCount > 0 ? (
+                        <Badge 
+                          badgeContent={inboxUnreadCount > 99 ? '99+' : inboxUnreadCount} 
+                          color="error"
+                          sx={{
+                            '& .MuiBadge-badge': {
+                              backgroundColor: '#0057B8', // Use brandPrimary for badge
+                              color: '#FFFFFF',
+                              fontSize: '0.65rem',
+                              height: '16px',
+                              minWidth: '16px',
+                              padding: '0 4px',
+                            }
+                          }}
+                        >
+                          {iconWithColor}
+                        </Badge>
+                      ) : (
+                        iconWithColor
+                      )}
+                    </ListItemIcon>
+                  </ListItemButton>
+                </Tooltip>
+              </ListItem>
+            );
+            })
           )}
         </List>
         
@@ -927,40 +1297,7 @@ const Layout: React.FC = React.memo(function Layout() {
           </ListItem>
         </Box> */}
         
-        {/* Fixed Collapse button at the bottom */}
-        <Box
-          sx={{
-            position: 'fixed',
-            left: 0,
-            bottom: 0,
-            width: drawerWidth,
-            bgcolor: 'background.paper',
-            zIndex: 1201,
-            borderTop: '1px solid rgba(0,0,0,0.08)',
-          }}
-        >
-          <ListItem disablePadding sx={{ display: 'block' }}>
-            <ListItemButton
-              onClick={toggleDrawer}
-              sx={{
-                justifyContent: open ? 'initial' : 'center',
-                px: 2.5,
-                py: 1.25,
-              }}
-            >
-              <ListItemIcon
-                sx={{
-                  minWidth: 0,
-                  mr: open ? 3 : 'auto',
-                  justifyContent: 'center',
-                }}
-              >
-                <MenuIcon />
-              </ListItemIcon>
-              {open && <ListItemText primary="Collapse" />}
-            </ListItemButton>
-          </ListItem>
-        </Box>
+        {/* Removed collapse button - sidebar is always collapsed */}
       </Drawer>
 
       <Box
@@ -979,60 +1316,343 @@ const Layout: React.FC = React.memo(function Layout() {
             }),
         }}
       >
-        {/* Sticky top bar */}
+        {/* Full-width top bar - Dark shell */}
         <Box
           sx={{
-            position: 'sticky',
+            position: 'fixed',
             top: 0,
+            left: 0,
+            right: 0,
             zIndex: 1100,
-            backgroundColor: 'background.paper',
-            borderBottom: '1px solid rgba(0,0,0,.06)',
-            px: { xs: 2, md: 4 },
-            py: 2,
+            backgroundColor: '#2E2E2E', // Dark shell background (per style guide)
+            borderBottom: 'none', // Remove border
+            boxShadow: '0 2px 8px rgba(0,0,0,.07)', // Subtle top-bar shadow (per style guide)
+            pl: 0, // No left padding - logo aligns with sidebar
+            pr: { xs: 2, md: 4 }, // Keep right padding
+            py: 1,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            minHeight: 64,
+            height: 64, // Top bar height
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {/* Hamburger menu button - only show on mobile */}
-            {isMobile && (
-              <IconButton
-                onClick={toggleDrawer}
-                edge="start"
-                sx={{ mr: 1 }}
-                aria-label="menu"
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            {/* Logo Container - Same width as sidebar (76px) to align with icons */}
+            <Box 
+              sx={{ 
+                width: `${drawerWidth}px`, // Same width as sidebar (76px)
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center', // Center logo within sidebar width (same as icons)
+              }}
+            >
+              {/* Logo Wrapper */}
+              <Box 
+                sx={{ 
+                  width: '52px', 
+                  height: '52px', 
+                  padding: '8px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'background-color 150ms ease',
+                  '&:hover': {
+                    background: 'rgba(255, 255, 255, 0.08)', // Hover glow - subtle increase (per spec)
+                    cursor: 'pointer',
+                  },
+                  '& img': {
+                    display: 'block',
+                    margin: 0,
+                  },
+                }}
+                onClick={() => navigate('/')} // Optional: go home on click
               >
-                <MenuIcon />
-              </IconButton>
-            )}
-            <Typography variant="h5" sx={{ fontWeight: 600, color: 'text.primary' }}>
-              {getPageTitle()}
-            </Typography>
+              <img
+                src="/C1Y.png"
+                alt="C1 Staffing Logo"
+                style={{
+                  display: 'block',
+                  margin: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                }}
+                onError={(e: any) => {
+                  console.error('Logo image failed to load, trying fallback:', e.target.src);
+                  // Fallback to C1.png if C1Y.png doesn't exist
+                  if (e.target.src.endsWith('/C1Y.png')) {
+                    e.target.src = '/C1.png';
+                  } else {
+                    e.target.style.display = 'none';
+                  }
+                }}
+                onLoad={() => {
+                  console.log('Logo image loaded successfully');
+                }}
+              />
+              </Box>
+            </Box>
+            {/* Page Title */}
+            <Box sx={{ ml: '12px', display: 'flex', alignItems: 'center' }}>
+              <Typography 
+                variant="h5" 
+                sx={{ 
+                  fontWeight: 600, 
+                  color: '#FFFFFF',
+                  lineHeight: 1.2, // Ensure consistent line height for center alignment
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                {getPageTitle()}
+              </Typography>
+            </Box>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {/* Google Connection Chip - Only show for users with crm_sales enabled */}
-            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && crmSalesEnabled && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {/* Google Connection Chip - Show for security level 5-7 users (Staff Manager, Manager, Admin) */}
+            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && (() => {
+              const secLevel = currentClaimsSecurityLevel || securityLevel;
+              const hasAdminLevel = secLevel && ['5', '6', '7'].includes(secLevel);
+              return hasAdminLevel;
+            })() && (
               <GoogleStatusProvider tenantId={activeTenant.id}>
                 <GoogleConnectionChip tenantId={activeTenant.id} />
               </GoogleStatusProvider>
             )}
-            {/* User menu and actions can go here */}
+            
+            {/* Top-Right Notifications Bar */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              {/* 📥 Inbox Counter */}
+              {inboxUnreadCount > 0 && (
+                <Tooltip title={`${inboxUnreadCount} unread inbox messages`}>
+                  <IconButton
+                    onClick={() => navigate('/inbox')}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: location.pathname.startsWith('/inbox') ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      '& svg': {
+                        fill: location.pathname.startsWith('/inbox') ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: location.pathname.startsWith('/inbox') ? '#0057B8' : '#FFFFFF',
+                        '& svg': {
+                          fill: location.pathname.startsWith('/inbox') ? '#0057B8' : '#FFFFFF',
+                        },
+                      },
+                    }}
+                  >
+                    <Badge badgeContent={inboxUnreadCount > 99 ? '99+' : inboxUnreadCount} color="error">
+                      <InboxIcon />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+              )}
+              
+              {/* 💬 Messages Counter - Internal HRX Messages */}
+              {messagesUnreadCount > 0 && (
+                <Tooltip title={`${messagesUnreadCount} unread messages`}>
+                  <IconButton
+                    onClick={() => navigate('/messages')}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: location.pathname.startsWith('/messages') ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      '& svg': {
+                        fill: location.pathname.startsWith('/messages') ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: location.pathname.startsWith('/messages') ? '#0057B8' : '#FFFFFF',
+                        '& svg': {
+                          fill: location.pathname.startsWith('/messages') ? '#0057B8' : '#FFFFFF',
+                        },
+                      },
+                    }}
+                  >
+                    <Badge badgeContent={messagesUnreadCount > 99 ? '99+' : messagesUnreadCount} color="primary">
+                      <ChatIcon />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+              )}
+              
+              {/* 🔔 Alerts Counter - System Notifications */}
+              {alertsUnreadCount > 0 && (
+                <Tooltip title={`${alertsUnreadCount} alert${alertsUnreadCount !== 1 ? 's' : ''} require${alertsUnreadCount === 1 ? 's' : ''} attention`}>
+                  <IconButton
+                    onClick={() => setAlertsDrawerOpen(true)}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: alertsDrawerOpen ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      '& svg': {
+                        fill: alertsDrawerOpen ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: alertsDrawerOpen ? '#0057B8' : '#FFFFFF',
+                        '& svg': {
+                          fill: alertsDrawerOpen ? '#0057B8' : '#FFFFFF',
+                        },
+                      },
+                      ...(alertsCriticalCount > 0 && {
+                        animation: 'pulse 2s ease-in-out infinite',
+                        '@keyframes pulse': {
+                          '0%, 100%': { opacity: 1 },
+                          '50%': { opacity: 0.6 },
+                        },
+                      }),
+                    }}
+                  >
+                    <Badge 
+                      badgeContent={alertsUnreadCount > 99 ? '99+' : alertsUnreadCount} 
+                      color={alertsCriticalCount > 0 ? 'error' : 'warning'}
+                    >
+                      <NotificationsActiveIcon />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+              )}
+              
+              {/* Direct Messenger Icon */}
+              {user && (
+                <MessengerIconButton />
+              )}
+              
+              {/* 👤 Avatar Menu */}
+              <Tooltip title="Account menu">
+                <IconButton
+                  onClick={(e) => setAvatarMenuAnchorEl(e.currentTarget)}
+                  sx={{
+                    p: 0.5,
+                    backgroundColor: 'transparent !important',
+                    color: avatarMenuAnchorEl ? '#0057B8' : 'rgba(255,255,255,.8)',
+                    '&:hover': { 
+                      backgroundColor: 'transparent !important',
+                      color: avatarMenuAnchorEl ? '#0057B8' : '#FFFFFF',
+                    },
+                  }}
+                >
+                  <Avatar
+                    alt={`${firstName} ${lastName}`}
+                    src={avatarUrl || undefined}
+                    sx={{ width: 32, height: 32 }}
+                  >
+                    {!avatarUrl && initials}
+                  </Avatar>
+                </IconButton>
+              </Tooltip>
+              
+              {/* Hamburger menu button - only show on mobile, positioned to the right of avatar */}
+              {isMobile && (
+                <IconButton
+                  onClick={toggleDrawer}
+                  sx={{ 
+                    backgroundColor: 'transparent !important',
+                    color: 'rgba(255,255,255,.8)',
+                    '& svg': {
+                      fill: 'rgba(255,255,255,.8) !important',
+                    },
+                    '&:hover': { 
+                      backgroundColor: 'transparent !important',
+                      color: '#FFFFFF',
+                      '& svg': {
+                        fill: '#FFFFFF',
+                      },
+                    },
+                  }}
+                  aria-label="menu"
+                >
+                  <MenuIcon />
+                </IconButton>
+              )}
+            </Box>
+            
+            {/* Avatar Dropdown Menu */}
+            <Menu
+              anchorEl={avatarMenuAnchorEl}
+              open={Boolean(avatarMenuAnchorEl)}
+              onClose={() => setAvatarMenuAnchorEl(null)}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'right',
+              }}
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'right',
+              }}
+            >
+              <MenuItem disabled>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {firstName} {lastName}
+                </Typography>
+              </MenuItem>
+              <Divider />
+              <MenuItem onClick={() => {
+                const effectiveSecurityLevel = currentClaimsSecurityLevel || securityLevel;
+                const isWorker = effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel);
+                const tenantSlug = activeTenant?.slug || 'c1';
+                const profilePath = isWorker ? `/${tenantSlug}/users/${user?.uid}` : `/users/${user?.uid}`;
+                navigate(profilePath);
+                setAvatarMenuAnchorEl(null);
+              }}>
+                My Profile
+              </MenuItem>
+              <MenuItem onClick={() => {
+                navigate('/settings');
+                setAvatarMenuAnchorEl(null);
+              }}>
+                Settings
+              </MenuItem>
+              <MenuItem onClick={() => {
+                navigate('/settings?tab=notifications');
+                setAvatarMenuAnchorEl(null);
+              }}>
+                Notifications
+              </MenuItem>
+              <MenuItem onClick={() => {
+                // TODO: Open help/support
+                setAvatarMenuAnchorEl(null);
+              }}>
+                Help & Support
+              </MenuItem>
+              <MenuItem onClick={() => {
+                // TODO: Show keyboard shortcuts dialog
+                setAvatarMenuAnchorEl(null);
+              }}>
+                Keyboard Shortcuts
+              </MenuItem>
+              <Divider />
+              <MenuItem onClick={async () => {
+                setAvatarMenuAnchorEl(null);
+                await logout();
+              }}>
+                <LogoutIcon sx={{ mr: 1, fontSize: 20 }} />
+                Log Out
+              </MenuItem>
+            </Menu>
           </Box>
         </Box>
 
-        {/* Scrollable content area */}
+        {/* Scrollable content area - with top bar offset */}
         <Box
           sx={{
             flex: 1,
-            overflowY: 'auto',
-            px: { xs: 2, md: 4 },
-            py: 3,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            mt: '64px', // Offset for fixed top bar
           }}
         >
           <Outlet />
         </Box>
+        
+        {/* Direct Messenger Drawer */}
+        <MessengerDrawer />
+        
         {/* Floating Chatbot Button and Widget */}
         {/* {showChatbotButton && (
           <>

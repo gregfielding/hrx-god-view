@@ -258,6 +258,12 @@ export const checkOtp = onCall(
 /**
  * Internal helper to send SMS via Twilio (for use in Firestore triggers and scheduled functions)
  * This version doesn't require authentication context
+ * 
+ * ⚠️ LEGACY FUNCTION - PATCHED FOR COMPLIANCE
+ * This function now enforces STOP/HELP compliance and uses unified logging.
+ * Prefer using routingOrchestrator.sendMessage() for new code.
+ * 
+ * Phase 1.1 Migration: Added STOP enforcement, unified logging, removed /sms_messages writes
  */
 export async function sendWorkerMessageInternal(
   to: string,
@@ -266,6 +272,9 @@ export async function sendWorkerMessageInternal(
     systemContext?: boolean;
     source?: string;
     sourceId?: string;
+    tenantId?: string;        // NEW: Tenant ID for proper logging
+    messageTypeId?: string;   // NEW: Message type for unified framework
+    userId?: string;          // NEW: User ID if known
   }
 ): Promise<{ success: boolean; messageId: string | null; status: string; error?: string; errorCode?: string }> {
   // Validate inputs
@@ -296,22 +305,86 @@ export async function sendWorkerMessageInternal(
       .limit(1)
       .get();
     
-    let recipientUserId: string | null = null;
+    let recipientUserId: string | null = context?.userId || null;
     let recipientUserData: any = null;
+    let tenantId: string | null = context?.tenantId || null;
     
     if (!usersQuery.empty) {
       const recipientUserDoc = usersQuery.docs[0];
-      recipientUserId = recipientUserDoc.id;
+      recipientUserId = recipientUserId || recipientUserDoc.id;
       recipientUserData = recipientUserDoc.data();
       
-      // Check SMS opt-in - if field exists and is false, skip SMS
+      // Get tenantId from user if not provided
+      if (!tenantId && recipientUserData?.tenantId) {
+        tenantId = recipientUserData.tenantId;
+      }
+      
+      // PHASE 1.1: Check BOTH smsOptIn AND smsBlockedSystem (STOP enforcement)
+      // This ensures STOP keyword always works, even in legacy code paths
       if (recipientUserData?.smsOptIn === false) {
-        logger.info(`Skipping SMS to ${to} - user has opted out`);
+        logger.info(`Skipping SMS to ${to} - user has opted out (smsOptIn=false)`);
+        
+        // Log the blocked attempt if we have tenantId
+        if (tenantId && recipientUserId) {
+          try {
+            const { logMessage } = await import('./messaging/messageLogging');
+            await logMessage({
+              tenantId,
+              userId: recipientUserId,
+              messageTypeId: context?.messageTypeId || 'legacy_sms',
+              channel: 'sms',
+              direction: 'outbound',
+              fromIdentity: context?.source === 'recruiter' ? 'recruiter' : 'system',
+              fromUserId: context?.sourceId || undefined,
+              contentSent: messageContent,
+              language: (recipientUserData?.preferredLanguage || 'en') as 'en' | 'es' | null,
+              status: 'not_sent',
+              failureReason: 'User opted out (smsOptIn=false)',
+            });
+          } catch (logError: any) {
+            logger.warn(`Failed to log blocked SMS attempt: ${logError.message}`);
+          }
+        }
+        
         return {
           success: false,
           messageId: null,
           status: 'skipped',
           error: 'Recipient has opted out of SMS messages'
+        };
+      }
+      
+      // PHASE 1.1: Check smsBlockedSystem (STOP keyword enforcement)
+      if (recipientUserData?.smsBlockedSystem === true) {
+        logger.info(`Skipping SMS to ${to} - user has sent STOP keyword (smsBlockedSystem=true)`);
+        
+        // Log the blocked attempt if we have tenantId
+        if (tenantId && recipientUserId) {
+          try {
+            const { logMessage } = await import('./messaging/messageLogging');
+            await logMessage({
+              tenantId,
+              userId: recipientUserId,
+              messageTypeId: context?.messageTypeId || 'legacy_sms',
+              channel: 'sms',
+              direction: 'outbound',
+              fromIdentity: context?.source === 'recruiter' ? 'recruiter' : 'system',
+              fromUserId: context?.sourceId || undefined,
+              contentSent: messageContent,
+              language: (recipientUserData?.preferredLanguage || 'en') as 'en' | 'es' | null,
+              status: 'not_sent',
+              failureReason: 'User sent STOP keyword (smsBlockedSystem=true)',
+            });
+          } catch (logError: any) {
+            logger.warn(`Failed to log blocked SMS attempt: ${logError.message}`);
+          }
+        }
+        
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'Recipient has blocked SMS messages (STOP keyword)'
         };
       }
       
@@ -380,21 +453,85 @@ export async function sendWorkerMessageInternal(
       throw twilioError;
     }
 
-    // Log message to Firestore for audit trail
-    await db.collection('sms_messages').add({
-      messageId: messageResult.sid,
-      from: context?.source || 'system',
-      sourceId: context?.sourceId || null,
-      to: to,
-      content: messageContent,
-      template: null,
-      status: messageResult.status, // Twilio status: queued, sent, delivered, failed, undelivered
-      errorCode: messageResult.errorCode || null,
-      errorMessage: messageResult.errorMessage || null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      sentAt: admin.firestore.FieldValue.serverTimestamp(),
-      systemContext: context?.systemContext || false,
-    });
+    // PHASE 1.1: Use unified logger instead of legacy /sms_messages collection
+    // This ensures all messages are logged to /tenants/{tenantId}/messageLogs
+    if (tenantId && recipientUserId) {
+      try {
+        const { logMessage, updateMessageLogStatus } = await import('./messaging/messageLogging');
+        const logId = await logMessage({
+          tenantId,
+          userId: recipientUserId,
+          messageTypeId: context?.messageTypeId || 'legacy_sms',
+          channel: 'sms',
+          direction: 'outbound',
+          fromIdentity: context?.source === 'recruiter' ? 'recruiter' : 'system',
+          fromUserId: context?.sourceId || undefined,
+          contentSent: messageContent,
+          language: (recipientUserData?.preferredLanguage || 'en') as 'en' | 'es' | null,
+          status: 'queued',
+          providerMessageId: messageResult.sid,
+        });
+        
+        // Update log with final status
+        if (logId) {
+          const finalStatus: 'sent' | 'failed' | 'not_sent' = 
+            messageResult.status === 'failed' || messageResult.status === 'undelivered' ? 'failed' :
+            messageResult.status === 'sent' || messageResult.status === 'delivered' ? 'sent' : 'sent';
+          
+          await updateMessageLogStatus(logId, finalStatus, {
+            tenantId,
+            providerMessageId: messageResult.sid,
+            failureReason: messageResult.errorMessage || messageResult.errorCode || undefined,
+          });
+        }
+      } catch (logError: any) {
+        // Don't fail SMS send if logging fails, but log the error
+        logger.warn(`Failed to log SMS to unified logger: ${logError.message}`);
+        
+        // PHASE 1.1: DEPRECATED - Only write to legacy collection if unified logging fails
+        // This is a fallback during migration period
+        logger.warn('Falling back to legacy /sms_messages collection (should not happen in production)');
+        await db.collection('sms_messages').add({
+          messageId: messageResult.sid,
+          from: context?.source || 'system',
+          sourceId: context?.sourceId || null,
+          to: to,
+          content: messageContent,
+          template: null,
+          status: messageResult.status,
+          errorCode: messageResult.errorCode || null,
+          errorMessage: messageResult.errorMessage || null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          systemContext: context?.systemContext || false,
+          _deprecated: true, // Mark as deprecated
+          _migrationNote: 'Legacy collection - should use /tenants/{tenantId}/messageLogs',
+        });
+      }
+    } else {
+      // If we don't have tenantId/userId, log warning but still send SMS
+      // This should be rare and indicates a data issue
+      logger.warn(`SMS sent but cannot log to unified system - missing tenantId or userId for ${to}`);
+      
+      // PHASE 1.1: DEPRECATED - Only write to legacy collection if we can't determine tenant/user
+      // This is a fallback during migration period
+      await db.collection('sms_messages').add({
+        messageId: messageResult.sid,
+        from: context?.source || 'system',
+        sourceId: context?.sourceId || null,
+        to: to,
+        content: messageContent,
+        template: null,
+        status: messageResult.status,
+        errorCode: messageResult.errorCode || null,
+        errorMessage: messageResult.errorMessage || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        systemContext: context?.systemContext || false,
+        _deprecated: true, // Mark as deprecated
+        _migrationNote: 'Legacy collection - missing tenantId/userId for unified logging',
+      });
+    }
 
     // Log to user's activity log if user exists
     if (recipientUserId) {

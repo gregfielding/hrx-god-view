@@ -152,15 +152,16 @@ export const sendGroupMessage = onCall(async (request) => {
       await Promise.all(
         batch.map(async (recipient) => {
           try {
-            const result = await sendWorkerMessageInternal(
-              recipient.phoneE164,
-              messageContent!,
-              {
-                systemContext: false,
-                source: 'group_message',
-                sourceId: userGroupId || `bulk_${senderUid}_${Date.now()}`,
-              }
-            );
+            // PHASE 3: Route through orchestrator instead of direct Twilio call
+            const { sendLegacyGroupMessage } = await import('./messaging/legacyMessageHelpers');
+            const result = await sendLegacyGroupMessage({
+              tenantId: senderData.tenantId || '',
+              userId: recipient.userId,
+              phoneE164: recipient.phoneE164,
+              message: messageContent!,
+              source: 'group_message',
+              sourceId: userGroupId || `bulk_${senderUid}_${Date.now()}`,
+            });
 
             if (result.success) {
               sent++;

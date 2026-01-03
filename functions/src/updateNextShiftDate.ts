@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
-import { sendWorkerMessageInternal } from './twilio';
+import { sendLegacyShiftMessage } from './messaging/legacyMessageHelpers';
 
 const db = admin.firestore();
 
@@ -159,17 +159,27 @@ async function notifyShiftWorkers(
         }
 
         if (message) {
-          await sendWorkerMessageInternal(
-            userData.phoneE164,
-            message,
-            {
-              systemContext: true,
-              source: `shift_${notificationType}`,
-              sourceId: shiftId
-            }
-          );
+          // PHASE 3: Route through orchestrator instead of direct Twilio call
+          const messageTypeId = notificationType === 'created' ? 'shift_created' : 
+                               notificationType === 'cancelled' ? 'shift_cancelled' : 
+                               'shift_updated';
           
-          logger.info(`SMS sent for shift ${notificationType} ${shiftId} to ${userData.phoneE164}`);
+          const result = await sendLegacyShiftMessage({
+            tenantId,
+            userId,
+            phoneE164: userData.phoneE164,
+            message,
+            messageTypeId,
+            source: `shift_${notificationType}`,
+            sourceId: shiftId,
+            shiftId,
+          });
+          
+          if (result.success) {
+            logger.info(`SMS sent for shift ${notificationType} ${shiftId} to ${userData.phoneE164}`);
+          } else {
+            logger.warn(`SMS failed for shift ${notificationType} ${shiftId} to ${userData.phoneE164}: ${result.error}`);
+          }
         }
       } catch (userError: any) {
         logger.error(`Error sending SMS to user ${userId} for shift ${shiftId}:`, userError);

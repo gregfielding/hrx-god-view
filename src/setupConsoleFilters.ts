@@ -29,7 +29,10 @@ if (process.env.NODE_ENV === 'development') {
       'Missing or insufficient permissions',
       'permission-denied',
       'Error fetching interviews count',
-      'Error fetching notes count'
+      'Error fetching notes count',
+      // React deprecation warnings from third-party libraries (ReactQuill)
+      'findDOMNode is deprecated',
+      'validateDOMNesting'
     ];
     return args.some((a) => argContains(a, needles)) || argContains(args?.map?.(String)?.join(' '), needles);
   };
@@ -48,7 +51,9 @@ if (process.env.NODE_ENV === 'development') {
       msg.includes('Content Security Policy directive: "frame-ancestors') ||
       msg.includes('Refused to frame') ||
       msg.includes("frame-ancestors 'self'") ||
-      msg.includes('Report Only')
+      msg.includes('Report Only') ||
+      msg.includes('findDOMNode is deprecated') ||
+      msg.includes('validateDOMNesting')
     )) {
       return;
     }
