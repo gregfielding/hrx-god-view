@@ -143,7 +143,8 @@ const UserInboxPage: React.FC = () => {
   const [smsThreads, setSmsThreads] = useState<SmsThread[]>([]);
   const [emailThreads, setEmailThreads] = useState<EmailThread[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tableLoading, setTableLoading] = useState(false); // Separate loading state for table only
+  // We intentionally avoid “refresh UI” effects during background inbox sync.
+  // New threads should simply appear without fading/spinners.
   const [error, setError] = useState<string | null>(null);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean | null>(null);
   const [availableTwilioNumbers, setAvailableTwilioNumbers] = useState<Array<{ phoneNumber: string; sid: string; friendlyName: string }>>([]);
@@ -464,9 +465,6 @@ const UserInboxPage: React.FC = () => {
     // Only show full page loading on initial load
     if (smsThreads.length === 0) {
     setLoading(true);
-    } else {
-      // For tab switches, only show table loading
-      setTableLoading(true);
     }
     setError(null);
 
@@ -502,13 +500,9 @@ const UserInboxPage: React.FC = () => {
   const loadEmailThreads = async () => {
     if (!user?.uid || !effectiveTenantId) return;
 
-    // Only show full page loading on initial load
-    if (emailThreads.length === 0) {
-    setLoading(true);
-    } else {
-      // For filter changes, only show table loading
-      setTableLoading(true);
-    }
+    // Only show a full-page loader on true first load.
+    // For filter changes and background refreshes, we do not show any visual refresh state.
+    if (emailThreads.length === 0) setLoading(true);
     setError(null);
 
     try {
@@ -574,7 +568,6 @@ const UserInboxPage: React.FC = () => {
       setError(err.message || 'Failed to load email threads');
     } finally {
       setLoading(false);
-      setTableLoading(false);
     }
   };
 
@@ -1884,12 +1877,6 @@ const UserInboxPage: React.FC = () => {
             </Box>
               )}
               
-              {tableLoading && (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2, position: 'relative', zIndex: 10 }}>
-                  <CircularProgress size={24} />
-                </Box>
-              )}
-              
               {/* Show Connect Gmail button if Gmail is not connected */}
               {activeTab === 'email' && !loadingGmailStatus && !gmailConnected && (
                 <Box sx={{ 
@@ -1931,8 +1918,6 @@ const UserInboxPage: React.FC = () => {
                         overflowX: 'hidden',
                         width: '100%',
                         px: 1,
-                        opacity: tableLoading ? 0.6 : 1,
-                        transition: 'opacity 0.2s',
                       }}
                     >
                       {filteredEmailThreads.length === 0 ? (
@@ -2280,8 +2265,6 @@ const UserInboxPage: React.FC = () => {
                       variant="outlined" 
                       sx={{ 
                         borderRadius: 2, 
-                        opacity: tableLoading ? 0.6 : 1, 
-                        transition: 'opacity 0.2s',
                         position: 'relative',
                         flex: 1,
                         display: 'flex',
