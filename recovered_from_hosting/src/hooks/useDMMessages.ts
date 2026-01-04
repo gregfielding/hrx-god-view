@@ -1,0 +1,543 @@
+/**
+ * useDMMessages Hook
+ * 
+ * Fetches and manages messages for a specific DM thread.
+ * Provides sendMessage and markAsRead functions.
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  orderBy,
+  limit,
+  addDoc,
+  serverTimestamp,
+  runTransaction,
+  doc,
+  updateDoc,
+  getDoc,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import { DMMessage, DMMessageView } from '../types/directMessenger';
+
+interface UseDMMessagesOptions {
+  tenantId: string;
+  threadId: string;
+  currentUserId: string;
+  otherUserId?: string; // Required for creating thread if it doesn't exist
+  otherUserData?: { displayName: string; email: string; avatarUrl?: string }; // User data to avoid Firestore read
+  maxMessages?: number;
+}
+
+interface UseDMMessagesReturn {
+  messages: DMMessageView[];
+  loading: boolean;
+  error: Error | null;
+  sendMessage: (text: string, gifData?: { url: string; stillUrl: string; width: number; height: number; provider: 'giphy' | 'tenor' }) => Promise<void>;
+  markAsRead: () => Promise<void>;
+}
+
+/**
+ * Format timestamp for message display
+ */
+function formatMessageTime(date: Date): string {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
+
+  const timeStr = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+  if (diffDays === 0) {
+    return timeStr; // Today: "3:45 PM"
+  } else if (diffDays === 1) {
+    return `Yesterday · ${timeStr}`;
+  } else if (diffDays < 7) {
+    return `${date.toLocaleDateString('en-US', { weekday: 'short' })} · ${timeStr}`;
+  } else {
+    return `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${timeStr}`;
+  }
+}
+
+/**
+ * Get date label for date separators (e.g., "Today", "Yesterday", "Jan 15")
+ */
+function getDateLabel(date: Date): string {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'long' });
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Hook to fetch and manage messages for a DM thread
+ */
+export function useDMMessages({
+  tenantId,
+  threadId,
+  currentUserId,
+  otherUserId,
+  otherUserData,
+  maxMessages = 100,
+}: UseDMMessagesOptions): UseDMMessagesReturn {
+  const [messages, setMessages] = useState<DMMessageView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const optimisticMessagesRef = useRef<Map<string, DMMessageView>>(new Map());
+
+  useEffect(() => {
+    if (!tenantId || !threadId || !currentUserId) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    const messagesRef = collection(db, 'tenants', tenantId, 'dmThreads', threadId, 'messages');
+    const messagesQuery = query(
+      messagesRef,
+      orderBy('createdAt', 'asc'),
+      limit(maxMessages)
+    );
+
+    const unsubscribe = onSnapshot(
+      messagesQuery,
+      (snapshot) => {
+        try {
+          // If we get a permission error, the thread might not exist yet
+          // This is fine - we'll just show an empty message list
+          const messagesList: DMMessageView[] = snapshot.docs
+            .filter((doc) => {
+              const data = doc.data() as DMMessage;
+              return !data.deletedAt; // Only include non-deleted messages
+            })
+            .map((doc, index, filteredDocs) => {
+              const data = doc.data() as DMMessage;
+              const createdAt = data.createdAt.toDate();
+              const editedAt = data.editedAt?.toDate();
+              const deletedAt = data.deletedAt?.toDate();
+
+              // Determine if we need a date separator
+              let dateLabel: string | undefined;
+              if (index === 0) {
+                // First message always shows date
+                dateLabel = getDateLabel(createdAt);
+              } else {
+                // Show date if different from previous message
+                const prevDoc = filteredDocs[index - 1];
+                if (prevDoc) {
+                  const prevData = prevDoc.data() as DMMessage;
+                  const prevCreatedAt = prevData.createdAt.toDate();
+                  const prevDate = new Date(
+                    prevCreatedAt.getFullYear(),
+                    prevCreatedAt.getMonth(),
+                    prevCreatedAt.getDate()
+                  );
+                  const currentDate = new Date(
+                    createdAt.getFullYear(),
+                    createdAt.getMonth(),
+                    createdAt.getDate()
+                  );
+                  if (prevDate.getTime() !== currentDate.getTime()) {
+                    dateLabel = getDateLabel(createdAt);
+                  }
+                }
+              }
+
+              return {
+                id: doc.id,
+                senderId: data.senderId,
+                text: data.text || '',
+                createdAt,
+                editedAt,
+                deletedAt,
+                type: data.type || 'message',
+                isOwn: data.senderId === currentUserId,
+                timeLabel: formatMessageTime(createdAt),
+                dateLabel,
+                // GIF fields
+                gifUrl: data.gifUrl,
+                stillPreviewUrl: data.stillPreviewUrl,
+                gifWidth: data.gifWidth,
+                gifHeight: data.gifHeight,
+                gifProvider: data.gifProvider,
+              };
+            });
+
+          // Merge real messages with optimistic messages
+          // Remove optimistic messages that have been confirmed (by matching text and sender)
+          const currentOptimistic = optimisticMessagesRef.current;
+          const confirmedOptimisticIds = new Set<string>();
+          messagesList.forEach((realMsg) => {
+            currentOptimistic.forEach((optMsg, optId) => {
+              // If we find a real message that matches the optimistic one (same text, same sender, close timestamp)
+              if (
+                optMsg.senderId === realMsg.senderId &&
+                optMsg.text === realMsg.text &&
+                Math.abs(realMsg.createdAt.getTime() - optMsg.createdAt.getTime()) < 10000 // Within 10 seconds
+              ) {
+                confirmedOptimisticIds.add(optId);
+              }
+            });
+          });
+
+          // Remove confirmed optimistic messages
+          confirmedOptimisticIds.forEach((id) => currentOptimistic.delete(id));
+
+          // Merge: real messages + remaining optimistic messages
+          const mergedMessages = [...messagesList];
+          currentOptimistic.forEach((optMsg) => {
+            // Insert optimistic message in correct position (sorted by createdAt)
+            const insertIndex = mergedMessages.findIndex(
+              (msg) => msg.createdAt.getTime() > optMsg.createdAt.getTime()
+            );
+            if (insertIndex === -1) {
+              mergedMessages.push(optMsg);
+            } else {
+              mergedMessages.splice(insertIndex, 0, optMsg);
+            }
+          });
+
+          setMessages(mergedMessages);
+          setLoading(false);
+        } catch (err: any) {
+          console.error('Error processing DM messages:', err);
+          setError(err);
+          setLoading(false);
+        }
+      },
+      (err: any) => {
+        // If permission denied, the thread might not exist yet - this is expected
+        if (err.code === 'permission-denied' || err.code === 'not-found') {
+          // Thread doesn't exist yet, just show empty messages
+          setMessages([]);
+          setLoading(false);
+          setError(null); // Don't set error for expected case
+        } else {
+          console.error('Error loading DM messages:', err);
+          setError(err);
+          setLoading(false);
+        }
+      }
+    );
+
+    return () => unsubscribe();
+  }, [tenantId, threadId, currentUserId, maxMessages]);
+
+  /**
+   * Send a new message to the thread
+   */
+  const sendMessage = useCallback(
+    async (text: string, gifData?: { url: string; stillUrl: string; width: number; height: number; provider: 'giphy' | 'tenor' }) => {
+      if (!tenantId || !threadId || !currentUserId) {
+        throw new Error('Missing required fields');
+      }
+
+      // For GIF messages, text can be empty
+      const trimmedText = text.trim();
+      if (!gifData && !trimmedText) {
+        throw new Error('Message text cannot be empty');
+      }
+
+      // Create optimistic message immediately
+      const optimisticId = `optimistic-${Date.now()}-${Math.random()}`;
+      const now = new Date();
+      const optimisticMessage: DMMessageView = {
+        id: optimisticId,
+        senderId: currentUserId,
+        text: trimmedText,
+        createdAt: now,
+        type: gifData ? 'gif' : 'message',
+        isOwn: true,
+        timeLabel: formatMessageTime(now),
+        dateLabel: getDateLabel(now),
+        isPending: true,
+        // Include GIF fields if present
+        gifUrl: gifData?.url,
+        stillPreviewUrl: gifData?.stillUrl,
+        gifWidth: gifData?.width,
+        gifHeight: gifData?.height,
+        gifProvider: gifData?.provider,
+      };
+
+      // Add optimistic message immediately
+      optimisticMessagesRef.current.set(optimisticId, optimisticMessage);
+      // Trigger a re-render by updating messages state
+      setMessages((prev) => {
+        const merged = [...prev, optimisticMessage].sort(
+          (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
+        );
+        return merged;
+      });
+
+      const threadRef = doc(db, 'tenants', tenantId, 'dmThreads', threadId);
+      const messagesRef = collection(db, 'tenants', tenantId, 'dmThreads', threadId, 'messages');
+      
+      let existingThreadSnap: any = null;
+      let currentUserData: any = null;
+      let otherUserDataForThread: any = null; // Renamed to avoid shadowing the parameter
+
+      try {
+        // Check if thread exists first
+        existingThreadSnap = await getDoc(threadRef);
+        
+        // Only fetch user data if thread doesn't exist (to avoid permission issues in transaction)
+        if (!existingThreadSnap.exists()) {
+          if (!otherUserId) {
+            throw new Error('Cannot create thread: otherUserId is required');
+          }
+
+          console.log('[useDMMessages] Thread does not exist, need to create it');
+          console.log('[useDMMessages] otherUserData provided:', !!otherUserData);
+
+          // Try to use provided user data first (from PeopleList), otherwise read from Firestore
+          if (otherUserData) {
+            console.log('[useDMMessages] Using provided otherUserData:', otherUserData);
+            // Use provided user data for other user (already has displayName, email, avatarUrl)
+            // We still need to read current user data (should always work since it's the authenticated user)
+            try {
+              console.log('[useDMMessages] Attempting to read current user document:', currentUserId);
+              const currentUserDoc = await getDoc(doc(db, 'users', currentUserId));
+              console.log('[useDMMessages] Current user document exists:', currentUserDoc.exists());
+              if (!currentUserDoc.exists()) {
+                throw new Error('Current user not found');
+              }
+              currentUserData = currentUserDoc.data();
+              console.log('[useDMMessages] Current user data loaded successfully');
+              // Use provided data for other user (convert to Firestore format)
+              otherUserDataForThread = {
+                displayName: otherUserData.displayName,
+                email: otherUserData.email,
+                avatarUrl: otherUserData.avatarUrl,
+              };
+              console.log('[useDMMessages] otherUserDataForThread set:', otherUserDataForThread);
+            } catch (err: any) {
+              console.error('[useDMMessages] Error reading current user document:', err);
+              console.error('[useDMMessages] Error code:', err.code);
+              console.error('[useDMMessages] Error message:', err.message);
+              console.error('[useDMMessages] Error stack:', err.stack);
+              throw new Error(`Failed to read current user data: ${err.message || err.code || 'Unknown error'}`);
+            }
+          } else {
+            // Fallback: Read user documents from Firestore (may fail due to permissions)
+            try {
+              const [currentUserDoc, otherUserDoc] = await Promise.all([
+                getDoc(doc(db, 'users', currentUserId)),
+                getDoc(doc(db, 'users', otherUserId)),
+              ]);
+
+              if (!currentUserDoc.exists() || !otherUserDoc.exists()) {
+                throw new Error('User not found');
+              }
+
+              currentUserData = currentUserDoc.data();
+              otherUserDataForThread = otherUserDoc.data();
+            } catch (err: any) {
+              console.error('Error reading user documents:', err);
+              console.error('Current User ID:', currentUserId);
+              console.error('Other User ID:', otherUserId);
+              throw new Error(`Failed to read user data: ${err.message || err.code || 'Unknown error'}`);
+            }
+          }
+        }
+
+        // Use transaction to atomically:
+        // 1. Create or get thread
+        // 2. Create message
+        // 3. Update thread's lastMessage* fields
+        // 4. Update unread counts (increment for other participant, reset for current user)
+        console.log('[useDMMessages] Starting transaction...');
+        console.log('[useDMMessages] currentUserData available:', !!currentUserData);
+        console.log('[useDMMessages] otherUserDataForThread available:', !!otherUserDataForThread);
+        await runTransaction(db, async (tx) => {
+          // Get thread document
+          const threadSnap = await tx.get(threadRef);
+          let threadData: any;
+          let otherParticipantId: string;
+
+          if (!threadSnap.exists()) {
+            // Thread doesn't exist - create it using data we fetched outside transaction
+
+            const currentDisplayName =
+              currentUserData.displayName ||
+              (currentUserData.firstName && currentUserData.lastName
+                ? `${currentUserData.firstName} ${currentUserData.lastName}`
+                : currentUserData.email?.split('@')[0] || 'User');
+            const otherDisplayName =
+              otherUserDataForThread.displayName ||
+              (otherUserDataForThread.firstName && otherUserDataForThread.lastName
+                ? `${otherUserDataForThread.firstName} ${otherUserDataForThread.lastName}`
+                : otherUserDataForThread.email?.split('@')[0] || 'User');
+
+            // Create thread
+            threadData = {
+              participantIds: [currentUserId, otherUserId],
+              participantMeta: {
+                [currentUserId]: {
+                  displayName: currentDisplayName,
+                  email: currentUserData.email || '',
+                  avatarUrl: currentUserData.avatar || currentUserData.photoURL || '',
+                },
+                [otherUserId]: {
+                  displayName: otherDisplayName,
+                  email: otherUserDataForThread.email || '',
+                  avatarUrl: otherUserDataForThread.avatarUrl || otherUserDataForThread.avatar || otherUserDataForThread.photoURL || '',
+                },
+              },
+              lastMessageText: '',
+              lastMessageAt: null,
+              lastMessageSenderId: '',
+              unreadCounts: {},
+              isMuted: {},
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              status: 'active',
+            };
+
+            tx.set(threadRef, threadData);
+            otherParticipantId = otherUserId;
+          } else {
+            // Thread exists
+            threadData = threadSnap.data();
+            const participantIds = threadData.participantIds || [];
+            otherParticipantId = participantIds.find((id: string) => id !== currentUserId);
+
+            if (!otherParticipantId) {
+              throw new Error('Other participant not found in thread');
+            }
+          }
+
+          // Create message
+          const messageRef = doc(messagesRef);
+          console.log('[useDMMessages] Creating message in transaction...');
+          tx.set(messageRef, {
+            senderId: currentUserId,
+            text: trimmedText,
+            createdAt: serverTimestamp(),
+            type: 'message',
+          });
+          console.log('[useDMMessages] Message document set in transaction');
+
+          // Update thread
+          const currentUnreadCounts = threadData.unreadCounts || {};
+          const newUnreadCounts = {
+            ...currentUnreadCounts,
+            [currentUserId]: 0, // Reset current user's unread count
+            [otherParticipantId]: (currentUnreadCounts[otherParticipantId] || 0) + 1, // Increment other's unread
+          };
+
+          // Update thread with last message text (use GIF indicator if it's a GIF)
+          const lastMessageText = gifData ? '📎 GIF' : trimmedText;
+          
+          tx.update(threadRef, {
+            lastMessageText,
+            lastMessageAt: serverTimestamp(),
+            lastMessageSenderId: currentUserId,
+            unreadCounts: newUnreadCounts,
+            updatedAt: serverTimestamp(),
+          });
+          console.log('[useDMMessages] Thread updated in transaction');
+        });
+        console.log('[useDMMessages] Transaction completed successfully');
+        
+        // Remove optimistic message on success (real message will arrive via snapshot)
+        optimisticMessagesRef.current.delete(optimisticId);
+      } catch (err: any) {
+        // Remove optimistic message on error
+        optimisticMessagesRef.current.delete(optimisticId);
+        // Also remove from displayed messages
+        setMessages((prev) => prev.filter((msg) => msg.id !== optimisticId));
+        console.error('Error sending DM message:', err);
+        console.error('Error code:', err.code);
+        console.error('Error message:', err.message);
+        console.error('Error stack:', err.stack);
+        console.error('Tenant ID:', tenantId);
+        console.error('Thread ID:', threadId);
+        console.error('Current User ID:', currentUserId);
+        console.error('Other User ID:', otherUserId);
+        console.error('Thread exists:', existingThreadSnap?.exists());
+        console.error('User data loaded:', !!currentUserData && !!otherUserDataForThread);
+        console.error('Provided otherUserData:', !!otherUserData);
+        console.error('currentUserData:', !!currentUserData);
+        console.error('otherUserDataForThread:', !!otherUserDataForThread);
+        
+        // Provide more helpful error message
+        if (err.code === 'permission-denied') {
+          throw new Error('Permission denied: Unable to send message. Please check your permissions.');
+        } else if (err.code === 'not-found') {
+          throw new Error('User or thread not found. Please try again.');
+        } else {
+          throw new Error(`Failed to send message: ${err.message || err.code || 'Unknown error'}`);
+        }
+      }
+    },
+    [tenantId, threadId, currentUserId]
+  );
+
+  /**
+   * Mark thread as read (reset unread count for current user)
+   */
+  const markAsRead = useCallback(async () => {
+    if (!tenantId || !threadId || !currentUserId) {
+      return;
+    }
+
+    try {
+      const threadRef = doc(db, 'tenants', tenantId, 'dmThreads', threadId);
+
+      await runTransaction(db, async (tx) => {
+        const threadSnap = await tx.get(threadRef);
+        if (!threadSnap.exists()) {
+          // Thread doesn't exist yet, nothing to mark as read
+          return;
+        }
+
+        const threadData = threadSnap.data();
+        const currentUnreadCounts = threadData.unreadCounts || {};
+
+        // Only update if there are unread messages
+        if (currentUnreadCounts[currentUserId] > 0) {
+          const newUnreadCounts = {
+            ...currentUnreadCounts,
+            [currentUserId]: 0,
+          };
+
+          tx.update(threadRef, {
+            unreadCounts: newUnreadCounts,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      });
+    } catch (err: any) {
+      // Silently handle errors - thread might not exist yet, or permission issues
+      // This is non-critical, so we don't want to throw
+      if (err.code !== 'permission-denied' && err.code !== 'not-found') {
+        console.error('Error marking DM thread as read:', err);
+      }
+    }
+  }, [tenantId, threadId, currentUserId]);
+
+  return {
+    messages,
+    loading,
+    error,
+    sendMessage,
+    markAsRead,
+  };
+}
+

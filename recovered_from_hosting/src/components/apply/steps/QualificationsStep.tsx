@@ -1,0 +1,426 @@
+import React from 'react';
+import { Box, Typography, TextField, Card, CardHeader, CardContent, Button, Stack, Alert, Divider, Chip, Grid, useTheme, useMediaQuery } from '@mui/material';
+import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { CheckCircle } from '@mui/icons-material';
+import Autocomplete from '@mui/material/Autocomplete';
+import { doc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { auth, db } from '../../../firebase';
+import { logger } from '../../../utils/logger';
+import onetSkills from '../../../data/onetSkills.json';
+import onetJobTitles from '../../../data/onetJobTitles.json';
+import SkillsTab from '../../../pages/UserProfile/components/SkillsTab/SkillsTab';
+import { EducationSection, WorkExperienceSection } from '../../../pages/UserProfile/components/SkillsTab/index';
+import { mapParsedExperienceToRows } from '../../../utils/resumeToWorkHistory';
+// Local debounce for onChange/onBlur saves (keeps dependencies minimal)
+// Using native month inputs for broad compatibility without extra dependencies
+
+type Props = {
+  value: any;
+  onChange: (v: any) => void;
+  context?: 'application' | 'profile';
+  tenantId?: string;
+  jobId?: string;
+  jobPosting?: any;
+  profileUid?: string;
+};
+
+const QualificationsStep: React.FC<Props> = ({
+  value,
+  onChange,
+  context = 'application',
+  tenantId,
+  jobId,
+  jobPosting,
+  profileUid
+}) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const effectiveUid = profileUid || auth.currentUser?.uid || null;
+  
+  const job = jobPosting; // job-driven gating comes from parent (Wizard)
+  // Use batched updates instead of immediate writes (imported at top)
+  const debouncedUpdate = (ref: any, data: any) => {
+    // Queue each field for batched save
+    Object.keys(data).forEach(key => {
+      if (key !== 'updatedAt') {
+        queueProfileUpdate(key, data[key]);
+      }
+    });
+  };
+  
+  // Transform the qualifications data into user-like format for SkillsTab
+  const userData = {
+    ...value,
+    skills: value?.skills || [],
+    certifications: value?.certifications || [],
+    languages: value?.languages || [],
+    education: value?.education || [],
+    workHistory: value?.workHistory || [],
+    workExperience: value?.workExperience || value?.workHistory || [], // Support both field names
+    salaryExpectations: value?.salaryExpectations || {}
+  };
+  
+  
+  
+  // Bio section removed - now handled by BioStep component in profile context
+
+  // Show Experience immediately while posting loads; then respect explicit flag when available
+  // Default to showing while posting loads (null/undefined), then respect flag
+  // Hide Experience & Work History section in profile context (work experience is handled separately)
+  const showExperience = context !== 'profile' && (job == null ? true : !!job.showExperience);
+  const showLanguages = context === 'profile' || (job == null ? true : !!job.showLanguages);
+
+  const [expSummary, setExpSummary] = React.useState<string>(value?.experienceSummary || '');
+  // Only adopt incoming prop value when it is defined to avoid clearing local edits
+  React.useEffect(() => {
+    if (typeof value?.experienceSummary === 'string') {
+      setExpSummary(value.experienceSummary);
+    }
+  }, [value?.experienceSummary]);
+
+  // Helper to normalize languages to strings
+  const normalizeLanguages = (languages: any[]): string[] => {
+    if (!Array.isArray(languages)) return [];
+    return languages.map((lang) => {
+      if (typeof lang === 'string') return lang;
+      if (lang && typeof lang === 'object') {
+        return lang.language || String(lang);
+      }
+      return String(lang);
+    }).filter(Boolean);
+  };
+
+  const queueUserUpdate = (data: Record<string, any>) => {
+    if (!effectiveUid) return;
+    debouncedUpdate(doc(db, 'users', effectiveUid), data);
+  };
+
+  const immediateUserUpdate = async (data: Record<string, any>) => {
+    if (!effectiveUid) return;
+    try {
+      await updateDoc(doc(db, 'users', effectiveUid), data);
+    } catch (error) {
+      console.error('Failed to update user doc:', error);
+    }
+  };
+
+  const [userLanguages, setUserLanguages] = React.useState<string[]>(normalizeLanguages(value?.languages || []));
+  // Only adopt incoming prop value when it is defined to avoid clearing local edits
+  React.useEffect(() => {
+    if (Array.isArray(value?.languages)) {
+      setUserLanguages(normalizeLanguages(value.languages));
+    }
+  }, [value?.languages]);
+
+  const [workRows, setWorkRows] = React.useState<Array<{ id: string; employer: string; title: string; startDate?: string; endDate?: string }>>(value?.workHistory || []);
+  // Hydrate from Firestore directly to avoid draft state overwriting persisted rows
+  React.useEffect(() => {
+    if (!effectiveUid) return;
+    const ref = doc(db, 'users', effectiveUid);
+    const unsub = onSnapshot(ref, (snap) => {
+      const data = snap.data() as any;
+      const rows = Array.isArray(data?.workHistory) ? data.workHistory : [];
+      setWorkRows((prev) => {
+        // If local has edits (ids not in Firestore), merge uniquely by id
+        const byId: Record<string, any> = {};
+        rows.forEach((r: any) => { if (r?.id) byId[r.id] = r; });
+        prev.forEach((r) => { if (r?.id && !(r.id in byId)) byId[r.id] = r; });
+        return Object.values(byId);
+      });
+    });
+    return () => unsub();
+  }, [effectiveUid]);
+
+  const addWorkRow = () => {
+    const row = { id: `${Date.now()}_${Math.random().toString(36).slice(2,7)}`, employer: '', title: '', startDate: '', endDate: '' };
+    setWorkRows((prev) => {
+      const next = [...prev, row];
+      onChange({ ...value, workHistory: next });
+      queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
+      return next;
+    });
+  };
+  const removeWorkRow = (id: string) => {
+    const next = workRows.filter(r => r.id !== id);
+    setWorkRows(next);
+    onChange({ ...value, workHistory: next });
+    queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
+  };
+
+  const updateRow = (id: string, field: string, v: string) => {
+    setWorkRows((prev) => {
+      const next = prev.map(r => r.id === id ? { ...r, [field]: v } : r);
+      onChange({ ...value, workHistory: next });
+      queueUserUpdate({ workHistory: next, updatedAt: serverTimestamp() });
+      return next;
+    });
+  };
+
+  const saveExpSummary = async () => {
+    // Persist both summary and latest rows to avoid losing in-progress rows on re-render
+    onChange({ ...value, experienceSummary: expSummary, workHistory: workRows });
+    await immediateUserUpdate({ experienceSummary: expSummary, workHistory: workRows, updatedAt: serverTimestamp() });
+  };
+
+  // Helpers to convert between display MM/yyyy and input type=month (YYYY-MM)
+  const toInputMonth = (val?: string) => {
+    if (!val) return '';
+    if (/^\d{2}\/\d{4}$/.test(val)) {
+      const [mm, yyyy] = val.split('/');
+      return `${yyyy}-${mm}`;
+    }
+    if (/^\d{4}-\d{2}$/.test(val)) return val;
+    return '';
+  };
+  const fromInputMonth = (val?: string) => {
+    if (!val) return '';
+    if (/^\d{4}-\d{2}$/.test(val)) {
+      const [yyyy, mm] = val.split('-');
+      return `${mm}/${yyyy}`;
+    }
+    return '';
+  };
+
+  const languagesHelper = Array.isArray(job?.languages) && job.languages.length ? `Language Required: ${job.languages.join(', ')}` : undefined;
+
+  
+
+  // One-time autofill of workHistory from latest parsed resume if empty
+  React.useEffect(() => {
+    const run = async () => {
+      if (context !== 'application') return;
+      if (!showExperience) return;
+      if (!effectiveUid) return;
+      if ((workRows || []).length > 0) return;
+      // Avoid repeated autofills within this session
+      if ((value && value._workHistoryPrefilled) === true) return;
+      try {
+        const q = query(
+          collection(db, 'parsedResumes'),
+          where('userId', '==', effectiveUid),
+          orderBy('uploadDate', 'desc'),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) return;
+        const parsed = snap.docs[0].data() as any;
+        const rows = mapParsedExperienceToRows(parsed?.parsedData || {});
+        if (rows.length === 0) return;
+        setWorkRows(rows);
+        onChange({ ...value, workHistory: rows, _workHistoryPrefilled: true });
+        await immediateUserUpdate({ workHistory: rows, workHistoryAutoFilledAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      } catch {}
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context, showExperience, effectiveUid]);
+
+  return (
+    <Box>
+      {showExperience && (
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader title={<Typography variant="h6">Experience & Work History</Typography>} action={<></>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Tell us about your most relevant work experience</Typography>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 2 }}>
+              <TextField
+                fullWidth
+                multiline
+                minRows={5}
+                value={expSummary}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setExpSummary(v);
+                  // Keep wizard state in sync so Next button validation passes without forcing an explicit Save
+                  onChange({ ...value, experienceSummary: v });
+                }}
+                placeholder="Describe your most relevant experience..."
+              />
+              <Button
+                sx={{ ml: 2, whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
+                variant="contained"
+                size="small"
+                onClick={saveExpSummary}
+              >
+                Save
+              </Button>
+            </Stack>
+
+            <Divider sx={{ my: 2 }} />
+
+            <Stack spacing={1} sx={{ mb: 2 }}>
+              {workRows.map((row) => (
+                <Stack key={row.id} direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ xs: 'stretch', md: 'center' }}>
+                  <TextField label="Employer" value={row.employer} onChange={(e) => updateRow(row.id, 'employer', e.target.value)} onBlur={(e) => updateRow(row.id, 'employer', e.target.value)} sx={{ flex: 2 }} />
+                  <TextField label="Job Title" value={row.title} onChange={(e) => updateRow(row.id, 'title', e.target.value)} onBlur={(e) => updateRow(row.id, 'title', e.target.value)} sx={{ flex: 2 }} />
+                  <TextField
+                    label="Start Date"
+                    type="month"
+                    value={toInputMonth(row.startDate)}
+                    onChange={(e) => updateRow(row.id, 'startDate', fromInputMonth(e.target.value))}
+                    sx={{ flex: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ autoComplete: 'off' }}
+                  />
+                  <TextField
+                    label="End Date"
+                    type="month"
+                    value={toInputMonth(row.endDate)}
+                    onChange={(e) => updateRow(row.id, 'endDate', fromInputMonth(e.target.value))}
+                    sx={{ flex: 1 }}
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ autoComplete: 'off' }}
+                  />
+                  <Button color="error" onClick={() => removeWorkRow(row.id)}>Delete</Button>
+                </Stack>
+              ))}
+            </Stack>
+            <Button variant="outlined" size="small" onClick={addWorkRow}>Add Work History</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Education Section - Hidden in profile context (handled separately) */}
+      {context !== 'profile' && (
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader 
+            title={<Typography variant="h6">Education</Typography>} 
+            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
+          />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            <EducationSection
+              value={value?.education || []}
+              onChange={(education) => {
+                onChange({ ...value, education });
+                queueUserUpdate({ education, updatedAt: serverTimestamp() });
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Work Experience Section - Hidden in profile context (handled separately) */}
+      {context !== 'profile' && (
+        <Card variant="outlined" sx={{ mb: 3, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader 
+            title={<Typography variant="h6">Work Experience</Typography>} 
+            sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }}
+          />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            <WorkExperienceSection
+              value={value?.workExperience || value?.workHistory || []}
+              onChange={(workExperience) => {
+                // Save to both field names for compatibility
+                onChange({ ...value, workExperience, workHistory: workExperience });
+                queueUserUpdate({ workExperience, workHistory: workExperience, updatedAt: serverTimestamp() });
+              }}
+              onetSkills={onetSkills as any}
+              onetJobTitles={onetJobTitles as any}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Skills 
+         - Keep only core skills here
+         - Hide Industry, Education, Work Experience, Certs/References to avoid duplication on Application */}
+      <SkillsTab
+        user={userData}
+        onUpdate={(updated) => onChange({ ...value, ...updated })}
+        onetSkills={onetSkills as any}
+        onetJobTitles={onetJobTitles as any}
+        hideCertsAndReferences={true}
+        hideIndustryPreferences={true}
+        hideEducation={true}
+        hideWorkExperience={true}
+        hideLanguages={true}
+      />
+
+      {/* Conditional Languages */}
+      {showLanguages && (
+        <Card variant="outlined" sx={{ mt: 3, mb: 4, boxShadow: isMobile ? 0 : undefined, border: isMobile ? '1px solid' : undefined, borderColor: isMobile ? 'divider' : undefined }}>
+          <CardHeader title={<Typography variant="h6">Languages</Typography>} sx={{ px: { xs: 2, md: 3 }, py: { xs: 1, md: 2 } }} />
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+            {languagesHelper && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {languagesHelper}
+              </Alert>
+            )}
+            
+            
+            <Grid container spacing={2}>
+              {/* Selected Languages */}
+              <Grid item xs={12} md={8}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Selected languages
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {userLanguages.map((lang) => {
+                    // Safety check: ensure we always have a string (should already be normalized)
+                    const langString = typeof lang === 'string' ? lang : String(lang);
+                    return (
+                      <Chip
+                        key={langString}
+                        label={langString}
+                        onDelete={() => {
+                          const newLanguages = userLanguages.filter(l => {
+                            const lString = typeof l === 'string' ? l : String(l);
+                            return lString !== langString;
+                          });
+                          setUserLanguages(newLanguages);
+                          onChange({ ...value, languages: newLanguages });
+                        queueUserUpdate({ languages: newLanguages, updatedAt: serverTimestamp() });
+                        }}
+                        color="primary"
+                        variant="filled"
+                        icon={<CheckCircle fontSize="small" />}
+                        sx={{
+                          '& .MuiChip-icon': { color: 'inherit' },
+                        }}
+                      />
+                    );
+                  })}
+                </Box>
+              </Grid>
+              
+              {/* Suggested Languages */}
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>
+                  Suggested languages (tap to add)
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1}>
+                  {[
+                    'English','Spanish','French','German','Italian','Portuguese','Chinese','Japanese','Korean','Arabic','Russian','Hindi','Dutch','Swedish','Norwegian','Danish','Finnish','Polish','Czech','Hungarian','Greek','Turkish','Hebrew','Thai','Vietnamese','Indonesian','Malay','Tagalog'
+                  ].map((lang) => (
+                    <Chip
+                      key={lang}
+                      label={lang}
+                      onClick={() => {
+                        if (userLanguages.includes(lang)) return;
+                        const newLanguages = [...userLanguages, lang];
+                        setUserLanguages(newLanguages);
+                        onChange({ ...value, languages: newLanguages });
+                        queueUserUpdate({ languages: newLanguages, updatedAt: serverTimestamp() });
+                      }}
+                      size="small"
+                      variant="outlined"
+                      sx={{
+                        cursor: userLanguages.includes(lang) ? 'default' : 'pointer',
+                        opacity: userLanguages.includes(lang) ? 0.5 : 1,
+                      }}
+                    />
+                  ))}
+                </Box>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      )}
+
+    </Box>
+  );
+};
+
+export default QualificationsStep;
+
+

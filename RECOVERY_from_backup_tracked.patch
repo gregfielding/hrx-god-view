@@ -1,0 +1,2286 @@
+diff --git a/.firebase/hosting.YnVpbGQ.cache b/.firebase/hosting.YnVpbGQ.cache
+index ac94b16c..3507e414 100644
+--- a/.firebase/hosting.YnVpbGQ.cache
++++ b/.firebase/hosting.YnVpbGQ.cache
+@@ -1,40 +1,40 @@
+-robots.txt,1767033779793,391d14b3c2f8c9143a27a28c7399585142228d4d1bdbe2c87ac946de411fa9a2
+-index.html,1767033816061,f038d197254db357066efc879052f1d6251e777653143b36dab5efc4b66fce23
+-manifest.json,1767033779793,4e1d3adad9ce7e17c0d13fac197f1c27091906f4ecf3909c9f51247bff345118
+-logo512.png,1767033779793,2356e0b814e58a349935c8de17226873d615d088a867d591fef48a64c80c9a2f
+-asset-manifest.json,1767033816106,14b578e72a24ec4358a372996f50ae81cb7c8860642f1adedffa88b97a32d461
+-googleb7ec2f235d73bfd4.html,1767033779789,c7477aba9f53aeb87d357c06360898ebcb76cc0d5972300801eb26cb5978515f
+-logo192.png,1767033779793,f66564670b5bfe49f3f04a5b63107bae60f4a7736f1d3b83aa0115f7acf45150
+-favicon.ico,1767033779789,0a11232336973f8752117a3d115fabe9883e55d3c78c4f774cdc023513e76c23
+-hrx-logo.png,1767033779790,497087b799ae5a9987191f2a9fd111f032d3088e0dd09fbed63714133952630f
+-static/js/949.502764c0.chunk.js.map,1767033816094,b010139c8fcfd3f40c187cb2412a0de04098d26e305cb8136abd8a4cbcc5730b
+-static/js/main.a69217b6.js.LICENSE.txt,1767033816091,147594eb33d6cd3f467da85280bc1534f8a1817f48ef4217dc1d5d3df22e3d2c
+-static/js/949.502764c0.chunk.js,1767033816091,5a360f78ac80ccea6c5a45bd1675dea0225e7b64ec062e11a63b99424c5c9407
+-static/js/977.b5ce7e9c.chunk.js,1767033816091,8a986f450cf8f56a7827df54763036bca035e862869da27081bbe5d619459922
+-static/js/453.ed643ccd.chunk.js.map,1767033816106,f4db0a54c7d6be6cc4d6f895c69cc1386c21f4544d10fdd377e68e810e36ef9e
+-static/js/453.ed643ccd.chunk.js,1767033816091,566cb8a956e43de93da9fa3e0cd47142aac5147a7c0f7882232289066e346433
+-static/js/239.3edba2a0.chunk.js.LICENSE.txt,1767033816094,39d2a29aad428e8fe09e5f097388b0cf999ab932522ab62de5394fb2bb180401
+-static/js/196.2180c451.chunk.js.map,1767033816104,4ee2ca190cc5b6d273cfe903733cadde1cde91ee960fadc72bc05fbda2cace55
+-static/js/196.2180c451.chunk.js,1767033816094,996d59f68eaeba969d84932c95a9120da0883592b651879b31a7f2c9a00641ad
+-static/css/main.0680cdb4.css.map,1767033816094,15f14aa6f16ab40cff9103208226ebe5c941a6792fce3ef01570a64dfa4d2947
+-static/css/main.0680cdb4.css,1767033816094,b3f73669a525e042964c8e02cb4337369c3e896973230100c2a92e54f13b9357
+-static/js/977.b5ce7e9c.chunk.js.LICENSE.txt,1767033816094,86d11589c9a484a3521eb3bb8c908aa1d1bf3355cd88c2ef0bf2fa9f820e0a6f
+-404.html,1767033779788,b6abfbdc894d37c260154e281499dc6415bb6ad76b32f01ef94dee93aa897ac4
+-img/crunchbase-icon.svg,1767033779792,35cb72133e3091f1759c77053d906d325fc3026dd4f45dddbf1b83594d34115e
+-img/crunchbase-icon-grey.svg,1767033779792,f46b031118fb4c36ce5193cbdee02bf5d4c77b7d9e035fae365a4349e45449bd
+-img/angellist-icon.svg,1767033779792,dd5063c7f74c5fa31d0eeec70b18c9ac66d778be5876c1af819f6deea0e9d38c
+-img/angellist-icon-grey.svg,1767033779791,e144f338e175edd78d68f1fbff9f401b181262bdf033de692061f10e7132041c
+-img/crunchbase-icon-blue.svg,1767033779792,d7ac164cb3aa2b8e9c05708bc40527b2e70c28e7e36fa16285f4243d1fb58b9d
+-img/angellist-icon-blue.svg,1767033779791,b1ce7e08a2d4424b65319202afe211db3f163eeaadddfbd8970c77b6f668c121
+-hrxone_logo.png,1767033779791,db2b580816df1322aa30fa2703477db8c1fde467ff9b237fc4aa7c7a0d93ac79
+-img/everify.png,1767033779792,9cbb0fc2e6fe9db93a7eef4e0fe83202d442900845e26c003701967a97dd2751
+-C1.png,1767033779789,f3d3d9730b8968030338610b40af4664e5dcf52c9ce8ec869dc19f9bec9b4376
+-static/js/977.b5ce7e9c.chunk.js.map,1767033816106,ebbb6bbdb1452d7eb48fadb69840ad156f0f12fc8b532051c2d8a08f592dacd7
+-C1_Logo.jpg,1767033779789,ea1f8e1a62484112a1e23c64150732417925a777b7834f931ab4c1eefd1fca4a
+-static/js/455.57d0d346.chunk.js,1767033816091,c38c7e6eb36ccacb224d73dff57c569940bcc56d2d31ffb3bb202bd0a18fda8e
+-static/js/239.3edba2a0.chunk.js,1767033816094,ddc068bbe78f6a9f7436694194c5ab3b48d5bc11b2fae61a2468ded947d34a01
+-static/js/455.57d0d346.chunk.js.map,1767033816106,8ad4b7fa17dc716f152155799574c13c483a5210eaf38dda0d70ca8b269c297b
+-hrx-logo2.png,1767033779790,f1e9540a00d62d85533fcfe30efe5126fd8df799226b5a38458444e074013174
+-static/js/239.3edba2a0.chunk.js.map,1767033816106,ecf27addfab0e36eb9fea2e7bdd9f3f15cf91fb501f8252aad51aa3ef6e8c166
+-static/js/main.a69217b6.js,1767033816091,b62af559a36ac014ee08730b9ab2a40e9cfd1a42097d07e0010e6437364bbc93
+-static/js/main.a69217b6.js.map,1767033816094,227b4856f7321e07aae1b472769b9b377da6fed33b6cf4f9e99b9155b48bca3e
++robots.txt,1767466389347,391d14b3c2f8c9143a27a28c7399585142228d4d1bdbe2c87ac946de411fa9a2
++manifest.json,1767466389347,4e1d3adad9ce7e17c0d13fac197f1c27091906f4ecf3909c9f51247bff345118
++logo512.png,1767466389347,2356e0b814e58a349935c8de17226873d615d088a867d591fef48a64c80c9a2f
++logo192.png,1767466389347,f66564670b5bfe49f3f04a5b63107bae60f4a7736f1d3b83aa0115f7acf45150
++index.html,1767466429333,fa9f221657d6b3c906d0226efdbb6726d474083a42a4cf6ac1b6d626dd5708eb
++hrxone_logo.png,1767466389345,db2b580816df1322aa30fa2703477db8c1fde467ff9b237fc4aa7c7a0d93ac79
++hrx-logo2.png,1767466389345,f1e9540a00d62d85533fcfe30efe5126fd8df799226b5a38458444e074013174
++hrx-logo.png,1767466389345,497087b799ae5a9987191f2a9fd111f032d3088e0dd09fbed63714133952630f
++googleb7ec2f235d73bfd4.html,1767466389344,c7477aba9f53aeb87d357c06360898ebcb76cc0d5972300801eb26cb5978515f
++favicon.ico,1767466389344,0a11232336973f8752117a3d115fabe9883e55d3c78c4f774cdc023513e76c23
++asset-manifest.json,1767466429385,f6bb595aa90e6cf9de9b13b889fbe214da4fcd4a2261259304ab9bcab30818fa
++C1_Logo.jpg,1767466389344,ea1f8e1a62484112a1e23c64150732417925a777b7834f931ab4c1eefd1fca4a
++C1.png,1767466389343,f3d3d9730b8968030338610b40af4664e5dcf52c9ce8ec869dc19f9bec9b4376
++404.html,1767466389343,b6abfbdc894d37c260154e281499dc6415bb6ad76b32f01ef94dee93aa897ac4
++static/js/main.9d528bb2.js.map,1767466429356,f0f62086b95e05b157475ed6aa1f43a02a854c03ed0f6cc4b77a10c5a5474c80
++static/js/main.9d528bb2.js.LICENSE.txt,1767466429354,cdd098c2e6a18205d0310b97221da285c5e3ec97121d6e7ad416bbda68837263
++static/js/main.9d528bb2.js,1767466429358,55ffd796044d59e45d0adc53a6a45553cc30746066f2cb8ce6da5951a76e745c
++static/js/977.b5ce7e9c.chunk.js.map,1767466429386,ebbb6bbdb1452d7eb48fadb69840ad156f0f12fc8b532051c2d8a08f592dacd7
++static/js/977.b5ce7e9c.chunk.js.LICENSE.txt,1767466429356,86d11589c9a484a3521eb3bb8c908aa1d1bf3355cd88c2ef0bf2fa9f820e0a6f
++static/js/977.b5ce7e9c.chunk.js,1767466429354,8a986f450cf8f56a7827df54763036bca035e862869da27081bbe5d619459922
++static/js/949.502764c0.chunk.js.map,1767466429356,b010139c8fcfd3f40c187cb2412a0de04098d26e305cb8136abd8a4cbcc5730b
++static/js/949.502764c0.chunk.js,1767466429358,5a360f78ac80ccea6c5a45bd1675dea0225e7b64ec062e11a63b99424c5c9407
++static/js/455.57d0d346.chunk.js.map,1767466429386,8ad4b7fa17dc716f152155799574c13c483a5210eaf38dda0d70ca8b269c297b
++static/js/455.57d0d346.chunk.js,1767466429354,c38c7e6eb36ccacb224d73dff57c569940bcc56d2d31ffb3bb202bd0a18fda8e
++static/js/453.ed643ccd.chunk.js.map,1767466429386,f4db0a54c7d6be6cc4d6f895c69cc1386c21f4544d10fdd377e68e810e36ef9e
++static/js/453.ed643ccd.chunk.js,1767466429356,566cb8a956e43de93da9fa3e0cd47142aac5147a7c0f7882232289066e346433
++static/js/239.3edba2a0.chunk.js.map,1767466429385,ecf27addfab0e36eb9fea2e7bdd9f3f15cf91fb501f8252aad51aa3ef6e8c166
++static/js/239.3edba2a0.chunk.js.LICENSE.txt,1767466429354,39d2a29aad428e8fe09e5f097388b0cf999ab932522ab62de5394fb2bb180401
++static/js/239.3edba2a0.chunk.js,1767466429354,ddc068bbe78f6a9f7436694194c5ab3b48d5bc11b2fae61a2468ded947d34a01
++static/js/196.2180c451.chunk.js.map,1767466429368,4ee2ca190cc5b6d273cfe903733cadde1cde91ee960fadc72bc05fbda2cace55
++static/js/196.2180c451.chunk.js,1767466429356,996d59f68eaeba969d84932c95a9120da0883592b651879b31a7f2c9a00641ad
++static/css/main.1be4dd33.css.map,1767466429354,70984350ea318f44f8f023440e3cd19bb9f4cca3ca488cfc1129ccd6946e48d8
++static/css/main.1be4dd33.css,1767466429354,6f82bef06a90746b07d272f619550fd6ef6e8ea470a33b013e0433af5a2c057b
++img/everify.png,1767466389347,9cbb0fc2e6fe9db93a7eef4e0fe83202d442900845e26c003701967a97dd2751
++img/crunchbase-icon.svg,1767466389346,35cb72133e3091f1759c77053d906d325fc3026dd4f45dddbf1b83594d34115e
++img/crunchbase-icon-grey.svg,1767466389346,f46b031118fb4c36ce5193cbdee02bf5d4c77b7d9e035fae365a4349e45449bd
++img/crunchbase-icon-blue.svg,1767466389346,d7ac164cb3aa2b8e9c05708bc40527b2e70c28e7e36fa16285f4243d1fb58b9d
++img/angellist-icon.svg,1767466389346,dd5063c7f74c5fa31d0eeec70b18c9ac66d778be5876c1af819f6deea0e9d38c
++img/angellist-icon-grey.svg,1767466389346,e144f338e175edd78d68f1fbff9f401b181262bdf033de692061f10e7132041c
++img/angellist-icon-blue.svg,1767466389346,b1ce7e08a2d4424b65319202afe211db3f163eeaadddfbd8970c77b6f668c121
+diff --git a/firebase.json b/firebase.json
+index 4894aef4..bb16b3b8 100644
+--- a/firebase.json
++++ b/firebase.json
+@@ -11,6 +11,10 @@
+       "**/node_modules/**"
+     ],
+     "rewrites": [
++      {
++        "source": "/slack/events",
++        "function": "slackEvents"
++      },
+       {
+         "source": "**",
+         "destination": "/index.html"
+diff --git a/firestore.rules b/firestore.rules
+index 8099d632..8de24ae0 100644
+--- a/firestore.rules
++++ b/firestore.rules
+@@ -145,15 +145,41 @@ service cloud.firestore {
+     
+     // --- USERS ---
+     match /users/{userId} {
++      // Most permissive rule first - allow any authenticated user to read any user document
++      // This is needed for DM functionality and other features
++      allow read: if isAuthenticated() && request.auth.uid != null;
++      
+       allow read, write: if isAuthenticated() && request.auth.uid == userId;
+       allow read, write: if isHRX();
+       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+       allow read: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
+       // Allow users to read other users who belong to the same tenant (for salespeople functionality)
+       allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
++
++    // --- USER CONSENTS (Compliance Logging) ---
++    // userConsents/{uid} - SMS consent records for compliance
++    match /userConsents/{uid} {
++      // Users can read their own consent record
++      allow read: if isAuthenticated() && request.auth.uid == uid;
++      // HRX admins can read all consent records (for compliance audits)
++      allow read: if isHRX();
++      // Backend only can write (via Cloud Functions)
++      allow write: if false; // Only backend functions can write
++      
++      // Events subcollection for STOP/HELP logging
++      match /events/{eventId} {
++        // Users can read their own consent events
++        allow read: if isAuthenticated() && request.auth.uid == uid;
++        // HRX admins can read all events (for compliance audits)
++        allow read: if isHRX();
++        // Backend only can write (via Cloud Functions)
++        allow write: if false; // Only backend functions can write
++      }
++    }
+       // Allow high-security-level users to update user profiles
+       allow write: if isAuthenticated() && isHighSecurityLevel();
+-      // Unified Association Service access for salespeople
++      // This allows reading any user document if authenticated (for DM thread creation)
++      // The actual tenant check happens at the thread level
+       allow read: if isAuthenticated() && request.auth.uid != null;
+       
+       // --- USER FOLLOWED COMPANIES ---
+@@ -742,6 +768,52 @@ service cloud.firestore {
+         allow read: if resource.data.visibility == 'public';
+       }
+ 
++      // --- SLACK COLLECTIONS (Tenant Subcollections) ---
++      // Slack channels - requires security level 5+ for active tenant
++      match /slackChannels/{channelId} {
++        allow read: if isAuthenticated() && 
++                       isAssignedToTenant(tenantId) && 
++                       getActiveTenantId() == tenantId &&
++                       canAccessSlack();
++        // Allow users with security level >= 5 to update watch/mute status
++        allow update: if isAuthenticated() && 
++                         isAssignedToTenant(tenantId) && 
++                         getActiveTenantId() == tenantId &&
++                         canAccessSlack() &&
++                         // Only allow updates to status field - validate it's a valid status
++                         request.resource.data.status != null &&
++                         (request.resource.data.status == 'watching' || 
++                          request.resource.data.status == 'unlinked' || 
++                          request.resource.data.status == 'muted') &&
++                         // Ensure tenantId matches (if it exists in both)
++                         (resource.data.tenantId == null || request.resource.data.tenantId == resource.data.tenantId || request.resource.data.tenantId == tenantId);
++        // Allow admins (security level >= 7) to delete channels
++        allow delete: if isAuthenticated() && 
++                       isAssignedToTenant(tenantId) && 
++                       getActiveTenantId() == tenantId &&
++                       getTenantSecurityLevel() >= 7;
++        // Create is backend-only
++        allow create: if false;
++      }
++
++      // Slack messages - requires security level 5+ for active tenant
++      match /slack_messages/{messageId} {
++        allow read: if isAuthenticated() && 
++                       isAssignedToTenant(tenantId) && 
++                       getActiveTenantId() == tenantId &&
++                       canAccessSlack();
++        allow write: if false; // Only backend writes via Admin SDK
++      }
++
++      // Slack users mapping - requires security level 5+ for active tenant
++      match /slackUsers/{slackUserId} {
++        allow read: if isAuthenticated() && 
++                       isAssignedToTenant(tenantId) && 
++                       getActiveTenantId() == tenantId &&
++                       canAccessSlack();
++        allow write: if false; // Only backend writes via Admin SDK
++      }
++
+       // --- JOB POSTINGS (New collection name) ---
+       match /job_postings/{postId} {
+         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+@@ -778,6 +850,284 @@ service cloud.firestore {
+         allow read, write: if isHRX() || isTenantAdmin(tenantId);
+         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+       }
++      
++      // --- SLACK INTEGRATION (Tenant-scoped) ---
++      match /slackUsers/{slackUserId} {
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId();
++        // Only backend writes (via Admin SDK)
++        allow write: if false;
++      }
++      
++      match /slackChannels/{channelId} {
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId();
++        // Allow users with security level >= 5 to update watch/mute status
++        allow update: if isAuthenticated() && 
++                         canAccessSlack() && 
++                         tenantId == getActiveTenantId() &&
++                         // Only allow updates to status, watchStatus, muted, and updatedAt fields
++                         request.resource.data.status != null &&
++                         (request.resource.data.status == 'watching' || 
++                          request.resource.data.status == 'unlinked' || 
++                          request.resource.data.status == 'muted') &&
++                         // Ensure tenantId matches (if it exists)
++                         (resource.data.tenantId == null || request.resource.data.tenantId == resource.data.tenantId || request.resource.data.tenantId == tenantId);
++        // Allow admins (security level >= 7) to delete channels
++        allow delete: if isAuthenticated() && 
++                       canAccessSlack() && 
++                       tenantId == getActiveTenantId() &&
++                       getTenantSecurityLevel() >= 7;
++        // Create is backend-only
++        allow create: if false;
++      }
++
++      // Slack channel memberships - membership-based model
++      match /slackChannelMembers/{membershipId} {
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId();
++        // Users can create their own memberships
++        allow create: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId() &&
++          request.resource.data.userId == request.auth.uid &&
++          request.resource.data.channelId != null &&
++          request.resource.data.createdAt != null;
++        // Users can delete their own memberships
++        allow delete: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId() &&
++          resource.data.userId == request.auth.uid;
++        // Updates not allowed (membership is immutable except create/delete)
++        allow update: if false;
++      }
++
++      match /slackLogs/{logId} {
++        // Phase 5: Only users with securityLevel >= 6 (Manager/Admin) can read logs
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId() &&
++          getTenantSecurityLevel() >= 6;
++        // Only backend writes (via Admin SDK)
++        allow write: if false;
++      }
++      
++      // --- INTERNAL MESSAGING (Slack-style) ---
++      match /internalDMs/{dmId} {
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId();
++        // Only backend writes (via Admin SDK)
++        allow write: if false;
++        match /internalMessages/{messageId} {
++          allow read: if isAuthenticated() && 
++            canAccessSlack() && 
++            tenantId == getActiveTenantId();
++          // Only backend writes (via Admin SDK)
++          allow write: if false;
++        }
++      }
++      
++      match /internalChannels/{channelId} {
++        allow read: if isAuthenticated() && 
++          canAccessSlack() && 
++          tenantId == getActiveTenantId();
++        // Only backend writes (via Admin SDK)
++        allow write: if false;
++        match /internalMessages/{messageId} {
++          allow read: if isAuthenticated() && 
++            canAccessSlack() && 
++            tenantId == getActiveTenantId();
++          // Only backend writes (via Admin SDK)
++          allow write: if false;
++        }
++      }
++      
++      // --- DIRECT MESSENGER (DM Threads) ---
++      match /dmThreads/{threadId} {
++        // Helper: Check if user is a participant in the thread
++        function isThreadParticipant() {
++          let thread = resource.data;
++          return thread != null && 
++                 thread.participantIds != null && 
++                 thread.participantIds is list &&
++                 request.auth.uid in thread.participantIds;
++        }
++        
++        // Helper: Check if creating thread for self (user must be in participantIds)
++        function isCreatingThreadForSelf() {
++          return request.resource.data.participantIds != null &&
++                 request.resource.data.participantIds is list &&
++                 request.resource.data.participantIds.size() == 2 && // Only 1:1 threads for now
++                 request.auth.uid in request.resource.data.participantIds;
++        }
++        
++        // Read: User must be authenticated and a participant
++        // For queries with array-contains: The rule must match the query constraint
++        // The query filters by participantIds containing the user's ID, so the rule checks the same
++        // This rule works for both individual document reads and queries
++        // Allow reads to non-existent documents (for checking if thread exists before creating)
++        allow read: if isAuthenticated() && 
++                      request.auth.uid != null &&
++                      (resource == null || // Allow reads to non-existent documents
++                       (resource.data != null &&
++                        resource.data.participantIds != null &&
++                        resource.data.participantIds.hasAny([request.auth.uid])));
++        
++        // Update: User must be a participant and can only update certain fields
++        // Allow updates to: unreadCounts, isMuted, status, pinnedBy, updatedAt, lastMessageText, lastMessageAt, lastMessageSenderId
++        allow update: if isAuthenticated() && 
++                         isAssignedToTenant(tenantId) && 
++                         getActiveTenantId() == tenantId &&
++                         isThreadParticipant();
++        
++        // Create: User must be creating thread for themselves (participantIds must include current user)
++        allow create: if isAuthenticated() && 
++                         isCreatingThreadForSelf();
++        
++        // Delete: No hard deletes from client
++        allow delete: if false;
++        
++        // Messages subcollection
++        match /messages/{messageId} {
++          // Helper: Check if user is a participant in parent thread
++          function isParentThreadParticipant() {
++            let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
++            return thread != null && 
++                   thread.participantIds != null && 
++                   thread.participantIds is list &&
++                   request.auth.uid in thread.participantIds;
++          }
++          
++          // Helper: Check if user owns the message
++          function isMessageOwner() {
++            return resource.data.senderId == request.auth.uid;
++          }
++          
++          // Read: User must be a participant in the parent thread
++          allow read: if isAuthenticated() && 
++                        isParentThreadParticipant();
++          
++          // Create: User must be a participant in the parent thread OR thread doesn't exist yet (will be created)
++          // If thread exists, check participation. If thread doesn't exist, allow creation (thread will be created first)
++          // Note: In a transaction, the thread might be created in the same transaction, so we need to allow creation
++          // if the thread doesn't exist OR if the user is a participant
++          allow create: if isAuthenticated() && 
++                           // Message sender must be the current user
++                           request.resource.data.senderId == request.auth.uid &&
++                           // Either thread doesn't exist (will be created in transaction) OR thread exists and user is participant
++                           (!exists(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)) ||
++                            isParentThreadParticipant());
++          
++          // Update: Only message owner can update (for editing)
++          allow update: if isAuthenticated() && 
++                           isParentThreadParticipant() &&
++                           isMessageOwner();
++          
++          // Delete: No hard deletes (use soft delete via deletedAt field)
++          allow delete: if false;
++          
++          // Reactions subcollection
++          match /reactions/{reactionId} {
++            // Helper: Check if user is a participant in parent thread
++            function isParentThreadParticipantForReaction() {
++              let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
++              return thread != null && 
++                     thread.participantIds != null && 
++                     thread.participantIds is list &&
++                     request.auth.uid in thread.participantIds;
++            }
++            
++            // Read: User must be a participant in the parent thread
++            allow read: if isAuthenticated() && 
++                          isParentThreadParticipantForReaction();
++            
++            // Create: User must be a participant and can only react as themselves
++            // Enforce one reaction per emoji per user (enforced by query in hook)
++            allow create: if isAuthenticated() && 
++                             isParentThreadParticipantForReaction() &&
++                             request.resource.data.userId == request.auth.uid &&
++                             request.resource.data.emoji != null;
++            
++            // Delete: User can only delete their own reactions
++            allow delete: if isAuthenticated() && 
++                            isParentThreadParticipantForReaction() &&
++                            resource.data.userId == request.auth.uid;
++            
++            // Update: Not allowed (reactions are immutable)
++            allow update: if false;
++          }
++        }
++      }
++
++      // Typing indicators subcollection
++      match /dmTyping/{typingId} {
++        // Helper: Check if user is a participant in the thread (for read/delete)
++        function isThreadParticipantForTyping() {
++          let threadId = resource.data.threadId;
++          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
++          return thread != null && 
++                 thread.participantIds != null && 
++                 thread.participantIds is list &&
++                 request.auth.uid in thread.participantIds;
++        }
++        
++        // Helper: Check if user is a participant in the thread (for create/update)
++        function isThreadParticipantForTypingCreate() {
++          let threadId = request.resource.data.threadId;
++          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
++          return thread != null && 
++                 thread.participantIds != null && 
++                 thread.participantIds is list &&
++                 request.auth.uid in thread.participantIds;
++        }
++        
++        // Read: User must be a participant in the thread
++        allow read: if isAuthenticated() && 
++                      isAssignedToTenant(tenantId) && 
++                      getActiveTenantId() == tenantId &&
++                      isThreadParticipantForTyping();
++        
++        // Create/Update: User can only set their own typing indicator and must be a thread participant
++        allow create, update: if isAuthenticated() && 
++                                 isAssignedToTenant(tenantId) && 
++                                 getActiveTenantId() == tenantId &&
++                                 request.resource.data.userId == request.auth.uid &&
++                                 request.resource.data.threadId != null &&
++                                 isThreadParticipantForTypingCreate();
++        
++        // Delete: User can delete their own typing indicator
++        allow delete: if isAuthenticated() && 
++                        isAssignedToTenant(tenantId) && 
++                        getActiveTenantId() == tenantId &&
++                        resource.data.userId == request.auth.uid;
++      }
++      
++      // User presence (optional, for future presence features)
++      match /userPresence/{uid} {
++        // Users can read any presence in their tenant
++        allow read: if isAuthenticated() && 
++                      isAssignedToTenant(tenantId) && 
++                      getActiveTenantId() == tenantId;
++        
++        // Users can only update their own presence
++        allow update: if isAuthenticated() && 
++                         isAssignedToTenant(tenantId) && 
++                         getActiveTenantId() == tenantId &&
++                         request.auth.uid == uid;
++        
++        // Users can create their own presence
++        allow create: if isAuthenticated() && 
++                         isAssignedToTenant(tenantId) && 
++                         getActiveTenantId() == tenantId &&
++                         request.auth.uid == uid;
++        
++        // No deletes
++        allow delete: if false;
++      }
+     }
+ 
+     // Context Engine: Only HRX admins can read/write
+@@ -797,6 +1147,33 @@ service cloud.firestore {
+       allow read, write: if isHRX();
+     }
+     
++    // ============================================================================
++    // SLACK INTEGRATION RULES (Root-level collections)
++    // ============================================================================
++    
++    // Root-level slack_messages collection
++    match /slack_messages/{messageId} {
++      // Only users with securityLevel >= 5 for their active tenant can read messages
++      allow read: if isAuthenticated() && 
++        canAccessSlack() && 
++        resource.data.tenantId != null &&
++        resource.data.tenantId == getActiveTenantId();
++      // Only Cloud Functions can write (via service account)
++      allow write: if false;
++    }
++    
++    // Root-level slackTeams collection
++    match /slackTeams/{teamId} {
++      // Only users with securityLevel >= 5 for their active tenant can read team mappings
++      // Also verify that the team document's tenantId matches the user's activeTenantId
++      allow read: if isAuthenticated() && 
++        canAccessSlack() && 
++        resource.data.tenantId != null &&
++        resource.data.tenantId == getActiveTenantId();
++      // Only Cloud Functions can write (via service account)
++      allow write: if false;
++    }
++    
+     // --- ASSIGNMENTS ---
+     match /assignments/{assignmentId} {
+       // Temporarily allow all authenticated users to read assignments
+@@ -1269,5 +1646,45 @@ service cloud.firestore {
+       let user = getUser();
+       return user.securityLevel == "6" || user.securityLevel == "7";
+     }
++    
++    // Slack admin access: securityLevel 5-7 (Staff Manager, Manager, Admin)
++    function canAccessSlackAdmin() {
++      let user = getUser();
++      return user.securityLevel == "5" || user.securityLevel == "6" || user.securityLevel == "7";
++    }
++    
++    // Get active tenant ID from user
++    function getActiveTenantId() {
++      let user = getUser();
++      return user.activeTenantId;
++    }
++    
++    // Get security level for active tenant (tenant-aware)
++    function getTenantSecurityLevel() {
++      let user = getUser();
++      let activeTenantId = user.activeTenantId;
++      
++      // Check if tenantIds exists and is a map, and if activeTenantId is in it
++      let hasTenantSettings = activeTenantId != null && 
++                              user.tenantIds != null && 
++                              user.tenantIds is map && 
++                              activeTenantId in user.tenantIds;
++      
++      // Prefer per-tenant securityLevel, fall back to global
++      let tenantSettings = hasTenantSettings ? user.tenantIds[activeTenantId] : null;
++      let level = (hasTenantSettings && 
++                   tenantSettings != null && 
++                   tenantSettings.securityLevel != null)
++        ? tenantSettings.securityLevel
++        : (user.securityLevel != null ? user.securityLevel : 1);
++      
++      // Cast to number if stored as string
++      return level is string ? int(level) : level;
++    }
++    
++  // Check if user can access Slack (securityLevel >= 5 for active tenant)
++  function canAccessSlack() {
++    return getTenantSecurityLevel() >= 5;
++  }
+   }
+ }
+\ No newline at end of file
+diff --git a/functions/package.json b/functions/package.json
+index 522c432a..35c76e83 100644
+--- a/functions/package.json
++++ b/functions/package.json
+@@ -16,7 +16,11 @@
+     "test:triggers:deployed": "firebase functions:call runTriggerTests",
+     "test:triggers:deployed:coverage": "firebase functions:call checkTriggerCoverage",
+     "test:triggers:dashboard": "firebase functions:call getTestResultsDashboard",
+-    "check:maintenance": "npx ts-node src/checkTestMaintenance.ts"
++    "check:maintenance": "npx ts-node src/checkTestMaintenance.ts",
++    "backfill:slackUserIntegrations": "npx ts-node src/tools/backfillSlackUserIntegrations.ts",
++    "backfill:tenantSecurity": "npx ts-node src/tools/backfillTenantSecurity.ts",
++    "backfill:slackConversationSettings": "npx ts-node src/tools/backfillSlackConversationSettings.ts",
++    "fix:emailThreadGrouping": "npx ts-node src/tools/fixEmailThreadGrouping.ts"
+   },
+   "engines": {
+     "node": "20"
+diff --git a/functions/src/enhancedMainChat.ts b/functions/src/enhancedMainChat.ts
+index 4174cb01..6404c974 100644
+--- a/functions/src/enhancedMainChat.ts
++++ b/functions/src/enhancedMainChat.ts
+@@ -49,9 +49,20 @@ export const enhancedChatWithGPT = onRequest({
+ }, async (req, res): Promise<void> => {
+   const startedAt = Date.now();
+   
++  // Determine allowed origin - allow localhost for development
++  const origin = req.headers.origin || '';
++  const allowedOrigins = [
++    'https://hrxone.com',
++    'http://localhost:3000',
++    'http://localhost:3001',
++    'http://127.0.0.1:3000',
++    'http://127.0.0.1:3001',
++  ];
++  const allowedOrigin = allowedOrigins.includes(origin) ? origin : 'https://hrxone.com';
++
+   try {
+     if (req.method === 'OPTIONS') {
+-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
++      res.set('Access-Control-Allow-Origin', allowedOrigin);
+       res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+       res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+       res.status(204).send('');
+@@ -60,7 +71,7 @@ export const enhancedChatWithGPT = onRequest({
+ 
+     const { tenantId, userId, threadId, messages, toolMode } = req.body || {};
+     if (!tenantId || !userId || !threadId || !Array.isArray(messages)) {
+-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
++      res.set('Access-Control-Allow-Origin', allowedOrigin);
+       res.status(400).json({ error: 'Missing required fields' });
+       return;
+     }
+@@ -128,7 +139,7 @@ export const enhancedChatWithGPT = onRequest({
+     // Call OpenAI with enhanced context
+     const apiKey = process.env.OPENAI_API_KEY;
+     if (!apiKey) {
+-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
++      res.set('Access-Control-Allow-Origin', allowedOrigin);
+       res.status(500).json({ error: 'OpenAI API key not configured' });
+       return;
+     }
+@@ -169,12 +180,12 @@ export const enhancedChatWithGPT = onRequest({
+       }
+     }
+ 
+-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
++    res.set('Access-Control-Allow-Origin', allowedOrigin);
+     res.json({ reply, latencyMs: Date.now() - startedAt });
+ 
+   } catch (error) {
+     console.error('enhancedChatWithGPT error:', error);
+-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
++    res.set('Access-Control-Allow-Origin', allowedOrigin);
+     res.status(500).json({ error: 'Internal server error' });
+   }
+ });
+diff --git a/functions/src/index.ts b/functions/src/index.ts
+index 3739c8ad..ea67b3f2 100644
+--- a/functions/src/index.ts
++++ b/functions/src/index.ts
+@@ -11299,7 +11299,7 @@ export {
+   listEmailThreadsApi,
+   getEmailThreadApi,
+   sendEmailReplyApi,
+-  sendNewEmailApi,
++  // sendNewEmailApi, // Temporarily commented out - missing export
+   updateEmailThreadApi,
+   archiveEmailThreadApi,
+   unarchiveEmailThreadApi,
+@@ -11308,35 +11308,38 @@ export {
+ } from './messaging/emailThreadsApi';
+ 
+ // Email Migration
+-export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads';
++// export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads'; // Temporarily commented out - missing module
+ 
+ // Email Thread Search
+-export { searchEmailThreadsApi } from './messaging/searchApi';
++// export { searchEmailThreadsApi } from './messaging/searchApi'; // Temporarily commented out - missing module
+ 
+ // Internal Messaging (Slack-style)
+-export {
+-  getInternalMessageCountsApi,
+-  getDirectMessagesApi,
+-  getChannelsApi,
+-  getConversationMessagesApi,
+-  sendInternalMessageApi,
+-  markInternalMessagesReadApi,
+-  createChannelApi,
+-  addReactionToMessageApi,
+-} from './messaging/internalMessagingApi';
+-
+-export {
+-  updateSlackUserMappingApi,
+-  updateSlackChannelMappingApi,
+-  getSlackMappingsApi,
+-} from './messaging/slackMappingApi';
++// Temporarily commented out due to missing modules
++// export {
++//   getInternalMessageCountsApi,
++//   getDirectMessagesApi,
++//   getChannelsApi,
++//   getConversationMessagesApi,
++//   sendInternalMessageApi,
++//   markInternalMessagesReadApi,
++//   createChannelApi,
++//   addReactionToMessageApi,
++// } from './messaging/internalMessagingApi';
++
++// export {
++//   updateSlackUserMappingApi,
++//   updateSlackChannelMappingApi,
++//   getSlackMappingsApi,
++// } from './messaging/slackMappingApi';
+ 
+ // Slack Integration
+-export { slackEvents } from './slackEvents';
+-export { sendMessageToSlackApi } from './messaging/sendMessageToSlack';
+-export { backfillSlackChannels } from './slack/backfillSlackChannels';
+-export { onSlackMessageActivity } from './slack/onSlackMessageActivity';
+-export { sendSlackChannelMessage } from './slack/sendSlackChannelMessage';
++// Temporarily commented out due to missing modules - uncomment when modules are available
++// export { slackEvents } from './slackEvents';
++// export { sendMessageToSlackApi } from './messaging/sendMessageToSlack';
++// export { backfillSlackChannels } from './slack/backfillSlackChannels';
++// export { onSlackMessageActivity } from './slack/onSlackMessageActivity';
++// export { sendSlackChannelMessage } from './slack/sendSlackChannelMessage';
++export { syncChannelMembershipOnJoin, syncChannelMembershipOnLeave } from './slackChannelMembershipSync';
+ 
+ // Unified Messaging Framework - Email Provider
+ export { getEmailProvider } from './messaging/emailProviderFactory';
+diff --git a/functions/tsconfig.json b/functions/tsconfig.json
+index 6386e754..dcaf065f 100644
+--- a/functions/tsconfig.json
++++ b/functions/tsconfig.json
+@@ -16,6 +16,7 @@
+   ],
+   "exclude": [
+     "src/**/*.test.ts",
+-    "src/**/__tests__/**/*"
++    "src/**/__tests__/**/*",
++    "src/enhancedFieldLoggingTests.ts"
+   ]
+ }
+diff --git a/package-lock.json b/package-lock.json
+index 869b36db..e0e8f50a 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -8,6 +8,8 @@
+       "name": "hrx-god-view",
+       "version": "0.1.0",
+       "dependencies": {
++        "@emoji-mart/data": "^1.2.1",
++        "@emoji-mart/react": "^1.1.1",
+         "@emotion/react": "^11.14.0",
+         "@emotion/styled": "^11.14.1",
+         "@mui/icons-material": "^5.18.0",
+@@ -26,6 +28,7 @@
+         "chart.js": "^4.5.0",
+         "csv-parser": "^3.2.0",
+         "date-fns": "^4.1.0",
++        "emoji-mart": "^5.6.0",
+         "firebase": "^11.10.0",
+         "firebase-admin": "^13.4.0",
+         "html-webpack-plugin": "^5.6.0",
+@@ -34,6 +37,7 @@
+         "jspdf-autotable": "^5.0.2",
+         "openai": "^5.12.1",
+         "papaparse": "^5.5.3",
++        "quill": "^2.0.3",
+         "react": "^18.2.0",
+         "react-chartjs-2": "^5.3.0",
+         "react-dom": "^18.2.0",
+@@ -41,6 +45,7 @@
+         "react-easy-crop": "^5.4.2",
+         "react-helmet-async": "^2.0.5",
+         "react-markdown": "^10.1.0",
++        "react-quill": "^2.0.0",
+         "react-router-dom": "^7.6.0",
+         "react-scripts": "^5.0.1",
+         "recharts": "^2.15.4",
+@@ -2465,6 +2470,22 @@
+         "postcss-selector-parser": "^6.0.10"
+       }
+     },
++    "node_modules/@emoji-mart/data": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/@emoji-mart/data/-/data-1.2.1.tgz",
++      "integrity": "sha512-no2pQMWiBy6gpBEiqGeU77/bFejDqUTRY7KX+0+iur13op3bqUsXdnwoZs6Xb1zbv0gAj5VvS1PWoUUckSr5Dw==",
++      "license": "MIT"
++    },
++    "node_modules/@emoji-mart/react": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/@emoji-mart/react/-/react-1.1.1.tgz",
++      "integrity": "sha512-NMlFNeWgv1//uPsvLxvGQoIerPuVdXwK/EUek8OOkJ6wVOWPUizRBJU0hDqWZCOROVpfBgCemaC3m6jDOXi03g==",
++      "license": "MIT",
++      "peerDependencies": {
++        "emoji-mart": "^5.2",
++        "react": "^16.8 || ^17 || ^18"
++      }
++    },
+     "node_modules/@emotion/babel-plugin": {
+       "version": "11.13.5",
+       "resolved": "https://registry.npmjs.org/@emotion/babel-plugin/-/babel-plugin-11.13.5.tgz",
+@@ -5694,6 +5715,21 @@
+       "integrity": "sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ==",
+       "license": "MIT"
+     },
++    "node_modules/@types/quill": {
++      "version": "1.3.10",
++      "resolved": "https://registry.npmjs.org/@types/quill/-/quill-1.3.10.tgz",
++      "integrity": "sha512-IhW3fPW+bkt9MLNlycw8u8fWb7oO7W5URC9MfZYHBlA24rex9rs23D5DETChu1zvgVdc5ka64ICjJOgQMr6Shw==",
++      "license": "MIT",
++      "dependencies": {
++        "parchment": "^1.1.2"
++      }
++    },
++    "node_modules/@types/quill/node_modules/parchment": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/parchment/-/parchment-1.1.4.tgz",
++      "integrity": "sha512-J5FBQt/pM2inLzg4hEWmzQx/8h8D0CiDxaG3vyp9rKrQRSDgBlhjdP5jQGgosEajXPSQouXGHOmVdgo7QmJuOg==",
++      "license": "BSD-3-Clause"
++    },
+     "node_modules/@types/raf": {
+       "version": "3.4.3",
+       "resolved": "https://registry.npmjs.org/@types/raf/-/raf-3.4.3.tgz",
+@@ -7803,6 +7839,15 @@
+         "node": ">=12"
+       }
+     },
++    "node_modules/clone": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/clone/-/clone-2.1.2.tgz",
++      "integrity": "sha512-3Pe/CF1Nn94hyhIYpjtiLhdCoEoz0DqQ+988E9gmeEdQZlojxnOb74wctFyuwWQHzqyf9X7C7MG8juUpqBJT8w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.8"
++      }
++    },
+     "node_modules/clsx": {
+       "version": "2.1.1",
+       "resolved": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
+@@ -8884,6 +8929,26 @@
+       "integrity": "sha512-Q6fKUPqnAHAyhiUgFU7BUzLiv0kd8saH9al7tnu5Q/okj6dnupxyTgFIBjVzJATdfIAm9NAsvXNzjaKa+bxVyA==",
+       "license": "MIT"
+     },
++    "node_modules/deep-equal": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/deep-equal/-/deep-equal-1.1.2.tgz",
++      "integrity": "sha512-5tdhKF6DbU7iIzrIOa1AOUt39ZRm13cmL1cGEh//aqR8x9+tNfbywRf0n5FD/18OKMdo7DNEtrX2t22ZAkI+eg==",
++      "license": "MIT",
++      "dependencies": {
++        "is-arguments": "^1.1.1",
++        "is-date-object": "^1.0.5",
++        "is-regex": "^1.1.4",
++        "object-is": "^1.1.5",
++        "object-keys": "^1.1.1",
++        "regexp.prototype.flags": "^1.5.1"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/deep-is": {
+       "version": "0.1.4",
+       "resolved": "https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz",
+@@ -9346,6 +9411,12 @@
+         "url": "https://github.com/sindresorhus/emittery?sponsor=1"
+       }
+     },
++    "node_modules/emoji-mart": {
++      "version": "5.6.0",
++      "resolved": "https://registry.npmjs.org/emoji-mart/-/emoji-mart-5.6.0.tgz",
++      "integrity": "sha512-eJp3QRe79pjwa+duv+n7+5YsNhRcMl812EcFVwrnRvYKoNPoQb5qxU8DG6Bgwji0akHdp6D4Ln6tYLG58MFSow==",
++      "license": "MIT"
++    },
+     "node_modules/emoji-regex": {
+       "version": "9.2.2",
+       "resolved": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-9.2.2.tgz",
+@@ -10460,7 +10531,6 @@
+       "version": "1.3.0",
+       "resolved": "https://registry.npmjs.org/fast-diff/-/fast-diff-1.3.0.tgz",
+       "integrity": "sha512-VxPP4NqbUjj6MaAOafWeUn2cXWLcCtljklUtZf0Ind4XQ+QPtmA0b18zZy0jIQx+ExRVCR/ZQpBmik5lXshNsw==",
+-      "dev": true,
+       "license": "Apache-2.0"
+     },
+     "node_modules/fast-equals": {
+@@ -12294,6 +12364,22 @@
+         "url": "https://github.com/sponsors/wooorm"
+       }
+     },
++    "node_modules/is-arguments": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/is-arguments/-/is-arguments-1.2.0.tgz",
++      "integrity": "sha512-7bVbi0huj/wrIAOzb8U1aszg9kdi3KN/CyU19CTI7tAoZYEZoL9yCDXpbXN+uPsuWnP02cyug1gleqq+TU+YCA==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bound": "^1.0.2",
++        "has-tostringtag": "^1.0.2"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/is-array-buffer": {
+       "version": "3.0.5",
+       "resolved": "https://registry.npmjs.org/is-array-buffer/-/is-array-buffer-3.0.5.tgz",
+@@ -14469,6 +14555,12 @@
+       "integrity": "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
+       "license": "MIT"
+     },
++    "node_modules/lodash-es": {
++      "version": "4.17.22",
++      "resolved": "https://registry.npmjs.org/lodash-es/-/lodash-es-4.17.22.tgz",
++      "integrity": "sha512-XEawp1t0gxSi9x01glktRZ5HDy0HXqrM0x5pXQM98EaI0NxO6jVM7omDOxsuEo5UIASAnm2bRp1Jt/e0a2XU8Q==",
++      "license": "MIT"
++    },
+     "node_modules/lodash.camelcase": {
+       "version": "4.3.0",
+       "resolved": "https://registry.npmjs.org/lodash.camelcase/-/lodash.camelcase-4.3.0.tgz",
+@@ -14499,6 +14591,13 @@
+       "integrity": "sha512-Bz5mupy2SVbPHURB98VAcw+aHh4vRV5IPNhILUCsOzRmsTmSQ17jIuqopAentWoehktxGd9e/hbIXq980/1QJg==",
+       "license": "MIT"
+     },
++    "node_modules/lodash.isequal": {
++      "version": "4.5.0",
++      "resolved": "https://registry.npmjs.org/lodash.isequal/-/lodash.isequal-4.5.0.tgz",
++      "integrity": "sha512-pDo3lu8Jhfjqls6GkMgpahsF9kCyayhgykjyLMNFTKWrpVdAQtYyB4muAMWozBB4ig/dtWAmsMxLEI8wuz+DYQ==",
++      "deprecated": "This package is deprecated. Use require('node:util').isDeepStrictEqual instead.",
++      "license": "MIT"
++    },
+     "node_modules/lodash.isinteger": {
+       "version": "4.0.4",
+       "resolved": "https://registry.npmjs.org/lodash.isinteger/-/lodash.isinteger-4.0.4.tgz",
+@@ -15699,6 +15798,22 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/object-is": {
++      "version": "1.1.6",
++      "resolved": "https://registry.npmjs.org/object-is/-/object-is-1.1.6.tgz",
++      "integrity": "sha512-F8cZ+KfGlSGi09lJT7/Nd6KJZ9ygtvYC0/UYYLI9nmQKLMnydpB9yvbv9K1uSkEu7FU9vYPmVwLg328tX+ot3Q==",
++      "license": "MIT",
++      "dependencies": {
++        "call-bind": "^1.0.7",
++        "define-properties": "^1.2.1"
++      },
++      "engines": {
++        "node": ">= 0.4"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/object-keys": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/object-keys/-/object-keys-1.1.1.tgz",
+@@ -16017,6 +16132,12 @@
+         "tslib": "^2.0.3"
+       }
+     },
++    "node_modules/parchment": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/parchment/-/parchment-3.0.0.tgz",
++      "integrity": "sha512-HUrJFQ/StvgmXRcQ1ftY6VEZUq3jA2t9ncFN4F84J/vN0/FPpQF+8FKXb3l6fLces6q0uOHj6NJn+2xvZnxO6A==",
++      "license": "BSD-3-Clause"
++    },
+     "node_modules/parent-module": {
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/parent-module/-/parent-module-1.0.1.tgz",
+@@ -17928,6 +18049,41 @@
+       ],
+       "license": "MIT"
+     },
++    "node_modules/quill": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/quill/-/quill-2.0.3.tgz",
++      "integrity": "sha512-xEYQBqfYx/sfb33VJiKnSJp8ehloavImQ2A6564GAbqG55PGw1dAWUn1MUbQB62t0azawUS2CZZhWCjO8gRvTw==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "eventemitter3": "^5.0.1",
++        "lodash-es": "^4.17.21",
++        "parchment": "^3.0.0",
++        "quill-delta": "^5.1.0"
++      },
++      "engines": {
++        "npm": ">=8.2.3"
++      }
++    },
++    "node_modules/quill-delta": {
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/quill-delta/-/quill-delta-5.1.0.tgz",
++      "integrity": "sha512-X74oCeRI4/p0ucjb5Ma8adTXd9Scumz367kkMK5V/IatcX6A0vlgLgKbzXWy5nZmCGeNJm2oQX0d2Eqj+ZIlCA==",
++      "license": "MIT",
++      "dependencies": {
++        "fast-diff": "^1.3.0",
++        "lodash.clonedeep": "^4.5.0",
++        "lodash.isequal": "^4.5.0"
++      },
++      "engines": {
++        "node": ">= 12.0.0"
++      }
++    },
++    "node_modules/quill/node_modules/eventemitter3": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/eventemitter3/-/eventemitter3-5.0.1.tgz",
++      "integrity": "sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==",
++      "license": "MIT"
++    },
+     "node_modules/raf": {
+       "version": "3.4.1",
+       "resolved": "https://registry.npmjs.org/raf/-/raf-3.4.1.tgz",
+@@ -18168,6 +18324,67 @@
+         "react": ">=18"
+       }
+     },
++    "node_modules/react-quill": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/react-quill/-/react-quill-2.0.0.tgz",
++      "integrity": "sha512-4qQtv1FtCfLgoD3PXAur5RyxuUbPXQGOHgTlFie3jtxp43mXDtzCKaOgQ3mLyZfi1PUlyjycfivKelFhy13QUg==",
++      "license": "MIT",
++      "dependencies": {
++        "@types/quill": "^1.3.10",
++        "lodash": "^4.17.4",
++        "quill": "^1.3.7"
++      },
++      "peerDependencies": {
++        "react": "^16 || ^17 || ^18",
++        "react-dom": "^16 || ^17 || ^18"
++      }
++    },
++    "node_modules/react-quill/node_modules/eventemitter3": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/eventemitter3/-/eventemitter3-2.0.3.tgz",
++      "integrity": "sha512-jLN68Dx5kyFHaePoXWPsCGW5qdyZQtLYHkxkg02/Mz6g0kYpDx4FyP6XfArhQdlOC4b8Mv+EMxPo/8La7Tzghg==",
++      "license": "MIT"
++    },
++    "node_modules/react-quill/node_modules/fast-diff": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/fast-diff/-/fast-diff-1.1.2.tgz",
++      "integrity": "sha512-KaJUt+M9t1qaIteSvjc6P3RbMdXsNhK61GRftR6SNxqmhthcd9MGIi4T+o0jD8LUSpSnSKXE20nLtJ3fOHxQig==",
++      "license": "Apache-2.0"
++    },
++    "node_modules/react-quill/node_modules/parchment": {
++      "version": "1.1.4",
++      "resolved": "https://registry.npmjs.org/parchment/-/parchment-1.1.4.tgz",
++      "integrity": "sha512-J5FBQt/pM2inLzg4hEWmzQx/8h8D0CiDxaG3vyp9rKrQRSDgBlhjdP5jQGgosEajXPSQouXGHOmVdgo7QmJuOg==",
++      "license": "BSD-3-Clause"
++    },
++    "node_modules/react-quill/node_modules/quill": {
++      "version": "1.3.7",
++      "resolved": "https://registry.npmjs.org/quill/-/quill-1.3.7.tgz",
++      "integrity": "sha512-hG/DVzh/TiknWtE6QmWAF/pxoZKYxfe3J/d/+ShUWkDvvkZQVTPeVmUJVu1uE6DDooC4fWTiCLh84ul89oNz5g==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "clone": "^2.1.1",
++        "deep-equal": "^1.0.1",
++        "eventemitter3": "^2.0.3",
++        "extend": "^3.0.2",
++        "parchment": "^1.1.4",
++        "quill-delta": "^3.6.2"
++      }
++    },
++    "node_modules/react-quill/node_modules/quill-delta": {
++      "version": "3.6.3",
++      "resolved": "https://registry.npmjs.org/quill-delta/-/quill-delta-3.6.3.tgz",
++      "integrity": "sha512-wdIGBlcX13tCHOXGMVnnTVFtGRLoP0imqxM696fIPwIf5ODIYUHIvHbZcyvGlZFiFhK5XzDC2lpjbxRhnM05Tg==",
++      "license": "MIT",
++      "dependencies": {
++        "deep-equal": "^1.0.1",
++        "extend": "^3.0.2",
++        "fast-diff": "1.1.2"
++      },
++      "engines": {
++        "node": ">=0.10"
++      }
++    },
+     "node_modules/react-refresh": {
+       "version": "0.11.0",
+       "resolved": "https://registry.npmjs.org/react-refresh/-/react-refresh-0.11.0.tgz",
+diff --git a/package.json b/package.json
+index 56752995..426e1b72 100644
+--- a/package.json
++++ b/package.json
+@@ -3,6 +3,8 @@
+   "version": "0.1.0",
+   "private": true,
+   "dependencies": {
++    "@emoji-mart/data": "^1.2.1",
++    "@emoji-mart/react": "^1.1.1",
+     "@emotion/react": "^11.14.0",
+     "@emotion/styled": "^11.14.1",
+     "@mui/icons-material": "^5.18.0",
+@@ -21,6 +23,7 @@
+     "chart.js": "^4.5.0",
+     "csv-parser": "^3.2.0",
+     "date-fns": "^4.1.0",
++    "emoji-mart": "^5.6.0",
+     "firebase": "^11.10.0",
+     "firebase-admin": "^13.4.0",
+     "html-webpack-plugin": "^5.6.0",
+@@ -29,6 +32,7 @@
+     "jspdf-autotable": "^5.0.2",
+     "openai": "^5.12.1",
+     "papaparse": "^5.5.3",
++    "quill": "^2.0.3",
+     "react": "^18.2.0",
+     "react-chartjs-2": "^5.3.0",
+     "react-dom": "^18.2.0",
+@@ -36,6 +40,7 @@
+     "react-easy-crop": "^5.4.2",
+     "react-helmet-async": "^2.0.5",
+     "react-markdown": "^10.1.0",
++    "react-quill": "^2.0.0",
+     "react-router-dom": "^7.6.0",
+     "react-scripts": "^5.0.1",
+     "recharts": "^2.15.4",
+diff --git a/src/App.tsx b/src/App.tsx
+index ec0040c1..5d95f08f 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -8,7 +8,7 @@ import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout'
+ import PageViewTracker from './components/PageViewTracker';
+ import Dashboard from './pages/Dashboard';
+ import AIDashboard from './pages/TenantViews/AIDashboard';
+-import ChatGPT from './pages/TenantViews/ChatGPT';
++// import ChatGPT from './pages/TenantViews/ChatGPT'; // TODO: File missing
+ import UserProfile from './pages/UserProfile';
+ import Login from './pages/Login';
+ import UserOnboarding from './pages/UserOnboarding';
+@@ -16,7 +16,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
+ import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
+ import { CRMCacheProvider } from './contexts/CRMCacheContext';
+ import { SalespeopleProvider } from './contexts/SalespeopleContext';
+-import { DirectMessengerProvider } from './contexts/DirectMessengerContext';
++// import { DirectMessengerProvider } from './contexts/DirectMessengerContext'; // TODO: File missing
+ import ProtectedRoute from './components/ProtectedRoute';
+ import SlackProtectedRoute from './components/SlackProtectedRoute';
+ import { Box, Typography } from '@mui/material';
+@@ -51,8 +51,8 @@ import AssignmentDetails from './pages/AssignmentDetails';
+ import Communications from './pages/Communications';
+ import Terms from './pages/Terms';
+ import Privacy from './pages/Privacy';
+-import SMSPrivacy from './pages/SMSPrivacy';
+-import Apply from './pages/Apply';
++// import SMSPrivacy from './pages/SMSPrivacy'; // TODO: File missing
++// import Apply from './pages/Apply'; // TODO: File missing
+ import TenantCRM from './pages/TenantViews/TenantCRM';
+ import CompanyDetails from './pages/TenantViews/CompanyDetails';
+ import ContactDetails from './pages/TenantViews/ContactDetails';
+@@ -103,7 +103,7 @@ import AutoDevOpsMonitoring from './pages/Admin/AutoDevOpsMonitoring';
+ import AutoDevOpsPipeline from './pages/Admin/AutoDevOpsPipeline';
+ import MotivationLibrarySeeder from './pages/Admin/MotivationLibrarySeeder';
+ import HelloMessageConfig from './pages/Admin/HelloMessageConfig';
+-import SlackAdminPage from './pages/Admin/SlackAdminPage';
++// import SlackAdminPage from './pages/Admin/SlackAdminPage'; // TODO: File missing
+ import MobileAppErrors from './pages/Admin/MobileAppErrors';
+ import ResumeManagement from './pages/ResumeManagement';
+ import Reports from './pages/Reports';
+@@ -131,9 +131,9 @@ import NewJobOrder from './pages/NewJobOrder';
+ import RecruiterUserGroups from './pages/RecruiterUserGroups';
+ import RecruiterUserGroupDetails from './pages/RecruiterUserGroupDetails';
+ import UserInboxPage from './pages/UserInboxPage';
+-import MessagesPage from './pages/MessagesPage';
+-import TextMessagesPage from './pages/TextMessagesPage';
+-import SlackPage from './pages/SlackPage';
++// import MessagesPage from './pages/MessagesPage'; // TODO: File missing
++// import TextMessagesPage from './pages/TextMessagesPage'; // TODO: File missing
++import SlackChannelsPage from './pages/SlackChannelsPage';
+ 
+ import InsightReports from './pages/InsightReports';
+ 
+@@ -253,11 +253,11 @@ function App() {
+       <Route path="/invite/:token" element={<InviteTokenValidator />} />
+       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
+       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
+-      <Route path="/c1/apply" element={<Apply />} />
++      {/* <Route path="/c1/apply" element={<Apply />} /> */} {/* TODO: Component missing */}
+       <Route path="/consent" element={<Communications />} />
+       <Route path="/terms" element={<Terms />} />
+       <Route path="/privacy" element={<Privacy />} />
+-      <Route path="/sms-privacy" element={<SMSPrivacy />} />
++      {/* <Route path="/sms-privacy" element={<SMSPrivacy />} /> */} {/* TODO: Component missing */}
+       
+       {/* Public Jobs Board routes with conditional layout */}
+       <Route element={<ConditionalJobsBoardLayout />}>
+@@ -288,27 +288,27 @@ function App() {
+       >
+         <Route index element={<Navigate to="/dashboard" replace />} />
+         <Route path="dashboard" element={<Dashboard />} />
+-        <Route path="chatgpt" element={<ChatGPT />} />
++        {/* <Route path="chatgpt" element={<ChatGPT />} /> */} {/* TODO: Component missing */}
+         <Route path="inbox" element={
+           <ProtectedRoute>
+             <UserInboxPage />
+           </ProtectedRoute>
+         } />
+-        <Route path="text-messages" element={
++        {/* <Route path="text-messages" element={
+           <ProtectedRoute>
+             <TextMessagesPage />
+           </ProtectedRoute>
+-        } />
++        } /> */} {/* TODO: Component missing */}
+         <Route path="slack" element={
+           <SlackProtectedRoute>
+-            <SlackPage />
++            <SlackChannelsPage />
+           </SlackProtectedRoute>
+         } />
+-        <Route path="messages" element={
++        {/* <Route path="messages" element={
+           <SlackProtectedRoute>
+             <MessagesPage />
+           </SlackProtectedRoute>
+-        } />
++        } /> */} {/* TODO: Component missing */}
+         <Route path="profile" element={<ProfileRedirect />} />
+ 
+         {/* Admin/Manager only routes */}
+@@ -608,7 +608,7 @@ function App() {
+           path="admin/slack"
+           element={
+             <SlackProtectedRoute>
+-              <SlackAdminPage />
++              <Box sx={{ p: 3 }}><Typography>Slack Admin Page - Coming Soon</Typography></Box>
+             </SlackProtectedRoute>
+           }
+         />
+@@ -909,7 +909,7 @@ function App() {
+       <Router>
+         <PageViewTracker />
+         <AuthProvider>
+-          <DirectMessengerProvider>
++          {/* <DirectMessengerProvider> */} {/* TODO: Component missing */}
+             <AssociationsCacheProvider>
+               <SalespeopleProvider>
+               {googleMapsApiKey ? (
+@@ -923,7 +923,7 @@ function App() {
+               )}
+               </SalespeopleProvider>
+             </AssociationsCacheProvider>
+-          </DirectMessengerProvider>
++          {/* </DirectMessengerProvider> */} {/* TODO: Component missing */}
+         </AuthProvider>
+       </Router>
+     </Box>
+diff --git a/src/componentBlocks/WorkersTable.tsx b/src/componentBlocks/WorkersTable.tsx
+index ff0a5962..b3a1a09b 100644
+--- a/src/componentBlocks/WorkersTable.tsx
++++ b/src/componentBlocks/WorkersTable.tsx
+@@ -260,7 +260,13 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
+     );
+   }
+   return (
+-    <TableContainer component={Paper}>
++    <TableContainer 
++      component={Paper}
++      sx={{
++        // Remove maxHeight to allow natural page scrolling
++        overflow: 'visible',
++      }}
++    >
+       <Table size="small">
+         <TableHead>
+           <TableRow>
+diff --git a/src/components/AIAssistantChat.tsx b/src/components/AIAssistantChat.tsx
+index 57e13396..0b194610 100644
+--- a/src/components/AIAssistantChat.tsx
++++ b/src/components/AIAssistantChat.tsx
+@@ -98,11 +98,19 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
+         }
+       }
+ 
++      // Use direct fetch - function uses onRequest (HTTP) not onCall (callable)
++      // CORS is handled by the function, but needs to allow localhost for dev
++      const origin = window.location.origin;
+       const response = await fetch(`https://us-central1-hrx1-d3beb.cloudfunctions.net/enhancedChatWithGPT`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ tenantId, userId, threadId: currentThreadId || 'ephemeral', messages: [...messages, userMsg].slice(-10) })
+       });
++      
++      if (!response.ok) {
++        throw new Error(`HTTP error! status: ${response.status}`);
++      }
++      
+       const data = await response.json();
+       const assistantMsg: ChatMessage = {
+         id: `${Date.now()}_assistant`,
+@@ -143,10 +151,18 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
+           console.warn('Failed to set chat title from suggestion:', e);
+         }
+       }
++      // Use direct fetch - function uses onRequest (HTTP) not onCall (callable)
++      // CORS is handled by the function, but needs to allow localhost for dev
+       const response = await fetch(`https://us-central1-hrx1-d3beb.cloudfunctions.net/enhancedChatWithGPT`, {
+-        method: 'POST', headers: { 'Content-Type': 'application/json' },
++        method: 'POST', 
++        headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ tenantId, userId, threadId: newId || 'ephemeral', messages: [userMsg] })
+       });
++      
++      if (!response.ok) {
++        throw new Error(`HTTP error! status: ${response.status}`);
++      }
++      
+       const data = await response.json();
+       const assistantMsg: ChatMessage = { id: `${Date.now()}_assistant`, role: 'assistant', content: data?.reply || 'No response' };
+       setMessages(prev => [...prev, assistantMsg]);
+@@ -233,16 +249,6 @@ const AIAssistantChat: React.FC<AIAssistantChatProps> = ({ tenantId, userId, thr
+         <Box ref={listRef} sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
+         {messages.length === 0 && (
+           <Box sx={{ textAlign: 'center', mt: 6 }}>
+-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mb: 1 }}>
+-              <PsychologyIcon color="primary" sx={{ fontSize: 40 }} />
+-              <Typography variant="h6">{title}</Typography>
+-              <Tooltip title="Refresh suggestions">
+-                <IconButton size="small" onClick={() => setSeed(s => s + 1)}>
+-                  <RefreshIcon fontSize="small" />
+-                </IconButton>
+-              </Tooltip>
+-            </Box>
+-            <Typography variant="body2" color="text.secondary">Ask questions, draft messages, and get help with your work…</Typography>
+             <Box sx={{ mt: 2, display: 'flex', gap: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
+               {(suggestedPrompts && suggestedPrompts.length > 0
+                 ? suggestedPrompts
+diff --git a/src/components/AuthDialog.tsx b/src/components/AuthDialog.tsx
+index e97b1388..7aa4c6f8 100644
+--- a/src/components/AuthDialog.tsx
++++ b/src/components/AuthDialog.tsx
+@@ -35,7 +35,7 @@ import {
+ } from 'firebase/auth';
+ import { auth, db } from '../firebase';
+ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+-import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
++// import { logSMSConsent, getUserAgent } from '../utils/consentLogging'; // TODO: File missing
+ import { useAuth } from '../contexts/AuthContext';
+ import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
+ import { formatPhoneNumber } from '../utils/formatPhone';
+diff --git a/src/components/ContactHeader.tsx b/src/components/ContactHeader.tsx
+index 86901845..4f93ec56 100644
+--- a/src/components/ContactHeader.tsx
++++ b/src/components/ContactHeader.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState, useRef } from 'react';
++import React, { useState, useRef, useEffect } from 'react';
+ import {
+   Box,
+   Typography,
+@@ -32,9 +32,12 @@ import {
+ } from '@mui/icons-material';
+ import { useNavigate } from 'react-router-dom';
+ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+-import { doc, updateDoc } from 'firebase/firestore';
+-import { db, storage } from '../firebase';
++import { doc, updateDoc, getDoc } from 'firebase/firestore';
++import { db, storage, functions } from '../firebase';
++import { httpsCallable } from 'firebase/functions';
+ import FavoriteButton from './FavoriteButton';
++import MessageDrawer, { MessageRecipient } from './MessageDrawer';
++import { useAuth } from '../contexts/AuthContext';
+ 
+ interface NavigationLink {
+   type: 'company' | 'location' | 'deal' | 'jobOrder';
+@@ -130,8 +133,13 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
+   companyLocations = [],
+ }) => {
+   const navigate = useNavigate();
++  const { user } = useAuth();
+   const [avatarLoading, setAvatarLoading] = useState(false);
+   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
++  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
++  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
++  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
++  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+ 
+   // Get contact display name
+   const getDisplayName = () => {
+@@ -703,7 +711,14 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
+                       },
+                       transition: 'all 0.2s ease'
+                     }}
+-                    onClick={() => window.open(`mailto:${contact.email}`, '_blank')}
++                    onClick={() => {
++                      if (gmailConnected) {
++                        setMessageDrawerChannel('email');
++                        setMessageDrawerOpen(true);
++                      } else {
++                        window.open(`mailto:${contact.email}`, '_blank');
++                      }
++                    }}
+                   >
+                     <EmailIcon sx={{ fontSize: 20 }} />
+                   </IconButton>
+@@ -1258,8 +1273,15 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
+                     },
+                     transition: 'all 0.2s ease'
+                   }}
+-                  onClick={() => window.open(`mailto:${contact.email}`, '_blank')}
+-                >
++                  onClick={() => {
++                    if (gmailConnected) {
++                      setMessageDrawerChannel('email');
++                      setMessageDrawerOpen(true);
++                    } else {
++                      window.open(`mailto:${contact.email}`, '_blank');
++                    }
++                  }}
++                  >
+                   <EmailIcon sx={{ fontSize: 20 }} />
+                 </IconButton>
+               </Tooltip>
+@@ -1633,6 +1655,34 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
+           </Typography>
+         )}
+       </Box>
++
++      {/* Message Drawer */}
++      <MessageDrawer
++        open={messageDrawerOpen}
++        onClose={() => setMessageDrawerOpen(false)}
++        recipients={(() => {
++          const recipients: MessageRecipient[] = [];
++          if (messageDrawerChannel === 'email' && contact.email) {
++            recipients.push({
++              userId: '',
++              name: getDisplayName() || contact.email.split('@')[0],
++              email: contact.email,
++            });
++          } else if (messageDrawerChannel === 'sms' && (contact.phone || contact.workPhone)) {
++            recipients.push({
++              userId: '',
++              name: getDisplayName() || (contact.phone || contact.workPhone),
++              phone: contact.phone || contact.workPhone,
++            });
++          }
++          return recipients;
++        })()}
++        tenantId={tenantId}
++        defaultChannels={[messageDrawerChannel]}
++        onSend={() => {
++          setMessageDrawerOpen(false);
++        }}
++      />
+     </Box>
+   );
+ };
+diff --git a/src/components/Layout.tsx b/src/components/Layout.tsx
+index 43b393c4..994fac29 100644
+--- a/src/components/Layout.tsx
++++ b/src/components/Layout.tsx
+@@ -48,7 +48,7 @@ import Menu from '@mui/material/Menu';
+ import MenuItem from '@mui/material/MenuItem';
+ import Divider from '@mui/material/Divider';
+ import Tooltip from '@mui/material/Tooltip';
+-import { SlackHashIcon } from './icons/SlackHashIcon';
++// import { SlackHashIcon } from './icons/SlackHashIcon'; // TODO: File missing
+ 
+ import { db } from '../firebase';
+ import { functions } from '../firebase';
+@@ -62,8 +62,8 @@ import { Role, SecurityLevel } from '../utils/AccessRoles';
+ import TenantSwitcher from './TenantSwitcher';
+ import GoogleConnectionChip from './GoogleConnectionChip';
+ import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
+-import MessengerIconButton from './messenger/MessengerIconButton';
+-import MessengerDrawer from './messenger/MessengerDrawer';
++// import MessengerIconButton from './messenger/MessengerIconButton'; // TODO: File missing
++// import MessengerDrawer from './messenger/MessengerDrawer'; // TODO: File missing
+ 
+ const drawerFullWidth = 240;
+ const drawerCollapsedWidth = 64;
+@@ -825,7 +825,7 @@ const Layout: React.FC = React.memo(function Layout() {
+       'Messages': <NotificationsIcon />,
+       'Inbox': <InboxIcon />,
+       'Text Messages': <SmsIcon />,
+-      'Slack Channels': <SlackHashIcon active={location.pathname.startsWith('/slack')} />,
++      'Slack Channels': <Box sx={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>#</Box>, // TODO: SlackHashIcon missing
+       'Notifications': <NotificationsIcon />,
+       'Privacy & Notifications': <NotificationsIcon />,
+       'Modules': <AppsIcon />,
+@@ -1002,7 +1002,6 @@ const Layout: React.FC = React.memo(function Layout() {
+                           },
+                         },
+                       },
+-                      transition: 'color 0.15s ease',
+                     }}
+                   >
+                     <ListItemIcon
+@@ -1078,7 +1077,6 @@ const Layout: React.FC = React.memo(function Layout() {
+                       '&.Mui-focusVisible': {
+                         backgroundColor: 'transparent !important',
+                       },
+-                      transition: 'color 0.15s ease',
+                     }}
+                   >
+                     <ListItemIcon
+@@ -1201,7 +1199,6 @@ const Layout: React.FC = React.memo(function Layout() {
+                           },
+                         },
+                       },
+-                      transition: 'color 0.15s ease',
+                     }}
+                   >
+                     <ListItemIcon
+@@ -1517,9 +1514,7 @@ const Layout: React.FC = React.memo(function Layout() {
+               )}
+               
+               {/* Direct Messenger Icon */}
+-              {user && (
+-                <MessengerIconButton />
+-              )}
++              {/* TODO: MessengerIconButton component missing */}
+               
+               {/* 👤 Avatar Menu */}
+               <Tooltip title="Account menu">
+@@ -1651,7 +1646,7 @@ const Layout: React.FC = React.memo(function Layout() {
+         </Box>
+         
+         {/* Direct Messenger Drawer */}
+-        <MessengerDrawer />
++        {/* TODO: MessengerDrawer component missing */}
+         
+         {/* Floating Chatbot Button and Widget */}
+         {/* {showChatbotButton && (
+diff --git a/src/index.css b/src/index.css
+index 9b39b681..75ccf73d 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -7,8 +7,13 @@
+   box-sizing: border-box;
+ }
+ 
+-body {
++html, body, #root {
++  height: 100%;
+   margin: 0;
++  overflow: hidden; /* Stop browser scrollbar */
++}
++
++body {
+   font-family: 'Helvetica', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+     sans-serif;
+@@ -25,21 +30,21 @@ code {
+ 
+ /* Global scrollbar styling */
+ ::-webkit-scrollbar {
+-  width: 8px;
+-  height: 8px;
++  width: 6px;
++  height: 6px;
+ }
+ 
+ ::-webkit-scrollbar-track {
+-  background: var(--scrollbar-track, #111111);
++  background: var(--scrollbar-track, transparent);
+ }
+ 
+ ::-webkit-scrollbar-thumb {
+-  background: var(--scrollbar-thumb, #2C2C2C);
+-  border-radius: 4px;
++  background: var(--scrollbar-thumb, rgba(0, 0, 0, 0.2));
++  border-radius: 3px;
+ }
+ 
+ ::-webkit-scrollbar-thumb:hover {
+-  background: var(--scrollbar-thumb-hover, #4A90E2);
++  background: var(--scrollbar-thumb-hover, rgba(0, 0, 0, 0.35));
+ }
+ 
+ /* Global focus styles */
+@@ -130,16 +135,16 @@ input, textarea, select {
+ 
+ /* Light mode styles (default) */
+ [data-mui-color-scheme="light"] {
+-  --scrollbar-track: #F8F9FA;
+-  --scrollbar-thumb: #DEE2E6;
+-  --scrollbar-thumb-hover: #4A90E2;
++  --scrollbar-track: transparent;
++  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
++  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+ }
+ 
+ /* Dark mode styles (disabled for now) */
+ [data-mui-color-scheme="dark"] {
+-  --scrollbar-track: #111111;
+-  --scrollbar-thumb: #2C2C2C;
+-  --scrollbar-thumb-hover: #4A90E2;
++  --scrollbar-track: transparent;
++  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
++  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+ }
+ 
+ /* Google Maps Autocomplete z-index fix for modals */
+diff --git a/src/legal/agreements.ts b/src/legal/agreements.ts
+index e35c14e1..490312c4 100644
+--- a/src/legal/agreements.ts
++++ b/src/legal/agreements.ts
+@@ -15,6 +15,10 @@ export const AGREEMENTS = {
+     version: "2025-10-21", 
+     url: "/privacy" 
+   },
++  smsPrivacy: {
++    version: "2025-10-21",
++    url: "/sms-privacy"
++  },
+ } as const;
+ 
+ export type AgreementKey = keyof typeof AGREEMENTS;
+diff --git a/src/pages/Communications.tsx b/src/pages/Communications.tsx
+index 6300f4d0..ae9a84de 100644
+--- a/src/pages/Communications.tsx
++++ b/src/pages/Communications.tsx
+@@ -157,7 +157,10 @@ const Communications: React.FC = () => {
+       {/* Footer */}
+       <Box component="footer" sx={{ mt: 5, pt: 3, borderTop: 1, borderColor: 'divider' }}>
+         <Typography variant="body2" color="text.secondary">
+-          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved.
++          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. |{' '}
++          <Link href="/terms">Terms of Use</Link> |{' '}
++          <Link href="/privacy">Privacy Policy</Link> |{' '}
++          <Link href="/sms-privacy">SMS Privacy Notice</Link>
+         </Typography>
+       </Box>
+     </Container>
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+index 0b3f16d3..cdc95d93 100644
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -1,134 +1,33 @@
+-import React, { useEffect } from 'react';
+-import { Box, Typography, Alert, Paper, Divider, Button } from '@mui/material';
+-import { Logout as LogoutIcon } from '@mui/icons-material';
+-import { useNavigate } from 'react-router-dom';
+-
+-import { useAuth } from '../contexts/AuthContext';
+-import { canAccessModule } from '../utils/canAccessModule';
+-import SalesNewsFeed from '../components/SalesNewsFeed';
++import React from 'react';
++import { Box, Typography, Paper } from '@mui/material';
+ 
+ const Dashboard: React.FC = () => {
+-  console.log('Dashboard component rendering');
+-  const { modules, role, securityLevel, accessRole, orgType, activeTenant, loading, logout, user } = useAuth();
+-  const navigate = useNavigate();
+-
+-  // Redirect users with security levels 0-4 to their profile
+-  useEffect(() => {
+-    const numericSecurityLevel = typeof securityLevel === 'string' ? parseInt(securityLevel, 10) : securityLevel;
+-    if (!loading && user && activeTenant && !isNaN(numericSecurityLevel) && (numericSecurityLevel >= 0 && numericSecurityLevel <= 4)) {
+-      console.log(`Redirecting user with security level ${securityLevel} to profile`);
+-      const profileUrl = `/${activeTenant.slug}/users/${user.uid}`;
+-      navigate(profileUrl, { replace: true });
+-    }
+-  }, [loading, user, activeTenant, securityLevel, navigate]);
+-
+-  // Don't render dashboard content if user should be redirected
+-  if (!loading && user && activeTenant) {
+-    const numericSecurityLevel = typeof securityLevel === 'string' ? parseInt(securityLevel, 10) : securityLevel;
+-    if (!isNaN(numericSecurityLevel) && (numericSecurityLevel >= 0 && numericSecurityLevel <= 4)) {
+-      return null; // Component will redirect, don't show content
+-    }
+-  }
+-
+   return (
+-    <Box>
+-      <Typography variant="h3" gutterBottom>
+-        Welcome to the HRX Dashboard
+-      </Typography>
+-
+-      {/* Debug Information */}
+-      <Paper sx={{ p: 2, mb: 2, backgroundColor: '#f5f5f5' }}>
+-        <Typography variant="h6" gutterBottom>
+-          🔍 Debug Information
++    <Box
++      sx={{
++        display: 'flex',
++        flexDirection: 'column',
++        alignItems: 'center',
++        justifyContent: 'center',
++        minHeight: 'calc(100vh - 200px)',
++        p: 4,
++      }}
++    >
++      <Paper
++        sx={{
++          p: 6,
++          textAlign: 'center',
++          maxWidth: 600,
++          borderRadius: 2,
++        }}
++      >
++        <Typography variant="h4" sx={{ mb: 2, fontWeight: 600 }}>
++          Coming Soon
+         </Typography>
+-        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+-          <strong>Loading:</strong> {loading ? 'Yes' : 'No'}<br />
+-          <strong>Role:</strong> {role}<br />
+-          <strong>Security Level:</strong> {securityLevel}<br />
+-          <strong>Access Role:</strong> {accessRole}<br />
+-          <strong>Org Type:</strong> {orgType}<br />
+-          <strong>Active Tenant ID:</strong> {activeTenant?.id || 'None'}<br />
+-          <strong>Active Tenant Name:</strong> {activeTenant?.name || 'None'}<br />
+-          <strong>Modules Count:</strong> {modules.length}<br />
+-          <strong>Modules:</strong> {modules.length > 0 ? modules.join(', ') : 'None'}
++        <Typography variant="body1" color="text.secondary">
++          The dashboard is under development and will be available soon.
+         </Typography>
+       </Paper>
+-
+-      <Divider sx={{ my: 2 }} />
+-
+-      {/* Module Access Checks */}
+-      <Typography variant="h6" gutterBottom>
+-        Module Access Status
+-      </Typography>
+-
+-      {canAccessModule('schedules', modules) ? (
+-        <Alert severity="success" sx={{ mb: 2 }}>
+-          ✅ You have access to the <strong>Schedules</strong> module.
+-        </Alert>
+-      ) : (
+-        <Alert severity="warning" sx={{ mb: 2 }}>
+-          🚫 You <strong>do not</strong> have access to the Schedules module.
+-        </Alert>
+-      )}
+-
+-      {canAccessModule('payroll', modules) ? (
+-        <Alert severity="success" sx={{ mb: 2 }}>
+-          ✅ You have access to the <strong>Payroll</strong> module.
+-        </Alert>
+-      ) : (
+-        <Alert severity="warning" sx={{ mb: 2 }}>
+-          🚫 You <strong>do not</strong> have access to the Payroll module.
+-        </Alert>
+-      )}
+-
+-      {/* Additional Module Checks */}
+-      {canAccessModule('crm', modules) ? (
+-        <Alert severity="success" sx={{ mb: 2 }}>
+-          ✅ You have access to the <strong>CRM</strong> module.
+-        </Alert>
+-      ) : (
+-        <Alert severity="info" sx={{ mb: 2 }}>
+-          ℹ️ You <strong>do not</strong> have access to the CRM module.
+-        </Alert>
+-      )}
+-
+-      {canAccessModule('flex', modules) ? (
+-        <Alert severity="success" sx={{ mb: 2 }}>
+-          ✅ You have access to the <strong>Flex</strong> module.
+-        </Alert>
+-      ) : (
+-        <Alert severity="info" sx={{ mb: 2 }}>
+-          ℹ️ You <strong>do not</strong> have access to the Flex module.
+-        </Alert>
+-      )}
+-
+-      <Divider sx={{ my: 2 }} />
+-
+-      {/* Sales News Feed - Only show if user has CRM access */}
+-      {canAccessModule('crm', modules) && (
+-        <>
+-          <Typography variant="h6" gutterBottom>
+-            📰 Sales News Feed
+-          </Typography>
+-          <Box sx={{ mb: 3 }}>
+-            <SalesNewsFeed />
+-          </Box>
+-          <Divider sx={{ my: 2 }} />
+-        </>
+-      )}
+-
+-      {/* Logout Button */}
+-      <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+-        <Button
+-          variant="outlined"
+-          color="error"
+-          startIcon={<LogoutIcon />}
+-          onClick={logout}
+-          sx={{ px: 3, py: 1.5 }}
+-        >
+-          Logout
+-        </Button>
+-      </Box>
+     </Box>
+   );
+ };
+diff --git a/src/pages/Privacy.tsx b/src/pages/Privacy.tsx
+index 6f980342..a564e03b 100644
+--- a/src/pages/Privacy.tsx
++++ b/src/pages/Privacy.tsx
+@@ -183,7 +183,8 @@ const Privacy: React.FC = () => {
+         <Typography variant="body2" color="text.secondary">
+           © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. |{' '}
+           <Link href="/terms">Terms of Use</Link> |{' '}
+-          <Link href="/consent">SMS Consent</Link>
++          <Link href="/consent">SMS Consent</Link> |{' '}
++          <Link href="/sms-privacy">SMS Privacy Notice</Link>
+         </Typography>
+       </Box>
+     </Container>
+diff --git a/src/pages/TenantViews/CompanyDirectory.tsx b/src/pages/TenantViews/CompanyDirectory.tsx
+index 02c2775f..7cb55120 100644
+--- a/src/pages/TenantViews/CompanyDirectory.tsx
++++ b/src/pages/TenantViews/CompanyDirectory.tsx
+@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
+ import {
+   Box,
+   Typography,
+-  TextField,
+   CircularProgress,
+ } from '@mui/material';
+ import { useNavigate } from 'react-router-dom';
+@@ -13,7 +12,12 @@ import { db } from '../../firebase';
+ import { useAuth } from '../../contexts/AuthContext';
+ import WorkersTable from '../../componentBlocks/WorkersTable';
+ 
+-const CompanyDirectory: React.FC = () => {
++interface CompanyDirectoryProps {
++  search?: string;
++  onSearchChange?: (value: string) => void;
++}
++
++const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({ search = '', onSearchChange }) => {
+   const { tenantId, activeTenant } = useAuth();
+   const navigate = useNavigate();
+   
+@@ -25,7 +29,6 @@ const CompanyDirectory: React.FC = () => {
+   const [divisions, setDivisions] = useState<any[]>([]);
+   const [regions, setRegions] = useState<any[]>([]);
+   const [loading, setLoading] = useState(false);
+-  const [search, setSearch] = useState('');
+ 
+   // Create breadcrumb path
+   const breadcrumbPath = [
+@@ -224,20 +227,7 @@ const CompanyDirectory: React.FC = () => {
+   }
+ 
+   return (
+-    <Box sx={{ p: 0 }}>
+-      {/* Header with search */}
+-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+-        <Typography variant="h6">Workers ({getCompanyDirectoryWorkers().length})</Typography>
+-        <TextField
+-          size="small"
+-          variant="outlined"
+-          placeholder="Search workers..."
+-          value={search}
+-          onChange={e => setSearch(e.target.value)}
+-          sx={{ width: 300 }}
+-        />
+-      </Box>
+-      
++    <Box>
+       <WorkersTable
+         contacts={getCompanyDirectoryWorkers()}
+         locations={locations}
+@@ -251,7 +241,7 @@ const CompanyDirectory: React.FC = () => {
+         contextType="agency"
+         loading={false}
+         search={search}
+-        onSearchChange={setSearch}
++        onSearchChange={onSearchChange || (() => {})}
+         effectiveTenantId={effectiveTenantId}
+       />
+     </Box>
+diff --git a/src/pages/TenantViews/ContactDetails.tsx b/src/pages/TenantViews/ContactDetails.tsx
+index 993f5c9a..5cc91bae 100644
+--- a/src/pages/TenantViews/ContactDetails.tsx
++++ b/src/pages/TenantViews/ContactDetails.tsx
+@@ -82,6 +82,7 @@ import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../compone
+ import ContactOpportunitiesTab from '../../components/ContactOpportunitiesTab';
+ import AIAssistantChat from '../../components/AIAssistantChat';
+ import ContactActivityTab from '../../components/ContactActivityTab';
++// import ContactEmailsTab from '../../components/ContactEmailsTab'; // TODO: File missing
+ import SalesCoach from '../../components/SalesCoach';
+ import CreateTaskDialog from '../../components/CreateTaskDialog';
+ import { TaskService } from '../../utils/taskService';
+@@ -91,6 +92,7 @@ import { logger } from '../../utils/logger';
+ import ContactHeader from '../../components/ContactHeader';
+ import { useFavorites } from '../../hooks/useFavorites';
+ import { BreadcrumbNav } from '../../components/BreadcrumbNav';
++import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
+ 
+ interface ContactData {
+   id: string;
+@@ -318,6 +320,10 @@ const ContactDetails: React.FC = () => {
+   // Job Orders state
+   const [jobOrders, setJobOrders] = useState<any[]>([]);
+   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
++  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
++  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
++  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
++  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+ 
+   // Lazy load AI components
+   useEffect(() => {
+@@ -1672,6 +1678,14 @@ const ContactDetails: React.FC = () => {
+               </Box>
+             } 
+           />
++          <Tab 
++            label={
++              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
++                <EmailIcon fontSize="small" />
++                Emails
++              </Box>
++            } 
++          />
+         </Tabs>
+       </Paper>
+ 
+@@ -2122,7 +2136,11 @@ const ContactDetails: React.FC = () => {
+                       
+                       {/* Current Locations Table */}
+                       {selectedLocations.length > 0 && (
+-                        <TableContainer component={Paper} variant="outlined" sx={{ mt: 2, maxHeight: 200 }}>
++                        <TableContainer 
++                          component={Paper} 
++                          variant="outlined" 
++                          sx={{ mt: 2, maxHeight: 200, overflowX: 'auto' }}
++                        >
+                           <Table size="small">
+                             <TableHead>
+                               <TableRow>
+@@ -2268,10 +2286,18 @@ const ContactDetails: React.FC = () => {
+                                   </Typography>
+                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                     <MUILink 
+-                                      href={`mailto:${contact.email}`} 
++                                      onClick={(e) => {
++                                        e.preventDefault();
++                                        if (gmailConnected) {
++                                          setMessageDrawerChannel('email');
++                                          setMessageDrawerOpen(true);
++                                        } else {
++                                          window.open(`mailto:${contact.email}`, '_blank');
++                                        }
++                                      }}
+                                       color="primary" 
+                                       underline="hover"
+-                                      sx={{ wordBreak: 'break-all' }}
++                                      sx={{ wordBreak: 'break-all', cursor: 'pointer' }}
+                                     >
+                                       {contact.email}
+                                     </MUILink>
+@@ -3381,6 +3407,10 @@ const ContactDetails: React.FC = () => {
+         />
+       </TabPanel>
+ 
++      <TabPanel value={tabValue} index={4}>
++        {/* TODO: ContactEmailsTab component missing */}
++      </TabPanel>
++
+       {/* Delete Contact Button - Bottom of page */}
+       <Box sx={{ 
+         display: 'flex', 
+@@ -3626,6 +3656,34 @@ const ContactDetails: React.FC = () => {
+           {snackbarMessage}
+         </Alert>
+       </Snackbar>
++
++      {/* Message Drawer */}
++      <MessageDrawer
++        open={messageDrawerOpen}
++        onClose={() => setMessageDrawerOpen(false)}
++        recipients={(() => {
++          const recipients: MessageRecipient[] = [];
++          if (messageDrawerChannel === 'email' && contact?.email) {
++            recipients.push({
++              userId: '',
++              name: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || contact.email.split('@')[0],
++              email: contact.email,
++            });
++          } else if (messageDrawerChannel === 'sms' && (contact?.phone || contact?.workPhone)) {
++            recipients.push({
++              userId: '',
++              name: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || (contact.phone || contact.workPhone),
++              phone: contact.phone || contact.workPhone,
++            });
++          }
++          return recipients;
++        })()}
++        tenantId={tenantId || ''}
++        defaultChannels={[messageDrawerChannel]}
++        onSend={() => {
++          setMessageDrawerOpen(false);
++        }}
++      />
+     </Box>
+   );
+ };
+diff --git a/src/pages/TenantViews/TenantSettings.tsx b/src/pages/TenantViews/TenantSettings.tsx
+index f797f7ee..7b1ec868 100644
+--- a/src/pages/TenantViews/TenantSettings.tsx
++++ b/src/pages/TenantViews/TenantSettings.tsx
+@@ -1,7 +1,9 @@
+ import React, { useState } from 'react';
+-import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
++import { Box, Typography, Paper, Tabs, Tab, Link } from '@mui/material';
++import { useNavigate } from 'react-router-dom';
+ 
+ import { useAuth } from '../../contexts/AuthContext';
++// import { canAccessSlackAdmin } from '../../utils/slackAccessControl'; // TODO: File missing
+ import LocationsTab from '../AgencyProfile/components/LocationsTab';
+ import DivisionsTab from '../AgencyProfile/components/DivisionsTab';
+ import RegionsTab from '../AgencyProfile/components/RegionsTab';
+@@ -14,8 +16,12 @@ import CompanyDefaultsTab from './CompanyDefaultsTab';
+ import MessagingTab from './MessagingTab';
+ 
+ const TenantSettings: React.FC = () => {
+-  const { tenantId } = useAuth();
++  const { tenantId, securityLevel } = useAuth();
++  const navigate = useNavigate();
+   const [tabValue, setTabValue] = useState(0);
++  // const canAccessSlack = canAccessSlackAdmin(securityLevel); // TODO: Function missing
++  const canAccessSlack = false; // Temporary fallback
++  
+   if (!tenantId) return null;
+ 
+   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+@@ -47,6 +53,16 @@ const TenantSettings: React.FC = () => {
+           <Tab label="Departments" />
+           <Tab label="Locations" />
+           <Tab label="Messaging" />
++          {canAccessSlack && (
++            <Tab 
++              label="Slack Mappings" 
++              onClick={(e) => {
++                e.preventDefault();
++                navigate('/admin/slack');
++              }}
++              sx={{ cursor: 'pointer' }}
++            />
++          )}
+           {/* <Tab label="Org Chart" /> */}
+           {/* <Tab label="Defaults" /> */}
+           {/* <Tab label="Company Defaults" /> */}
+@@ -88,12 +104,12 @@ const TenantSettings: React.FC = () => {
+           <MessagingTab tenantId={tenantId} />
+         </Box>
+       )}
+-      {tabValue === 7 && (
++      {tabValue === 8 && (
+         <Box sx={{ p: 0 }}>
+           <OrgChartTab tenantId={tenantId} />
+         </Box>
+       )}
+-      {tabValue === 8 && (
++      {tabValue === 9 && (
+         <Box sx={{ p: 0 }}>
+           <CompanyDefaultsTab tenantId={tenantId} />
+         </Box>
+diff --git a/src/pages/Terms.tsx b/src/pages/Terms.tsx
+index ec19612c..6b941bee 100644
+--- a/src/pages/Terms.tsx
++++ b/src/pages/Terms.tsx
+@@ -192,7 +192,7 @@ const Terms: React.FC = () => {
+       {/* Footer */}
+       <Box component="footer" sx={{ mt: 5, pt: 3, borderTop: 1, borderColor: 'divider' }}>
+         <Typography variant="body2" color="text.secondary">
+-          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. | <Link href="/privacy">Privacy Policy</Link> | <Link href="/consent">SMS Consent</Link>
++          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. | <Link href="/privacy">Privacy Policy</Link> | <Link href="/consent">SMS Consent</Link> | <Link href="/sms-privacy">SMS Privacy Notice</Link>
+         </Typography>
+       </Box>
+     </Container>
+diff --git a/src/pages/UserApplications.tsx b/src/pages/UserApplications.tsx
+index 5f68e143..e80c8335 100644
+--- a/src/pages/UserApplications.tsx
++++ b/src/pages/UserApplications.tsx
+@@ -225,7 +225,11 @@ const UserApplications: React.FC = () => {
+           </Alert>
+         </Box>
+       ) : (
+-        <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 0 }}>
++        <TableContainer 
++          component={Paper} 
++          elevation={0} 
++          sx={{ borderRadius: 0, overflowX: 'auto' }}
++        >
+           <Table>
+             <TableHead>
+               <TableRow sx={{ backgroundColor: 'grey.100' }}>
+diff --git a/src/pages/UserProfile/components/ContactActionButtons.tsx b/src/pages/UserProfile/components/ContactActionButtons.tsx
+index 6ca9ebf7..ecd540c9 100644
+--- a/src/pages/UserProfile/components/ContactActionButtons.tsx
++++ b/src/pages/UserProfile/components/ContactActionButtons.tsx
+@@ -1,23 +1,37 @@
+-import React, { useState } from 'react';
++import React, { useState, useEffect } from 'react';
+ import { IconButton, Tooltip, Stack, Snackbar, Alert } from '@mui/material';
+ import PhoneIcon from '@mui/icons-material/Phone';
+ import MessageIcon from '@mui/icons-material/Message';
+ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+ import EmailIcon from '@mui/icons-material/Email';
+ import { formatPhoneNumber } from '../../../utils/formatPhone';
++import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
++import { useAuth } from '../../../contexts/AuthContext';
++import { functions } from '../../../firebase';
++import { httpsCallable } from 'firebase/functions';
++import { doc, getDoc } from 'firebase/firestore';
++import { db } from '../../../firebase';
+ 
+ interface ContactActionButtonsProps {
+   phone?: string;
+   email?: string;
+   compact?: boolean; // If true, shows only icons without labels
++  tenantId?: string; // Optional tenant ID for checking SMS number
+ }
+ 
+ const ContactActionButtons: React.FC<ContactActionButtonsProps> = ({
+   phone,
+   email,
+   compact = false,
++  tenantId,
+ }) => {
++  const { user, activeTenant } = useAuth();
++  const effectiveTenantId = tenantId || activeTenant?.id || '';
+   const [copySuccess, setCopySuccess] = useState<string | null>(null);
++  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
++  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
++  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
++  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+ 
+   const handleCopy = async (text: string, label: string) => {
+     try {
+@@ -44,9 +58,59 @@ const ContactActionButtons: React.FC<ContactActionButtonsProps> = ({
+     return phoneNumber;
+   };
+ 
++  // Check Gmail connection and Twilio number on mount
++  useEffect(() => {
++    const checkSenderInfo = async () => {
++      if (!user?.uid) return;
++
++      // Check Gmail connection
++      try {
++        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
++        const result = await getGmailStatus({ userId: user.uid });
++        const data = result.data as { connected?: boolean };
++        setGmailConnected(data.connected || false);
++      } catch (err) {
++        console.warn('Failed to check Gmail status:', err);
++        setGmailConnected(false);
++      }
++
++      // Check Twilio number assignment
++      if (effectiveTenantId) {
++        try {
++          const recruiterNumberDoc = await getDoc(doc(db, 'tenants', effectiveTenantId, 'recruiterNumbers', user.uid));
++          const hasNumber = recruiterNumberDoc.exists() && (recruiterNumberDoc.data()?.twilioNumber || recruiterNumberDoc.data()?.useMainNumber);
++          setHasTwilioNumber(hasNumber || false);
++        } catch (err) {
++          console.warn('Failed to check Twilio number:', err);
++          setHasTwilioNumber(false);
++        }
++      }
++    };
++
++    checkSenderInfo();
++  }, [user?.uid, effectiveTenantId]);
++
++  const handleEmail = () => {
++    if (gmailConnected && email) {
++      // Open MessageDrawer with email pre-selected
++      setMessageDrawerChannel('email');
++      setMessageDrawerOpen(true);
++    } else if (email) {
++      // Open default email client
++      window.open(`mailto:${email}`, '_blank');
++    }
++  };
++
+   const handleSMS = (phoneNumber: string) => {
+-    const smsNumber = formatPhoneForSMS(phoneNumber);
+-    window.open(`sms:${smsNumber}`, '_blank');
++    if (hasTwilioNumber && phoneNumber) {
++      // Open MessageDrawer with SMS pre-selected
++      setMessageDrawerChannel('sms');
++      setMessageDrawerOpen(true);
++    } else {
++      // Open default SMS client
++      const smsNumber = formatPhoneForSMS(phoneNumber);
++      window.open(`sms:${smsNumber}`, '_blank');
++    }
+   };
+ 
+   if (!phone && !email) {
+@@ -109,8 +173,7 @@ const ContactActionButtons: React.FC<ContactActionButtonsProps> = ({
+             <Tooltip title="Send email">
+               <IconButton
+                 size="small"
+-                href={`mailto:${email}`}
+-                component="a"
++                onClick={handleEmail}
+                 sx={{
+                   color: 'primary.main',
+                   '&:hover': {
+@@ -149,6 +212,34 @@ const ContactActionButtons: React.FC<ContactActionButtonsProps> = ({
+           {copySuccess}
+         </Alert>
+       </Snackbar>
++
++      {/* Message Drawer */}
++      <MessageDrawer
++        open={messageDrawerOpen}
++        onClose={() => setMessageDrawerOpen(false)}
++        recipients={(() => {
++          const recipients: MessageRecipient[] = [];
++          if (messageDrawerChannel === 'email' && email) {
++            recipients.push({
++              userId: '',
++              name: email.split('@')[0],
++              email: email,
++            });
++          } else if (messageDrawerChannel === 'sms' && phone) {
++            recipients.push({
++              userId: '',
++              name: phone,
++              phone: phone,
++            });
++          }
++          return recipients;
++        })()}
++        tenantId={effectiveTenantId}
++        defaultChannels={[messageDrawerChannel]}
++        onSend={() => {
++          setMessageDrawerOpen(false);
++        }}
++      />
+     </>
+   );
+ };
+diff --git a/src/pages/UsersTable.tsx b/src/pages/UsersTable.tsx
+index 9c837285..fd7e0afe 100644
+--- a/src/pages/UsersTable.tsx
++++ b/src/pages/UsersTable.tsx
+@@ -156,7 +156,10 @@ const UsersTable = () => {
+ 
+       {!loading && (
+         <>
+-          <TableContainer component={Paper}>
++          <TableContainer 
++            component={Paper}
++            sx={{ overflowX: 'auto' }}
++          >
+             <Table>
+               <TableHead>
+                 <TableRow>
+diff --git a/src/theme/theme.tsx b/src/theme/theme.tsx
+index edae5451..a5d02be9 100644
+--- a/src/theme/theme.tsx
++++ b/src/theme/theme.tsx
+@@ -34,6 +34,13 @@ const hrxColors = {
+   error: '#E74C3C',
+   success: '#2ECC71',
+   info: '#4A90E2',
++  
++  // Dark Shell Colors (from spec)
++  shell: {
++    bg: '#333333',
++    border: '#4A4A4A',
++  },
++  brandPrimary: '#0057B8', // C1 accent color
+ };
+ 
+ // Light mode colors
+@@ -69,6 +76,24 @@ const lightColors = {
+   error: '#E74C3C',
+   success: '#2ECC71',
+   info: '#4A90E2',
++  
++  // Dark Shell Colors (from spec) - used for sidebar and top bar
++  shell: {
++    bg: '#333333',
++    border: '#4A4A4A',
++  },
++  brandPrimary: '#0057B8', // C1 accent color
++  // Surface colors for content area
++  surfacePage: '#F5F5F7', // main page background behind cards
++  surfaceRow: '#FFFFFF', // email row default background
++  surfaceRowHover: '#FFFFFF', // same as row; distinction comes from shadow/outline
++  // Text colors
++  textInverted: '#FFFFFF', // on dark shell
++  // State colors
++  rowHoverBorder: '#D0D7E2', // thin border on hover
++  unreadPillBg: '#0057B8', // blue unread badge
++  unreadPillText: '#FFFFFF',
++  divider: '#E5E7EB',
+ };
+ 
+ const getTheme = (mode: 'light' | 'dark') => {

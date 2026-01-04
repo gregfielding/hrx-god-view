@@ -1,0 +1,879 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  TextField,
+  Box,
+  Typography,
+  Alert,
+  CircularProgress,
+  Tabs,
+  Tab,
+  IconButton,
+  InputAdornment,
+  Link,
+  Checkbox,
+  FormControlLabel,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  Email as EmailIcon,
+  Lock as LockIcon,
+  Visibility,
+  VisibilityOff,
+} from '@mui/icons-material';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile
+} from 'firebase/auth';
+import { auth, db } from '../firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
+import { useAuth } from '../contexts/AuthContext';
+import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
+import { formatPhoneNumber } from '../utils/formatPhone';
+
+interface AuthDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onAuthSuccess: () => void;
+}
+
+const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess }) => {
+  const { setCreatingUserProfile } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [activeTab, setActiveTab] = useState(0);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
+  const [recaptchaLoading, setRecaptchaLoading] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
+  const [phone, setPhone] = useState('');
+  const [smsConsent, setSmsConsent] = useState(false);
+  
+  // Refs for focus management
+  const emailRef = useRef<HTMLInputElement>(null);
+  const firstNameRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus first field when modal opens
+  useEffect(() => {
+    if (open) {
+      const timer = setTimeout(() => {
+        if (activeTab === 0 && firstNameRef.current) {
+          firstNameRef.current.focus();
+        } else if (activeTab === 1 && emailRef.current) {
+          emailRef.current.focus();
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [open, activeTab]);
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+    setError(null);
+    setSuccess(null);
+    // Focus appropriate field after tab change
+    setTimeout(() => {
+      if (newValue === 0 && firstNameRef.current) {
+        firstNameRef.current.focus();
+      } else if (newValue === 1 && emailRef.current) {
+        emailRef.current.focus();
+      }
+    }, 100);
+  };
+
+  const handleClose = () => {
+    setEmail('');
+    setPassword('');
+    setConfirmPassword('');
+    setFirstName('');
+    setLastName('');
+    setPhone('');
+    setError(null);
+    setSuccess(null);
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setRecaptchaToken(null);
+    setRecaptchaLoading(false);
+    setAgreedToTerms(false);
+    setSmsConsent(false);
+    setActiveTab(0);
+    onClose();
+  };
+
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePassword = (password: string): boolean => {
+    // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/;
+    return passwordRegex.test(password);
+  };
+
+  const executeRecaptchaVerification = async (action: string): Promise<string> => {
+    setRecaptchaLoading(true);
+    setError(null);
+    
+    try {
+      // Wait for reCAPTCHA to be ready
+      await waitForRecaptcha(10000);
+      
+      // Execute reCAPTCHA
+      const token = await executeRecaptcha(action);
+      setRecaptchaToken(token);
+      setRecaptchaLoading(false);
+      return token;
+    } catch (error: any) {
+      setRecaptchaLoading(false);
+      throw new Error(`reCAPTCHA verification failed: ${error.message}`);
+    }
+  };
+
+  const handleKeyPress = (event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      if (activeTab === 0) {
+        handleSignUp();
+      } else {
+        handleSignIn();
+      }
+    }
+  };
+
+  const handleSignUp = async () => {
+    setError(null);
+    setSuccess(null);
+
+    // Validation
+    if (!email || !password || !firstName || !lastName || !phone) {
+      setError('All fields are required');
+      return;
+    }
+
+    // Validate phone number (should be 10 digits)
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phoneDigits.length !== 10) {
+      setError('Please enter a valid 10-digit phone number');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    if (!validatePassword(password)) {
+      setError('Password must be at least 8 characters with uppercase, lowercase, and number');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    setLoading(true);
+
+    // Set flag to prevent AuthContext from creating default user document
+    setCreatingUserProfile(true);
+
+    try {
+      // Execute reCAPTCHA verification
+      await executeRecaptchaVerification('SIGNUP');
+      // Create user account
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Update user profile with display name
+      await updateProfile(user, {
+        displayName: `${firstName} ${lastName}`.trim()
+      });
+
+      // Get the tenantId from the current route (C1 tenant)
+      const isC1Route = window.location.pathname.startsWith('/c1/');
+      const tenantId = isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null;
+      
+      if (!tenantId) {
+        throw new Error('Unable to determine tenant for user registration');
+      }
+
+      // Create user profile in Firestore
+      const userProfile = {
+        uid: user.uid,
+        email: user.email,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        displayName: `${firstName} ${lastName}`.trim(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+        // Default values for new users from public jobs board
+        securityLevel: '2' as const, // Applicant level
+        role: 'Tenant' as const,
+        orgType: 'Tenant' as const,
+        activeTenantId: tenantId,
+        tenantIds: {
+          [tenantId]: {
+            role: 'Applicant',
+            securityLevel: '2'
+          }
+        },
+        isActive: true,
+        avatar: null,
+        phone: phone.replace(/\D/g, ''),
+        phoneE164: `+1${phone.replace(/\D/g, '')}`,
+        address: {
+          street: '',
+          city: '',
+          state: '',
+          zipCode: '',
+          coordinates: null
+        },
+        // Work status and eligibility
+        workStatus: 'Active',
+        workEligibility: false, // Gate that must be verified before job applications
+        dob: null, // Date of birth in YYYY-MM-DD format (nullable until provided)
+        phoneVerified: false, // Phone verification status
+        // Employment details
+        employmentType: null as string | null, // Use null; Firestore rejects undefined
+        departmentId: '',
+        divisionId: '',
+        locationId: '',
+        regionId: '',
+        managerId: '',
+        startDate: null,
+        workerId: '',
+        // Job/Profile fields
+        jobTitle: '',
+        linkedinUrl: '',
+        preferredName: '',
+        // Languages and skills
+        languages: [],
+        skills: [],
+        certifications: [],
+        // User associations
+        userGroupIds: [],
+        // Module access flags - explicitly set to false for applicants
+        crm_sales: false,
+        recruiter: false,
+        jobsBoard: false, // Module access flag for managers/admins only
+        // Job application related fields
+        applications: [],
+        favorites: [],
+        // Profile completion tracking
+        profileComplete: false,
+        onboarded: false,
+        // Public jobs board specific
+        source: 'public_jobs_board',
+        // Consent tracking
+        userAgreements: {
+          termsOfUse: {
+            agreed: true,
+            version: "2025-10-21",
+            timestamp: new Date().toISOString()
+          },
+          smsConsent: {
+            agreed: smsConsent,
+            version: "2025-10-21",
+            timestamp: smsConsent ? new Date().toISOString() : null
+          },
+          privacyPolicy: {
+            acknowledged: true,
+            version: "2025-10-21",
+            timestamp: new Date().toISOString()
+          }
+        },
+        // Default privacy and notification settings
+        locationSettings: {
+          locationSharingEnabled: true,
+          locationGranularity: 'precise',
+          locationUpdateFrequency: 'realtime',
+        },
+          notificationSettings: {
+            pushNotifications: true,
+            emailNotifications: true,
+            smsNotifications: true,
+            companionMessages: true,
+            shiftReminders: true,
+            safetyAlerts: true,
+            performanceUpdates: true,
+            quietHours: {
+              enabled: false,
+              startTime: '22:00',
+              endTime: '08:00',
+            },
+          },
+        privacySettings: {
+          profileVisibility: 'managers',
+          showContactInfo: true,
+          showLocation: true,
+          showPerformanceMetrics: true,
+          allowDataAnalytics: true,
+          allowAIInsights: true,
+        },
+      };
+
+      await setDoc(doc(db, 'users', user.uid), userProfile);
+
+      setSuccess('✅ Account created! Redirecting you to available jobs…');
+      
+      // Close dialog and refresh page state after a brief delay
+      setTimeout(() => {
+        try {
+          onAuthSuccess();
+        } catch (err) {
+          console.error('Error in onAuthSuccess callback:', err);
+        }
+        handleClose();
+      }, 2000);
+
+      // Clear flag after a longer delay to ensure AuthContext has processed
+      setTimeout(() => {
+        setCreatingUserProfile(false);
+      }, 5000);
+
+    } catch (error: any) {
+      console.error('Sign up error:', error);
+      
+      // Clear flag on error
+      setCreatingUserProfile(false);
+      
+      // Handle specific Firebase errors
+      switch (error.code) {
+        case 'auth/email-already-in-use':
+          setError('An account with this email already exists. Try signing in instead.');
+          break;
+        case 'auth/weak-password':
+          setError('Password is too weak. Please choose a stronger password.');
+          break;
+        case 'auth/invalid-email':
+          setError('Please enter a valid email address.');
+          break;
+        default:
+          setError('Failed to create account. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignIn = async () => {
+    setError(null);
+    setSuccess(null);
+
+    if (!email || !password) {
+      setError('Email and password are required');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Execute reCAPTCHA verification
+      await executeRecaptchaVerification('LOGIN');
+      
+      await signInWithEmailAndPassword(auth, email, password);
+      setSuccess('Welcome back!');
+      
+      // Close dialog and refresh page state after a brief delay
+      setTimeout(() => {
+        try {
+          onAuthSuccess();
+        } catch (err) {
+          console.error('Error in onAuthSuccess callback:', err);
+        }
+        handleClose();
+      }, 1000);
+
+    } catch (error: any) {
+      console.error('Sign in error:', error);
+      
+      // Handle specific Firebase errors
+      switch (error.code) {
+        case 'auth/user-not-found':
+          setError('No account found with this email. Please create an account first.');
+          break;
+        case 'auth/wrong-password':
+          setError('Incorrect password. Please try again.');
+          break;
+        case 'auth/invalid-email':
+          setError('Please enter a valid email address.');
+          break;
+        case 'auth/too-many-requests':
+          setError('Too many failed attempts. Please try again later.');
+          break;
+        default:
+          setError('Failed to sign in. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Please enter your email address first');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setSuccess('Password reset email sent! Check your inbox.');
+    } catch (error: any) {
+      console.error('Password reset error:', error);
+      setError('Failed to send reset email. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const switchToSignIn = () => {
+    setActiveTab(1);
+    setError(null);
+    setSuccess(null);
+    setTimeout(() => {
+      if (emailRef.current) {
+        emailRef.current.focus();
+      }
+    }, 100);
+  };
+
+  const switchToSignUp = () => {
+    setActiveTab(0);
+    setError(null);
+    setSuccess(null);
+    setTimeout(() => {
+      if (firstNameRef.current) {
+        firstNameRef.current.focus();
+      }
+    }, 100);
+  };
+
+  return (
+    <Dialog 
+      open={open} 
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      fullScreen={isMobile}
+      PaperProps={{
+        sx: { 
+          borderRadius: isMobile ? 0 : 3,
+          maxWidth: isMobile ? '100%' : '520px',
+          width: '100%',
+          m: isMobile ? 0 : 2,
+          maxHeight: isMobile ? '100%' : '90vh'
+        }
+      }}
+      aria-labelledby="auth-dialog-title"
+      aria-describedby="auth-dialog-description"
+    >
+      <DialogTitle sx={{ pb: 1, px: isMobile ? 2 : 3, pt: isMobile ? 2 : 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography 
+            variant={isMobile ? 'h6' : 'h5'} 
+            sx={{ fontWeight: 600, fontSize: isMobile ? '1.25rem' : undefined }} 
+            id="auth-dialog-title"
+          >
+            {activeTab === 0 ? 'Create Your Account' : 'Welcome Back'}
+          </Typography>
+          <IconButton 
+            onClick={handleClose} 
+            size={isMobile ? 'medium' : 'small'} 
+            aria-label="Close dialog"
+            sx={{ ml: 1 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </Box>
+      </DialogTitle>
+
+      <DialogContent sx={{ px: isMobile ? 2 : 3 }}>
+        {/* Subheader */}
+        <Typography 
+          variant="body2" 
+          sx={{ 
+            color: 'text.secondary', 
+            mb: isMobile ? 2 : 3,
+            fontSize: isMobile ? '0.875rem' : '0.95rem'
+          }}
+          id="auth-dialog-description"
+        >
+          {activeTab === 0 
+            ? 'Start applying in seconds. Save jobs and track your progress.'
+            : 'Sign in to apply for jobs, save listings, and track your applications.'
+          }
+        </Typography>
+
+        <Box sx={{ mb: isMobile ? 2 : 3 }}>
+          <Tabs 
+            value={activeTab} 
+            onChange={handleTabChange}
+            variant="fullWidth"
+            sx={{ 
+              borderBottom: 1, 
+              borderColor: 'divider',
+              '& .MuiTab-root': {
+                fontWeight: 600,
+                fontSize: isMobile ? '0.875rem' : '1rem',
+                textTransform: 'none',
+                minHeight: isMobile ? 48 : 48,
+                padding: isMobile ? '12px 8px' : '12px 16px',
+                '&.Mui-selected': {
+                  color: 'primary.main'
+                }
+              },
+              '& .MuiTabs-indicator': {
+                height: 3,
+                borderRadius: '3px 3px 0 0'
+              }
+            }}
+          >
+            <Tab label="Create Account" />
+            <Tab label="Sign In" />
+          </Tabs>
+        </Box>
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+
+        {success && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {success}
+          </Alert>
+        )}
+
+        <form onSubmit={activeTab === 0 ? handleSignUp : handleSignIn}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 2 : 2.5 }}>
+            {activeTab === 0 && (
+              <>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: isMobile ? 'column' : 'row',
+                  gap: isMobile ? 2 : 2 
+                }}>
+                  <TextField
+                    ref={firstNameRef}
+                    fullWidth
+                    label="First Name"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    disabled={loading}
+                    required
+                    onKeyPress={handleKeyPress}
+                    size={isMobile ? 'medium' : 'medium'}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Last Name"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    disabled={loading}
+                    required
+                    onKeyPress={handleKeyPress}
+                    size={isMobile ? 'medium' : 'medium'}
+                  />
+                </Box>
+              </>
+            )}
+
+            <TextField
+              ref={emailRef}
+              fullWidth
+              label="Email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+              required
+              onKeyPress={handleKeyPress}
+              size={isMobile ? 'medium' : 'medium'}
+              InputProps={{
+                startAdornment: <EmailIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />
+              }}
+            />
+
+            <TextField
+              fullWidth
+              label="Password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={loading}
+              required
+              onKeyPress={handleKeyPress}
+              size={isMobile ? 'medium' : 'medium'}
+              InputProps={{
+                startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      onClick={() => setShowPassword(!showPassword)}
+                      edge="end"
+                      disabled={loading}
+                      aria-label="toggle password visibility"
+                      size={isMobile ? 'medium' : 'small'}
+                    >
+                      {showPassword ? <VisibilityOff /> : <Visibility />}
+                    </IconButton>
+                  </InputAdornment>
+                )
+              }}
+              helperText={activeTab === 0 ? "At least 8 characters, including uppercase, lowercase, and a number." : ""}
+            />
+
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label="Confirm Password"
+                type={showConfirmPassword ? 'text' : 'password'}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={loading}
+                required
+                onKeyPress={handleKeyPress}
+                size={isMobile ? 'medium' : 'medium'}
+                InputProps={{
+                  startAdornment: <LockIcon sx={{ mr: 1, color: 'text.secondary', opacity: 0.7 }} />,
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        edge="end"
+                        disabled={loading}
+                        aria-label="toggle confirm password visibility"
+                        size={isMobile ? 'medium' : 'small'}
+                      >
+                        {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
+                      </IconButton>
+                    </InputAdornment>
+                  )
+                }}
+              />
+            )}
+
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                label="Phone Number"
+                type="tel"
+                value={phone}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, '');
+                  if (digits.length <= 10) {
+                    const formatted = digits.length === 10 
+                      ? formatPhoneNumber(digits)
+                      : digits;
+                    setPhone(formatted);
+                  }
+                }}
+                disabled={loading}
+                required
+                onKeyPress={handleKeyPress}
+                size={isMobile ? 'medium' : 'medium'}
+                placeholder="(555) 123-4567"
+                helperText="We'll use this to send you job updates and verification codes."
+              />
+            )}
+
+          {activeTab === 0 && (
+            <Box sx={{ mt: isMobile ? 1 : 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={smsConsent}
+                    onChange={(e) => setSmsConsent(e.target.checked)}
+                    required
+                    size={isMobile ? 'medium' : 'small'}
+                  />
+                }
+                label={
+                  <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
+                    By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to job applications, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+                  </Typography>
+                }
+              />
+            </Box>
+          )}
+
+          {activeTab === 0 && (
+            <Box sx={{ mt: isMobile ? 1 : 2 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={agreedToTerms}
+                    onChange={(e) => setAgreedToTerms(e.target.checked)}
+                    required
+                    size={isMobile ? 'medium' : 'small'}
+                  />
+                }
+                label={
+                  <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
+                    I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>.
+                  </Typography>
+                }
+              />
+              <Typography 
+                variant="body2" 
+                color="text.secondary" 
+                sx={{ mt: 1, ml: isMobile ? 5 : 4, fontSize: isMobile ? '0.75rem' : undefined }}
+              >
+                By creating an account, you acknowledge that you have read our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+              </Typography>
+            </Box>
+          )}
+
+          {activeTab === 1 && (
+            <Box sx={{ textAlign: 'right' }}>
+              <Link
+                component="button"
+                variant="body2"
+                onClick={handleForgotPassword}
+                disabled={loading || !email}
+                sx={{ 
+                  textDecoration: 'none',
+                  '&:hover': { textDecoration: 'underline' },
+                  opacity: loading || !email ? 0.6 : 1
+                }}
+              >
+                Forgot your password?
+              </Link>
+            </Box>
+          )}
+          </Box>
+        </form>
+      </DialogContent>
+
+      <DialogActions sx={{ 
+        px: isMobile ? 2 : 3, 
+        pb: isMobile ? 3 : 3, 
+        pt: isMobile ? 2 : 2,
+        flexDirection: 'column', 
+        gap: isMobile ? 2 : 2 
+      }}>
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: isMobile ? 'column-reverse' : 'row',
+          justifyContent: 'flex-end', 
+          gap: isMobile ? 1.5 : 2, 
+          width: '100%' 
+        }}>
+          <Button 
+            onClick={handleClose} 
+            disabled={loading}
+            variant="outlined"
+            fullWidth={isMobile}
+            sx={{ 
+              minWidth: isMobile ? '100%' : 100,
+              py: isMobile ? 1.5 : undefined
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={activeTab === 0 ? handleSignUp : handleSignIn}
+            variant="contained"
+            disabled={
+              loading || 
+              recaptchaLoading || 
+              (activeTab === 0 && (!agreedToTerms || !smsConsent || !firstName.trim() || !lastName.trim() || !email.trim() || !password.trim() || !phone.trim() || password !== confirmPassword))
+            }
+            startIcon={(loading || recaptchaLoading) ? <CircularProgress size={20} /> : null}
+            fullWidth={isMobile}
+            sx={{ 
+              minWidth: isMobile ? '100%' : 140,
+              py: isMobile ? 1.5 : undefined
+            }}
+          >
+            {recaptchaLoading ? 'Verifying...' : loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
+          </Button>
+        </Box>
+
+        {/* Optional statement for SMS consent */}
+        {activeTab === 0 && (
+          <Box sx={{ textAlign: 'center', width: '100%', pt: 1 }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.75rem' : '0.8rem' }}>
+              Consent to receive text messages is not a condition of employment.
+            </Typography>
+          </Box>
+        )}
+
+        {/* Footer microcopy */}
+        <Box sx={{ textAlign: 'center', width: '100%', pt: isMobile ? 1 : 0 }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.875rem' : undefined }}>
+            {activeTab === 0 ? (
+              <>
+                Already have an account?{' '}
+                <Link
+                  component="button"
+                  onClick={switchToSignIn}
+                  sx={{ 
+                    textDecoration: 'none',
+                    '&:hover': { textDecoration: 'underline' },
+                    fontWeight: 500,
+                    fontSize: isMobile ? '0.875rem' : undefined
+                  }}
+                >
+                  Sign in
+                </Link>
+              </>
+            ) : (
+              <>
+                Don't have an account yet?{' '}
+                <Link
+                  component="button"
+                  onClick={switchToSignUp}
+                  sx={{ 
+                    textDecoration: 'none',
+                    '&:hover': { textDecoration: 'underline' },
+                    fontWeight: 500,
+                    fontSize: isMobile ? '0.875rem' : undefined
+                  }}
+                >
+                  Create one here
+                </Link>
+              </>
+            )}
+          </Typography>
+        </Box>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+export default AuthDialog;
