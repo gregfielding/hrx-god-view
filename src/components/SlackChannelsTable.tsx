@@ -19,7 +19,6 @@ import {
   IconButton,
   Avatar,
   Tooltip,
-  TablePagination,
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
@@ -28,6 +27,7 @@ import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined
 import DeleteIcon from '@mui/icons-material/Delete';
 import { SlackChannelView } from '../types/slackChannels';
 import { getChannelColor, isRecentlyActive } from '../utils/slackChannelUtils';
+import StandardTablePagination from './StandardTablePagination';
 
 interface SlackChannelsTableProps {
   channels: SlackChannelView[];
@@ -333,9 +333,8 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
           })}
         </TableBody>
       </Table>
-      {/* Inbox-standard footer (TablePagination) */}
-      <TablePagination
-        component="div"
+      {/* Inbox-standard footer */}
+      <StandardTablePagination
         count={channels.length}
         page={page}
         onPageChange={(_, newPage) => setPage(newPage)}
@@ -344,8 +343,7 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
           setRowsPerPage(parseInt(e.target.value, 10));
           setPage(0);
         }}
-        rowsPerPageOptions={[10, 20, 50, 100]}
-        sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
+        sx={{ flexShrink: 0 }}
       />
     </TableContainer>
   );

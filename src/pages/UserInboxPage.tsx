@@ -29,7 +29,6 @@ import {
   DialogContent,
   DialogActions,
   Button,
-  TablePagination,
   Avatar,
   List,
   ListItem,
@@ -62,6 +61,7 @@ import InboxFilters, { InboxFilter } from '../components/InboxFilters';
 import InboxSearchBar from '../components/InboxSearchBar';
 import PageHeader from '../components/PageHeader';
 import ContactHoverCard from '../components/ContactHoverCard';
+import StandardTablePagination from '../components/StandardTablePagination';
 import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useNavigate } from 'react-router-dom';
@@ -2255,10 +2255,9 @@ const UserInboxPage: React.FC = () => {
                           </List>
                         </>
                       )}
-                      {/* Mobile Pagination */}
+                      {/* Mobile Pagination (Inbox-standard) */}
                       {filteredEmailThreads.length > 0 && (
-                        <TablePagination
-                          component="div"
+                        <StandardTablePagination
                           count={filteredEmailThreads.length}
                           page={page}
                           onPageChange={(_, newPage) => setPage(newPage)}
@@ -2267,11 +2266,8 @@ const UserInboxPage: React.FC = () => {
                             setRowsPerPage(parseInt(e.target.value, 10));
                             setPage(0);
                           }}
-                          rowsPerPageOptions={[10, 20, 50, 100]}
                           sx={{ 
                             flexShrink: 0, 
-                            borderTop: 1, 
-                            borderColor: 'divider',
                             px: 1,
                           }}
                         />
@@ -2861,8 +2857,7 @@ const UserInboxPage: React.FC = () => {
                   </TableBody>
                 </Table>
                 {activeTab === 'email' && gmailConnected && (
-              <TablePagination
-                component="div"
+              <StandardTablePagination
                 count={filteredEmailThreads.length}
                 page={page}
                 onPageChange={(_, newPage) => setPage(newPage)}
@@ -2871,8 +2866,7 @@ const UserInboxPage: React.FC = () => {
                   setRowsPerPage(parseInt(e.target.value, 10));
                   setPage(0);
                 }}
-                    rowsPerPageOptions={[10, 20, 50, 100]}
-                    sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
+                    sx={{ flexShrink: 0 }}
                   />
                 )}
                     </TableContainer>
