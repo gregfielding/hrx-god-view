@@ -248,7 +248,8 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
     // Determine new status: if currently watching, set to unlinked; otherwise set to watching
     const newStatus: SlackChannelStatus = channel.status === 'watching' ? 'unlinked' : 'watching';
     const isWatched = newStatus === 'watching';
-    const isMuted = newStatus === 'muted';
+    // newStatus can only be 'watching' or 'unlinked' in this toggle
+    const isMuted = false;
 
     try {
       const channelRef = doc(db, 'tenants', activeTenantId, 'slackChannels', channelId);

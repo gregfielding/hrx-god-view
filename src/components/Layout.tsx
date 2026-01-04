@@ -998,7 +998,6 @@ const Layout: React.FC = React.memo(function Layout() {
                           },
                         },
                       },
-                      transition: 'color 0.15s ease',
                     }}
                   >
                     <ListItemIcon
@@ -1074,7 +1073,6 @@ const Layout: React.FC = React.memo(function Layout() {
                       '&.Mui-focusVisible': {
                         backgroundColor: 'transparent !important',
                       },
-                      transition: 'color 0.15s ease',
                     }}
                   >
                     <ListItemIcon
@@ -1197,7 +1195,6 @@ const Layout: React.FC = React.memo(function Layout() {
                           },
                         },
                       },
-                      transition: 'color 0.15s ease',
                     }}
                   >
                     <ListItemIcon

@@ -89,6 +89,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   threadId,
   onSend,
   onMessageSent,
+  onOptimisticMessage,
 }) => {
   const { user, activeTenant } = useAuth();
   const effectiveTenantId = tenantId || activeTenant?.id || '';

@@ -31,10 +31,11 @@ const SlackPage: React.FC = () => {
   const effectiveTenantId = activeTenant?.id || '';
   
   // Ensure user object has activeTenantId and tenantIds for security check
+  const userAny = user as any;
   const userWithTenant = user ? {
-    ...user,
-    activeTenantId: user.activeTenantId || activeTenant?.id,
-    tenantIds: user.tenantIds || (activeTenant?.id ? {
+    ...userAny,
+    activeTenantId: userAny.activeTenantId || activeTenant?.id,
+    tenantIds: userAny.tenantIds || (activeTenant?.id ? {
       [activeTenant.id]: {
         securityLevel: currentClaimsSecurityLevel || securityLevel,
       }
@@ -151,7 +152,6 @@ const SlackPage: React.FC = () => {
       display: 'flex', 
       flexDirection: 'column', 
       height: 'calc(100vh - 64px)',
-      bgcolor: 'grey.50',
     }}>
       {/* Page Header with Standardized Layout */}
       <PageHeader
@@ -180,7 +180,9 @@ const SlackPage: React.FC = () => {
                 maxWidth: { md: 420 },
                 '& .MuiOutlinedInput-root': {
                   fontSize: '14px',
-                },
+                  height: '40px', // Inbox standard
+                  borderRadius: '24px', // Inbox standard
+                }
               }}
             />
             {canManageChannels && (
@@ -206,7 +208,7 @@ const SlackPage: React.FC = () => {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {isBackfilling ? 'Syncing…' : 'Sync channels from Slack'}
+                {isBackfilling ? 'Syncing…' : 'Sync'}
               </Button>
             )}
           </Box>
@@ -244,7 +246,16 @@ const SlackPage: React.FC = () => {
       </Snackbar>
 
       {/* Content Area */}
-      <Box sx={{ flex: 1, overflow: 'auto', px: { xs: 2, md: 3 }, pt: 1.5 }}>
+      <Box
+        sx={{
+          flex: 1,
+          overflow: 'auto',
+          // Inbox standard: content is slightly less padded than the header
+          px: 1,
+          pt: 0,
+          pb: 1,
+        }}
+      >
         {loading ? (
           <SlackChannelsSkeleton />
         ) : channels.length === 0 ? (

@@ -14,10 +14,13 @@ interface SlackMappingsPanelProps {
 
 const SlackMappingsPanel: React.FC<SlackMappingsPanelProps> = ({ tenantId }) => {
   return (
-    <Paper elevation={1} sx={{ p: 3, borderRadius: 0 }}>
+    <Paper elevation={1} sx={{ px: 2, py: 3, borderRadius: 0 }}>
       <SlackMappingsTab tenantId={tenantId} />
     </Paper>
   );
 };
 
 export default SlackMappingsPanel;
+
+
+

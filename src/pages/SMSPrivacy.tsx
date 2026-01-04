@@ -181,3 +181,4 @@ const SMSPrivacy: React.FC = () => {
 
 export default SMSPrivacy;
 
+

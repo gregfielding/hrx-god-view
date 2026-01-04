@@ -303,3 +303,4 @@ const GIFPicker: React.FC<GIFPickerProps> = ({ open, onClose, onGIFSelect }) => 
 
 export default GIFPicker;
 
+

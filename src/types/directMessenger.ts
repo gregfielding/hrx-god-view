@@ -16,9 +16,11 @@ export interface DMParticipantMeta {
 }
 
 /**
- * Alias for compatibility
+ * UI-facing participant meta (includes uid)
  */
-export type ParticipantMeta = DMParticipantMeta;
+export interface ParticipantMeta extends DMParticipantMeta {
+  uid: string;
+}
 
 /**
  * DM Thread document structure

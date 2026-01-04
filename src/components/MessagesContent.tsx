@@ -287,7 +287,7 @@ const MessagesContent: React.FC<MessagesContentProps> = ({
                 uid: user?.uid || '',
                 activeTenantId: activeTenant?.id,
                 securityLevel: currentClaimsSecurityLevel || securityLevel,
-                tenantIds: user?.tenantIds ? { [activeTenant?.id || '']: { securityLevel: currentClaimsSecurityLevel || securityLevel } } : undefined,
+                tenantIds: (user as any)?.tenantIds ? { [activeTenant?.id || '']: { securityLevel: currentClaimsSecurityLevel || securityLevel } } : undefined,
               });
 
               return (

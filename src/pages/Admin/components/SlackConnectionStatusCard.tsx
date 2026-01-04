@@ -4,7 +4,7 @@
  * Displays workspace connection status, bot info, and last event timestamp.
  */
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   Box,
   Typography,
@@ -18,96 +18,19 @@ import {
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import WarningIcon from '@mui/icons-material/Warning';
-import { collection, query, where, orderBy, limit, getDocs, getDoc, doc } from 'firebase/firestore';
-import { db } from '../../../firebase';
-
-interface SlackConnectionStatus {
-  workspaceName: string | null;
-  botName: string;
-  installed: boolean;
-  lastEventAt: Date | null;
-  teamId: string | null;
-}
+import { useSlackIntegration } from '../../../hooks/useSlackIntegration';
 
 interface SlackConnectionStatusCardProps {
   tenantId: string;
 }
 
 const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ tenantId }) => {
-  const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState<SlackConnectionStatus>({
-    workspaceName: null,
-    botName: 'HRX Messaging Bridge',
-    installed: false,
-    lastEventAt: null,
-    teamId: null,
-  });
-  const [error, setError] = useState<string | null>(null);
+  const { loading, error, team } = useSlackIntegration();
 
-  useEffect(() => {
-    loadConnectionStatus();
-  }, [tenantId]);
-
-  const loadConnectionStatus = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      // Query slackTeams collection for this tenant
-      const slackTeamsRef = collection(db, 'slackTeams');
-      const teamsQuery = query(
-        slackTeamsRef,
-        where('tenantId', '==', tenantId),
-        limit(1)
-      );
-      const teamsSnapshot = await getDocs(teamsQuery);
-
-      let workspaceName: string | null = null;
-      let teamId: string | null = null;
-      let installed = false;
-
-      if (!teamsSnapshot.empty) {
-        const teamData = teamsSnapshot.docs[0].data();
-        workspaceName = teamData.teamName || teamData.name || null;
-        teamId = teamsSnapshot.docs[0].id;
-        installed = teamData.status === 'active' || !!teamData.tenantId;
-      }
-
-      // Query slack_messages for last event
-      const messagesRef = collection(db, 'slack_messages');
-      const messagesQuery = query(
-        messagesRef,
-        where('tenantId', '==', tenantId),
-        orderBy('createdAt', 'desc'),
-        limit(1)
-      );
-      const messagesSnapshot = await getDocs(messagesQuery);
-
-      let lastEventAt: Date | null = null;
-      if (!messagesSnapshot.empty) {
-        const messageData = messagesSnapshot.docs[0].data();
-        if (messageData.createdAt) {
-          lastEventAt = messageData.createdAt.toDate();
-        }
-      }
-
-      setStatus({
-        workspaceName,
-        botName: 'HRX Messaging Bridge',
-        installed,
-        lastEventAt,
-        teamId,
-      });
-    } catch (err: any) {
-      console.error('Error loading Slack connection status:', err);
-      setError(err.message || 'Failed to load connection status');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const isConnected = !!team && team.status === 'active';
 
   const getStatusChip = () => {
-    if (!status.installed) {
+    if (!isConnected) {
       return (
         <Chip
           icon={<ErrorIcon />}
@@ -118,7 +41,7 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
       );
     }
 
-    if (!status.lastEventAt) {
+    if (!team?.lastEventTs) {
       return (
         <Chip
           icon={<WarningIcon />}
@@ -129,7 +52,11 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
       );
     }
 
-    const daysSinceLastEvent = (Date.now() - status.lastEventAt.getTime()) / (1000 * 60 * 60 * 24);
+    // Parse lastEventTs (Slack timestamp format: "1234567890.123456")
+    const lastEventTimestamp = team.lastEventTs.split('.')[0];
+    const lastEventDate = new Date(Number(lastEventTimestamp) * 1000);
+    const daysSinceLastEvent = (Date.now() - lastEventDate.getTime()) / (1000 * 60 * 60 * 24);
+    
     if (daysSinceLastEvent > 7) {
       return (
         <Chip
@@ -153,7 +80,7 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
 
   if (loading) {
     return (
-      <Paper elevation={1} sx={{ p: 3, borderRadius: 0 }}>
+      <Paper elevation={1} sx={{ px: 2, py: 3, borderRadius: 0 }}>
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
           <CircularProgress />
         </Box>
@@ -188,7 +115,7 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
             Workspace
           </Typography>
           <Typography variant="body1">
-            {status.workspaceName || 'Unknown'}
+            {team?.teamName || 'Unknown'}
           </Typography>
         </Box>
 
@@ -197,17 +124,17 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
             Bot Name
           </Typography>
           <Typography variant="body1">
-            {status.botName}
+            {team?.botDisplayName || 'HRX Messaging Bridge'}
           </Typography>
         </Box>
 
-        {status.teamId && (
+        {team?.teamId && (
           <Box>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               Team ID
             </Typography>
             <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-              {status.teamId}
+              {team.teamId}
             </Typography>
           </Box>
         )}
@@ -218,9 +145,13 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
           <Typography variant="body2" color="text.secondary" gutterBottom>
             Last Event
           </Typography>
-          {status.lastEventAt ? (
+          {team?.lastEventTs ? (
             <Typography variant="body1">
-              {status.lastEventAt.toLocaleString()}
+              {(() => {
+                // Parse Slack timestamp (format: "1234567890.123456")
+                const timestamp = team.lastEventTs.split('.')[0];
+                return new Date(Number(timestamp) * 1000).toLocaleString();
+              })()}
             </Typography>
           ) : (
             <Typography variant="body2" color="text.secondary">
@@ -234,4 +165,6 @@ const SlackConnectionStatusCard: React.FC<SlackConnectionStatusCardProps> = ({ t
 };
 
 export default SlackConnectionStatusCard;
+
+
 

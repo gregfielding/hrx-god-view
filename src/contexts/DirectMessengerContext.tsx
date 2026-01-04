@@ -21,7 +21,7 @@ interface DirectMessengerContextType {
   mode: DirectMessengerMode; // For mobile: 'list' or 'conversation'
   openMessenger: () => void;
   closeMessenger: () => void;
-  openThreadForUser: (userId: string) => Promise<void>;
+  openThreadForUser: (userId: string, userData?: DMParticipantMeta) => Promise<void>;
   setPane: (pane: DirectMessengerPane) => void;
   setMode: (mode: DirectMessengerMode) => void;
   setActiveThreadId: (threadId: string | null) => void;

@@ -137,7 +137,7 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
         flexDirection: 'row', 
         gap: 0.5, 
         alignItems: 'center', 
-        flexWrap: isMdAndUp ? 'nowrap' : 'wrap' // No wrap on MD+ screens, wrap on smaller screens
+        flexWrap: 'nowrap', // Never wrap: PageHeader handles horizontal scrolling
       }}>
         {/* Gmail Categories - only show when email tab is active */}
         {showCategories && (

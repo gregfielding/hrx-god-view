@@ -19,6 +19,7 @@ import {
   IconButton,
   Avatar,
   Tooltip,
+  TablePagination,
 } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
@@ -45,6 +46,17 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
   isAdmin = false,
   onRowClick,
 }) => {
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(20);
+
+  React.useEffect(() => {
+    setPage(0);
+  }, [channels.length]);
+
+  const visibleChannels = React.useMemo(() => {
+    return channels.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  }, [channels, page, rowsPerPage]);
+
   const formatDate = (date: Date | null | undefined): string => {
     if (!date) return '';
     const now = new Date();
@@ -62,18 +74,24 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
 
 
   return (
-    <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1 }}>
-      <Table>
+    <TableContainer
+      component={Paper}
+      variant="outlined"
+      sx={{
+        borderRadius: 2, // Inbox standard
+      }}
+    >
+      <Table stickyHeader size="small">
         <TableHead>
           <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Channel</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>Latest Activity</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>Linked To</TableCell>
-            <TableCell align="right" sx={{ fontWeight: 600 }}>Actions</TableCell>
+            <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Channel</TableCell>
+            <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Latest Activity</TableCell>
+            <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Linked To</TableCell>
+            <TableCell align="right" sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Actions</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {channels.map((channel) => {
+          {visibleChannels.map((channel) => {
             const channelColor = getChannelColor(channel.name);
             const recentlyActive = isRecentlyActive(channel.lastMessageAt);
             const isMuted = channel.isMuted;
@@ -86,8 +104,10 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                 sx={{ 
                   cursor: 'pointer',
                   opacity: isMuted ? 0.7 : 1,
+                  // Inbox-style subtle striping + compact density
+                  '&:nth-of-type(odd)': { bgcolor: 'rgba(0,0,0,0.02)' },
                   '&:hover': {
-                    bgcolor: 'action.hover',
+                    bgcolor: 'rgba(0, 0, 0, 0.02)', // Inbox hover style
                   }
                 }}
               >
@@ -313,6 +333,20 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
           })}
         </TableBody>
       </Table>
+      {/* Inbox-standard footer (TablePagination) */}
+      <TablePagination
+        component="div"
+        count={channels.length}
+        page={page}
+        onPageChange={(_, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(e) => {
+          setRowsPerPage(parseInt(e.target.value, 10));
+          setPage(0);
+        }}
+        rowsPerPageOptions={[10, 20, 50, 100]}
+        sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
+      />
     </TableContainer>
   );
 };

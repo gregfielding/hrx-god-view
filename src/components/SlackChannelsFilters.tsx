@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Box, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
+import { Box, Button, TextField, Typography } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import { SlackChannelsFilter } from '../types/slackChannels';
 
@@ -22,6 +22,30 @@ const SlackChannelsFilters: React.FC<SlackChannelsFiltersProps> = ({
   totalCount,
   showSearch = true,
 }) => {
+  const chipSx = (selected: boolean) => ({
+    textTransform: 'none',
+    borderRadius: '999px',
+    fontSize: '14px',
+    fontWeight: selected ? 600 : 500,
+    px: 2,
+    py: 0.75,
+    minWidth: 'auto',
+    whiteSpace: 'nowrap',
+    boxShadow: 'none',
+    border: 'none',
+    ...(selected
+      ? {
+          bgcolor: '#0057B8',
+          color: '#FFFFFF',
+          '&:hover': { bgcolor: '#004a9f' },
+        }
+      : {
+          bgcolor: 'rgba(0, 0, 0, 0.06)',
+          color: 'rgba(0, 0, 0, 0.78)',
+          '&:hover': { bgcolor: 'rgba(0, 0, 0, 0.10)' },
+        }),
+  });
+
   return (
     <Box sx={{ 
       display: 'flex', 
@@ -36,103 +60,40 @@ const SlackChannelsFilters: React.FC<SlackChannelsFiltersProps> = ({
       <Box sx={{ 
         display: 'flex', 
         flexDirection: { xs: 'column', sm: 'row' },
-        gap: 0.5, // 4px between filter groups (consistent with Inbox)
+        gap: 1, // Inbox chip spacing
         flex: showSearch ? 1 : 'none',
+        minWidth: 0,
+        flexWrap: 'nowrap',
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        WebkitOverflowScrolling: 'touch',
+        pr: 2,
+        scrollbarWidth: 'none',
+        '&::-webkit-scrollbar': { display: 'none' },
       }}>
-        {/* Watch Status Segmented Control */}
-        <ToggleButtonGroup
-          value={filter.watchFilter}
-          exclusive
-          onChange={(_, value) => {
-            if (value !== null) {
-              onChangeFilter({ watchFilter: value });
-            }
-          }}
-          size="small"
-          sx={{ 
-            height: 36,
-            gap: 0, // Remove default spacing within group
-            '& .MuiToggleButton-root': {
-              borderRadius: '999px',
-              fontSize: '14px',
-              fontWeight: 400,
-              px: 1.5, // 12-16px horizontal padding
-              py: 0.75, // 6-8px vertical padding
-              textTransform: 'none',
-              border: 'none',
-              bgcolor: 'rgba(0, 0, 0, 0.04)',
-              color: 'rgba(0, 0, 0, 0.7)',
-              marginLeft: 0, // Remove any default margin
-              marginRight: 0,
-              '&:not(:first-of-type)': {
-                marginLeft: 0.5, // Add consistent spacing between buttons in group
-              },
-              '&:hover': {
-                bgcolor: 'rgba(0, 0, 0, 0.08)',
-              },
-              '&.Mui-selected': {
-                bgcolor: '#0057B8',
-                color: 'white',
-                fontWeight: 500,
-                '&:hover': {
-                  bgcolor: '#004a9f',
-                },
-              },
-            },
-          }}
-        >
-          <ToggleButton value="all">All</ToggleButton>
-          <ToggleButton value="watched">Watched</ToggleButton>
-          <ToggleButton value="unwatched">Unwatched</ToggleButton>
-          <ToggleButton value="muted">Muted</ToggleButton>
-        </ToggleButtonGroup>
+        {/* Watch Filter (Inbox-style chips) */}
+        {(['all', 'watched', 'unwatched', 'muted'] as const).map((v) => (
+          <Button
+            key={v}
+            variant="contained"
+            onClick={() => onChangeFilter({ watchFilter: v })}
+            sx={chipSx(filter.watchFilter === v)}
+          >
+            {v === 'all' ? 'All' : v === 'watched' ? 'Watched' : v === 'unwatched' ? 'Unwatched' : 'Muted'}
+          </Button>
+        ))}
 
-        {/* Activity Filter */}
-        <ToggleButtonGroup
-          value={filter.activityFilter}
-          exclusive
-          onChange={(_, value) => {
-            if (value !== null) {
-              onChangeFilter({ activityFilter: value });
-            }
-          }}
-          size="small"
-          sx={{ 
-            height: 36,
-            gap: 0, // Remove default spacing within group
-            '& .MuiToggleButton-root': {
-              borderRadius: '999px',
-              fontSize: '14px',
-              fontWeight: 400,
-              px: 1.5,
-              py: 0.75,
-              textTransform: 'none',
-              border: 'none',
-              bgcolor: 'rgba(0, 0, 0, 0.04)',
-              color: 'rgba(0, 0, 0, 0.7)',
-              marginLeft: 0, // Remove any default margin
-              marginRight: 0,
-              '&:not(:first-of-type)': {
-                marginLeft: 0.5, // Add consistent spacing between buttons in group
-              },
-              '&:hover': {
-                bgcolor: 'rgba(0, 0, 0, 0.08)',
-              },
-              '&.Mui-selected': {
-                bgcolor: '#0057B8',
-                color: 'white',
-                fontWeight: 500,
-                '&:hover': {
-                  bgcolor: '#004a9f',
-                },
-              },
-            },
-          }}
-        >
-          <ToggleButton value="all">Any Activity</ToggleButton>
-          <ToggleButton value="active">Active</ToggleButton>
-          <ToggleButton value="quiet">Quiet</ToggleButton>
-        </ToggleButtonGroup>
+        {/* Activity Filter (Inbox-style chips) */}
+        {(['all', 'active', 'quiet'] as const).map((v) => (
+          <Button
+            key={v}
+            variant="contained"
+            onClick={() => onChangeFilter({ activityFilter: v })}
+            sx={chipSx(filter.activityFilter === v)}
+          >
+            {v === 'all' ? 'Any Activity' : v === 'active' ? 'Active' : 'Quiet'}
+          </Button>
+        ))}
       </Box>
 
       {/* Right: Search and Count (only if showSearch is true) */}

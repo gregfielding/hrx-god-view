@@ -37,3 +37,4 @@ export function isRecentlyActive(lastMessageAt: Date | null | undefined): boolea
   return diffMins < 3;
 }
 
+

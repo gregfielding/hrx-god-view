@@ -1,0 +1,298 @@
+/**
+ * Legacy Message Helpers
+ * 
+ * Helper functions that wrap the unified messaging orchestrator for legacy code paths.
+ * These maintain backward compatibility while modernizing under the hood.
+ * 
+ * Phase 3: Route all legacy SMS through orchestrator
+ */
+
+import { logger } from 'firebase-functions/v2';
+import { sendMessage, MessageContext } from './routingOrchestrator';
+
+/**
+ * Send legacy application status message
+ * Wraps orchestrator.sendMessage() for backward compatibility
+ */
+export async function sendLegacyApplicationStatusMessage(args: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  message: string;
+  source: 'application_created' | 'application_status_changed';
+  sourceId?: string;
+  applicationId?: string;
+  status?: string;
+}): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
+  try {
+    // Map source to message type
+    let messageTypeId = 'application_received';
+    if (args.source === 'application_status_changed') {
+      if (args.status === 'screened') messageTypeId = 'application_screened';
+      else if (args.status === 'advanced') messageTypeId = 'application_advanced';
+      else if (args.status === 'hired') messageTypeId = 'application_hired';
+      else if (args.status === 'rejected') messageTypeId = 'application_rejected';
+      else messageTypeId = 'application_status_update';
+    }
+    
+    const result = await sendMessage({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      messageTypeId,
+      variables: {
+        // Pass raw message if template not found
+        _rawMessage: args.message,
+      },
+      metadata: {
+        applicationId: args.applicationId,
+        status: args.status,
+      },
+      source: 'system',
+      sourceId: args.sourceId,
+    });
+    
+    // Convert orchestrator result to legacy format
+    const smsResult = result.deliveryResults.find(r => r.channel === 'sms');
+    if (smsResult) {
+      return {
+        success: smsResult.success,
+        messageId: smsResult.messageId || null,
+        status: smsResult.status || 'unknown',
+        error: smsResult.error,
+      };
+    }
+    
+    return {
+      success: result.success,
+      messageId: null,
+      status: result.success ? 'sent' : 'failed',
+      error: result.routingDecision.reason,
+    };
+  } catch (error: any) {
+    logger.error(`Error sending legacy application message:`, error);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Send legacy group/bulk message
+ * Wraps orchestrator.sendMessage() for backward compatibility
+ */
+export async function sendLegacyGroupMessage(args: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  message: string;
+  source?: string;
+  sourceId?: string;
+}): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
+  try {
+    const result = await sendMessage({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      messageTypeId: 'bulk_message',
+      variables: {
+        _rawMessage: args.message,
+      },
+      metadata: {},
+      source: args.source || 'system',
+      sourceId: args.sourceId,
+    });
+    
+    const smsResult = result.deliveryResults.find(r => r.channel === 'sms');
+    if (smsResult) {
+      return {
+        success: smsResult.success,
+        messageId: smsResult.messageId || null,
+        status: smsResult.status || 'unknown',
+        error: smsResult.error,
+      };
+    }
+    
+    return {
+      success: result.success,
+      messageId: null,
+      status: result.success ? 'sent' : 'failed',
+      error: result.routingDecision.reason,
+    };
+  } catch (error: any) {
+    logger.error(`Error sending legacy group message:`, error);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Send legacy shift reminder/notification
+ * Wraps orchestrator.sendMessage() for backward compatibility
+ */
+export async function sendLegacyShiftMessage(args: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  message: string;
+  messageTypeId?: string;
+  source?: string;
+  sourceId?: string;
+  shiftId?: string;
+}): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
+  try {
+    const result = await sendMessage({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      messageTypeId: args.messageTypeId || 'shift_reminder',
+      variables: {
+        _rawMessage: args.message,
+      },
+      metadata: {
+        shiftId: args.shiftId,
+      },
+      source: args.source || 'system',
+      sourceId: args.sourceId,
+    });
+    
+    const smsResult = result.deliveryResults.find(r => r.channel === 'sms');
+    if (smsResult) {
+      return {
+        success: smsResult.success,
+        messageId: smsResult.messageId || null,
+        status: smsResult.status || 'unknown',
+        error: smsResult.error,
+      };
+    }
+    
+    return {
+      success: result.success,
+      messageId: null,
+      status: result.success ? 'sent' : 'failed',
+      error: result.routingDecision.reason,
+    };
+  } catch (error: any) {
+    logger.error(`Error sending legacy shift message:`, error);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Send legacy broadcast message
+ * Wraps orchestrator.sendMessage() for backward compatibility
+ */
+export async function sendLegacyBroadcastMessage(args: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  message: string;
+  broadcastId: string;
+}): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
+  try {
+    const result = await sendMessage({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      messageTypeId: 'broadcast',
+      variables: {
+        _rawMessage: args.message,
+      },
+      metadata: {
+        broadcastId: args.broadcastId,
+      },
+      source: 'system',
+      sourceId: args.broadcastId,
+    });
+    
+    const smsResult = result.deliveryResults.find(r => r.channel === 'sms');
+    if (smsResult) {
+      return {
+        success: smsResult.success,
+        messageId: smsResult.messageId || null,
+        status: smsResult.status || 'unknown',
+        error: smsResult.error,
+      };
+    }
+    
+    return {
+      success: result.success,
+      messageId: null,
+      status: result.success ? 'sent' : 'failed',
+      error: result.routingDecision.reason,
+    };
+  } catch (error: any) {
+    logger.error(`Error sending legacy broadcast message:`, error);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+
+/**
+ * Send legacy assignment message
+ * Wraps orchestrator.sendMessage() for backward compatibility
+ */
+export async function sendLegacyAssignmentMessage(args: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  message: string;
+  messageTypeId?: string;
+  source?: string;
+  sourceId?: string;
+  assignmentId?: string;
+}): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
+  try {
+    const result = await sendMessage({
+      tenantId: args.tenantId,
+      userId: args.userId,
+      messageTypeId: args.messageTypeId || 'assignment_created',
+      variables: {
+        _rawMessage: args.message,
+      },
+      metadata: {
+        assignmentId: args.assignmentId,
+      },
+      source: args.source || 'system',
+      sourceId: args.sourceId,
+    });
+    
+    const smsResult = result.deliveryResults.find(r => r.channel === 'sms');
+    if (smsResult) {
+      return {
+        success: smsResult.success,
+        messageId: smsResult.messageId || null,
+        status: smsResult.status || 'unknown',
+        error: smsResult.error,
+      };
+    }
+    
+    return {
+      success: result.success,
+      messageId: null,
+      status: result.success ? 'sent' : 'failed',
+      error: result.routingDecision.reason,
+    };
+  } catch (error: any) {
+    logger.error(`Error sending legacy assignment message:`, error);
+    return {
+      success: false,
+      messageId: null,
+      status: 'failed',
+      error: error.message || 'Unknown error',
+    };
+  }
+}
+

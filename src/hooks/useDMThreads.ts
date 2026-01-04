@@ -88,7 +88,7 @@ export function useDMThreads({
             fromCache: snapshot.metadata.fromCache,
           });
           // Filter by status client-side (active only)
-          const threadsList: DMThreadView[] = snapshot.docs
+          const threadsList = snapshot.docs
             .filter((doc) => {
               const data = doc.data() as DMThread;
               return (data.status || 'active') === 'active'; // Default to active if not set
@@ -127,7 +127,8 @@ export function useDMThreads({
               isPinned: data.pinnedBy?.[currentUserId] || false,
               status: data.status,
             };
-          }).filter((thread): thread is DMThreadView => thread !== null);
+          })
+          .filter((thread) => thread !== null) as DMThreadView[];
 
           // Sort: pinned first, then by lastMessageAt
           threadsList.sort((a, b) => {

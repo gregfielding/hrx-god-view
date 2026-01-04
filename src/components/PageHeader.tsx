@@ -25,8 +25,8 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   showDivider = true,
 }) => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
+  // Inbox standard: stack the toolbar on md and smaller so filters don't get squeezed/clipped
+  const isStackedToolbar = useMediaQuery(theme.breakpoints.down('md'));
 
   return (
     <Box
@@ -69,43 +69,60 @@ const PageHeader: React.FC<PageHeaderProps> = ({
         <Box
           sx={{
             display: 'flex',
-            flexDirection: isSmallScreen ? 'column' : 'row',
-            alignItems: isSmallScreen ? 'stretch' : 'center',
-            gap: isSmallScreen ? 1.5 : 2,
+            flexDirection: isStackedToolbar ? 'column' : 'row',
+            alignItems: isStackedToolbar ? 'stretch' : 'center',
+            gap: isStackedToolbar ? 1.5 : 2,
             minHeight: '48px',
             mb: 1.5, // 12px spacing to divider
+            width: '100%',
+            overflow: 'visible',
           }}
         >
-          {/* Filters (Left) */}
+          {/* On stacked widths, show actions first (search full width), then filters row */}
+          {isStackedToolbar && rightActions && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5, // 12px between search and CTA
+                width: '100%',
+              }}
+            >
+              {rightActions}
+            </Box>
+          )}
+
+          {/* Filters Row (Inbox standard: horizontally scrollable, never clipped) */}
           {filters && (
             <Box
               sx={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 1, // 8px between filter chips
-                flex: isSmallScreen ? 'none' : 1,
+                gap: 1, // 8px between filter chips (spec)
+                flex: isStackedToolbar ? 'none' : '1 1 auto',
                 minWidth: 0,
-                overflow: 'visible',
+                overflowX: 'auto',
+                overflowY: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+                pr: 2, // ensures last pill never looks clipped at container edge
+                scrollbarWidth: 'none',
+                '&::-webkit-scrollbar': { display: 'none' },
               }}
             >
               {filters}
             </Box>
           )}
 
-          {/* Spacer (only on desktop) */}
-          {!isSmallScreen && filters && rightActions && (
-            <Box sx={{ flex: 1 }} />
-          )}
-
-          {/* Right Actions (Search + CTA) */}
-          {rightActions && (
+          {/* Right Actions (desktop only) */}
+          {!isStackedToolbar && rightActions && (
             <Box
               sx={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 1.5, // 12px between search and CTA
                 flexShrink: 0,
-                width: isSmallScreen ? '100%' : 'auto',
+                width: 'auto',
+                ml: 'auto', // Push actions to far right on desktop
               }}
             >
               {rightActions}
@@ -129,4 +146,5 @@ const PageHeader: React.FC<PageHeaderProps> = ({
 };
 
 export default PageHeader;
+
 
