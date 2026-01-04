@@ -29,7 +29,20 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import ForumIcon from '@mui/icons-material/Forum';
 import BlockIcon from '@mui/icons-material/Block';
 
-export type InboxFilter = 'all' | 'unread' | 'starred' | 'sent' | 'archived' | 'trash' | 'primary' | 'social' | 'promotions' | 'updates' | 'forums' | 'spam';
+export type InboxFilter =
+  | 'all'
+  | 'unread'
+  | 'starred'
+  | 'sent'
+  | 'archived'
+  | 'trash'
+  // Optional Gmail category filters (only when explicitly enabled)
+  | 'primary'
+  | 'social'
+  | 'promotions'
+  | 'updates'
+  | 'forums'
+  | 'spam';
 
 interface InboxFiltersProps {
   activeFilter: InboxFilter;
@@ -58,14 +71,14 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
     count?: number;
   }> = [
     {
-      id: 'primary',
+      id: 'all',
       label: 'Inbox',
       icon: <HomeIcon />,
     },
     {
-      id: 'unread', // Always use 'unread' filter ID (we changed 'all' to behave like 'unread')
-      label: 'Unread', // Always show 'Unread' label (consistent behavior)
-      icon: <InboxIcon />,
+      id: 'unread',
+      label: 'Unread',
+      icon: <MailIcon />,
       count: unreadCount > 0 ? unreadCount : undefined,
     },
     {

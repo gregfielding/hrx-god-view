@@ -161,8 +161,8 @@ const UserInboxPage: React.FC = () => {
   const [syncingGmail, setSyncingGmail] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
 
-  // Filter state - default to 'primary' (Inbox) to show main inbox view
-  const [activeFilter, setActiveFilter] = useState<InboxFilter>('primary');
+  // Filter state - default to 'all' so Inbox shows BOTH read and unread (canonical spec)
+  const [activeFilter, setActiveFilter] = useState<InboxFilter>('all');
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null);
@@ -203,7 +203,7 @@ const UserInboxPage: React.FC = () => {
   const handleSyncGmail = async (silent = false) => {
     if (!user?.uid || !effectiveTenantId) {
       if (!silent) {
-        setError('User or tenant not found');
+      setError('User or tenant not found');
       }
       return;
     }
@@ -215,8 +215,8 @@ const UserInboxPage: React.FC = () => {
 
     setSyncingGmail(true);
     if (!silent) {
-      setError(null);
-      setSyncSuccess(null);
+    setError(null);
+    setSyncSuccess(null);
     }
 
     try {
@@ -231,7 +231,7 @@ const UserInboxPage: React.FC = () => {
       
       if (data.error) {
         if (!silent) {
-          setError(data.message || 'Failed to sync Gmail emails');
+        setError(data.message || 'Failed to sync Gmail emails');
         }
         return;
       }
@@ -245,25 +245,25 @@ const UserInboxPage: React.FC = () => {
 
       // Only show success message if not silent and there were new emails
       if (!silent) {
-        if (syncedCount > 0) {
-          setSyncSuccess(`Successfully synced ${syncedCount} email${syncedCount !== 1 ? 's' : ''} from Gmail`);
-          // Clear success message after 5 seconds
-          setTimeout(() => {
-            setSyncSuccess(null);
-          }, 5000);
-        } else {
-          setSyncSuccess('Sync completed. No new emails found in your Gmail inbox.');
-          // Clear message after 3 seconds for "no emails" case
-          setTimeout(() => {
-            setSyncSuccess(null);
-          }, 3000);
+      if (syncedCount > 0) {
+        setSyncSuccess(`Successfully synced ${syncedCount} email${syncedCount !== 1 ? 's' : ''} from Gmail`);
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          setSyncSuccess(null);
+        }, 5000);
+      } else {
+        setSyncSuccess('Sync completed. No new emails found in your Gmail inbox.');
+        // Clear message after 3 seconds for "no emails" case
+        setTimeout(() => {
+          setSyncSuccess(null);
+        }, 3000);
         }
       }
 
     } catch (error: any) {
       console.error('Error syncing Gmail emails:', error);
       if (!silent) {
-        setError(`Failed to sync Gmail emails: ${error.message || 'Unknown error'}`);
+      setError(`Failed to sync Gmail emails: ${error.message || 'Unknown error'}`);
       }
     } finally {
       setSyncingGmail(false);
@@ -463,7 +463,7 @@ const UserInboxPage: React.FC = () => {
 
     // Only show full page loading on initial load
     if (smsThreads.length === 0) {
-      setLoading(true);
+    setLoading(true);
     } else {
       // For tab switches, only show table loading
       setTableLoading(true);
@@ -591,7 +591,7 @@ const UserInboxPage: React.FC = () => {
           target.closest('button') ||
           target.closest('[role="button"]') ||
           target.closest('.MuiIconButton-root')) {
-        return;
+      return;
       }
     }
     setSelectedEmailThread(thread);
@@ -653,13 +653,13 @@ const UserInboxPage: React.FC = () => {
       console.log('Starring thread:', { threadId, starred, url });
 
       const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
           threadId, // Include in body as fallback
-          tenantId: effectiveTenantId,
-          starred,
-        }),
+            tenantId: effectiveTenantId,
+            starred,
+          }),
       });
 
       if (!response.ok) {
@@ -1305,8 +1305,8 @@ const UserInboxPage: React.FC = () => {
     
     // Apply category/system filters
     if (activeFilter === 'starred' && !thread.starred) return false;
-    // Both 'unread' and 'all' show only unread messages (standard inbox behavior)
-    if (activeFilter === 'unread' || activeFilter === 'all') {
+    // Unread filter shows only unread threads. Inbox (all) shows read + unread.
+    if (activeFilter === 'unread') {
       if (!thread.unreadCount || thread.unreadCount === 0) return false;
     }
     
@@ -1667,7 +1667,7 @@ const UserInboxPage: React.FC = () => {
       height: '100%',
     }}>
       {/* Page Header with Standardized Layout */}
-      {activeTab === 'email' && (
+          {activeTab === 'email' && (
         <PageHeader
           title="Inbox"
           subtitle="View and manage messages from your connected inbox."
@@ -1690,10 +1690,10 @@ const UserInboxPage: React.FC = () => {
                 suggestions={generateSearchSuggestions(searchQuery)}
                 disabled={loading}
               />
-              <Button
-                variant="contained"
-                startIcon={<EditIcon />}
-                onClick={() => setMessageDrawerOpen(true)}
+          <Button
+            variant="contained"
+            startIcon={<EditIcon />}
+            onClick={() => setMessageDrawerOpen(true)}
                 sx={{
                   textTransform: 'none',
                   borderRadius: '24px',
@@ -1710,10 +1710,10 @@ const UserInboxPage: React.FC = () => {
                   },
                   whiteSpace: 'nowrap',
                 }}
-              >
-                Compose
-              </Button>
-            </Box>
+          >
+            Compose
+          </Button>
+        </Box>
           }
         />
       )}
@@ -1881,7 +1881,7 @@ const UserInboxPage: React.FC = () => {
                       )}
                     </Stack>
                   )}
-                </Box>
+            </Box>
               )}
               
               {tableLoading && (
@@ -2002,7 +2002,7 @@ const UserInboxPage: React.FC = () => {
                             }}
                           >
                             <Box sx={{ width: '32px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              <Checkbox
+                        <Checkbox
                                 indeterminate={(() => {
                                   const currentVisibleThreads = filteredEmailThreads.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
                                   const currentVisibleThreadIds = new Set(currentVisibleThreads.map(t => t.id || '').filter(Boolean));
@@ -2014,7 +2014,7 @@ const UserInboxPage: React.FC = () => {
                                   const currentVisibleThreadIds = new Set(currentVisibleThreads.map(t => t.id || '').filter(Boolean));
                                   return currentVisibleThreadIds.size > 0 && Array.from(currentVisibleThreadIds).every(id => selectedThreadIds.has(id));
                                 })()}
-                                onChange={handleSelectAll}
+                          onChange={handleSelectAll}
                                 size="small"
                                 sx={{ 
                                   padding: '4px',
@@ -2678,18 +2678,18 @@ const UserInboxPage: React.FC = () => {
                               <Stack spacing={0.25} sx={{ width: '100%' }}>
                                 {/* Subject - Bold, single line */}
                                 <Stack direction="row" spacing={1} alignItems="center" sx={{ width: '100%' }}>
-                                  {thread.unreadCount > 0 && (
-                                    <Box
-                                      sx={{
-                                        width: 8,
-                                        height: 8,
-                                        borderRadius: '50%',
+                                {thread.unreadCount > 0 && (
+                                  <Box
+                                    sx={{
+                                      width: 8,
+                                      height: 8,
+                                      borderRadius: '50%',
                                         bgcolor: '#0057B8', // Brand primary color (per style guide)
                                         flexShrink: 0,
                                         mt: 0.25,
-                                      }}
-                                    />
-                                  )}
+                                    }}
+                                  />
+                                )}
                                   <Typography 
                                     variant="body2" 
                                     component="div"
@@ -2726,7 +2726,7 @@ const UserInboxPage: React.FC = () => {
                                       />
                                     )}
                                   </Typography>
-                                </Stack>
+                              </Stack>
                                 {/* Preview - Muted gray, lighter weight */}
                                 {thread.lastMessageSnippet && (
                                   <Typography 
@@ -2742,7 +2742,7 @@ const UserInboxPage: React.FC = () => {
                                     }}
                                   >
                                     {sanitizeSnippet(thread.lastMessageSnippet)}
-                                  </Typography>
+                              </Typography>
                                 )}
                               </Stack>
                             </TableCell>
@@ -2861,16 +2861,16 @@ const UserInboxPage: React.FC = () => {
                   </TableBody>
                 </Table>
                 {activeTab === 'email' && gmailConnected && (
-                  <TablePagination
-                    component="div"
-                    count={filteredEmailThreads.length}
-                    page={page}
-                    onPageChange={(_, newPage) => setPage(newPage)}
-                    rowsPerPage={rowsPerPage}
-                    onRowsPerPageChange={(e) => {
-                      setRowsPerPage(parseInt(e.target.value, 10));
-                      setPage(0);
-                    }}
+              <TablePagination
+                component="div"
+                count={filteredEmailThreads.length}
+                page={page}
+                onPageChange={(_, newPage) => setPage(newPage)}
+                rowsPerPage={rowsPerPage}
+                onRowsPerPageChange={(e) => {
+                  setRowsPerPage(parseInt(e.target.value, 10));
+                  setPage(0);
+                }}
                     rowsPerPageOptions={[10, 20, 50, 100]}
                     sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
                   />
@@ -2878,11 +2878,11 @@ const UserInboxPage: React.FC = () => {
                     </TableContainer>
                   )}
                 </>
-              )}
-            </Box>
+          )}
+        </Box>
           </Box>
           </>
-        )}
+      )}
 
       {/* SMS tab removed - SMS now has dedicated /text-messages page per decoupling spec */}
 
@@ -3005,7 +3005,7 @@ const UserInboxPage: React.FC = () => {
         onSend={(result) => {
           if (result.success) {
             // Reload email threads after sending
-            loadEmailThreads();
+              loadEmailThreads();
           }
         }}
       />
