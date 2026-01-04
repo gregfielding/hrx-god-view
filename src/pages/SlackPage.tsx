@@ -1,11 +1,11 @@
 /**
  * Slack Channels Page
  * 
- * Dedicated Slack channels interface per hrx-slack-channels-implementation.md
+ * Dedicated Slack channels interface with membership support.
  * Focuses on channels only (no DMs).
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Box, Typography, Alert, CircularProgress, useMediaQuery, useTheme, Button, Snackbar, TextField } from '@mui/material';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import SyncIcon from '@mui/icons-material/Sync';
@@ -13,7 +13,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import { useAuth } from '../contexts/AuthContext';
 import { canUserAccessSlack, getSecurityLevelForActiveTenant } from '../utils/security';
 import { useSlackChannels } from '../hooks/useSlackChannels';
-import SlackChannelsFilters from '../components/SlackChannelsFilters';
+import { useSlackChannelMembership } from '../hooks/useSlackChannelMembership';
+import SlackChannelsFilters, { SlackChannelFilterType } from '../components/SlackChannelsFilters';
 import SlackChannelsTable from '../components/SlackChannelsTable';
 import SlackChannelsMobileList from '../components/SlackChannelsMobileList';
 import SlackChannelsEmptyState from '../components/SlackChannelsEmptyState';
@@ -44,27 +45,43 @@ const SlackPage: React.FC = () => {
   
   const canAccess = canUserAccessSlack(userWithTenant);
   
-  // Check if user has security level >= 7 for admin actions
+  // Check if user has security level >= 7 for admin actions (delete button)
   const activeTenantSecurityLevel = userWithTenant 
     ? getSecurityLevelForActiveTenant(userWithTenant)
     : 1;
   const isAdmin = activeTenantSecurityLevel >= 7;
   
-  // Only show delete and sync buttons to specific admin user
+  // Only show sync button to specific admin user
   const ADMIN_USER_ID = 'zazCFZdVZMTX3AJZsVmrYzHmb6Q2';
   const canManageChannels = user?.uid === ADMIN_USER_ID;
   
+  // Membership tracking hook
+  const {
+    membersByChannel,
+    isMemberByChannel,
+    joinChannel,
+    leaveChannel,
+    loading: membershipLoading,
+  } = useSlackChannelMembership(effectiveTenantId, user?.uid || null);
+
   const {
     channels,
     loading,
     error,
     filter,
     setFilter,
-    toggleWatch,
     toggleMute,
     deleteChannel,
     refresh,
   } = useSlackChannels(effectiveTenantId);
+
+  // Apply membership filter
+  const filteredChannels = useMemo(() => {
+    if (filter.membershipFilter === 'myChannels') {
+      return channels.filter(channel => isMemberByChannel[channel.id] === true);
+    }
+    return channels;
+  }, [channels, filter.membershipFilter, isMemberByChannel]);
 
   // Drawer state
   const [selectedChannel, setSelectedChannel] = useState<SlackChannelView | null>(null);
@@ -126,6 +143,10 @@ const SlackPage: React.FC = () => {
     }
   };
 
+  const handleFilterChange = (newFilter: SlackChannelFilterType) => {
+    setFilter({ ...filter, membershipFilter: newFilter });
+  };
+
   // No access UI
   if (!canAccess) {
     return (
@@ -156,13 +177,11 @@ const SlackPage: React.FC = () => {
       {/* Page Header with Standardized Layout */}
       <PageHeader
         title="Slack Channels"
-        subtitle="View activity across connected Slack channels. Watch channels to prioritize them."
+        subtitle="View activity across connected Slack channels. Join channels to stay updated."
         filters={
           <SlackChannelsFilters
-            filter={filter}
-            onChangeFilter={setFilter}
-            totalCount={channels.length}
-            showSearch={false}
+            filter={filter.membershipFilter}
+            onChangeFilter={handleFilterChange}
           />
         }
         rightActions={
@@ -256,29 +275,35 @@ const SlackPage: React.FC = () => {
           pb: 1,
         }}
       >
-        {loading ? (
+        {(loading || membershipLoading) ? (
           <SlackChannelsSkeleton />
-        ) : channels.length === 0 ? (
+        ) : filteredChannels.length === 0 ? (
           <SlackChannelsEmptyState 
             filter={filter}
-            onBrowseChannels={() => setFilter({ watchFilter: 'all' })}
+            onBrowseChannels={() => setFilter({ ...filter, membershipFilter: 'all' })}
           />
         ) : isMobile ? (
           <SlackChannelsMobileList
-            channels={channels}
-            onToggleWatch={toggleWatch}
+            channels={filteredChannels}
+            membersByChannel={membersByChannel}
+            isMemberByChannel={isMemberByChannel}
+            onJoin={joinChannel}
+            onLeave={leaveChannel}
             onToggleMute={toggleMute}
             onDelete={deleteChannel}
-            isAdmin={canManageChannels}
+            isAdmin={isAdmin}
             onRowClick={handleRowClick}
           />
         ) : (
           <SlackChannelsTable
-            channels={channels}
-            onToggleWatch={toggleWatch}
+            channels={filteredChannels}
+            membersByChannel={membersByChannel}
+            isMemberByChannel={isMemberByChannel}
+            onJoin={joinChannel}
+            onLeave={leaveChannel}
             onToggleMute={toggleMute}
             onDelete={deleteChannel}
-            isAdmin={canManageChannels}
+            isAdmin={isAdmin}
             onRowClick={handleRowClick}
           />
         )}
@@ -289,7 +314,7 @@ const SlackPage: React.FC = () => {
         open={drawerOpen}
         channel={selectedChannel}
         onClose={handleDrawerClose}
-        onToggleWatch={toggleWatch}
+        onToggleWatch={async () => {}} // No longer used
         onToggleMute={toggleMute}
       />
     </Box>

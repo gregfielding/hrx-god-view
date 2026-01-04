@@ -46,7 +46,6 @@ interface UseSlackChannelsResult {
   error: Error | null;
   filter: SlackChannelsFilter;
   setFilter: (update: Partial<SlackChannelsFilter>) => void;
-  toggleWatch: (channelId: string) => Promise<void>;
   toggleMute: (channelId: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
   refresh: () => void;
@@ -57,8 +56,7 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [filter, setFilter] = useState<SlackChannelsFilter>({
-    watchFilter: 'all',
-    activityFilter: 'all',
+    membershipFilter: 'myChannels',
     search: '',
   });
 
@@ -179,27 +177,10 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
     return () => unsubscribe();
   }, [activeTenantId]);
 
-          // Apply filters
+          // Apply filters (membership filter is applied at page level with membership data)
           const filteredChannels = useMemo(() => {
             // Filter out archived channels by default
             let result = channels.filter(c => !c.isArchived);
-
-    // Watch filter
-    if (filter.watchFilter === 'watched') {
-      result = result.filter(c => c.isWatched);
-    } else if (filter.watchFilter === 'unwatched') {
-      result = result.filter(c => !c.isWatched && !c.isMuted);
-    } else if (filter.watchFilter === 'muted') {
-      result = result.filter(c => c.isMuted);
-    }
-
-    // Activity filter (use activityBucket for more accurate filtering)
-    if (filter.activityFilter === 'active') {
-      result = result.filter(c => c.activityBucket === 'active');
-    } else if (filter.activityFilter === 'quiet') {
-      // Quiet includes both 'quiet' and 'silent' buckets
-      result = result.filter(c => c.activityBucket === 'quiet' || c.activityBucket === 'silent');
-    }
 
     // Search filter
     if (filter.search.trim()) {
@@ -216,14 +197,8 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
       });
     }
 
-    // Sort: watched first, then by lastMessageAt desc
+    // Sort: by lastMessageAt desc
     result.sort((a, b) => {
-      // Primary: watched channels first
-      if (a.isWatched !== b.isWatched) {
-        return a.isWatched ? -1 : 1;
-      }
-      
-      // Secondary: by lastMessageAt (most recent first)
       const aTime = a.lastMessageAt?.getTime() || 0;
       const bTime = b.lastMessageAt?.getTime() || 0;
       
@@ -231,39 +206,13 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
         return bTime - aTime; // desc
       }
       
-      // Tertiary: by name (alphabetical)
+      // Secondary: by name (alphabetical)
       return a.name.localeCompare(b.name);
     });
 
     return result;
   }, [channels, filter]);
 
-  // Toggle watch status
-  const toggleWatch = async (channelId: string) => {
-    if (!activeTenantId) return;
-
-    const channel = channels.find(c => c.id === channelId);
-    if (!channel) return;
-
-    // Determine new status: if currently watching, set to unlinked; otherwise set to watching
-    const newStatus: SlackChannelStatus = channel.status === 'watching' ? 'unlinked' : 'watching';
-    const isWatched = newStatus === 'watching';
-    // newStatus can only be 'watching' or 'unlinked' in this toggle
-    const isMuted = false;
-
-    try {
-      const channelRef = doc(db, 'tenants', activeTenantId, 'slackChannels', channelId);
-      await updateDoc(channelRef, {
-        status: newStatus,
-        watchStatus: isWatched ? 'watched' : 'unwatched',
-        muted: isMuted,
-        updatedAt: new Date(),
-      });
-    } catch (err: any) {
-      console.error('Error toggling watch status:', err);
-      throw err;
-    }
-  };
 
   // Toggle mute status
   const toggleMute = async (channelId: string) => {
@@ -315,7 +264,6 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
     error,
     filter,
     setFilter: (update) => setFilter(prev => ({ ...prev, ...update })),
-    toggleWatch,
     toggleMute,
     deleteChannel,
     refresh,

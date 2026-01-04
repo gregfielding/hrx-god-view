@@ -15,7 +15,7 @@ interface SlackChannelsEmptyStateProps {
 }
 
 const SlackChannelsEmptyState: React.FC<SlackChannelsEmptyStateProps> = ({ filter, onBrowseChannels }) => {
-  const isWatchedFilter = filter?.watchFilter === 'watched';
+  const isMyChannelsFilter = filter?.membershipFilter === 'myChannels';
 
   return (
     <Box
@@ -43,20 +43,20 @@ const SlackChannelsEmptyState: React.FC<SlackChannelsEmptyStateProps> = ({ filte
             mb: 2,
           }}
         />
-        {isWatchedFilter ? (
+        {isMyChannelsFilter ? (
           <>
             <Typography variant="h6" fontWeight={600} gutterBottom>
-              You aren't watching any channels yet
+              You haven't joined any channels yet
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Watching a channel helps you keep track of important conversations.
+              Join channels to stay updated on important conversations.
             </Typography>
             {onBrowseChannels && (
               <Button
                 variant="outlined"
                 onClick={onBrowseChannels}
               >
-                Browse channels
+                Browse all channels
               </Button>
             )}
           </>

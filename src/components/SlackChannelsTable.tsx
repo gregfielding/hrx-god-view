@@ -1,10 +1,10 @@
 /**
  * Slack Channels Table Component (Desktop)
  * 
- * Desktop table view for Slack channels with polished UX.
+ * Desktop table view for Slack channels with membership support.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Table,
@@ -19,19 +19,23 @@ import {
   IconButton,
   Avatar,
   Tooltip,
+  Button,
+  CircularProgress,
 } from '@mui/material';
-import StarIcon from '@mui/icons-material/Star';
-import StarBorderIcon from '@mui/icons-material/StarBorder';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { SlackChannelView } from '../types/slackChannels';
 import { getChannelColor, isRecentlyActive } from '../utils/slackChannelUtils';
 import StandardTablePagination from './StandardTablePagination';
+import { MemberPreview } from '../hooks/useSlackChannelMembership';
 
 interface SlackChannelsTableProps {
   channels: SlackChannelView[];
-  onToggleWatch: (id: string) => void;
+  membersByChannel: Record<string, MemberPreview[]>;
+  isMemberByChannel: Record<string, boolean>;
+  onJoin: (channelId: string) => Promise<void>;
+  onLeave: (channelId: string) => Promise<void>;
   onToggleMute: (id: string) => void;
   onDelete?: (id: string) => void;
   isAdmin?: boolean;
@@ -40,7 +44,10 @@ interface SlackChannelsTableProps {
 
 const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
   channels,
-  onToggleWatch,
+  membersByChannel,
+  isMemberByChannel,
+  onJoin,
+  onLeave,
   onToggleMute,
   onDelete,
   isAdmin = false,
@@ -48,6 +55,7 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
 }) => {
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(20);
+  const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     setPage(0);
@@ -57,21 +65,77 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
     return channels.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
   }, [channels, page, rowsPerPage]);
 
-  const formatDate = (date: Date | null | undefined): string => {
-    if (!date) return '';
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+  const handleJoin = async (channelId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLoadingActions(prev => ({ ...prev, [channelId]: true }));
+    try {
+      await onJoin(channelId);
+    } catch (err) {
+      console.error('Error joining channel:', err);
+      alert('Failed to join channel. Please try again.');
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [channelId]: false }));
+    }
   };
 
+  const handleLeave = async (channelId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLoadingActions(prev => ({ ...prev, [channelId]: true }));
+    try {
+      await onLeave(channelId);
+    } catch (err) {
+      console.error('Error leaving channel:', err);
+      alert('Failed to leave channel. Please try again.');
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [channelId]: false }));
+    }
+  };
+
+  const renderMembers = (channelId: string) => {
+    const members = membersByChannel[channelId] || [];
+    
+    if (members.length === 0) {
+      return <Typography variant="body2" color="text.secondary">—</Typography>;
+    }
+
+    const displayMembers = members.slice(0, 3);
+    const remainingCount = members.length - 3;
+
+    return (
+      <Box display="flex" alignItems="center" gap={0.5}>
+        {displayMembers.map((member, idx) => {
+          const initials = member.displayName
+            ?.split(' ')
+            .map(n => n[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 2) || member.email?.slice(0, 2).toUpperCase() || '?';
+          
+          return (
+            <Avatar
+              key={member.userId}
+              src={member.avatarUrl}
+              sx={{
+                width: 32,
+                height: 32,
+                fontSize: '0.75rem',
+                border: '2px solid white',
+                marginLeft: idx > 0 ? '-8px' : 0,
+                zIndex: 3 - idx,
+              }}
+            >
+              {initials}
+            </Avatar>
+          );
+        })}
+        {remainingCount > 0 && (
+          <Typography variant="caption" sx={{ ml: 0.5, fontWeight: 500 }}>
+            +{remainingCount}
+          </Typography>
+        )}
+      </Box>
+    );
+  };
 
   return (
     <TableContainer
@@ -85,6 +149,7 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
         <TableHead>
           <TableRow>
             <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Channel</TableCell>
+            <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Members</TableCell>
             <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Latest Activity</TableCell>
             <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Linked To</TableCell>
             <TableCell align="right" sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Actions</TableCell>
@@ -95,6 +160,8 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
             const channelColor = getChannelColor(channel.name);
             const recentlyActive = isRecentlyActive(channel.lastMessageAt);
             const isMuted = channel.isMuted;
+            const isMember = isMemberByChannel[channel.id] || false;
+            const isLoadingAction = loadingActions[channel.id] || false;
             
             return (
               <TableRow
@@ -104,10 +171,9 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                 sx={{ 
                   cursor: 'pointer',
                   opacity: isMuted ? 0.7 : 1,
-                  // Inbox-style subtle striping + compact density
                   '&:nth-of-type(odd)': { bgcolor: 'rgba(0,0,0,0.02)' },
                   '&:hover': {
-                    bgcolor: 'rgba(0, 0, 0, 0.02)', // Inbox hover style
+                    bgcolor: 'rgba(0, 0, 0, 0.02)',
                   }
                 }}
               >
@@ -132,19 +198,6 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                         <Typography variant="body2" fontWeight={600}>
                           {channel.displayName}
                         </Typography>
-                        {channel.isWatched && (
-                          <Chip
-                            label="Watched"
-                            size="small"
-                            sx={{
-                              height: 20,
-                              fontSize: '0.65rem',
-                              bgcolor: 'rgba(0, 87, 184, 0.1)',
-                              color: '#0057B8',
-                              border: '1px solid rgba(0, 87, 184, 0.2)',
-                            }}
-                          />
-                        )}
                         {isMuted && (
                           <Chip
                             icon={<VolumeOffIcon sx={{ fontSize: '0.75rem !important' }} />}
@@ -166,6 +219,11 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                       )}
                     </Box>
                   </Box>
+                </TableCell>
+
+                {/* Members Column */}
+                <TableCell>
+                  {renderMembers(channel.id)}
                 </TableCell>
 
                 {/* Latest Activity Column */}
@@ -247,48 +305,44 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                 {/* Actions Column */}
                 <TableCell align="right">
                   <Box display="flex" alignItems="center" justifyContent="flex-end" gap={0.5}>
-                    {/* Unread Badge - Gray for low-priority, Blue for watched, never red */}
-                    {channel.unreadCount && channel.unreadCount > 0 && (
-                      <Chip
-                        label={channel.unreadCount}
+                    {/* Join/Leave Button */}
+                    {isMember ? (
+                      <Button
                         size="small"
+                        variant="outlined"
+                        onClick={(e) => handleLeave(channel.id, e)}
+                        disabled={isLoadingAction}
                         sx={{
-                          minWidth: 32,
-                          bgcolor: channel.isWatched ? 'primary.main' : 'grey.300',
-                          color: channel.isWatched ? 'white' : 'text.primary',
-                          fontWeight: channel.isWatched ? 600 : 400,
-                        }}
-                      />
-                    )}
-                    
-                    <Tooltip title={channel.isWatched ? 'Unwatch' : 'Watch'}>
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleWatch(channel.id);
-                        }}
-                        sx={{
-                          color: channel.isWatched ? '#0057B8' : 'text.secondary',
+                          textTransform: 'none',
+                          minWidth: 70,
                         }}
                       >
-                        {channel.isWatched ? (
-                          <StarIcon fontSize="small" sx={{ color: '#0057B8' }} />
-                        ) : (
-                          <StarBorderIcon fontSize="small" />
-                        )}
-                      </IconButton>
-                    </Tooltip>
+                        {isLoadingAction ? <CircularProgress size={16} /> : 'Leave'}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={(e) => handleJoin(channel.id, e)}
+                        disabled={isLoadingAction}
+                        sx={{
+                          textTransform: 'none',
+                          minWidth: 70,
+                          bgcolor: '#0057B8',
+                          '&:hover': { bgcolor: '#004a9f' },
+                        }}
+                      >
+                        {isLoadingAction ? <CircularProgress size={16} /> : 'Join'}
+                      </Button>
+                    )}
 
+                    {/* Mute Button */}
                     <Tooltip title={channel.isMuted ? 'Unmute' : 'Mute'}>
                       <IconButton
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation();
                           onToggleMute(channel.id);
-                        }}
-                        sx={{
-                          color: channel.isMuted ? 'text.secondary' : 'text.secondary',
                         }}
                       >
                         {channel.isMuted ? (
@@ -299,6 +353,7 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                       </IconButton>
                     </Tooltip>
 
+                    {/* Admin Delete Button (only if securityLevel >= 7) */}
                     {isAdmin && onDelete && (
                       <Tooltip title="Delete channel">
                         <IconButton

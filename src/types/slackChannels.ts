@@ -59,8 +59,7 @@ export interface SlackChannelView {
 }
 
 export interface SlackChannelsFilter {
-  watchFilter: 'all' | 'watched' | 'unwatched' | 'muted';
-  activityFilter: 'all' | 'active' | 'quiet';
+  membershipFilter: 'myChannels' | 'all';
   search: string;
 }
 

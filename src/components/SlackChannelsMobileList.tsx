@@ -1,10 +1,10 @@
 /**
  * Slack Channels Mobile List Component
  * 
- * Mobile card layout for Slack channels with polished UX.
+ * Mobile card layout for Slack channels with membership support.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Paper,
@@ -13,19 +13,23 @@ import {
   Chip,
   Avatar,
   IconButton,
+  Button,
+  CircularProgress,
 } from '@mui/material';
-import StarIcon from '@mui/icons-material/Star';
-import StarBorderIcon from '@mui/icons-material/StarBorder';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { Tooltip } from '@mui/material';
 import { SlackChannelView } from '../types/slackChannels';
 import { getChannelColor, isRecentlyActive } from '../utils/slackChannelUtils';
+import { MemberPreview } from '../hooks/useSlackChannelMembership';
 
 interface SlackChannelsMobileListProps {
   channels: SlackChannelView[];
-  onToggleWatch: (id: string) => void;
+  membersByChannel: Record<string, MemberPreview[]>;
+  isMemberByChannel: Record<string, boolean>;
+  onJoin: (channelId: string) => Promise<void>;
+  onLeave: (channelId: string) => Promise<void>;
   onToggleMute: (id: string) => void;
   onDelete?: (id: string) => void;
   isAdmin?: boolean;
@@ -34,25 +38,87 @@ interface SlackChannelsMobileListProps {
 
 const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
   channels,
-  onToggleWatch,
+  membersByChannel,
+  isMemberByChannel,
+  onJoin,
+  onLeave,
   onToggleMute,
   onDelete,
   isAdmin = false,
   onRowClick,
 }) => {
-  const formatDate = (date: Date | null | undefined): string => {
-    if (!date) return '';
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+  const [loadingActions, setLoadingActions] = useState<Record<string, boolean>>({});
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
+  const handleJoin = async (channelId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLoadingActions(prev => ({ ...prev, [channelId]: true }));
+    try {
+      await onJoin(channelId);
+    } catch (err) {
+      console.error('Error joining channel:', err);
+      alert('Failed to join channel. Please try again.');
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [channelId]: false }));
+    }
+  };
+
+  const handleLeave = async (channelId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLoadingActions(prev => ({ ...prev, [channelId]: true }));
+    try {
+      await onLeave(channelId);
+    } catch (err) {
+      console.error('Error leaving channel:', err);
+      alert('Failed to leave channel. Please try again.');
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [channelId]: false }));
+    }
+  };
+
+  const renderMembers = (channelId: string) => {
+    const members = membersByChannel[channelId] || [];
+    
+    if (members.length === 0) {
+      return <Typography variant="caption" color="text.secondary">—</Typography>;
+    }
+
+    const displayMembers = members.slice(0, 3);
+    const remainingCount = members.length - 3;
+
+    return (
+      <Box display="flex" alignItems="center" gap={0.5}>
+        {displayMembers.map((member, idx) => {
+          const initials = member.displayName
+            ?.split(' ')
+            .map(n => n[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 2) || member.email?.slice(0, 2).toUpperCase() || '?';
+          
+          return (
+            <Avatar
+              key={member.userId}
+              src={member.avatarUrl}
+              sx={{
+                width: 28,
+                height: 28,
+                fontSize: '0.7rem',
+                border: '2px solid white',
+                marginLeft: idx > 0 ? '-8px' : 0,
+                zIndex: 3 - idx,
+              }}
+            >
+              {initials}
+            </Avatar>
+          );
+        })}
+        {remainingCount > 0 && (
+          <Typography variant="caption" sx={{ ml: 0.5, fontWeight: 500 }}>
+            +{remainingCount}
+          </Typography>
+        )}
+      </Box>
+    );
   };
 
   return (
@@ -61,6 +127,8 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
         const channelColor = getChannelColor(channel.name);
         const recentlyActive = isRecentlyActive(channel.lastMessageAt);
         const isMuted = channel.isMuted;
+        const isMember = isMemberByChannel[channel.id] || false;
+        const isLoadingAction = loadingActions[channel.id] || false;
 
         return (
           <Paper
@@ -75,7 +143,7 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
               },
             }}
           >
-            {/* Top Row: Channel Name */}
+            {/* Top Row: Channel Name and Members */}
             <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>
               <Box display="flex" alignItems="center" flex={1} minWidth={0}>
                 <Avatar
@@ -96,19 +164,6 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                     {channel.displayName}
                   </Typography>
                   <Box display="flex" alignItems="center" gap={0.5} mt={0.25}>
-                    {channel.isWatched && (
-                      <Chip
-                        label="Watched"
-                        size="small"
-                        sx={{
-                          height: 18,
-                          fontSize: '0.65rem',
-                          bgcolor: 'rgba(0, 87, 184, 0.1)',
-                          color: '#0057B8',
-                          border: '1px solid rgba(0, 87, 184, 0.2)',
-                        }}
-                      />
-                    )}
                     {isMuted && (
                       <Chip
                         icon={<VolumeOffIcon sx={{ fontSize: '0.7rem !important' }} />}
@@ -125,20 +180,10 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                   </Box>
                 </Box>
               </Box>
-              {/* Unread Badge - Gray for low-priority, Blue for watched, never red */}
-              {channel.unreadCount && channel.unreadCount > 0 && (
-                <Chip
-                  label={channel.unreadCount}
-                  size="small"
-                  sx={{
-                    ml: 1,
-                    minWidth: 32,
-                    bgcolor: channel.isWatched ? 'primary.main' : 'grey.300',
-                    color: channel.isWatched ? 'white' : 'text.primary',
-                    fontWeight: channel.isWatched ? 600 : 400,
-                  }}
-                />
-              )}
+              {/* Members */}
+              <Box ml={1}>
+                {renderMembers(channel.id)}
+              </Box>
             </Box>
 
             {/* Middle: Activity Preview */}
@@ -166,7 +211,6 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                     </Typography>
                   )}
                 </Box>
-                {/* Activity label (includes sender and message preview) */}
                 <Typography variant="body2" color="text.secondary" sx={{ 
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -184,7 +228,7 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
               </Box>
             )}
 
-            {/* Bottom: Chips (Watched, Muted) and Footer actions */}
+            {/* Bottom: Chips and Footer actions */}
             <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
               <Box display="flex" flexWrap="wrap" gap={0.5} flex={1}>
                 {channel.linkedDeal && (
@@ -203,22 +247,37 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
               
               {/* Footer actions row */}
               <Box display="flex" alignItems="center" gap={0.5}>
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleWatch(channel.id);
-                  }}
-                  sx={{
-                    color: channel.isWatched ? '#0057B8' : 'text.secondary',
-                  }}
-                >
-                  {channel.isWatched ? (
-                    <StarIcon fontSize="small" />
-                  ) : (
-                    <StarBorderIcon fontSize="small" />
-                  )}
-                </IconButton>
+                {/* Join/Leave Button */}
+                {isMember ? (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={(e) => handleLeave(channel.id, e)}
+                    disabled={isLoadingAction}
+                    sx={{
+                      textTransform: 'none',
+                      minWidth: 70,
+                    }}
+                  >
+                    {isLoadingAction ? <CircularProgress size={16} /> : 'Leave'}
+                  </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={(e) => handleJoin(channel.id, e)}
+                    disabled={isLoadingAction}
+                    sx={{
+                      textTransform: 'none',
+                      minWidth: 70,
+                      bgcolor: '#0057B8',
+                      '&:hover': { bgcolor: '#004a9f' },
+                    }}
+                  >
+                    {isLoadingAction ? <CircularProgress size={16} /> : 'Join'}
+                  </Button>
+                )}
+
                 <IconButton
                   size="small"
                   onClick={(e) => {
