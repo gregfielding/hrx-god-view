@@ -292,7 +292,7 @@ const Dashboard: React.FC = () => {
                     overflow: 'hidden',
                   }}
                 >
-                  <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
+                  <Card sx={{ height: '100%', display: 'flex', padding: '8px', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
                     <CardHeader
                       title="To-Dos"
                       action={
@@ -306,7 +306,7 @@ const Dashboard: React.FC = () => {
                         </IconButton>
                       }
                       titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                      sx={{ px: 3, pt: 3, pb: 1 }}
+                      sx={{ px: 2, pt: 2, pb: 1 }}
                     />
                     <CardContent sx={{ px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }}>
                       <TasksDashboard
@@ -389,7 +389,7 @@ const Dashboard: React.FC = () => {
                     </IconButton>
                   }
                   titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
-                  sx={{ px: 3, pt: 3, pb: 1 }}
+                  sx={{ px: 2, pt: 2, pb: 1 }}
                 />
                 <CardContent sx={{ px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }}>
                   <TasksDashboard
