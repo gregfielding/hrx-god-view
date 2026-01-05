@@ -229,7 +229,13 @@ const Dashboard: React.FC = () => {
             >
               <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: isTablet ? 'row' : 'column', gap: 2 }}>
                 {/* Calendar */}
-                <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <Box
+                  sx={{
+                    flex: isTablet ? 1 : '0 0 calc(36% - 8px)', // desktop: calendar is 36% height (gap accounted for)
+                    minHeight: 0,
+                    overflow: 'hidden',
+                  }}
+                >
                   {googleStatus.calendar.connected ? (
                     <CalendarWidget
                       userId={user?.uid || ''}
@@ -279,7 +285,13 @@ const Dashboard: React.FC = () => {
                 </Box>
 
                 {/* To-Dos */}
-                <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <Box
+                  sx={{
+                    flex: isTablet ? 1 : '0 0 calc(64% - 8px)', // desktop: remaining height (gap accounted for)
+                    minHeight: 0,
+                    overflow: 'hidden',
+                  }}
+                >
                   <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
                     <CardHeader
                       title="To-Dos"

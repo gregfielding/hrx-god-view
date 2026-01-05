@@ -123,6 +123,24 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
   const [showEventDrawer, setShowEventDrawer] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const thinLightScrollbarSx = useMemo(
+    () => ({
+      '&::-webkit-scrollbar': { width: '6px', height: '6px' },
+      '&::-webkit-scrollbar-track': {
+        background: 'rgba(0, 0, 0, 0.02)',
+        borderRadius: '4px',
+      },
+      '&::-webkit-scrollbar-thumb': {
+        background: 'rgba(0, 0, 0, 0.12)',
+        borderRadius: '4px',
+        '&:hover': { background: 'rgba(0, 0, 0, 0.20)' },
+      },
+      scrollbarWidth: 'thin',
+      scrollbarColor: 'rgba(0, 0, 0, 0.12) rgba(0, 0, 0, 0.02)',
+    }),
+    [],
+  );
+
   // Persist callable cache across renders (was previously re-created per fetch, defeating caching)
   const calendarEventsCache = useMemo(() => new CallableCache(90 * 60 * 1000), []);
 
@@ -683,6 +701,9 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
               border: '1px solid #EAEEF4',
               boxShadow: 'none',
               overflow: 'hidden',
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
             }
           : isPage
             ? {
@@ -752,8 +773,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         sx={
           isDashboard
             ? {
-                px: 1.5,
-                pt: 1.25,
+                px: 2,     // 16px side padding (down from 24px target)
+                pt: 2,     // 16px top padding (down from 24px target)
                 pb: 0.75,
                 '& .MuiCardHeader-action': { alignSelf: 'center' },
               }
@@ -763,7 +784,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       <CardContent
         sx={
           isDashboard
-            ? { px: 1.5, pb: 1.5, pt: 0 }
+            ? { px: 2, pb: 2, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 16px sides + bottom
             : isPage
               ? { px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }
               : undefined
@@ -936,6 +957,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
               overflow: 'auto',
               maxHeight: 520,
               p: isDashboard ? 1.25 : 1,
+              pb: 2, // 16px bottom padding inside scroll area
+              ...thinLightScrollbarSx,
             }}
           >
             {eachDayOfInterval({ start: startOfWeek(selectedDate), end: endOfWeek(selectedDate) }).map((day) => {
@@ -1008,6 +1031,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
                 p: isDashboard ? 1.5 : 1,
                 overflow: 'auto',
                 maxHeight: 520,
+                pb: 2, // 16px bottom padding inside scroll area
+                ...thinLightScrollbarSx,
               }}
             >
               {(() => {
