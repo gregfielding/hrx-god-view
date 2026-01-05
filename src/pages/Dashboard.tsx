@@ -126,7 +126,7 @@ const Dashboard: React.FC = () => {
       <PageHeader
         title="Dashboard"
         subtitle={
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5, mb: '12px' }}>
             {(
               [
                 { label: 'New Job Order', onClick: () => navigate('/recruiter/job-orders/new'), kind: 'candidates' as const },
