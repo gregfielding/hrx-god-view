@@ -19,6 +19,7 @@ import {
   doc,
   updateDoc,
   getDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DMMessage, DMMessageView } from '../types/directMessenger';
@@ -288,131 +289,75 @@ export function useDMMessages({
       const threadRef = doc(db, 'tenants', tenantId, 'dmThreads', threadId);
       const messagesRef = collection(db, 'tenants', tenantId, 'dmThreads', threadId, 'messages');
       
-      let existingThreadSnap: any = null;
       let currentUserData: any = null;
       let otherUserDataForThread: any = null; // Renamed to avoid shadowing the parameter
 
       try {
-        // Check if thread exists first
-        existingThreadSnap = await getDoc(threadRef);
-        
-        // Only fetch user data if thread doesn't exist (to avoid permission issues in transaction)
-        if (!existingThreadSnap.exists()) {
-          if (!otherUserId) {
-            throw new Error('Cannot create thread: otherUserId is required');
-          }
+        // IMPORTANT:
+        // Do NOT "check if thread exists" with getDoc(threadRef).
+        // Our Firestore rules for dmThreads read are participant-based and will deny reads when the doc doesn't exist.
+        // That produces the exact 403/batchGet + permission-denied you're seeing.
+        //
+        // Instead, we "ensure" the thread exists via a write (create/update) that doesn't require a read.
+        if (!otherUserId) {
+          throw new Error('Cannot send DM: otherUserId is required');
+        }
 
-          console.log('[useDMMessages] Thread does not exist, need to create it');
-          console.log('[useDMMessages] otherUserData provided:', !!otherUserData);
+        console.log('[useDMMessages] Ensuring thread exists (no pre-read)...');
+        console.log('[useDMMessages] otherUserData provided:', !!otherUserData);
 
-          // Try to use provided user data first (from PeopleList), otherwise read from Firestore
-          if (otherUserData) {
-            console.log('[useDMMessages] Using provided otherUserData:', otherUserData);
-            // Use provided user data for other user (already has displayName, email, avatarUrl)
-            // We still need to read current user data (should always work since it's the authenticated user)
-            try {
-              console.log('[useDMMessages] Attempting to read current user document:', currentUserId);
-              const currentUserDoc = await getDoc(doc(db, 'users', currentUserId));
-              console.log('[useDMMessages] Current user document exists:', currentUserDoc.exists());
-              if (!currentUserDoc.exists()) {
-                throw new Error('Current user not found');
-              }
-              currentUserData = currentUserDoc.data();
-              console.log('[useDMMessages] Current user data loaded successfully');
-              // Use provided data for other user (convert to Firestore format)
-              otherUserDataForThread = {
-                displayName: otherUserData.displayName,
-                email: otherUserData.email,
-                avatarUrl: otherUserData.avatarUrl,
-              };
-              console.log('[useDMMessages] otherUserDataForThread set:', otherUserDataForThread);
-            } catch (err: any) {
-              console.error('[useDMMessages] Error reading current user document:', err);
-              console.error('[useDMMessages] Error code:', err.code);
-              console.error('[useDMMessages] Error message:', err.message);
-              console.error('[useDMMessages] Error stack:', err.stack);
-              throw new Error(`Failed to read current user data: ${err.message || err.code || 'Unknown error'}`);
-            }
-          } else {
-            // Fallback: Read user documents from Firestore (may fail due to permissions)
-            try {
-              const [currentUserDoc, otherUserDoc] = await Promise.all([
-                getDoc(doc(db, 'users', currentUserId)),
-                getDoc(doc(db, 'users', otherUserId)),
-              ]);
+        // Prefer provided otherUserData (from People list) and avoid reading other user's Firestore doc.
+        if (otherUserData) {
+          otherUserDataForThread = {
+            displayName: otherUserData.displayName,
+            email: otherUserData.email,
+            avatarUrl: otherUserData.avatarUrl,
+          };
+        }
 
-              if (!currentUserDoc.exists() || !otherUserDoc.exists()) {
-                throw new Error('User not found');
-              }
-
-              currentUserData = currentUserDoc.data();
-              otherUserDataForThread = otherUserDoc.data();
-            } catch (err: any) {
-              console.error('Error reading user documents:', err);
-              console.error('Current User ID:', currentUserId);
-              console.error('Other User ID:', otherUserId);
-              throw new Error(`Failed to read user data: ${err.message || err.code || 'Unknown error'}`);
-            }
-          }
+        // Try reading current user's own doc (should be allowed), but don't hard-fail if it isn't.
+        try {
+          const currentUserDoc = await getDoc(doc(db, 'users', currentUserId));
+          if (currentUserDoc.exists()) currentUserData = currentUserDoc.data();
+        } catch {
+          // ignore – we can still create the thread with minimal meta
         }
 
         // IMPORTANT: Firestore rules for messages rely on reading the parent dmThreads/{threadId}.
         // If we create the thread and the first message in the SAME transaction, rules `get(...)`
         // for the thread won't see the just-created doc and message create will fail with permission-denied.
-        //
-        // So we ensure the thread exists first, then create the message in a second transaction.
+        // So: first ensure thread exists via setDoc(merge:true) WITHOUT reading it.
 
-        if (!existingThreadSnap.exists()) {
-          console.log('[useDMMessages] Creating thread (separate transaction)...');
-          console.log('[useDMMessages] currentUserData available:', !!currentUserData);
-          console.log('[useDMMessages] otherUserDataForThread available:', !!otherUserDataForThread);
+        const currentDisplayName =
+          currentUserData?.displayName ||
+          (currentUserData?.firstName && currentUserData?.lastName
+            ? `${currentUserData.firstName} ${currentUserData.lastName}`
+            : currentUserData?.email?.split('@')[0] || 'User');
 
-          const currentDisplayName =
-            currentUserData.displayName ||
-            (currentUserData.firstName && currentUserData.lastName
-              ? `${currentUserData.firstName} ${currentUserData.lastName}`
-              : currentUserData.email?.split('@')[0] || 'User');
-          const otherDisplayName =
-            otherUserDataForThread.displayName ||
-            (otherUserDataForThread.firstName && otherUserDataForThread.lastName
-              ? `${otherUserDataForThread.firstName} ${otherUserDataForThread.lastName}`
-              : otherUserDataForThread.email?.split('@')[0] || 'User');
+        const otherDisplayName =
+          otherUserDataForThread?.displayName ||
+          (otherUserDataForThread?.email ? otherUserDataForThread.email.split('@')[0] : 'User');
 
-          const threadData = {
-            participantIds: [currentUserId, otherUserId],
-            participantMeta: {
-              [currentUserId]: {
-                displayName: currentDisplayName,
-                email: currentUserData.email || '',
-                avatarUrl: currentUserData.avatar || currentUserData.photoURL || '',
-              },
-              [otherUserId]: {
-                displayName: otherDisplayName,
-                email: otherUserDataForThread.email || '',
-                avatarUrl:
-                  otherUserDataForThread.avatarUrl ||
-                  otherUserDataForThread.avatar ||
-                  otherUserDataForThread.photoURL ||
-                  '',
-              },
+        const ensureThreadData: any = {
+          participantIds: [currentUserId, otherUserId],
+          participantMeta: {
+            [currentUserId]: {
+              displayName: currentDisplayName,
+              email: currentUserData?.email || '',
+              avatarUrl: currentUserData?.avatar || currentUserData?.photoURL || '',
             },
-            lastMessageText: '',
-            lastMessageAt: null,
-            lastMessageSenderId: '',
-            unreadCounts: {},
-            isMuted: {},
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            status: 'active',
-          };
+            [otherUserId]: {
+              displayName: otherDisplayName,
+              email: otherUserDataForThread?.email || '',
+              avatarUrl: otherUserDataForThread?.avatarUrl || '',
+            },
+          },
+          status: 'active',
+          updatedAt: serverTimestamp(),
+        };
 
-          await runTransaction(db, async (tx) => {
-            const snap = await tx.get(threadRef);
-            if (!snap.exists()) {
-              tx.set(threadRef, threadData);
-            }
-          });
-        }
+        // Use setDoc with merge to avoid overwriting existing thread fields (unreadCounts, lastMessage*, createdAt, etc.)
+        await setDoc(threadRef, ensureThreadData, { merge: true });
 
         // Create message + update thread atomically
         console.log('[useDMMessages] Creating message + updating thread (transaction)...');
@@ -473,7 +418,7 @@ export function useDMMessages({
         console.error('Thread ID:', threadId);
         console.error('Current User ID:', currentUserId);
         console.error('Other User ID:', otherUserId);
-        console.error('Thread exists:', existingThreadSnap?.exists());
+        console.error('Thread exists:', 'unknown (we avoid pre-reads to prevent permission-denied)');
         console.error('User data loaded:', !!currentUserData && !!otherUserDataForThread);
         console.error('Provided otherUserData:', !!otherUserData);
         console.error('currentUserData:', !!currentUserData);
