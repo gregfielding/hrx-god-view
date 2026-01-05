@@ -702,7 +702,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                       </TableCell>
 
                       {/* Activity Column (Title + Snippet) */}
-                      <TableCell sx={{ width: 360, maxWidth: 360 }}>
+                      <TableCell sx={{ width: 600, maxWidth: 600 }}>
                         <Box sx={{ minWidth: 0 }}>
                           <Typography
                             variant="body2"
