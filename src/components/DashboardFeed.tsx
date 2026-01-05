@@ -598,6 +598,9 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             overflowY: 'auto',
             overflowX: 'auto',
             width: '100%',
+            // 16px left gutter so the source icons aren't flush to the card edge
+            pl: 2,
+            boxSizing: 'border-box',
             '&::-webkit-scrollbar': { width: '8px', height: '8px' },
             '&::-webkit-scrollbar-track': {
               background: 'rgba(0, 0, 0, 0.02)',
