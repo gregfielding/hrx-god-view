@@ -208,6 +208,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   }, [filteredItems, page, rowsPerPage]);
 
   const getTimeBucket = (timestamp: number): 'Now' | 'Earlier Today' | 'Yesterday' | 'This Week' | 'Older' => {
+    if (!timestamp || timestamp <= 0) return 'Older';
     const now = new Date();
     const d = new Date(timestamp);
 
@@ -239,6 +240,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
   // Format relative time
   const formatTime = (timestamp: number): string => {
+    if (!timestamp || timestamp <= 0) return '—';
     const now = new Date();
     const d = new Date(timestamp);
     const diffMs = now.getTime() - timestamp;
@@ -270,6 +272,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
   // Get full date/time for tooltip
   const getFullDateTime = (timestamp: number): string => {
+    if (!timestamp || timestamp <= 0) return '';
     return new Date(timestamp).toLocaleString();
   };
 

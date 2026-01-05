@@ -6,6 +6,39 @@
 
 import { DashboardFeedItem } from '../types/dashboardFeed';
 
+function toEpochMs(value: any): number {
+  if (!value) return 0;
+
+  // Firestore Timestamp (client) or admin Timestamp-like
+  if (typeof value?.toDate === 'function') {
+    const d = value.toDate();
+    return d instanceof Date ? d.getTime() : 0;
+  }
+
+  if (value instanceof Date) return value.getTime();
+
+  // ISO string (API serializes Firestore timestamps to ISO strings)
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  // Numeric timestamps (seconds or ms)
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    // Heuristic: seconds are usually 10 digits; ms are 13 digits
+    return value < 1e12 ? Math.floor(value * 1000) : Math.floor(value);
+  }
+
+  // Timestamp-like object
+  const seconds = value?.seconds ?? value?._seconds;
+  if (typeof seconds === 'number' && Number.isFinite(seconds)) {
+    return Math.floor(seconds * 1000);
+  }
+
+  return 0;
+}
+
 // Email Thread Adapter
 export interface EmailThreadSource {
   id: string;
@@ -26,11 +59,7 @@ export function adaptEmailThreadToFeedItem(
   thread: EmailThreadSource,
   tenantId: string
 ): DashboardFeedItem {
-  const timestamp = thread.lastMessageAt?.toDate 
-    ? thread.lastMessageAt.toDate().getTime()
-    : thread.lastMessageAt instanceof Date
-    ? thread.lastMessageAt.getTime()
-    : 0;
+  const timestamp = toEpochMs(thread.lastMessageAt);
 
   // Get primary sender from participant contacts
   const primaryContact = thread.participantContacts?.[0];
@@ -76,7 +105,7 @@ export interface SlackDMThreadSource {
 export function adaptSlackDMToFeedItem(
   thread: SlackDMThreadSource
 ): DashboardFeedItem {
-  const timestamp = thread.lastMessageAt?.getTime() || 0;
+  const timestamp = toEpochMs(thread.lastMessageAt);
 
   return {
     id: `slack_dm_${thread.id}`,
@@ -113,7 +142,7 @@ export function adaptSlackChannelToFeedItem(
   channel: SlackChannelSource,
   userId: string
 ): DashboardFeedItem | null {
-  const timestamp = channel.lastMessageAt?.getTime() || 0;
+  const timestamp = toEpochMs(channel.lastMessageAt);
   const isMuted = channel.status === 'muted';
   
   // Dashboard feed inclusion rule: member + not muted.
