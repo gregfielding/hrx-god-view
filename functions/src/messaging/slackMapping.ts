@@ -236,31 +236,48 @@ export async function mapSlackUserToHRXUser(
           .collection('users').doc(hrxUserId);
         
         await db.runTransaction(async (tx) => {
-          // 1. Update or create slackUsers doc with security info
-          tx.set(slackUserRef, {
-            id: slackUserId,
-            tenantId,
-            slackTeamId,
-            hrxUserId,
-            email: slackEmail,
-            displayName,
-            realName,
-            avatar: userData.avatar || userData.avatarUrl,
-            isBot: false,
-            isDeleted: false,
-            autoLinked: true,
-            manualLinked: false,
-            securityLevel,
-            canAccessSlack: canAccess,
-            mappedAt: admin.firestore.FieldValue.serverTimestamp(),
-            lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
-            createdAt: slackUserDoc.exists 
-              ? slackUserDoc.data()?.createdAt 
-              : admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          
-          // 2. Update user.integrations.slack (only if user can access Slack)
+          // Firestore transactions require all reads before all writes.
+          // Read first (only if we plan to write integrations).
+          let tenantUserExists = false;
+          let rootUserExists = false;
+          if (canAccess) {
+            const [tenantUserSnap, rootUserSnap] = await Promise.all([
+              tx.get(tenantUserRef),
+              tx.get(userRef),
+            ]);
+            tenantUserExists = tenantUserSnap.exists;
+            rootUserExists = rootUserSnap.exists;
+          }
+
+          // 1) Upsert slackUsers doc with security info
+          tx.set(
+            slackUserRef,
+            {
+              id: slackUserId,
+              tenantId,
+              slackTeamId,
+              hrxUserId,
+              email: slackEmail,
+              displayName,
+              realName,
+              avatar: userData.avatar || userData.avatarUrl,
+              isBot: false,
+              isDeleted: false,
+              autoLinked: true,
+              manualLinked: false,
+              securityLevel,
+              canAccessSlack: canAccess,
+              mappedAt: admin.firestore.FieldValue.serverTimestamp(),
+              lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAt: slackUserDoc.exists
+                ? slackUserDoc.data()?.createdAt
+                : admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+
+          // 2) Update user.integrations.slack (only if user can access Slack)
           if (canAccess) {
             const integrationUpdate = {
               integrations: {
@@ -274,16 +291,11 @@ export async function mapSlackUserToHRXUser(
                 },
               },
             };
-            
-            // Update tenant-scoped user doc if it exists
-            const tenantUserSnap = await tx.get(tenantUserRef);
-            if (tenantUserSnap.exists) {
+
+            if (tenantUserExists) {
               tx.set(tenantUserRef, integrationUpdate, { merge: true });
             }
-            
-            // Also update root users collection for backward compatibility
-            const rootUserSnap = await tx.get(userRef);
-            if (rootUserSnap.exists) {
+            if (rootUserExists) {
               tx.set(userRef, integrationUpdate, { merge: true });
             }
           }
