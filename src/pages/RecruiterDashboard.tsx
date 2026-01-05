@@ -16,6 +16,7 @@ import {
   Business as BusinessIcon,
   Contacts as ContactsIcon,
   Add as AddIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
@@ -23,7 +24,15 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useAuth } from '../contexts/AuthContext';
 
-export type RecruiterTab = 'job-orders' | 'users' | 'companies' | 'contacts' | 'user-groups' | 'jobs-board' | 'reports';
+export type RecruiterTab =
+  | 'job-orders'
+  | 'my-orders'
+  | 'users'
+  | 'companies'
+  | 'contacts'
+  | 'user-groups'
+  | 'jobs-board'
+  | 'reports';
 
 export type RecruiterOutletContext = {
   activeTab: RecruiterTab;
@@ -47,6 +56,7 @@ const RecruiterDashboard: React.FC = () => {
   // Get active tab from URL or default to 'job-orders'
   const getActiveTab = (): RecruiterTab => {
     const path = location.pathname;
+    if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
     if (path.includes('/users')) return 'users';
     if (path.includes('/companies')) return 'companies';
@@ -87,6 +97,11 @@ const RecruiterDashboard: React.FC = () => {
       id: 'job-orders' as RecruiterTab,
       label: 'Job Orders',
       icon: <WorkIcon fontSize="small" />,
+    },
+    {
+      id: 'my-orders' as RecruiterTab,
+      label: 'My Orders',
+      icon: <PersonIcon fontSize="small" />,
     },
     {
       id: 'users' as RecruiterTab,
@@ -162,6 +177,7 @@ const RecruiterDashboard: React.FC = () => {
           }
           rightActions={
             activeTab === 'job-orders' ||
+            activeTab === 'my-orders' ||
             activeTab === 'users' ||
             activeTab === 'companies' ||
             activeTab === 'contacts' ||
@@ -171,7 +187,7 @@ const RecruiterDashboard: React.FC = () => {
                 {activeTab !== 'user-groups' && (
                   <FavoritesFilter
                     favoriteType={
-                      activeTab === 'job-orders'
+                      activeTab === 'job-orders' || activeTab === 'my-orders'
                         ? 'jobOrders'
                         : activeTab === 'users'
                           ? 'users'
@@ -201,7 +217,7 @@ const RecruiterDashboard: React.FC = () => {
                   onChange={setSearch}
                   onSearch={setSearch}
                   placeholder={
-                    activeTab === 'job-orders'
+                    activeTab === 'job-orders' || activeTab === 'my-orders'
                       ? 'Search job orders...'
                       : activeTab === 'users'
                         ? 'Search users...'
@@ -215,7 +231,7 @@ const RecruiterDashboard: React.FC = () => {
                   }
                 />
 
-                {activeTab === 'job-orders' && (
+                {(activeTab === 'job-orders' || activeTab === 'my-orders') && (
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}

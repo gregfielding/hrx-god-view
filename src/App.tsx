@@ -862,6 +862,7 @@ function App() {
         }>
           <Route index element={<Navigate to="/recruiter/job-orders" replace />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
+          <Route path="my-orders" element={<RecruiterJobOrders />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="users" element={<RecruiterUsers />} />

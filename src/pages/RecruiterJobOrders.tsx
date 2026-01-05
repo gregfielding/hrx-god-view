@@ -67,17 +67,22 @@ const PAGE_SIZE = 20;
 interface RecruiterJobOrdersProps {
   search?: string;
   showFavoritesOnly?: boolean;
+  onlyMyOrders?: boolean;
 }
 
 const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({ 
   search: searchProp = '', 
-  showFavoritesOnly: showFavoritesOnlyProp = false 
+  showFavoritesOnly: showFavoritesOnlyProp = false,
+  onlyMyOrders: onlyMyOrdersProp
 }) => {
   const { user, tenantId } = useAuth();
   const navigate = useNavigate();
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
   const effectiveSearch = searchProp || outletCtx?.search || '';
   const effectiveShowFavoritesOnly = showFavoritesOnlyProp || outletCtx?.showFavoritesOnly || false;
+  const effectiveOnlyMyOrders = typeof onlyMyOrdersProp === 'boolean'
+    ? onlyMyOrdersProp
+    : outletCtx?.activeTab === 'my-orders';
   
   // State
   const [jobOrders, setJobOrders] = useState<JobOrderWithDetails[]>([]);
@@ -127,6 +132,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       // Add status filter if selected
       if (statusFilter) {
         constraints.push(where('status', '==', statusFilter));
+      }
+
+      // "My Orders" filter: only show job orders assigned to the logged-in user.
+      if (effectiveOnlyMyOrders && user?.uid) {
+        constraints.push(where('assignedRecruiters', 'array-contains', user.uid));
       }
 
       const jobOrderQuery = query(baseRef, ...constraints);
@@ -228,7 +238,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [tenantId, statusFilter, sortField, sortDirection]);
+  }, [tenantId, statusFilter, sortField, sortDirection, effectiveOnlyMyOrders, user?.uid]);
 
   // Reset and reload when filters/search/sort change
   useEffect(() => {
