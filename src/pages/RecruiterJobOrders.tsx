@@ -373,7 +373,6 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       flexDirection: 'column',
       overflow: 'hidden',
       px: { xs: 2, md: 3 },
-      pb: 2,
       pt: 2,
     }}>
       {/* Filter & Toolbar Area */}

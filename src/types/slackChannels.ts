@@ -56,6 +56,9 @@ export interface SlackChannelView {
   isWatched: boolean;
   isMuted: boolean;
   isActive: boolean;           // derived from lastMessageAt or activityBucket
+
+  // Membership snapshot (used for unread counts + feed membership fallback)
+  memberIds?: string[];
 }
 
 export interface SlackChannelsFilter {

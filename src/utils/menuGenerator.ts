@@ -163,6 +163,16 @@ export async function generateMenuItems(
         requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
       });
     }
+
+    // Calendar - requires security level 5+ (Worker, Manager, Admin)
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
+      menuItems.push({
+        text: 'Calendar',
+        to: '/calendar',
+        icon: 'calendar',
+        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
+      });
+    }
     // {
     //   text: 'My Profile',
     //   to: '/profile',

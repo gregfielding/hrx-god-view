@@ -101,6 +101,8 @@ import { useCRMCache } from '../../contexts/CRMCacheContext';
 import { useFavorites } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
 import FavoritesFilter from '../../components/FavoritesFilter';
+import PageHeader from '../../components/PageHeader';
+import InboxSearchBar from '../../components/InboxSearchBar';
 import ContactTable from '../../components/ContactTable';
 import ContactTableRow from '../../components/ContactTableRow';
 import CompanyTable from '../../components/CompanyTable';
@@ -1850,407 +1852,118 @@ const TenantCRM: React.FC = () => {
     );
   }
   return (
-    <Box sx={{ p: 0 }}>
-      {/* <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-        <Typography variant="h3" gutterBottom>
-          Sales CRM
-        </Typography>
-      </Box> */}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <PageHeader
+        title="CRM"
+        subtitle="Manage contacts, companies, opportunities, and pipeline"
+        filters={
+          <Box display="flex" gap={0.5} sx={{ flexWrap: 'wrap' }}>
+            {[
+              { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
+              { label: 'Contacts', value: 1, icon: <PersonIcon fontSize="small" /> },
+              { label: 'Companies', value: 2, icon: <BusinessIcon fontSize="small" /> },
+              { label: 'Opportunities', value: 3, icon: <DealIcon fontSize="small" /> },
+              { label: 'Pipeline', value: 4, icon: <PipelineIcon fontSize="small" /> },
+              { label: 'Prospect', value: 5, icon: <FilterAltIcon fontSize="small" /> },
+              { label: 'Activity', value: 6, icon: <TrendingUpIcon fontSize="small" /> },
+            ].map((t) => {
+              const isActive = tabValue === t.value;
+              return (
+                <Button
+                  key={t.value}
+                  startIcon={t.icon}
+                  onClick={() => handleTabChange({} as any, t.value)}
+                  variant="text"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+              <InboxSearchBar
+                value={search}
+                onChange={setSearch}
+                onSearch={setSearch}
+                placeholder={
+                  tabValue === 1 ? 'Search contacts...' : tabValue === 2 ? 'Search companies...' : 'Search opportunities...'
+                }
+              />
+            )}
 
-      {/* Navigation Menu */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ 
-          display: 'flex', 
-          gap: { xs: 2, sm: 3.5, md: 4 },
-          flexWrap: 'nowrap',
-          overflowX: 'auto',
-          alignItems: 'center',
-          borderBottom: '1px solid',
-          borderColor: '#F1F3F5',
-          py: 1.5,
-          scrollBehavior: 'smooth'
-        }}>
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 0)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 0 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 0 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 0 ? 1 : 0
-              }}
-            >
-              Dashboard
-            </Typography>
-            {tabValue === 0 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
+            {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => handleAddNew(tabValue === 1 ? 'contact' : tabValue === 2 ? 'company' : 'deal')}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  px: 2.5,
+                  py: 1,
+                  height: '40px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#0057B8',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                  '&:hover': {
+                    bgcolor: '#004a9f',
+                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                  },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {tabValue === 1 ? 'Add Contact' : tabValue === 2 ? 'Add Company' : 'Add Opportunity'}
+              </Button>
             )}
           </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 1)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 1 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 1 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 1 ? 1 : 0
-              }}
-            >
-              Contacts
-            </Typography>
-            {tabValue === 1 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 2)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 2 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 2 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 2 ? 1 : 0
-              }}
-            >
-              Companies
-            </Typography>
-            {tabValue === 2 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 3)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 3 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 3 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 3 ? 1 : 0
-              }}
-            >
-              Opportunities
-            </Typography>
-            {tabValue === 3 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 4)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 4 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 4 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 4 ? 1 : 0
-              }}
-            >
-              Pipeline
-            </Typography>
-            {tabValue === 4 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 5)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 5 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 5 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 5 ? 1 : 0
-              }}
-            >
-              Prospect
-            </Typography>
-            {tabValue === 5 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-          
-          <Box 
-            sx={{ 
-              cursor: 'pointer', 
-              position: 'relative',
-              px: 1,
-              py: 1,
-              transition: 'color 200ms ease-in',
-              '&:hover': {
-                color: '#111827',
-                '&::after': {
-                  content: '""',
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '20%',
-                  right: '20%',
-                  height: '1px',
-                  bgcolor: '#D1D5DB',
-                  transition: 'width 200ms ease-in'
-                }
-              }
-            }}
-            onClick={() => handleTabChange({} as any, 6)}
-          >
-            <Typography 
-              variant="body1" 
-              sx={{ 
-                fontSize: { xs: '14px', sm: '15px' },
-                fontWeight: tabValue === 6 ? 600 : 500,
-                lineHeight: '20px',
-                color: tabValue === 6 ? '#0B63C5' : '#4B5563',
-                textTransform: 'none',
-                position: 'relative',
-                pb: tabValue === 6 ? 1 : 0
-              }}
-            >
-              Activity
-            </Typography>
-            {tabValue === 6 && (
-              <Box 
-                sx={{ 
-                  position: 'absolute',
-                  bottom: -3,
-                  left: '17.5%',
-                  right: '17.5%',
-                  height: '2px',
-                  bgcolor: '#0B63C5',
-                  transition: 'width 200ms ease-in'
-                }} 
-              />
-            )}
-          </Box>
-        </Box>
-      </Box>
+        }
+      />
 
       {/* Tab Panels */}
-      <Box ref={contentRef} sx={{ minHeight: lockHeight ? `${Math.max(200, lockHeight)}px` : undefined }}>
+      <Box
+        ref={contentRef}
+        sx={{
+          flex: 1,
+          minHeight: lockHeight ? `${Math.max(200, lockHeight)}px` : 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          pb: 2,
+        }}
+      >
       {tabValue === 0 && (
-        <SalesDashboard 
-          tenantId={tenantId}
-          currentUser={currentUser}
-          deals={deals}
-          companies={companies}
-          contacts={contacts}
-          tasks={tasks}
-          pipelineStages={pipelineStages}
-          allCompanies={allCompanies}
-          allDeals={allDeals}
-          initialDataLoaded={initialDataLoaded}
-        />
+        <Box sx={{ px: 2, pt: 2 }}>
+          <SalesDashboard 
+            tenantId={tenantId}
+            currentUser={currentUser}
+            deals={deals}
+            companies={companies}
+            contacts={contacts}
+            tasks={tasks}
+            pipelineStages={pipelineStages}
+            allCompanies={allCompanies}
+            allDeals={allDeals}
+            initialDataLoaded={initialDataLoaded}
+          />
+        </Box>
       )}
       
       {tabValue === 1 && (

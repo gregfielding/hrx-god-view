@@ -7,6 +7,7 @@ import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
 import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
+import CalendarPage from './pages/CalendarPage';
 import AIDashboard from './pages/TenantViews/AIDashboard';
 import ChatGPT from './pages/TenantViews/ChatGPT';
 import UserProfile from './pages/UserProfile';
@@ -223,6 +224,40 @@ function ProfileRedirect() {
   return <div>Redirecting to your profile...</div>;
 }
 
+function HomeRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Redirecting...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  return <Navigate to={level >= 5 ? '/dashboard' : '/profile'} replace />;
+}
+
+function DashboardAdminRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  if (level < 5) return <Navigate to="/profile" replace />;
+
+  return <Dashboard />;
+}
+
+function CalendarAdminRedirect() {
+  const { user, securityLevel, loading } = useAuth();
+
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+
+  const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
+  if (level < 5) return <Navigate to="/profile" replace />;
+
+  return <CalendarPage />;
+}
+
 // Wrapper component for IntegrationsTab to provide tenantId
 const IntegrationsTabWrapper: React.FC = () => {
   const { tenantId } = useAuth();
@@ -286,8 +321,9 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route index element={<HomeRedirect />} />
+        <Route path="dashboard" element={<DashboardAdminRedirect />} />
+        <Route path="calendar" element={<CalendarAdminRedirect />} />
         <Route path="chatgpt" element={<ChatGPT />} />
         <Route path="inbox" element={
           <ProtectedRoute>

@@ -8,7 +8,6 @@ import {
   Chip,
   CircularProgress,
   FormControl,
-  InputAdornment,
   InputLabel,
   MenuItem,
   Paper,
@@ -22,7 +21,6 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import StarIcon from '@mui/icons-material/Star';
@@ -38,6 +36,7 @@ import { calculateProfileScore } from '../utils/applicantScoring';
 import PageHeader from '../components/PageHeader';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
+import InboxSearchBar from '../components/InboxSearchBar';
 import { useFavorites } from '../hooks/useFavorites';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
@@ -484,23 +483,52 @@ const RecruiterUserGroupDetails: React.FC = () => {
           </Box>
         }
         rightActions={
-          <Button
-            variant="outlined"
-            onClick={() => navigate('/recruiter/user-groups')}
-            sx={{
-              textTransform: 'none',
-              borderRadius: '24px',
-              height: '40px',
-              px: 2,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Back
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {activeTab === 'members' && (
+              <>
+                <FavoritesFilter
+                  favoriteType="users"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={setShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '36px',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                />
+                <InboxSearchBar
+                  value={searchTerm}
+                  onChange={setSearchTerm}
+                  onSearch={setSearchTerm}
+                  placeholder="Search people..."
+                />
+              </>
+            )}
+
+            <Button
+              variant="outlined"
+              onClick={() => navigate('/recruiter/user-groups')}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back
+            </Button>
+          </Box>
         }
       />
 
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
         {activeTab === 'settings' ? (
           <Box sx={{ p: 2 }}>
             <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid #EAEEF4', p: 2 }}>
@@ -535,41 +563,6 @@ const RecruiterUserGroupDetails: React.FC = () => {
               }}
             >
               <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-                <TextField
-                  placeholder="Search people..."
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  variant="outlined"
-                  size="small"
-                  sx={{
-                    flexGrow: 1,
-                    minWidth: 280,
-                    maxWidth: 480,
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: '8px',
-                      backgroundColor: 'white',
-                    },
-                  }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon sx={{ color: 'text.secondary' }} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <FavoritesFilter
-                          favoriteType="users"
-                          showFavoritesOnly={showFavoritesOnly}
-                          onToggle={setShowFavoritesOnly}
-                          showText={false}
-                          size="small"
-                        />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-
                 <FormControl size="small" sx={{ minWidth: 160 }}>
                   <InputLabel>Role</InputLabel>
                   <Select

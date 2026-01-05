@@ -35,6 +35,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import { useAuth } from '../contexts/AuthContext';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import ContactHoverCard, { ParticipantContact } from './ContactHoverCard';
+import { fetchEmailThreadCached, peekEmailThread } from '../utils/emailThreadCache';
 
 interface EmailThreadViewProps {
   open: boolean;
@@ -108,9 +109,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   const loadingRef = useRef<string | null>(null); // Track which threadId is currently loading
   const [optimisticMessages, setOptimisticMessages] = useState<Map<string, EmailMessage>>(new Map());
   
-  // Cache for loaded threads to avoid reloading
-  const threadCacheRef = useRef<Map<string, { thread: EmailThread; timestamp: number }>>(new Map());
-  const CACHE_DURATION = 30000; // 30 seconds cache
+  // Note: Email thread caching is handled centrally in `src/utils/emailThreadCache.ts`
 
   // Reset flag when drawer opens
   useEffect(() => {
@@ -179,21 +178,22 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
 
   const loadThread = useCallback(async (forceRefresh = false) => {
     if (!threadId || !tenantId) return;
-    
-    // Check cache first
-    const cacheKey = `${tenantId}:${threadId}`;
-    const cached = threadCacheRef.current.get(cacheKey);
-    const now = Date.now();
-    
-    if (!forceRefresh && cached && (now - cached.timestamp) < CACHE_DURATION) {
-      setThread(cached.thread);
-      setStarred(cached.thread.starred || false);
-      setLoading(false);
-      // Mark as read in background (non-blocking)
-      if (cached.thread.unreadCount > 0 && !threadWasMarkedAsRead) {
-        markThreadRead();
+
+    // Best-effort immediate paint from session cache (instant open)
+    if (!forceRefresh) {
+      const peek = peekEmailThread(tenantId, threadId, 50);
+      if (peek?.success && peek.thread) {
+        const threadWithMessages = {
+          ...(peek.thread as any),
+          messages: (peek.messages || []) as any[],
+        } as EmailThread;
+        setThread(threadWithMessages);
+        setStarred(threadWithMessages.starred || false);
+        // Mark as read in background (non-blocking)
+        if ((threadWithMessages.unreadCount || 0) > 0 && !threadWasMarkedAsRead) {
+          markThreadRead();
+        }
       }
-      return;
     }
     
     // Prevent duplicate API calls for the same threadId
@@ -206,21 +206,12 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     setError(null);
 
     try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-
-      // Reduce initial limit to 50 for faster loading
-      const url = `${API_BASE_URL}/getEmailThreadApi?threadId=${encodeURIComponent(threadId)}&tenantId=${encodeURIComponent(tenantId)}&limit=50`;
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('EmailThreadView: Response error', { status: response.status, errorText });
-        throw new Error(`Failed to load email thread: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
+      const data = await fetchEmailThreadCached({
+        tenantId,
+        threadId,
+        limit: 50,
+        force: forceRefresh,
+      });
       
       if (data.success) {
         // Ensure messages are attached so the drawer renders content
@@ -231,12 +222,6 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         
         setThread(threadWithMessages);
         setStarred(data.thread.starred || false);
-        
-        // Cache the thread
-        threadCacheRef.current.set(cacheKey, {
-          thread: threadWithMessages,
-          timestamp: now,
-        });
         
         // Remove optimistic messages that are now in the real thread
         // (real messages will have different IDs, so we check by content/timestamp)

@@ -30,6 +30,9 @@ pglite-debug.log
 functions/firebase-debug.log
 functions/pglite-debug.log
 
+# Firebase Hosting cache noise
+.firebase/hosting.*.cache
+
 functions/.env*
 
 functions/.env*
@@ -38,3 +41,6 @@ functions/.env*
 service-account-key.json
 functions/service-account-key.json
 **/service-account-key.json
+
+# Notebook artifacts
+*.ipynb

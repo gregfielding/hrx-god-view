@@ -44,6 +44,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import SmsIcon from '@mui/icons-material/Sms';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import DashboardIcon from '@mui/icons-material/Dashboard';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -821,6 +822,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Messages': <NotificationsIcon />,
       'Inbox': <InboxIcon />,
       'Text Messages': <SmsIcon />,
+      'Calendar': <CalendarMonthIcon />,
       'Slack Channels': <SlackHashIcon active={location.pathname.startsWith('/slack')} />,
       'Notifications': <NotificationsIcon />,
       'Privacy & Notifications': <NotificationsIcon />,
@@ -865,7 +867,16 @@ const Layout: React.FC = React.memo(function Layout() {
   const safeDevRole = allowedRoles.includes(devRole) ? devRole : '';
   const safeDevSecurityLevel = allowedSecurityLevels.includes(devSecurityLevel) ? devSecurityLevel : '';
 
-  return (
+  // Google status context should wrap any component that calls useGoogleStatus (Dashboard, GoogleConnectionChip, CRM, etc.)
+  const effectiveGoogleTenantId = activeTenant?.id || tenantId || '';
+  const secLevelForGoogle = currentClaimsSecurityLevel || securityLevel;
+  const hasAdminLevelForGoogle = !!(secLevelForGoogle && ['5', '6', '7'].includes(secLevelForGoogle));
+  const shouldProvideGoogleStatus =
+    hasAdminLevelForGoogle &&
+    !!effectiveGoogleTenantId &&
+    effectiveGoogleTenantId !== 'TgDJ4sIaC7x2n5cPs3rW';
+
+  const layout = (
     <Box sx={{ display: 'flex' }}>
       <CssBaseline />
 
@@ -1406,14 +1417,8 @@ const Layout: React.FC = React.memo(function Layout() {
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {/* Google Connection Chip - Show for security level 5-7 users (Staff Manager, Manager, Admin) */}
-            {activeTenant?.id && activeTenant.id !== 'TgDJ4sIaC7x2n5cPs3rW' && (() => {
-              const secLevel = currentClaimsSecurityLevel || securityLevel;
-              const hasAdminLevel = secLevel && ['5', '6', '7'].includes(secLevel);
-              return hasAdminLevel;
-            })() && (
-              <GoogleStatusProvider tenantId={activeTenant.id}>
-                <GoogleConnectionChip tenantId={activeTenant.id} />
-              </GoogleStatusProvider>
+            {shouldProvideGoogleStatus && (
+              <GoogleConnectionChip tenantId={effectiveGoogleTenantId} />
             )}
             
             {/* Top-Right Notifications Bar */}
@@ -1701,6 +1706,14 @@ const Layout: React.FC = React.memo(function Layout() {
         )} */}
       </Box>
     </Box>
+  );
+
+  return shouldProvideGoogleStatus ? (
+    <GoogleStatusProvider tenantId={effectiveGoogleTenantId}>
+      {layout}
+    </GoogleStatusProvider>
+  ) : (
+    layout
   );
 });
 

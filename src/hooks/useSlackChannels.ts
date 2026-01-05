@@ -130,6 +130,7 @@ export function useSlackChannels(activeTenantId: string | null): UseSlackChannel
                       topic: data.topic || undefined,
                       isArchived: data.isArchived || false,
                       status,
+                      memberIds: Array.isArray(data.memberIds) ? data.memberIds : [],
               linkedDeal: data.linkedDealId ? { id: data.linkedDealId, name: data.linkedDealName || 'Deal' } : null,
               linkedCustomer: data.linkedCustomerId ? { id: data.linkedCustomerId, name: data.linkedCustomerName || 'Customer' } : null,
               linkedJob: data.linkedJobId ? { id: data.linkedJobId, title: data.linkedJobTitle || 'Job' } : null,

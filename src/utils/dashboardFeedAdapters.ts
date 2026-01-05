@@ -116,10 +116,10 @@ export function adaptSlackChannelToFeedItem(
   const timestamp = channel.lastMessageAt?.getTime() || Date.now();
   const isMuted = channel.status === 'muted';
   
-  // Only include if user is watching and not muted (exclude unlinked, setup_needed, muted)
-  if (isMuted || channel.status !== 'watching') {
-    return null; // Filter these out in the hook
-  }
+  // Dashboard feed inclusion rule: member + not muted.
+  // Channel.status is not a reliable per-user membership indicator (often "unlinked" by default),
+  // so we only exclude muted here. Membership filtering happens in the hook.
+  if (isMuted) return null;
 
   const channelName = channel.name.startsWith('#') 
     ? channel.name 

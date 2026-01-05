@@ -5,12 +5,9 @@ import {
   Card,
   CardHeader,
   CardContent,
+  Drawer,
+  Divider,
   IconButton,
-  Chip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Button,
   TextField,
   FormControl,
@@ -23,24 +20,52 @@ import {
   Badge,
   ToggleButton,
   ToggleButtonGroup,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Switch,
+  FormControlLabel,
+  Autocomplete,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   Today as TodayIcon,
   Add as AddIcon,
+  CalendarMonth as CalendarMonthIcon,
   Event as EventIcon,
   Schedule as ScheduleIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
   Business as BusinessIcon,
+  Close as CloseIcon,
   ViewModule as ViewModuleIcon,
   ViewDay as ViewDayIcon,
 } from '@mui/icons-material';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, startOfWeek, endOfWeek, isToday, parseISO } from 'date-fns';
+import { Link } from 'react-router-dom';
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  isSameMonth,
+  isSameDay,
+  addMonths,
+  subMonths,
+  startOfWeek,
+  endOfWeek,
+  startOfDay,
+  endOfDay,
+  isToday,
+  parseISO,
+} from 'date-fns';
 import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../firebase';
+import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
+import type { DashboardCalendarEventInput } from '../types/dashboardCalendar';
+import { CallableCache } from '../utils/callableCache';
 
 interface CalendarEvent {
   id: string;
@@ -66,6 +91,8 @@ interface CalendarWidgetProps {
   preloadedSalespeople?: any[];
   preloadedCompanies?: any[];
   preloadedDeals?: any[];
+  variant?: 'default' | 'dashboard' | 'page';
+  initialView?: 'today' | 'week' | 'month';
 }
 
 const CalendarWidget: React.FC<CalendarWidgetProps> = ({
@@ -75,17 +102,72 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
   preloadedSalespeople = [],
   preloadedCompanies = [],
   preloadedDeals = [],
+  variant = 'default',
+  initialView,
 }) => {
+  const isDashboard = variant === 'dashboard';
+  const isPage = variant === 'page';
+  const showSourceChips = !isDashboard;
+  const showMonthInUi = !isDashboard; // keep month logic, hide UI for dashboard
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [view, setView] = useState<'month' | 'day'>(() => {
+  const [view, setView] = useState<'today' | 'week' | 'month'>(() => {
+    if (variant === 'page') return initialView || 'month';
     const saved = typeof window !== 'undefined' ? window.localStorage.getItem('calendar_view') : null;
-    return (saved === 'day' || saved === 'month') ? (saved as any) : 'month';
+    if (saved === 'day') return 'today'; // migrate old "day" view to Today-first
+    return (saved === 'today' || saved === 'week' || saved === 'month') ? (saved as any) : 'today';
   });
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [showEventDialog, setShowEventDialog] = useState(false);
+  const [showEventDrawer, setShowEventDrawer] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Persist callable cache across renders (was previously re-created per fetch, defeating caching)
+  const calendarEventsCache = useMemo(() => new CallableCache(90 * 60 * 1000), []);
+
+  // Compute the visible window to fetch from Google so "earlier today" and date navigation work.
+  const googleFetchRange = useMemo(() => {
+    const base = view === 'month' ? currentDate : selectedDate;
+    if (view === 'month') {
+      // Include full visible month grid range
+      const start = startOfWeek(startOfMonth(base));
+      const end = endOfWeek(endOfMonth(base));
+      return { start, end };
+    }
+    if (view === 'week') {
+      return { start: startOfWeek(base), end: endOfWeek(base) };
+    }
+    return { start: startOfDay(base), end: endOfDay(base) };
+  }, [view, selectedDate, currentDate]);
+
+  // Dashboard quick-add modal state (UI only; backend integration deferred)
+  const [showAddEventModal, setShowAddEventModal] = useState(false);
+  const [addTitle, setAddTitle] = useState('');
+  const [addDate, setAddDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [addAllDay, setAddAllDay] = useState(false);
+  const [addStartTime, setAddStartTime] = useState('09:00');
+  const [addEndTime, setAddEndTime] = useState('10:00');
+  const [addLocation, setAddLocation] = useState('');
+  const [addInvitees, setAddInvitees] = useState<string[]>([]);
+  const [addMeetLink, setAddMeetLink] = useState(false);
+  const [addDescription, setAddDescription] = useState('');
+  const [addValidationError, setAddValidationError] = useState<string | null>(null);
+  const [addSaveError, setAddSaveError] = useState<string | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
+
+  // When the selected date changes, keep the add-modal default date in sync
+  useEffect(() => {
+    setAddDate(format(selectedDate, 'yyyy-MM-dd'));
+  }, [selectedDate]);
+
+  // Dashboard variant: if month was persisted, don't show month in UI. Snap back to Today.
+  useEffect(() => {
+    if (!showMonthInUi && view === 'month') {
+      setView('today');
+      try { window.localStorage.setItem('calendar_view', 'today'); } catch {}
+    }
+  }, [showMonthInUi, view]);
 
   // Helper function to safely convert dates
   const safeDateConversion = (dateValue: any): Date => {
@@ -115,44 +197,204 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     const today = new Date();
     setCurrentDate(today);
     setSelectedDate(today);
+    setView('today');
   };
 
-  // Day view navigation
-  const goToPreviousDay = () => {
-    const prevDay = new Date(selectedDate);
-    prevDay.setDate(prevDay.getDate() - 1);
-    setSelectedDate(prevDay);
+  // Today/Week navigation
+  const goToPreviousPeriod = () => {
     if (view === 'month') {
-      setCurrentDate(prevDay);
+      setCurrentDate(subMonths(currentDate, 1));
+      return;
     }
+    const prev = new Date(selectedDate);
+    prev.setDate(prev.getDate() - (view === 'week' ? 7 : 1));
+    setSelectedDate(prev);
+    setCurrentDate(prev);
   };
 
-  const goToNextDay = () => {
-    const nextDay = new Date(selectedDate);
-    nextDay.setDate(nextDay.getDate() + 1);
-    setSelectedDate(nextDay);
+  const goToNextPeriod = () => {
     if (view === 'month') {
-      setCurrentDate(nextDay);
+      setCurrentDate(addMonths(currentDate, 1));
+      return;
     }
+    const next = new Date(selectedDate);
+    next.setDate(next.getDate() + (view === 'week' ? 7 : 1));
+    setSelectedDate(next);
+    setCurrentDate(next);
   };
 
   const handleDayClick = (date: Date) => {
     setSelectedDate(date);
-    setView('day');
+    setCurrentDate(date);
+    setView('today');
   };
 
-  const handleViewChange = (newView: 'month' | 'day') => {
+  const handleViewChange = (newView: 'today' | 'week' | 'month') => {
+    // If the user explicitly selects "Today", snap the date back to real today.
+    // This preserves the old Today-icon behavior while allowing the Dashboard header icon to be a link.
+    if (newView === 'today') {
+      const today = new Date();
+      setCurrentDate(today);
+      setSelectedDate(today);
+    }
     setView(newView);
+    if (newView === 'month') {
+      setCurrentDate(selectedDate);
+    }
     try { window.localStorage.setItem('calendar_view', newView); } catch {}
+  };
+
+  const handleOpenAddEvent = () => {
+    if (!isDashboard) {
+      window.location.assign('/crm?tab=tasks');
+      return;
+    }
+    setAddValidationError(null);
+    setAddSaveError(null);
+    setShowAddEventModal(true);
+  };
+
+  const handleCloseAddEvent = () => {
+    if (addSaving) return;
+    setShowAddEventModal(false);
+    setAddValidationError(null);
+    setAddSaveError(null);
+  };
+
+  const handleCreateCalendarEvent = async (payload: DashboardCalendarEventInput) => {
+    if (!userId) throw new Error('User not authenticated');
+    if (!tenantId) throw new Error('Missing tenant');
+
+    setAddSaving(true);
+    setAddSaveError(null);
+    try {
+      const functions = getFunctions();
+      const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
+
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const attendees = (payload.invitees || [])
+        .map((i) => ({ email: i.email, displayName: i.name }))
+        .filter((a) => !!a.email);
+
+      const eventData: any = {
+        summary: payload.title,
+        description: payload.description || '',
+        location: payload.location || '',
+        attendees: attendees.length ? attendees : undefined,
+      };
+
+      if (payload.allDay) {
+        const startDate = payload.date;
+        const endDateObj = new Date(`${payload.date}T00:00:00`);
+        endDateObj.setDate(endDateObj.getDate() + 1);
+        const endDate = format(endDateObj, 'yyyy-MM-dd');
+
+        eventData.start = { date: startDate, timeZone };
+        eventData.end = { date: endDate, timeZone };
+      } else {
+        const startDateTime = new Date(`${payload.date}T${payload.startTime || '09:00'}`);
+        const endDateTime = new Date(`${payload.date}T${payload.endTime || '10:00'}`);
+
+        eventData.start = { dateTime: startDateTime.toISOString(), timeZone };
+        eventData.end = { dateTime: endDateTime.toISOString(), timeZone };
+      }
+
+      // Note: backend currently ignores conferenceData / meet link creation; we keep the UI toggle for later.
+      await createCalendarEventFn({ userId, eventData });
+
+      // Force-refresh Google events (bypass the 90m client cache used in the initial load)
+      try {
+        const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEventsOptimized');
+        const payloadList = {
+          userId,
+          maxResults: 50,
+          timeMin: googleFetchRange.start.toISOString(),
+          timeMax: googleFetchRange.end.toISOString(),
+        };
+        const calendarData: any = (await listCalendarEventsFn(payloadList)).data as any;
+        if (calendarData?.success && Array.isArray(calendarData.events)) {
+          const googleEvents: CalendarEvent[] = calendarData.events.map((event: any) => ({
+            id: event.id,
+            title: event.summary || 'Untitled Event',
+            start: safeDateConversion(event.start?.dateTime || event.start?.date),
+            end: safeDateConversion(event.end?.dateTime || event.end?.date),
+            type: 'google_calendar',
+            description: event.description,
+            location: event.location,
+            attendees: event.attendees || [],
+            color: '#4caf50',
+            relatedTo: event.relatedTo,
+          }));
+          setEvents((prev) => {
+            const filtered = prev.filter((e) => e.type !== 'google_calendar');
+            return [...filtered, ...googleEvents];
+          });
+        }
+      } catch {
+        // If refresh fails, event was still created; the next reload will pick it up.
+      }
+    } catch (err: any) {
+      const msg =
+        typeof err?.message === 'string'
+          ? err.message
+          : 'Failed to create calendar event.';
+      setAddSaveError(msg);
+      throw err;
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
+  const handleSubmitAddEvent = async () => {
+    const title = addTitle.trim();
+    if (!title) {
+      setAddValidationError('Title is required.');
+      return;
+    }
+    if (!addAllDay) {
+      if (!addStartTime || !addEndTime) {
+        setAddValidationError('Start and end time are required (or choose All-day).');
+        return;
+      }
+      if (addEndTime <= addStartTime) {
+        setAddValidationError('End time must be after start time.');
+        return;
+      }
+    }
+
+    setAddValidationError(null);
+    setAddSaveError(null);
+    const payload: DashboardCalendarEventInput = {
+      source: 'google',
+      title,
+      date: addDate,
+      startTime: addAllDay ? undefined : addStartTime,
+      endTime: addAllDay ? undefined : addEndTime,
+      allDay: addAllDay,
+      location: addLocation.trim() || undefined,
+      invitees: addInvitees
+        .map((v) => v.trim())
+        .filter(Boolean)
+        .map((email) => ({ email })),
+      addMeetLink,
+      description: addDescription.trim() || undefined,
+    };
+
+    try {
+      await handleCreateCalendarEvent(payload);
+      handleCloseAddEvent();
+    } catch {
+      // error state already set; keep modal open
+    }
   };
 
   // Keyboard navigation for month view
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (showEventDialog) {
+      if (showEventDrawer) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          handleCloseEventDialog();
+          handleCloseEventDrawer();
         }
         return;
       }
@@ -168,7 +410,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, showEventDialog, selectedDate]);
+  }, [view, showEventDrawer, selectedDate]);
 
   // Get calendar days for the current month view
   const calendarDays = useMemo(() => {
@@ -236,13 +478,14 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         // First try to get Google Calendar events via API (like appointments widget does)
         const functions = getFunctions();
         const listCalendarEvents = httpsCallable(functions, 'listCalendarEventsOptimized');
-        // Visibility gating and client cache (90m)
-        const { useGoogleStatus } = await import('../contexts/GoogleStatusContext');
-        const { CallableCache } = await import('../utils/callableCache');
-        const cache = new CallableCache(90 * 60 * 1000);
-        const payload = { userId, maxResults: 50, timeMin: new Date().toISOString(), timeMax: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() };
-        const cacheKey = `listCalendarEvents:${userId}:${payload.timeMin.slice(0,10)}`;
-        const calendarResult: any = await cache.getOrFetch(cacheKey, async () => (await listCalendarEvents(payload)).data as any);
+        const payload = {
+          userId,
+          maxResults: 50,
+          timeMin: googleFetchRange.start.toISOString(),
+          timeMax: googleFetchRange.end.toISOString(),
+        };
+        const cacheKey = `listCalendarEvents:${userId}:${view}:${payload.timeMin.slice(0, 10)}:${payload.timeMax.slice(0, 10)}`;
+        const calendarResult: any = await calendarEventsCache.getOrFetch(cacheKey, async () => (await listCalendarEvents(payload)).data as any);
         const calendarData = calendarResult as any;
         
         if (calendarData.success && calendarData.events) {
@@ -330,7 +573,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     return () => {
       unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
     };
-  }, [userId, tenantId]);
+  }, [userId, tenantId, view, selectedDate, currentDate, googleFetchRange.start, googleFetchRange.end, calendarEventsCache]);
 
   // Get events for a specific day
   const getEventsForDay = (date: Date) => {
@@ -342,15 +585,6 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     const dayEvents = getEventsForDay(date);
     return dayEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
   };
-
-  // Generate time slots for day view (6 AM to 10 PM)
-  const timeSlots = useMemo(() => {
-    const slots = [];
-    for (let hour = 6; hour <= 22; hour++) {
-      slots.push(hour);
-    }
-    return slots;
-  }, []);
 
   // Get related entity name
   const getRelatedEntityName = (relatedTo?: { type: string; id: string; name: string }) => {
@@ -376,11 +610,11 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
 
   const handleEventClick = (event: CalendarEvent) => {
     setSelectedEvent(event);
-    setShowEventDialog(true);
+    setShowEventDrawer(true);
   };
 
-  const handleCloseEventDialog = () => {
-    setShowEventDialog(false);
+  const handleCloseEventDrawer = () => {
+    setShowEventDrawer(false);
     setSelectedEvent(null);
   };
 
@@ -396,7 +630,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       url.searchParams.set('editTaskId', selectedEvent.id);
       window.history.pushState({}, '', url.toString());
     } catch {}
-    handleCloseEventDialog();
+    handleCloseEventDrawer();
   };
 
   const handleDeleteAppointment = async () => {
@@ -407,7 +641,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       const functions = getFunctions();
       const deleteTask = httpsCallable(functions, 'deleteTask');
       await deleteTask({ tenantId, taskId: selectedEvent.id });
-      handleCloseEventDialog();
+      handleCloseEventDrawer();
     } catch (e) {
       console.error('Failed to delete appointment', e);
       alert('Failed to delete appointment.');
@@ -441,58 +675,118 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
   };
 
   return (
-    <Card>
+    <Card
+      sx={
+        isDashboard
+          ? {
+              borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px`,
+              border: '1px solid #EAEEF4',
+              boxShadow: 'none',
+              overflow: 'hidden',
+            }
+          : isPage
+            ? {
+                borderRadius: 0,
+                boxShadow: 'none',
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+              }
+          : undefined
+      }
+    >
       <CardHeader
         title="Calendar"
         action={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Chip 
-              label="CRM" 
-              size="small" 
-              sx={{ backgroundColor: '#1976d2', color: 'white' }}
-            />
-            <Chip 
-              label="Google" 
-              size="small" 
-              sx={{ backgroundColor: '#4caf50', color: 'white' }}
-            />
             <ToggleButtonGroup
               value={view}
               exclusive
               onChange={(e, newView) => newView && handleViewChange(newView)}
               size="small"
             >
-              <ToggleButton value="month" aria-label="month view">
-                <ViewModuleIcon />
+              <ToggleButton value="today" aria-label="today view">
+                Today
               </ToggleButton>
-              <ToggleButton value="day" aria-label="day view">
-                <ViewDayIcon />
+              <ToggleButton value="week" aria-label="week view">
+                Week
               </ToggleButton>
+              {showMonthInUi && (
+                <ToggleButton value="month" aria-label="month view">
+                  Month
+                </ToggleButton>
+              )}
             </ToggleButtonGroup>
-            <IconButton size="small" onClick={goToToday}>
-              <TodayIcon />
-            </IconButton>
+            {isDashboard ? (
+              <>
+                <Tooltip title="Open Calendar">
+                  <IconButton
+                    size="small"
+                    component={Link}
+                    to="/calendar"
+                    sx={{ width: 44, height: 44 }}
+                    aria-label="Open calendar page"
+                  >
+                    <CalendarMonthIcon />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Add Event">
+                  <IconButton
+                    size="small"
+                    onClick={handleOpenAddEvent}
+                    sx={{ width: 44, height: 44 }}
+                    aria-label="Add calendar event"
+                  >
+                    <AddIcon />
+                  </IconButton>
+                </Tooltip>
+              </>
+            ) : (
+              <IconButton size="small" onClick={goToToday}>
+                <TodayIcon />
+              </IconButton>
+            )}
           </Box>
         }
         titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+        sx={
+          isDashboard
+            ? {
+                px: 1.5,
+                pt: 1.25,
+                pb: 0.75,
+                '& .MuiCardHeader-action': { alignSelf: 'center' },
+              }
+            : undefined
+        }
       />
-      <CardContent>
+      <CardContent
+        sx={
+          isDashboard
+            ? { px: 1.5, pb: 1.5, pt: 0 }
+            : isPage
+              ? { px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }
+              : undefined
+        }
+      >
         {/* Calendar Navigation */}
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <IconButton 
-            onClick={view === 'month' ? goToPreviousMonth : goToPreviousDay} 
+            onClick={goToPreviousPeriod} 
             size="small"
           >
             <ChevronLeftIcon />
           </IconButton>
           <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-            {view === 'month' 
+            {view === 'month'
               ? format(currentDate, 'MMMM yyyy')
-              : format(selectedDate, 'EEEE, MMMM d, yyyy')
+              : view === 'week'
+                ? `Week of ${format(startOfWeek(selectedDate), 'MMM d')}`
+                : (isToday(selectedDate) ? `Today — ${format(selectedDate, 'MMM d')}` : format(selectedDate, 'EEEE, MMM d'))
             }
           </Typography>
           <IconButton 
-            onClick={view === 'month' ? goToNextMonth : goToNextDay} 
+            onClick={goToNextPeriod} 
             size="small"
           >
             <ChevronRightIcon />
@@ -633,173 +927,354 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
             );
           })}
         </Box>
-        ) : (
-          /* Day View */
-          <Box sx={{ 
-            display: 'flex',
-            flexDirection: 'column',
-            height: 600,
-            overflow: 'auto',
-            border: '1px solid #e0e0e0',
-            borderRadius: 1,
-          }}>
-            {/* Time slots */}
-            {timeSlots.map((hour) => {
-              const hourEvents = getEventsForDaySorted(selectedDate).filter(event => {
-                const eventHour = event.start.getHours();
-                return eventHour === hour;
-              });
-
+        ) : view === 'week' ? (
+          /* Week View (simple agenda) */
+          <Box
+            sx={{
+              border: '1px solid #e0e0e0',
+              borderRadius: `${DASHBOARD_WIDGET.innerRadiusPx}px`,
+              overflow: 'auto',
+              maxHeight: 520,
+              p: isDashboard ? 1.25 : 1,
+            }}
+          >
+            {eachDayOfInterval({ start: startOfWeek(selectedDate), end: endOfWeek(selectedDate) }).map((day) => {
+              const dayEvents = getEventsForDaySorted(day);
               return (
-                <Box
-                  key={hour}
-                  sx={{
-                    display: 'flex',
-                    minHeight: 60,
-                    borderBottom: '1px solid #f0f0f0',
-                    position: 'relative',
-                  }}
-                >
-                  {/* Time label */}
-                  <Box
-                    sx={{
-                      width: 80,
-                      p: 1,
-                      borderRight: '1px solid #e0e0e0',
-                      backgroundColor: '#f9f9f9',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '0.875rem',
-                      color: 'text.secondary',
-                      fontWeight: 'bold',
-                    }}
-                  >
-                    {format(new Date().setHours(hour, 0, 0, 0), 'h a')}
-                  </Box>
-
-                  {/* Events for this hour */}
-                  <Box
-                    sx={{
-                      flex: 1,
-                      p: 1,
-                      position: 'relative',
-                    }}
-                  >
-                    {hourEvents.map((event) => (
-                      <Box
-                        key={event.id}
-                        onClick={() => handleEventClick(event)}
-                        sx={{
-                          p: 1,
-                          backgroundColor: event.color,
-                          color: 'white',
-                          borderRadius: 1,
-                          marginBottom: 0.5,
-                          cursor: 'pointer',
-                          fontSize: '0.875rem',
-                          '&:hover': {
-                            opacity: 0.8,
-                          },
-                        }}
-                      >
-                        <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                          {format(event.start, 'h:mm a')} - {format(event.end, 'h:mm a')}
-                        </Typography>
-                        <Typography variant="body2">
-                          {event.title}
-                        </Typography>
-                        {event.location && (
-                          <Typography variant="caption" sx={{ opacity: 0.9 }}>
-                            📍 {event.location}
+                <Box key={day.toISOString()} sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
+                    {format(day, 'EEE, MMM d')}
+                  </Typography>
+                  {dayEvents.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      No events
+                    </Typography>
+                  ) : (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {dayEvents.map((event) => (
+                        <Box
+                          key={event.id}
+                          onClick={() => handleEventClick(event)}
+                          sx={{
+                            p: 1,
+                            borderRadius: 1,
+                            border: '1px solid #EAEEF4',
+                            cursor: 'pointer',
+                            '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' },
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                          }}
+                        >
+                          <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: event.color || '#999', flexShrink: 0 }} />
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {format(event.start, 'h:mm a')}
                           </Typography>
-                        )}
-                      </Box>
-                    ))}
-                  </Box>
+                          <Typography variant="body2" sx={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {event.title}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
+                  )}
                 </Box>
               );
             })}
           </Box>
+        ) : (
+          /* Today-first view (agenda) */
+          <Box>
+            {!isDashboard && (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                  {isToday(selectedDate) ? `Today — ${format(selectedDate, 'MMM d')}` : format(selectedDate, 'EEEE, MMM d')}
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddIcon />}
+                  onClick={handleOpenAddEvent}
+                  sx={{ textTransform: 'none', borderRadius: '999px' }}
+                >
+                  Add Event
+                </Button>
+              </Box>
+            )}
+
+            <Box
+              sx={{
+                border: '1px solid #EAEEF4',
+                borderRadius: `${DASHBOARD_WIDGET.innerRadiusPx}px`,
+                p: isDashboard ? 1.5 : 1,
+                overflow: 'auto',
+                maxHeight: 520,
+              }}
+            >
+              {(() => {
+                const dayEvents = getEventsForDaySorted(selectedDate);
+                if (dayEvents.length === 0) {
+                  return (
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+                      No events scheduled.
+                    </Typography>
+                  );
+                }
+
+                const now = new Date();
+                const isTodayDate = isToday(selectedDate);
+                const earlier = isTodayDate ? dayEvents.filter((e) => e.end.getTime() < now.getTime()) : [];
+                const upcoming = isTodayDate ? dayEvents.filter((e) => e.end.getTime() >= now.getTime()) : dayEvents;
+
+                const renderEventRow = (event: CalendarEvent) => (
+                  <Box
+                    key={event.id}
+                    onClick={() => handleEventClick(event)}
+                    sx={{
+                      py: 0.375,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      cursor: 'pointer',
+                      '&:hover': { opacity: 0.9 },
+                    }}
+                  >
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: event.color || '#999', flexShrink: 0 }} />
+                    <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 84, lineHeight: 1.5 }}>
+                      {format(event.start, 'h:mm a')}
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {event.title}
+                    </Typography>
+                  </Box>
+                );
+
+                return (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.375 }}>
+                    {upcoming.map(renderEventRow)}
+                    {earlier.length > 0 && (
+                      <>
+                        <Divider sx={{ my: 1 }} />
+                        <Typography variant="caption" sx={{ fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B7280' }}>
+                          Earlier Today
+                        </Typography>
+                        {earlier.map(renderEventRow)}
+                      </>
+                    )}
+                  </Box>
+                );
+              })()}
+            </Box>
+          </Box>
         )}
 
-        {/* Event Details Dialog */}
-        <Dialog open={showEventDialog} onClose={handleCloseEventDialog} maxWidth="sm" fullWidth>
-          <DialogTitle>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <EventIcon color="primary" />
-              {selectedEvent?.title}
+        {/* Event Details Drawer (drawer-first) */}
+        <Drawer
+          anchor="right"
+          open={showEventDrawer}
+          onClose={handleCloseEventDrawer}
+          PaperProps={{ sx: { width: { xs: '100%', sm: 420 } } }}
+        >
+          <Box sx={{ p: 2.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <EventIcon color="primary" />
+                <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                  {selectedEvent?.title || 'Event'}
+                </Typography>
+              </Box>
+              {selectedEvent?.type && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {selectedEvent.type === 'crm_appointment' ? 'CRM Appointment' : 'Google Calendar'}
+                </Typography>
+              )}
             </Box>
-          </DialogTitle>
-          <DialogContent>
+            <IconButton onClick={handleCloseEventDrawer} sx={{ width: 44, height: 44 }}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+
+          <Divider />
+
+          <Box sx={{ p: 2.5 }}>
+            {selectedEvent?.description && (
+              <Box sx={{ mb: 2, color: 'text.secondary' }} dangerouslySetInnerHTML={{ __html: linkifyDescription(selectedEvent.description) }} />
+            )}
+
             {selectedEvent && (
-              <Grid container spacing={2}>
-                <Grid item xs={12}>
-                  {selectedEvent.description && (
-                    <Box sx={{ color: 'text.secondary' }}
-                      dangerouslySetInnerHTML={{ __html: linkifyDescription(selectedEvent.description) }} />
-                  )}
-                </Grid>
-                
-                <Grid item xs={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ScheduleIcon fontSize="small" color="action" />
-                    <Typography variant="body2">
-                      {format(selectedEvent.start, 'MMM d, yyyy h:mm a')}
-                    </Typography>
-                  </Box>
-                </Grid>
-                
-                <Grid item xs={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ScheduleIcon fontSize="small" color="action" />
-                    <Typography variant="body2">
-                      {format(selectedEvent.end, 'MMM d, yyyy h:mm a')}
-                    </Typography>
-                  </Box>
-                </Grid>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <ScheduleIcon fontSize="small" color="action" />
+                  <Typography variant="body2">
+                    {format(selectedEvent.start, 'MMM d, yyyy h:mm a')} — {format(selectedEvent.end, 'h:mm a')}
+                  </Typography>
+                </Box>
 
                 {selectedEvent.location && (
-                  <Grid item xs={12}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <LocationIcon fontSize="small" color="action" />
-                      <Typography variant="body2">
-                        {selectedEvent.location}
-                      </Typography>
-                    </Box>
-                  </Grid>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LocationIcon fontSize="small" color="action" />
+                    <Typography variant="body2">{selectedEvent.location}</Typography>
+                  </Box>
                 )}
 
                 {selectedEvent.relatedTo && (
-                  <Grid item xs={12}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      {selectedEvent.relatedTo.type === 'contact' && <PersonIcon fontSize="small" color="action" />}
-                      {selectedEvent.relatedTo.type === 'company' && <BusinessIcon fontSize="small" color="action" />}
-                      <Typography variant="body2">
-                        Related to: {getRelatedEntityName(selectedEvent.relatedTo)}
-                      </Typography>
-                    </Box>
-                  </Grid>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {selectedEvent.relatedTo.type === 'contact' && <PersonIcon fontSize="small" color="action" />}
+                    {selectedEvent.relatedTo.type === 'company' && <BusinessIcon fontSize="small" color="action" />}
+                    <Typography variant="body2">
+                      Related to: {getRelatedEntityName(selectedEvent.relatedTo)}
+                    </Typography>
+                  </Box>
                 )}
 
                 {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
-                  <Grid item xs={12}>
-                    <Typography variant="body2" color="text.secondary">
-                      Attendees: {selectedEvent.attendees.map(getAttendeeLabel).filter(Boolean).join(', ')}
-                    </Typography>
-                  </Grid>
+                  <Typography variant="body2" color="text.secondary">
+                    Attendees: {selectedEvent.attendees.map(getAttendeeLabel).filter(Boolean).join(', ')}
+                  </Typography>
                 )}
-              </Grid>
+              </Box>
             )}
-          </DialogContent>
-          <DialogActions>
+          </Box>
+
+          <Box sx={{ mt: 'auto', p: 2.5, display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
             {selectedEvent?.type === 'crm_appointment' && (
               <>
-                <Button onClick={handleEditAppointment} variant="outlined">Edit</Button>
-                <Button onClick={handleDeleteAppointment} color="error" variant="outlined">Delete</Button>
+                <Button onClick={handleEditAppointment} variant="outlined" sx={{ textTransform: 'none', borderRadius: '24px' }}>
+                  Edit
+                </Button>
+                <Button onClick={handleDeleteAppointment} color="error" variant="outlined" sx={{ textTransform: 'none', borderRadius: '24px' }}>
+                  Delete
+                </Button>
               </>
             )}
-            <Button onClick={handleCloseEventDialog}>Close</Button>
+            <Button onClick={handleCloseEventDrawer} variant="contained" sx={{ textTransform: 'none', borderRadius: '24px' }}>
+              Close
+            </Button>
+          </Box>
+        </Drawer>
+
+        {/* Add Event Modal (dashboard quick add) */}
+        <Dialog
+          open={showAddEventModal}
+          onClose={handleCloseAddEvent}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle sx={{ fontWeight: 700 }}>
+            Add Event
+          </DialogTitle>
+          <DialogContent sx={{ pt: 1 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <TextField
+                label="Title"
+                value={addTitle}
+                onChange={(e) => setAddTitle(e.target.value)}
+                autoFocus
+                required
+                fullWidth
+              />
+
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                <TextField
+                  label="Date"
+                  type="date"
+                  value={addDate}
+                  onChange={(e) => setAddDate(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                  sx={{ flex: 1, minWidth: 180 }}
+                />
+                <FormControlLabel
+                  control={<Switch checked={addAllDay} onChange={(e) => setAddAllDay(e.target.checked)} />}
+                  label="All-day"
+                />
+              </Box>
+
+              {!addAllDay && (
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                  <TextField
+                    label="Start time"
+                    type="time"
+                    value={addStartTime}
+                    onChange={(e) => setAddStartTime(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, minWidth: 180 }}
+                  />
+                  <TextField
+                    label="End time"
+                    type="time"
+                    value={addEndTime}
+                    onChange={(e) => setAddEndTime(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, minWidth: 180 }}
+                  />
+                </Box>
+              )}
+
+              <TextField
+                label="Location (optional)"
+                value={addLocation}
+                onChange={(e) => setAddLocation(e.target.value)}
+                fullWidth
+              />
+
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={addInvitees}
+                onChange={(_, newValue) => setAddInvitees(newValue as string[])}
+                renderInput={(params) => (
+                  <TextField {...params} label="Invitees (optional)" placeholder="Type an email and press Enter" />
+                )}
+              />
+
+              <FormControlLabel
+                control={<Switch checked={addMeetLink} onChange={(e) => setAddMeetLink(e.target.checked)} />}
+                label="Add Google Meet link"
+              />
+
+              <TextField
+                label="Description / Notes (optional)"
+                value={addDescription}
+                onChange={(e) => setAddDescription(e.target.value)}
+                fullWidth
+                multiline
+                minRows={3}
+              />
+
+              {addValidationError && (
+                <Typography color="error" variant="body2">
+                  {addValidationError}
+                </Typography>
+              )}
+              {addSaveError && (
+                <Typography color="error" variant="body2">
+                  {addSaveError}
+                </Typography>
+              )}
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={handleCloseAddEvent} sx={{ textTransform: 'none' }} disabled={addSaving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitAddEvent}
+              variant="contained"
+              disabled={!addTitle.trim() || addSaving}
+              sx={{ textTransform: 'none' }}
+            >
+              {addSaving ? 'Saving…' : 'Save Event'}
+            </Button>
           </DialogActions>
         </Dialog>
       </CardContent>

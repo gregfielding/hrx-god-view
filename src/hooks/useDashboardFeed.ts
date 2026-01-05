@@ -18,7 +18,7 @@ import {
   EmailThreadSource,
 } from '../utils/dashboardFeedAdapters';
 import { SlackChannelView } from '../types/slackChannels';
-import { canUserAccessSlack } from '../utils/security';
+import { normalizeSecurityLevel } from '../utils/security';
 
 interface UseDashboardFeedOptions {
   limit?: number;
@@ -36,11 +36,11 @@ export function useDashboardFeed(
   options: UseDashboardFeedOptions = {}
 ): UseDashboardFeedReturn {
   const { limit = 100, refreshInterval = 60000 } = options;
-  const { user, activeTenant } = useAuth();
+  const { user, activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
   
-  const tenantId = activeTenant?.id || '';
+  const tenantId = activeTenant?.id || (user as any)?.activeTenantId || '';
   const userId = user?.uid || null;
-  const canAccessSlack = canUserAccessSlack(user);
+  const canAccessSlack = normalizeSecurityLevel(currentClaimsSecurityLevel || securityLevel) >= 5;
 
   // State for email threads
   const [emailThreads, setEmailThreads] = useState<EmailThreadSource[]>([]);
@@ -166,7 +166,9 @@ export function useDashboardFeed(
     if (canAccessSlack && !membershipLoading) {
       slackChannels.forEach((channel: SlackChannelView) => {
         // Only include channels where user is a member and not muted
-        const isMember = isMemberByChannel[channel.id];
+        const isMember =
+          !!isMemberByChannel[channel.id] ||
+          (!!userId && Array.isArray(channel.memberIds) && channel.memberIds.includes(userId));
         if (!isMember || channel.status === 'muted') {
           return;
         }
