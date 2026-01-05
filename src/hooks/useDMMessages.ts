@@ -356,94 +356,99 @@ export function useDMMessages({
           }
         }
 
-        // Use transaction to atomically:
-        // 1. Create or get thread
-        // 2. Create message
-        // 3. Update thread's lastMessage* fields
-        // 4. Update unread counts (increment for other participant, reset for current user)
-        console.log('[useDMMessages] Starting transaction...');
-        console.log('[useDMMessages] currentUserData available:', !!currentUserData);
-        console.log('[useDMMessages] otherUserDataForThread available:', !!otherUserDataForThread);
-        await runTransaction(db, async (tx) => {
-          // Get thread document
-          const threadSnap = await tx.get(threadRef);
-          let threadData: any;
-          let otherParticipantId: string;
+        // IMPORTANT: Firestore rules for messages rely on reading the parent dmThreads/{threadId}.
+        // If we create the thread and the first message in the SAME transaction, rules `get(...)`
+        // for the thread won't see the just-created doc and message create will fail with permission-denied.
+        //
+        // So we ensure the thread exists first, then create the message in a second transaction.
 
-          if (!threadSnap.exists()) {
-            // Thread doesn't exist - create it using data we fetched outside transaction
+        if (!existingThreadSnap.exists()) {
+          console.log('[useDMMessages] Creating thread (separate transaction)...');
+          console.log('[useDMMessages] currentUserData available:', !!currentUserData);
+          console.log('[useDMMessages] otherUserDataForThread available:', !!otherUserDataForThread);
 
-            const currentDisplayName =
-              currentUserData.displayName ||
-              (currentUserData.firstName && currentUserData.lastName
-                ? `${currentUserData.firstName} ${currentUserData.lastName}`
-                : currentUserData.email?.split('@')[0] || 'User');
-            const otherDisplayName =
-              otherUserDataForThread.displayName ||
-              (otherUserDataForThread.firstName && otherUserDataForThread.lastName
-                ? `${otherUserDataForThread.firstName} ${otherUserDataForThread.lastName}`
-                : otherUserDataForThread.email?.split('@')[0] || 'User');
+          const currentDisplayName =
+            currentUserData.displayName ||
+            (currentUserData.firstName && currentUserData.lastName
+              ? `${currentUserData.firstName} ${currentUserData.lastName}`
+              : currentUserData.email?.split('@')[0] || 'User');
+          const otherDisplayName =
+            otherUserDataForThread.displayName ||
+            (otherUserDataForThread.firstName && otherUserDataForThread.lastName
+              ? `${otherUserDataForThread.firstName} ${otherUserDataForThread.lastName}`
+              : otherUserDataForThread.email?.split('@')[0] || 'User');
 
-            // Create thread
-            threadData = {
-              participantIds: [currentUserId, otherUserId],
-              participantMeta: {
-                [currentUserId]: {
-                  displayName: currentDisplayName,
-                  email: currentUserData.email || '',
-                  avatarUrl: currentUserData.avatar || currentUserData.photoURL || '',
-                },
-                [otherUserId]: {
-                  displayName: otherDisplayName,
-                  email: otherUserDataForThread.email || '',
-                  avatarUrl: otherUserDataForThread.avatarUrl || otherUserDataForThread.avatar || otherUserDataForThread.photoURL || '',
-                },
+          const threadData = {
+            participantIds: [currentUserId, otherUserId],
+            participantMeta: {
+              [currentUserId]: {
+                displayName: currentDisplayName,
+                email: currentUserData.email || '',
+                avatarUrl: currentUserData.avatar || currentUserData.photoURL || '',
               },
-              lastMessageText: '',
-              lastMessageAt: null,
-              lastMessageSenderId: '',
-              unreadCounts: {},
-              isMuted: {},
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-              status: 'active',
-            };
+              [otherUserId]: {
+                displayName: otherDisplayName,
+                email: otherUserDataForThread.email || '',
+                avatarUrl:
+                  otherUserDataForThread.avatarUrl ||
+                  otherUserDataForThread.avatar ||
+                  otherUserDataForThread.photoURL ||
+                  '',
+              },
+            },
+            lastMessageText: '',
+            lastMessageAt: null,
+            lastMessageSenderId: '',
+            unreadCounts: {},
+            isMuted: {},
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            status: 'active',
+          };
 
-            tx.set(threadRef, threadData);
-            otherParticipantId = otherUserId;
-          } else {
-            // Thread exists
-            threadData = threadSnap.data();
-            const participantIds = threadData.participantIds || [];
-            otherParticipantId = participantIds.find((id: string) => id !== currentUserId);
-
-            if (!otherParticipantId) {
-              throw new Error('Other participant not found in thread');
+          await runTransaction(db, async (tx) => {
+            const snap = await tx.get(threadRef);
+            if (!snap.exists()) {
+              tx.set(threadRef, threadData);
             }
+          });
+        }
+
+        // Create message + update thread atomically
+        console.log('[useDMMessages] Creating message + updating thread (transaction)...');
+        await runTransaction(db, async (tx) => {
+          const threadSnap = await tx.get(threadRef);
+          if (!threadSnap.exists()) {
+            throw new Error('Thread not found');
           }
+
+          const threadData = threadSnap.data() as any;
+          const participantIds = threadData.participantIds || [];
+          const otherParticipantId =
+            participantIds.find((id: string) => id !== currentUserId) || otherUserId;
 
           // Create message
           const messageRef = doc(messagesRef);
-          console.log('[useDMMessages] Creating message in transaction...');
           tx.set(messageRef, {
             senderId: currentUserId,
             text: trimmedText,
             createdAt: serverTimestamp(),
-            type: 'message',
+            type: gifData ? 'gif' : 'message',
+            gifUrl: gifData?.url,
+            stillPreviewUrl: gifData?.stillUrl,
+            gifWidth: gifData?.width,
+            gifHeight: gifData?.height,
+            gifProvider: gifData?.provider,
           });
-          console.log('[useDMMessages] Message document set in transaction');
 
-          // Update thread
           const currentUnreadCounts = threadData.unreadCounts || {};
           const newUnreadCounts = {
             ...currentUnreadCounts,
-            [currentUserId]: 0, // Reset current user's unread count
-            [otherParticipantId]: (currentUnreadCounts[otherParticipantId] || 0) + 1, // Increment other's unread
+            [currentUserId]: 0,
+            [otherParticipantId]: (currentUnreadCounts[otherParticipantId] || 0) + 1,
           };
 
-          // Update thread with last message text (use GIF indicator if it's a GIF)
           const lastMessageText = gifData ? '📎 GIF' : trimmedText;
-          
           tx.update(threadRef, {
             lastMessageText,
             lastMessageAt: serverTimestamp(),
@@ -451,9 +456,7 @@ export function useDMMessages({
             unreadCounts: newUnreadCounts,
             updatedAt: serverTimestamp(),
           });
-          console.log('[useDMMessages] Thread updated in transaction');
         });
-        console.log('[useDMMessages] Transaction completed successfully');
         
         // Remove optimistic message on success (real message will arrive via snapshot)
         optimisticMessagesRef.current.delete(optimisticId);
@@ -486,7 +489,7 @@ export function useDMMessages({
         }
       }
     },
-    [tenantId, threadId, currentUserId]
+    [tenantId, threadId, currentUserId, otherUserId, otherUserData]
   );
 
   /**
