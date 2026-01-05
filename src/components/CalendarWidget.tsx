@@ -67,6 +67,22 @@ import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
 import type { DashboardCalendarEventInput } from '../types/dashboardCalendar';
 import { CallableCache } from '../utils/callableCache';
 
+type CachedGoogleEventsPayload = {
+  at: number;
+  events: Array<{
+    id: string;
+    title: string;
+    start: string;
+    end: string;
+    type: 'google_calendar';
+    description?: string;
+    location?: string;
+    attendees?: any[];
+    color?: string;
+    relatedTo?: any;
+  }>;
+};
+
 interface CalendarEvent {
   id: string;
   title: string;
@@ -492,6 +508,39 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
 
     // Load Google Calendar events (from activities collection and direct API)
     const loadGoogleCalendarEvents = async () => {
+      const cacheKeySession = `calendarWidget.googleEvents.v1:${userId}:${tenantId}:${googleFetchRange.start.toISOString().slice(0, 10)}:${googleFetchRange.end.toISOString().slice(0, 10)}`;
+
+      // Hydrate from sessionStorage immediately (stale-while-revalidate) to avoid flicker.
+      try {
+        const raw = sessionStorage.getItem(cacheKeySession);
+        if (raw) {
+          const parsed = JSON.parse(raw) as CachedGoogleEventsPayload;
+          if (parsed?.events?.length) {
+            const cachedGoogleEvents: CalendarEvent[] = parsed.events.map((e) => ({
+              id: e.id,
+              title: e.title,
+              start: safeDateConversion(e.start),
+              end: safeDateConversion(e.end),
+              type: 'google_calendar',
+              description: e.description,
+              location: e.location,
+              attendees: e.attendees || [],
+              color: e.color || '#4caf50',
+              relatedTo: e.relatedTo,
+            }));
+
+            setEvents((prev) => {
+              const filtered = prev.filter((ev) => ev.type !== 'google_calendar');
+              // Only hydrate if we don't already have google events; avoids oscillation on quick range changes.
+              const hasGoogle = prev.some((ev) => ev.type === 'google_calendar');
+              return hasGoogle ? prev : [...filtered, ...cachedGoogleEvents];
+            });
+          }
+        }
+      } catch {
+        // ignore cache parse issues
+      }
+
       try {
         // First try to get Google Calendar events via API (like appointments widget does)
         const functions = getFunctions();
@@ -506,7 +555,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         const calendarResult: any = await calendarEventsCache.getOrFetch(cacheKey, async () => (await listCalendarEvents(payload)).data as any);
         const calendarData = calendarResult as any;
         
-        if (calendarData.success && calendarData.events) {
+        if (calendarData.success && Array.isArray(calendarData.events)) {
           console.log(`📅 Loaded ${calendarData.events.length} Google Calendar events via API for user ${userId}`);
           const googleEvents: CalendarEvent[] = calendarData.events.map((event: any) => ({
             id: event.id,
@@ -521,10 +570,42 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
             relatedTo: event.relatedTo,
           }));
           
-          setEvents(prev => {
-            const filtered = prev.filter(e => e.type !== 'google_calendar');
+          setEvents((prev) => {
+            const hadGoogleBefore = prev.some((e) => e.type === 'google_calendar');
+            // Guard: don't blow away previously-seen events if the API returns an empty list unexpectedly.
+            if (hadGoogleBefore && googleEvents.length === 0) return prev;
+            const filtered = prev.filter((e) => e.type !== 'google_calendar');
             return [...filtered, ...googleEvents];
           });
+
+          // Persist a lightweight cache so refreshes and transient fetch issues don't clear the UI.
+          try {
+            const payloadToCache: CachedGoogleEventsPayload = {
+              at: Date.now(),
+              events: googleEvents.map((e) => ({
+                id: e.id,
+                title: e.title,
+                start: e.start.toISOString(),
+                end: e.end.toISOString(),
+                type: 'google_calendar',
+                description: e.description,
+                location: e.location,
+                attendees: e.attendees,
+                color: e.color,
+                relatedTo: e.relatedTo,
+              })),
+            };
+
+            // Only overwrite an existing non-empty cache with non-empty data.
+            if (payloadToCache.events.length > 0) {
+              sessionStorage.setItem(cacheKeySession, JSON.stringify(payloadToCache));
+            } else {
+              const existing = sessionStorage.getItem(cacheKeySession);
+              if (!existing) sessionStorage.setItem(cacheKeySession, JSON.stringify(payloadToCache));
+            }
+          } catch {
+            // ignore cache write errors
+          }
         }
       } catch (calendarError: any) {
         console.warn('Google Calendar API not accessible:', calendarError);
