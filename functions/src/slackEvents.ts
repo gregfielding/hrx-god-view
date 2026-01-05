@@ -746,24 +746,33 @@ export const slackEvents = onRequest(
 
     try {
       // Body handling for signature verification
-      // Note: Firebase Functions v2 with Express parses JSON automatically
-      // For proper signature verification, we need the raw body string
-      // If rawBody is not available, we'll reconstruct it (Slack signature verification may fail if formatting differs)
+      // Slack signatures are computed over the *raw request body bytes*.
+      // Firebase usually provides req.rawBody, but if it's missing we fall back to a best-effort string.
+      // NOTE: JSON re-serialization can break signature verification, so we use it only as a last resort.
       let rawBody: string;
-      
-      // Check if rawBody is available (Firebase Functions may provide this)
-      if ((req as any).rawBody) {
-        rawBody = (req as any).rawBody.toString('utf8');
+      const rawBuf = (req as any).rawBody as Buffer | undefined;
+      if (rawBuf && Buffer.isBuffer(rawBuf)) {
+        rawBody = rawBuf.toString('utf8');
+      } else if (typeof (req as any).body === 'string') {
+        rawBody = (req as any).body;
       } else {
-        // Fallback: reconstruct JSON string
-        // WARNING: This may cause signature verification to fail if Slack's JSON has different formatting
-        // For production, configure Firebase Functions to preserve raw body or use a middleware
-        rawBody = JSON.stringify(req.body);
+        rawBody = JSON.stringify(req.body ?? {});
       }
 
+      // Parse payload for tenant resolution (do NOT trust until signature verifies)
+      const parsedBody: any = typeof req.body === 'object' && req.body
+        ? req.body
+        : (() => {
+            try {
+              return JSON.parse(rawBody);
+            } catch {
+              return null;
+            }
+          })();
+
       // 1. URL verification (no signature check needed for this)
-      if (req.body && req.body.type === 'url_verification') {
-        const payload = req.body as SlackUrlVerificationPayload;
+      if (parsedBody && parsedBody.type === 'url_verification') {
+        const payload = parsedBody as SlackUrlVerificationPayload;
         logger.info('Slack URL verification received', { challenge: payload.challenge });
         res.status(200).json({ challenge: payload.challenge });
         return;
@@ -781,8 +790,21 @@ export const slackEvents = onRequest(
         signingSecretOverride = undefined;
       }
       if (!signingSecretOverride) {
-        // Fallback to tenant integration config (single-tenant)
-        const fallback = await getSlackSecretsFallback(DEFAULT_TENANT_ID);
+        // Fallback to tenant integration config (multi-tenant safe): resolve tenant from team_id first.
+        const teamId = parsedBody?.team_id;
+        let tenantIdForSecrets = DEFAULT_TENANT_ID;
+        if (typeof teamId === 'string' && teamId) {
+          try {
+            const mappedTenantId = await getTenantIdFromSlackTeam(teamId);
+            if (mappedTenantId) tenantIdForSecrets = mappedTenantId;
+          } catch (err: any) {
+            logger.warn('Failed to map Slack team to tenantId; using DEFAULT_TENANT_ID', {
+              teamId,
+              error: err?.message,
+            });
+          }
+        }
+        const fallback = await getSlackSecretsFallback(tenantIdForSecrets);
         signingSecretOverride = fallback.signingSecret;
       }
 
@@ -795,7 +817,7 @@ export const slackEvents = onRequest(
         return;
       }
 
-      const payload = req.body as SlackEventPayload;
+      const payload = (parsedBody ?? req.body) as SlackEventPayload;
 
       // 3. Event callback
       if (payload.type === 'event_callback') {
