@@ -1,5 +1,6 @@
 import React from 'react';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip } from '@mui/material';
+import StandardTablePagination from '../components/StandardTablePagination';
 
 export interface WorkersTableProps {
   contacts: any[];
@@ -134,6 +135,8 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
 }) => {
   const [order, setOrder] = React.useState<'asc' | 'desc'>('asc');
   const [orderBy, setOrderBy] = React.useState<string>('firstName');
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(20);
 
   const handleRequestSort = (property: string) => {
     const isAsc = orderBy === property && order === 'asc';
@@ -252,6 +255,17 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
     return data;
   }, [filteredContacts, order, orderBy, departments, locations, divisions, regions, effectiveTenantId]);
 
+  // Paginate sorted contacts
+  const paginatedContacts = React.useMemo(() => {
+    const start = page * rowsPerPage;
+    return sortedContacts.slice(start, start + rowsPerPage);
+  }, [sortedContacts, page, rowsPerPage]);
+
+  // Reset page when search changes
+  React.useEffect(() => {
+    setPage(0);
+  }, [search]);
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
@@ -259,35 +273,83 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
       </Box>
     );
   }
+
   return (
-    <TableContainer component={Paper}>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', px: 2 }}>
+      <TableContainer 
+        component={Paper}
+        sx={{
+          borderRadius: 2,
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+          width: '100%',
+          // Custom scrollbar styling (lighter and thinner)
+          '&::-webkit-scrollbar': {
+            width: '8px',
+            height: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': {
+              background: 'rgba(0, 0, 0, 0.25)',
+            },
+          },
+          // Firefox scrollbar styling
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+      <Table size="small" stickyHeader sx={{ width: '100%' }}>
+        <TableHead sx={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          backgroundColor: 'background.paper',
+        }}>
+          <TableRow sx={{ backgroundColor: 'background.paper' }}>
             {/* First Name */}
-            <TableCell sortDirection={orderBy === 'firstName' ? order : false}>
+            <TableCell 
+              sortDirection={orderBy === 'firstName' ? order : false}
+              sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+            >
               <TableSortLabel
                 active={orderBy === 'firstName'}
                 direction={orderBy === 'firstName' ? order : 'asc'}
                 onClick={() => handleRequestSort('firstName')}
               >
-                First Name
+                First
               </TableSortLabel>
             </TableCell>
             {/* Last Name */}
-            <TableCell sortDirection={orderBy === 'lastName' ? order : false}>
+            <TableCell 
+              sortDirection={orderBy === 'lastName' ? order : false}
+              sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+            >
               <TableSortLabel
                 active={orderBy === 'lastName'}
                 direction={orderBy === 'lastName' ? order : 'asc'}
                 onClick={() => handleRequestSort('lastName')}
               >
-                Last Name
+                Last
               </TableSortLabel>
             </TableCell>
-            <TableCell>Email</TableCell>
-            <TableCell sx={{ minWidth: '140px' }}>Phone</TableCell>
+            <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Email</TableCell>
+            <TableCell sx={{ minWidth: '140px', fontWeight: 700, bgcolor: '#FFFFFF' }}>Phone</TableCell>
             {/* Job Title */}
-            <TableCell sortDirection={orderBy === 'jobTitle' ? order : false}>
+            <TableCell 
+              sortDirection={orderBy === 'jobTitle' ? order : false}
+              sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+            >
               <TableSortLabel
                 active={orderBy === 'jobTitle'}
                 direction={orderBy === 'jobTitle' ? order : 'asc'}
@@ -297,7 +359,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
               </TableSortLabel>
             </TableCell>
                   {/* Region */}
-                  <TableCell sortDirection={orderBy === 'region' ? order : false}>
+                  <TableCell 
+                    sortDirection={orderBy === 'region' ? order : false}
+                    sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+                  >
                     <TableSortLabel
                       active={orderBy === 'region'}
                       direction={orderBy === 'region' ? order : 'asc'}
@@ -307,7 +372,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   {/* Division */}
-                  <TableCell sortDirection={orderBy === 'division' ? order : false}>
+                  <TableCell 
+                    sortDirection={orderBy === 'division' ? order : false}
+                    sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+                  >
                     <TableSortLabel
                       active={orderBy === 'division'}
                       direction={orderBy === 'division' ? order : 'asc'}
@@ -317,7 +385,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   {/* Department */}
-                  <TableCell sortDirection={orderBy === 'department' ? order : false}>
+                  <TableCell 
+                    sortDirection={orderBy === 'department' ? order : false}
+                    sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+                  >
                     <TableSortLabel
                       active={orderBy === 'department'}
                       direction={orderBy === 'department' ? order : 'asc'}
@@ -327,7 +398,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   {/* Location */}
-                  <TableCell sortDirection={orderBy === 'location' ? order : false}>
+                  <TableCell 
+                    sortDirection={orderBy === 'location' ? order : false}
+                    sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+                  >
                     <TableSortLabel
                       active={orderBy === 'location'}
                       direction={orderBy === 'location' ? order : 'asc'}
@@ -337,7 +411,10 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   {/* Role */}
-                  <TableCell sortDirection={orderBy === 'securityLevel' ? order : false}>
+                  <TableCell 
+                    sortDirection={orderBy === 'securityLevel' ? order : false}
+                    sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}
+                  >
                     <TableSortLabel
                       active={orderBy === 'securityLevel'}
                       direction={orderBy === 'securityLevel' ? order : 'asc'}
@@ -347,13 +424,13 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
                     </TableSortLabel>
                   </TableCell>
                   {/* Module Access */}
-                  <TableCell>
+                  <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>
                     Module Access
                   </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
-          {sortedContacts.map((contact) => (
+          {paginatedContacts.map((contact) => (
             <TableRow key={contact.id} hover onClick={() => navigateToUser(contact.id)} sx={{ cursor: 'pointer' }}>
               {/* First Name */}
               <TableCell>
@@ -518,7 +595,7 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
               </TableCell>
             </TableRow>
           ))}
-          {contacts.length === 0 && (
+          {sortedContacts.length === 0 && (
             <TableRow>
               <TableCell colSpan={11} align="center">
                 No workers found. Add your first worker using the button above.
@@ -527,7 +604,20 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
           )}
         </TableBody>
       </Table>
-    </TableContainer>
+      </TableContainer>
+
+      {/* Pagination Footer */}
+      <StandardTablePagination
+        count={sortedContacts.length}
+        page={page}
+        onPageChange={(_, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(e) => {
+          setRowsPerPage(parseInt(e.target.value, 10));
+          setPage(0);
+        }}
+      />
+    </Box>
   );
 };
 

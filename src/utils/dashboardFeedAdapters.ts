@@ -1,0 +1,148 @@
+/**
+ * Dashboard Feed Adapters
+ * 
+ * Convert source-specific data into unified DashboardFeedItem format.
+ */
+
+import { DashboardFeedItem } from '../types/dashboardFeed';
+
+// Email Thread Adapter
+export interface EmailThreadSource {
+  id: string;
+  subject: string;
+  participants: string[];
+  lastMessageAt: any; // Firestore Timestamp or Date
+  lastMessageSnippet?: string;
+  unreadCount: number;
+  participantContacts?: Array<{
+    email: string;
+    contactName?: string;
+    userName?: string;
+    avatarUrl?: string;
+  }>;
+}
+
+export function adaptEmailThreadToFeedItem(
+  thread: EmailThreadSource,
+  tenantId: string
+): DashboardFeedItem {
+  const timestamp = thread.lastMessageAt?.toDate 
+    ? thread.lastMessageAt.toDate().getTime()
+    : thread.lastMessageAt instanceof Date
+    ? thread.lastMessageAt.getTime()
+    : Date.now();
+
+  // Get primary sender from participant contacts
+  const primaryContact = thread.participantContacts?.[0];
+  const fromLabel = primaryContact?.contactName || 
+                    primaryContact?.userName || 
+                    primaryContact?.email?.split('@')[0] || 
+                    'Unknown';
+  const avatarUrl = primaryContact?.avatarUrl;
+
+  return {
+    id: `email_${thread.id}`,
+    sourceType: 'email',
+    sourceId: thread.id,
+    title: thread.subject || '(No subject)',
+    snippet: thread.lastMessageSnippet || '',
+    fromLabel,
+    avatarUrl,
+    isUnread: thread.unreadCount > 0,
+    isMuted: false, // Email mute not implemented yet
+    timestamp,
+    drawerScope: {
+      scopeType: 'email',
+      threadId: thread.id,
+    },
+  };
+}
+
+// Slack DM Thread Adapter
+export interface SlackDMThreadSource {
+  id: string;
+  otherUser: {
+    uid: string;
+    displayName: string;
+    email?: string;
+    avatarUrl?: string;
+  };
+  lastMessageText: string;
+  lastMessageAt: Date | null;
+  unreadCount: number;
+  isMuted: boolean;
+}
+
+export function adaptSlackDMToFeedItem(
+  thread: SlackDMThreadSource
+): DashboardFeedItem {
+  const timestamp = thread.lastMessageAt?.getTime() || Date.now();
+
+  return {
+    id: `slack_dm_${thread.id}`,
+    sourceType: 'slack_dm',
+    sourceId: thread.id,
+    title: `DM with ${thread.otherUser.displayName}`,
+    snippet: thread.lastMessageText || '',
+    fromLabel: thread.otherUser.displayName,
+    avatarUrl: thread.otherUser.avatarUrl,
+    isUnread: thread.unreadCount > 0,
+    isMuted: thread.isMuted,
+    timestamp,
+    drawerScope: {
+      scopeType: 'slack_dm',
+      channelId: thread.id,
+      dmUserId: thread.otherUser.uid,
+    },
+  };
+}
+
+// Slack Channel Adapter
+export interface SlackChannelSource {
+  id: string;
+  name: string;
+  lastMessageText?: string;
+  lastMessageUserName?: string;
+  lastMessageAt?: Date | null;
+  status: 'watching' | 'unlinked' | 'muted' | 'setup_needed';
+  unreadCount?: number;
+  hasMentions?: boolean;
+}
+
+export function adaptSlackChannelToFeedItem(
+  channel: SlackChannelSource,
+  userId: string
+): DashboardFeedItem | null {
+  const timestamp = channel.lastMessageAt?.getTime() || Date.now();
+  const isMuted = channel.status === 'muted';
+  
+  // Only include if user is watching and not muted (exclude unlinked, setup_needed, muted)
+  if (isMuted || channel.status !== 'watching') {
+    return null; // Filter these out in the hook
+  }
+
+  const channelName = channel.name.startsWith('#') 
+    ? channel.name 
+    : `#${channel.name}`;
+
+  return {
+    id: `slack_channel_${channel.id}`,
+    sourceType: 'slack_channel',
+    sourceId: channel.id,
+    title: channelName,
+    snippet: channel.lastMessageText || 
+             (channel.lastMessageUserName 
+               ? `${channel.lastMessageUserName}: (message)` 
+               : 'No recent activity'),
+    fromLabel: channel.lastMessageUserName || 'No activity',
+    isUnread: (channel.unreadCount || 0) > 0,
+    hasMentions: channel.hasMentions || false,
+    isMuted: false, // Already filtered out muted channels
+    timestamp,
+    drawerScope: {
+      scopeType: 'slack_channel',
+      channelId: channel.id,
+    },
+  };
+}
+

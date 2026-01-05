@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Avatar,
@@ -8,7 +8,6 @@ import {
   Chip,
   CircularProgress,
   FormControl,
-  InputAdornment,
   InputLabel,
   MenuItem,
   Paper,
@@ -19,10 +18,10 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import StarIcon from '@mui/icons-material/Star';
@@ -30,17 +29,19 @@ import GroupIcon from '@mui/icons-material/Groups';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
-import FavoritesFilter from '../components/FavoritesFilter';
+import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import type { RecruiterOutletContext } from './RecruiterDashboard';
 
 type SecurityLevel =
   | '0'
@@ -77,6 +78,11 @@ interface TenantUserGroup {
 const RecruiterUsers: React.FC = () => {
   const navigate = useNavigate();
   const { activeTenant } = useAuth();
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const searchTerm = outletCtx?.search || '';
+  const showFavoritesOnly = outletCtx?.showFavoritesOnly || false;
+
+  const isFetchingRef = useRef(false);
 
   const [users, setUsers] = useState<RecruiterUser[]>([]);
   const [groups, setGroups] = useState<TenantUserGroup[]>([]);
@@ -89,13 +95,14 @@ const RecruiterUsers: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const PAGE_SIZE = 500; // Load up to 500 users at a time so search can filter locally without reloads
 
-  const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [groupFilter, setGroupFilter] = useState<string>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
   const [stateFilter, setStateFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>('accountCreated');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -117,6 +124,20 @@ const RecruiterUsers: React.FC = () => {
     loadUsers(activeTenant.id, true);
   }, [activeTenant?.id, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
+  // Reset client pagination when filters/search change
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
+
+  const handleSort = (key: 'name' | 'aiScore' | 'lastLogin') => {
+    if (sortBy === key) {
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortBy(key);
+    setSortDirection(key === 'name' ? 'asc' : 'desc');
+  };
+
   const loadGroups = async (tenantId: string) => {
     try {
       const groupsRef = collection(db, 'tenants', tenantId, 'userGroups');
@@ -129,6 +150,10 @@ const RecruiterUsers: React.FC = () => {
   };
 
   const loadUsers = async (tenantId: string, isInitialLoad = false) => {
+    // Guard against overlapping/double-invoked fetches (React dev/StrictMode)
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     if (isInitialLoad) {
       setLoading(true);
     } else {
@@ -219,18 +244,22 @@ const RecruiterUsers: React.FC = () => {
         };
       });
       
-      // If initial load, replace users; if loading more, append
-      if (isInitialLoad) {
-        setUsers(data);
-      } else {
-        setUsers(prev => [...prev, ...data]);
-      }
+      // If initial load, replace users; if loading more, append (dedupe by id)
+      setUsers((prev) => {
+        const map = new Map<string, RecruiterUser>();
+        if (!isInitialLoad) {
+          prev.forEach((u) => map.set(u.id, u));
+        }
+        data.forEach((u) => map.set(u.id, u));
+        return Array.from(map.values());
+      });
     } catch (err) {
       console.error('RecruiterUsers: Failed to load users', err);
       setError('Unable to load users. Please try again.');
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      isFetchingRef.current = false;
     }
   };
   
@@ -370,21 +399,24 @@ const RecruiterUsers: React.FC = () => {
         );
       })
       .sort((a, b) => {
+        const dir = sortDirection === 'asc' ? 1 : -1;
         switch (sortBy) {
           case 'recentlyUpdated': {
-            return getUpdatedMillis(b) - getUpdatedMillis(a);
+            return (getUpdatedMillis(b) - getUpdatedMillis(a)) * dir;
           }
           case 'lastLogin': {
-            return getLoginMillis(b) - getLoginMillis(a);
+            return (getLoginMillis(b) - getLoginMillis(a)) * dir;
           }
           case 'accountCreated':
-            return getCreatedMillis(b) - getCreatedMillis(a);
+            return (getCreatedMillis(b) - getCreatedMillis(a)) * dir;
           case 'name':
-            return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+            return (
+              `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`) * dir
+            );
           case 'aiScore': {
             const aScore = a.aiJobFitScore ?? a.aiProfileScore ?? -1;
             const bScore = b.aiJobFitScore ?? b.aiProfileScore ?? -1;
-            return (bScore ?? -1) - (aScore ?? -1);
+            return ((bScore ?? -1) - (aScore ?? -1)) * dir;
           }
           default:
             return 0;
@@ -399,8 +431,26 @@ const RecruiterUsers: React.FC = () => {
     skillFilter,
     stateFilter,
     sortBy,
+    sortDirection,
     users,
   ]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = page * rowsPerPage;
+    const end = start + rowsPerPage;
+    return filteredUsers.slice(start, end);
+  }, [filteredUsers, page, rowsPerPage]);
+
+  // If user paginates beyond what's loaded, auto-fetch more in the background
+  useEffect(() => {
+    if (!activeTenant?.id) return;
+    if (!hasMore || loadingMore) return;
+    const needed = (page + 1) * rowsPerPage;
+    if (needed > users.length) {
+      loadMoreUsers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, rowsPerPage, users.length, hasMore, loadingMore, activeTenant?.id]);
 
   if (error) {
     return (
@@ -411,7 +461,17 @@ const RecruiterUsers: React.FC = () => {
   }
 
   return (
-    <Box>
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        px: { xs: 2, md: 3 },
+        pt: 2,
+      }}
+    >
       {/* Initial loading indicator, but keep header and filters visible */}
       {loading && users.length === 0 && (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 80, mb: 2 }}>
@@ -428,62 +488,6 @@ const RecruiterUsers: React.FC = () => {
         borderBottom: '1px solid #D1D5DB'
       }}>
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search people..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="users"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {searchTerm && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setSearchTerm('')}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
-
         <FormControl size="small" sx={{ minWidth: 160 }}>
           <InputLabel>Role</InputLabel>
           <Select
@@ -588,49 +592,100 @@ const RecruiterUsers: React.FC = () => {
         </Box>
       </Box>
 
-      <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
-        <TableContainer sx={{ overflowX: 'auto' }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 60 }} />
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Person
+      <TableContainer
+        component={Paper}
+        elevation={0}
+        sx={{
+          borderRadius: 2,
+          border: '1px solid #EAEEF4',
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+          width: '100%',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        <Table size="small" stickyHeader sx={{ width: '100%' }}>
+          <TableHead
+            sx={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              backgroundColor: 'background.paper',
+            }}
+          >
+            <TableRow sx={{ backgroundColor: 'background.paper' }}>
+                <TableCell sx={{ width: 60, bgcolor: '#FFFFFF' }} />
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortBy === 'name'}
+                    direction={sortBy === 'name' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('name')}
+                  >
+                    Person
+                  </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Contact
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Role
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Profile Score
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortBy === 'aiScore'}
+                    direction={sortBy === 'aiScore' ? sortDirection : 'desc'}
+                    onClick={() => handleSort('aiScore')}
+                  >
+                    Profile Score
+                  </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Groups
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Skills
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200 }}>
-                  Last Login
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200 }}>
+                  <TableSortLabel
+                    active={sortBy === 'lastLogin'}
+                    direction={sortBy === 'lastLogin' ? sortDirection : 'desc'}
+                    onClick={() => handleSort('lastLogin')}
+                  >
+                    Last Login
+                  </TableSortLabel>
                 </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredUsers.map((user, index) => (
-                <TableRow
-                  key={user.id}
-                  hover
-                  sx={{
-                    cursor: 'pointer',
-                    backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                    '&:hover': {
-                      backgroundColor: 'action.selected',
-                    },
-                  }}
-                  onClick={() => navigate(`/recruiter/users/${user.id}`)}
-                >
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {paginatedUsers.map((user, index) => (
+              <TableRow
+                key={user.id}
+                hover
+                sx={{
+                  cursor: 'pointer',
+                  backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                  '&:hover': {
+                    backgroundColor: 'action.selected',
+                  },
+                }}
+                onClick={() => navigate(`/recruiter/users/${user.id}`)}
+              >
                   <TableCell onClick={(event) => event.stopPropagation()}>
                     <FavoriteButton
                       itemId={user.id}
@@ -646,7 +701,11 @@ const RecruiterUsers: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Avatar src={user.avatar} alt={`${user.firstName} ${user.lastName}`} sx={{ width: 40, height: 40 }}>
+                      <Avatar
+                        src={user.avatar}
+                        alt={`${user.firstName} ${user.lastName}`}
+                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}
+                      >
                         {user.firstName?.[0]}
                       </Avatar>
                       <Box>
@@ -742,34 +801,22 @@ const RecruiterUsers: React.FC = () => {
                   <TableCell sx={{ minWidth: 200 }}>
                     <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
                   </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
-      {/* Load More Button */}
-      {hasMore && !loading && (
-        <Box sx={{ mt: 3, textAlign: 'center' }}>
-          <Button
-            variant="outlined"
-            size="large"
-            onClick={loadMoreUsers}
-            disabled={loadingMore}
-            startIcon={loadingMore ? <CircularProgress size={16} /> : null}
-          >
-            {loadingMore ? 'Loading More Users...' : 'Load More Users'}
-          </Button>
-        </Box>
-      )}
-
-      <Box sx={{ mt: 2, textAlign: 'center', color: 'text.secondary' }}>
-        <Typography variant="body2">
-          Showing {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''}
-          {hasMore && ' (click "Load More" to see additional users)'}
-        </Typography>
-      </Box>
+      <StandardTablePagination
+        count={filteredUsers.length}
+        page={page}
+        onPageChange={(_, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(e) => {
+          setRowsPerPage(parseInt(e.target.value, 10));
+          setPage(0);
+        }}
+      />
     </Box>
   );
 };

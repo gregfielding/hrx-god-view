@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useLocation, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
   Paper,
   Grid,
-  Card,
-  CardContent,
   Chip,
   Button,
   TextField,
@@ -24,8 +22,6 @@ import {
   Stack,
   Autocomplete,
   Switch,
-  FormControlLabel,
-  FormHelperText,
   Table,
   TableBody,
   TableCell,
@@ -33,7 +29,6 @@ import {
   TableHead,
   TableRow,
   TableSortLabel,
-  IconButton,
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
@@ -41,10 +36,12 @@ import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBo
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
-import { useFavorites, useFavoritesFilter } from '../../hooks/useFavorites';
+import { useFavorites } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
 import FavoritesFilter from '../../components/FavoritesFilter';
 import { BreadcrumbNav } from '../../components/BreadcrumbNav';
+import StandardTablePagination from '../../components/StandardTablePagination';
+import type { RecruiterOutletContext } from '../RecruiterDashboard';
 import jobTitlesList from '../../data/onetJobTitles.json';
 import onetSkills from '../../data/onetSkills.json';
 import credentialsSeed from '../../data/credentialsSeed.json';
@@ -102,12 +99,22 @@ const JobsBoard: React.FC = () => {
   const [editingStatus, setEditingStatus] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   
-  // Favorites state using universal system
+  // Favorites state using universal system (local fallback when not in recruiter module)
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
+
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const headerSearch = outletCtx?.search ?? '';
+  const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
+  const effectiveSearch = isFromRecruiter ? headerSearch : searchTerm;
+  const effectiveShowFavoritesOnly = isFromRecruiter ? headerShowFavoritesOnly : showFavoritesOnly;
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   // Job orders for connection
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
@@ -527,13 +534,13 @@ const JobsBoard: React.FC = () => {
     let filtered = posts;
 
     // Search filter
-    if (searchTerm) {
+    if (effectiveSearch) {
       filtered = filtered.filter(post =>
-        post.postTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.jobTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.jobDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.worksiteName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        post.companyName.toLowerCase().includes(searchTerm.toLowerCase())
+        post.postTitle.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+        post.jobTitle.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+        post.jobDescription.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+        post.worksiteName.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
+        post.companyName.toLowerCase().includes(effectiveSearch.toLowerCase())
       );
     }
 
@@ -548,12 +555,23 @@ const JobsBoard: React.FC = () => {
     }
 
     // Favorites filter
-    if (showFavoritesOnly) {
+    if (effectiveShowFavoritesOnly) {
       filtered = filtered.filter(post => favorites.includes(post.id));
     }
 
     setFilteredJobs(filtered);
-  }, [posts, searchTerm, locationFilter, companyFilter, companyNamesCache, showFavoritesOnly, favorites]);
+  }, [posts, locationFilter, companyFilter, companyNamesCache, favorites, effectiveSearch, effectiveShowFavoritesOnly]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [effectiveSearch, locationFilter, companyFilter, effectiveShowFavoritesOnly, sortField, sortDirection]);
+
+  useEffect(() => {
+    if (!isFromRecruiter) return;
+    if (searchParams.get('new') !== '1') return;
+    handleOpenNewPostModal();
+    // keep param until close, so refresh doesn't lose state
+  }, [isFromRecruiter, searchParams]);
 
   const getUniqueLocations = () => {
     return Array.from(new Set(posts.map(post => post.worksiteName))).sort();
@@ -1004,6 +1022,9 @@ const JobsBoard: React.FC = () => {
     setUseCompanyLocation(true);
     setSubmitError(null);
     setOriginalFormValues(null);
+    if (isFromRecruiter && searchParams.get('new') === '1') {
+      setSearchParams({});
+    }
   };
 
   // Check if form is valid for submission
@@ -1135,53 +1156,86 @@ const JobsBoard: React.FC = () => {
     );
   }
 
-  return (
-    <Box sx={{ p: 0, width: '100%' }}>
-      <BreadcrumbNav
-        items={[
-          { label: 'Recruiter', href: '/recruiter' },
-          { label: 'Jobs Board' },
-        ]}
-      />
+  const sortedJobs = getSortedJobs();
+  const paginatedJobs = sortedJobs.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
-      {/* Filters */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+  return (
+    <Box
+      sx={{
+        p: 0,
+        width: '100%',
+        ...(isFromRecruiter
+          ? {
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              px: { xs: 2, md: 3 },
+              pt: 2,
+            }
+          : {}),
+      }}
+    >
+      {!isFromRecruiter && (
+        <BreadcrumbNav
+          items={[
+            { label: 'Recruiter', href: '/recruiter' },
+            { label: 'Jobs Board' },
+          ]}
+        />
+      )}
+
+      {/* Filters (search + favorites + new post are in header for Recruiter) */}
+      <Paper
+        elevation={0}
+        sx={{
+          mb: 2,
+          p: 1.5,
+          backgroundColor: '#F9FAFB',
+          borderRadius: '8px',
+          border: '1px solid #E5E7EB',
+          borderBottom: '1px solid #D1D5DB',
+        }}
+      >
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={3}>
-            <TextField
-              fullWidth
-              placeholder="Search jobs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Search />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <FavoritesFilter
-                      favoriteType="jobPosts"
-                      showFavoritesOnly={showFavoritesOnly}
-                      onToggle={setShowFavoritesOnly}
-                      showText={false}
-                      size="small"
-                      sx={{
-                        minWidth: '32px',
-                        width: '32px',
-                        height: '32px',
-                        borderRadius: '50%',
-                        '&:hover': {
-                          backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                        }
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Grid>
+          {!isFromRecruiter && (
+            <Grid item xs={12} md={3}>
+              <TextField
+                fullWidth
+                placeholder="Search jobs..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search />
+                    </InputAdornment>
+                  ),
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <FavoritesFilter
+                        favoriteType="jobPosts"
+                        showFavoritesOnly={showFavoritesOnly}
+                        onToggle={setShowFavoritesOnly}
+                        showText={false}
+                        size="small"
+                        sx={{
+                          minWidth: '32px',
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '50%',
+                          '&:hover': {
+                            backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                          },
+                        }}
+                      />
+                    </InputAdornment>
+                  ),
+                }}
+              />
+            </Grid>
+          )}
           <Grid item xs={12} md={3}>
             <FormControl fullWidth>
               <InputLabel>Location</InputLabel>
@@ -1212,16 +1266,18 @@ const JobsBoard: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={3}>
-            <Button
-              variant="contained"
-              startIcon={<Add />}
-              onClick={handleOpenNewPostModal}
-              fullWidth
-            >
-              New Post
-            </Button>
-          </Grid>
+          {!isFromRecruiter && (
+            <Grid item xs={12} md={3}>
+              <Button
+                variant="contained"
+                startIcon={<Add />}
+                onClick={handleOpenNewPostModal}
+                fullWidth
+              >
+                New Post
+              </Button>
+            </Grid>
+          )}
         </Grid>
       </Paper>
 
@@ -1231,13 +1287,39 @@ const JobsBoard: React.FC = () => {
           No jobs found matching your criteria. Try adjusting your filters or search terms.
         </Alert>
       ) : (
-        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-          <Table>
-            <TableHead sx={{ backgroundColor: 'grey.50' }}>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem', width: '60px', textAlign: 'center' }}>
-                  Favorites
-                </TableCell>
+        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: isFromRecruiter ? 1 : undefined }}>
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              position: 'relative',
+              flex: isFromRecruiter ? 1 : undefined,
+              display: isFromRecruiter ? 'flex' : undefined,
+              flexDirection: isFromRecruiter ? 'column' : undefined,
+              minHeight: isFromRecruiter ? 0 : undefined,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              width: '100%',
+              '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader size="small" sx={{ width: '100%' }}>
+              <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#FFFFFF' }}>
+                <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+                  <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', textAlign: 'center' }} />
                 <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.75rem' }}>
                   <TableSortLabel
                     active={sortField === 'postTitle'}
@@ -1313,7 +1395,7 @@ const JobsBoard: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {getSortedJobs().map((post) => (
+              {paginatedJobs.map((post) => (
                 <TableRow 
                   key={post.id}
                   hover
@@ -1456,6 +1538,17 @@ const JobsBoard: React.FC = () => {
             </TableBody>
           </Table>
         </TableContainer>
+          <StandardTablePagination
+            count={sortedJobs.length}
+            page={page}
+            onPageChange={(_e, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
+          />
+        </Box>
       )}
 
       {/* New Post Modal */}

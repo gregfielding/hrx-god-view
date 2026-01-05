@@ -35,10 +35,12 @@ import { SelectChangeEvent } from '@mui/material/Select';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
+import PageHeader from '../components/PageHeader';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
+import StandardTablePagination from '../components/StandardTablePagination';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 type SecurityLevel =
   | '0'
@@ -87,6 +89,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
   const [skillFilter, setSkillFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore'>('recentlyUpdated');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -327,6 +332,15 @@ const RecruiterUserGroupDetails: React.FC = () => {
     sortBy,
   ]);
 
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm, securityLevelFilter, skillFilter, sortBy, showFavoritesOnly]);
+
+  const paginatedMembers = useMemo(() => {
+    const start = page * rowsPerPage;
+    return filteredMembers.slice(start, start + rowsPerPage);
+  }, [filteredMembers, page, rowsPerPage]);
+
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
     let date: Date;
@@ -397,293 +411,418 @@ const RecruiterUserGroupDetails: React.FC = () => {
   }
 
   return (
-    <Box>
-      <BreadcrumbNav
-        items={[
-          { label: 'Recruiter', href: '/recruiter' },
-          { label: 'User Groups', href: '/recruiter/user-groups' },
-          { label: group.title || 'Untitled Group' },
-        ]}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+            <Avatar
+              sx={{
+                width: 108,
+                height: 108,
+                bgcolor: 'primary.main',
+                fontSize: '40px',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              {(group.title || 'G').trim().charAt(0).toUpperCase()}
+            </Avatar>
+            <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                }}
+              >
+                {group.title || 'Untitled Group'}
+              </Typography>
+              {group.description && (
+                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
+                  {group.description}
+                </Typography>
+              )}
+              <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
+                {members.length} member{members.length === 1 ? '' : 's'} • ID: {group.id.slice(0, 8)}
+              </Typography>
+            </Box>
+          </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {[
+              { label: 'Members', value: 'members' as const },
+              { label: 'Settings', value: 'settings' as const },
+            ].map((t) => {
+              const isActive = activeTab === t.value;
+              return (
+                <Button
+                  key={t.value}
+                  onClick={() => setActiveTab(t.value)}
+                  variant="text"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Button
+            variant="outlined"
+            onClick={() => navigate('/recruiter/user-groups')}
+            sx={{
+              textTransform: 'none',
+              borderRadius: '24px',
+              height: '40px',
+              px: 2,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Back
+          </Button>
+        }
       />
 
-      <Box sx={{ mb: 2 }}>
-        <Box>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-            {group.title || 'Untitled Group'}
-          </Typography>
-          {group.description && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {group.description}
-            </Typography>
-          )}
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          mb: 3,
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 2,
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <TextField
-          placeholder="Search people..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          variant="outlined"
-          size="small"
-          sx={{
-            flexGrow: 1,
-            minWidth: 280,
-            maxWidth: 480,
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '8px',
-              backgroundColor: 'white',
-            },
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon sx={{ color: 'text.secondary' }} />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <FavoritesFilter
-                  favoriteType="users"
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
+        {activeTab === 'settings' ? (
+          <Box sx={{ p: 2 }}>
+            <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid #EAEEF4', p: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+                Group Settings
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Title: {group.title || 'Untitled Group'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Description: {group.description || '—'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Members: {members.length}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Group ID: {group.id}
+              </Typography>
+            </Paper>
+          </Box>
+        ) : (
+          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            {/* Member filters */}
+            <Box
+              sx={{
+                mb: 2,
+                p: 1.5,
+                backgroundColor: '#F9FAFB',
+                borderRadius: '8px',
+                border: '1px solid #E5E7EB',
+                borderBottom: '1px solid #D1D5DB',
+              }}
+            >
+              <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                <TextField
+                  placeholder="Search people..."
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  variant="outlined"
                   size="small"
+                  sx={{
+                    flexGrow: 1,
+                    minWidth: 280,
+                    maxWidth: 480,
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: '8px',
+                      backgroundColor: 'white',
+                    },
+                  }}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ color: 'text.secondary' }} />
+                      </InputAdornment>
+                    ),
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <FavoritesFilter
+                          favoriteType="users"
+                          showFavoritesOnly={showFavoritesOnly}
+                          onToggle={setShowFavoritesOnly}
+                          showText={false}
+                          size="small"
+                        />
+                      </InputAdornment>
+                    ),
+                  }}
                 />
-              </InputAdornment>
-            ),
-          }}
-        />
 
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Role</InputLabel>
-          <Select
-            label="Role"
-            value={securityLevelFilter}
-            onChange={(event: SelectChangeEvent<SecurityLevel>) =>
-              setSecurityLevelFilter(event.target.value as SecurityLevel)
-            }
-          >
-            <MenuItem value="all">All Roles</MenuItem>
-            <MenuItem value="4">Staff</MenuItem>
-            <MenuItem value="3">Candidate</MenuItem>
-            <MenuItem value="2">Applicant</MenuItem>
-            <MenuItem value="1">Dismissed</MenuItem>
-            <MenuItem value="0">Suspended</MenuItem>
-          </Select>
-        </FormControl>
-
-        <Autocomplete
-          size="small"
-          options={uniqueSkills}
-          value={skillFilter === 'all' ? null : skillFilter}
-          onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Primary Skill"
-              placeholder="Search skills..."
-              sx={{ minWidth: 160 }}
-            />
-          )}
-        />
-
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Sort By</InputLabel>
-          <Select
-            label="Sort By"
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
-          >
-            <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
-            <MenuItem value="lastLogin">Last Login</MenuItem>
-            <MenuItem value="aiScore">AI Score</MenuItem>
-            <MenuItem value="name">Name (A-Z)</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-
-      <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4', mb: 3 }}>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ width: 60 }} />
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Person
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Contact
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Role
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Profile Score
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Groups
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Skills
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                  Last Login
-                </TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredMembers.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} sx={{ textAlign: 'center', py: 4 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {members.length === 0
-                        ? 'No members in this group.'
-                        : 'No members match your filters.'}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredMembers.map((user, index) => (
-                  <TableRow
-                    key={user.id}
-                    hover
-                    sx={{
-                      cursor: 'pointer',
-                      backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                      '&:hover': {
-                        backgroundColor: 'action.selected',
-                      },
-                    }}
-                    onClick={() => navigate(`/recruiter/users/${user.id}`)}
+                <FormControl size="small" sx={{ minWidth: 160 }}>
+                  <InputLabel>Role</InputLabel>
+                  <Select
+                    label="Role"
+                    value={securityLevelFilter}
+                    onChange={(event: SelectChangeEvent<SecurityLevel>) =>
+                      setSecurityLevelFilter(event.target.value as SecurityLevel)
+                    }
                   >
-                    <TableCell onClick={(event) => event.stopPropagation()}>
-                      <FavoriteButton
-                        itemId={user.id}
-                        favoriteType="users"
-                        isFavorite={isFavorite}
-                        toggleFavorite={toggleFavorite}
-                        size="small"
-                        tooltipText={{
-                          favorited: 'Remove from favorites',
-                          notFavorited: 'Add to favorites',
-                        }}
-                      />
+                    <MenuItem value="all">All Roles</MenuItem>
+                    <MenuItem value="4">Staff</MenuItem>
+                    <MenuItem value="3">Candidate</MenuItem>
+                    <MenuItem value="2">Applicant</MenuItem>
+                    <MenuItem value="1">Dismissed</MenuItem>
+                    <MenuItem value="0">Suspended</MenuItem>
+                  </Select>
+                </FormControl>
+
+                <Autocomplete
+                  size="small"
+                  options={uniqueSkills}
+                  value={skillFilter === 'all' ? null : skillFilter}
+                  onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Primary Skill"
+                      placeholder="Search skills..."
+                      sx={{ minWidth: 160 }}
+                    />
+                  )}
+                />
+
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <InputLabel>Sort By</InputLabel>
+                  <Select
+                    label="Sort By"
+                    value={sortBy}
+                    onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+                  >
+                    <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
+                    <MenuItem value="lastLogin">Last Login</MenuItem>
+                    <MenuItem value="aiScore">AI Score</MenuItem>
+                    <MenuItem value="name">Name (A-Z)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Box>
+            </Box>
+
+            {/* Members Table */}
+            <TableContainer
+              component={Paper}
+              elevation={0}
+              sx={{
+                borderRadius: 2,
+                border: '1px solid #EAEEF4',
+                position: 'relative',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                overflowY: 'auto',
+                overflowX: 'auto',
+                width: '100%',
+                '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+                '&::-webkit-scrollbar-track': {
+                  background: 'rgba(0, 0, 0, 0.02)',
+                  borderRadius: '4px',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(0, 0, 0, 0.15)',
+                  borderRadius: '4px',
+                  '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+                },
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+              }}
+            >
+              <Table size="small" stickyHeader sx={{ width: '100%' }}>
+                <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#FFFFFF' }}>
+                  <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+                    <TableCell sx={{ width: 60, bgcolor: '#FFFFFF' }} />
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Person
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Avatar src={user.avatar} alt={`${user.firstName} ${user.lastName}`} sx={{ width: 40, height: 40 }}>
-                          {user.firstName?.[0]}
-                        </Avatar>
-                        <Box>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            {user.firstName} {user.lastName}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            #{user.id.slice(-6)}
-                          </Typography>
-                        </Box>
-                      </Box>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Contact
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                          <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                            {user.email}
-                          </Typography>
-                        </Box>
-                        {user.phone && (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                            <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                              {user.phone}
-                            </Typography>
-                          </Box>
-                        )}
-                      </Box>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Role
                     </TableCell>
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={getSecurityLevelLabel(user.securityLevel)}
-                        color={getSecurityLevelColor(user.securityLevel)}
-                      />
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Profile Score
                     </TableCell>
-                    <TableCell>{renderAiScore(user)}</TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {user.userGroupIds.length === 0 && (
-                          <Typography variant="body2" color="text.secondary">
-                            —
-                          </Typography>
-                        )}
-                        {user.userGroupIds.slice(0, 3).map((groupId) => {
-                          const group = groupLookup.get(groupId);
-                          return (
-                            <Chip
-                              key={groupId}
-                              size="small"
-                              icon={<GroupIcon sx={{ fontSize: 14 }} />}
-                              label={group?.title || groupId}
-                              variant="outlined"
-                            />
-                          );
-                        })}
-                        {user.userGroupIds.length > 3 && (
-                          <Chip
-                            size="small"
-                            label={`+${user.userGroupIds.length - 3} more`}
-                            variant="outlined"
-                          />
-                        )}
-                      </Box>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Groups
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {user.skills?.slice(0, 3).map((skill) => (
-                          <Chip
-                            key={skill}
-                            label={skill}
-                            size="small"
-                            variant="outlined"
-                            icon={<StarIcon sx={{ fontSize: 14 }} />}
-                          />
-                        ))}
-                        {user.skills?.length === 0 && (
-                          <Typography variant="body2" color="text.secondary">
-                            —
-                          </Typography>
-                        )}
-                        {user.skills?.length > 3 && (
-                          <Chip size="small" label={`+${user.skills.length - 3}`} variant="outlined" />
-                        )}
-                      </Box>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Skills
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Last Login
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+                </TableHead>
+                <TableBody>
+                  {paginatedMembers.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} sx={{ textAlign: 'center', py: 4 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          {members.length === 0 ? 'No members in this group.' : 'No members match your filters.'}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    paginatedMembers.map((user, index) => (
+                      <TableRow
+                        key={user.id}
+                        hover
+                        sx={{
+                          cursor: 'pointer',
+                          backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                          '&:hover': {
+                            backgroundColor: 'action.selected',
+                          },
+                        }}
+                        onClick={() => navigate(`/recruiter/users/${user.id}`)}
+                      >
+                        <TableCell onClick={(event) => event.stopPropagation()}>
+                          <FavoriteButton
+                            itemId={user.id}
+                            favoriteType="users"
+                            isFavorite={isFavorite}
+                            toggleFavorite={toggleFavorite}
+                            size="small"
+                            tooltipText={{
+                              favorited: 'Remove from favorites',
+                              notFavorited: 'Add to favorites',
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Avatar
+                              src={user.avatar}
+                              alt={`${user.firstName} ${user.lastName}`}
+                              sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}
+                            >
+                              {user.firstName?.[0]}
+                            </Avatar>
+                            <Box>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {user.firstName} {user.lastName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                #{user.id.slice(-6)}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                              <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                                {user.email}
+                              </Typography>
+                            </Box>
+                            {user.phone && (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                                  {user.phone}
+                                </Typography>
+                              </Box>
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={getSecurityLevelLabel(user.securityLevel)}
+                            color={getSecurityLevelColor(user.securityLevel)}
+                          />
+                        </TableCell>
+                        <TableCell>{renderAiScore(user)}</TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {user.userGroupIds.length === 0 && (
+                              <Typography variant="body2" color="text.secondary">
+                                —
+                              </Typography>
+                            )}
+                            {user.userGroupIds.slice(0, 3).map((gid) => {
+                              const g = groupLookup.get(gid);
+                              return (
+                                <Chip
+                                  key={gid}
+                                  size="small"
+                                  icon={<GroupIcon sx={{ fontSize: 14 }} />}
+                                  label={g?.title || gid}
+                                  variant="outlined"
+                                />
+                              );
+                            })}
+                            {user.userGroupIds.length > 3 && (
+                              <Chip size="small" label={`+${user.userGroupIds.length - 3} more`} variant="outlined" />
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {user.skills?.slice(0, 3).map((skill) => (
+                              <Chip
+                                key={skill}
+                                label={skill}
+                                size="small"
+                                variant="outlined"
+                                icon={<StarIcon sx={{ fontSize: 14 }} />}
+                              />
+                            ))}
+                            {user.skills?.length === 0 && (
+                              <Typography variant="body2" color="text.secondary">
+                                —
+                              </Typography>
+                            )}
+                            {user.skills?.length > 3 && (
+                              <Chip size="small" label={`+${user.skills.length - 3}`} variant="outlined" />
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
 
-      <Box sx={{ textAlign: 'center', color: 'text.secondary' }}>
-        <Typography variant="body2">
-          Showing {filteredMembers.length} of {members.length} member{members.length !== 1 ? 's' : ''}
-        </Typography>
+            <StandardTablePagination
+              count={filteredMembers.length}
+              page={page}
+              onPageChange={(_e, newPage) => setPage(newPage)}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={(e) => {
+                setRowsPerPage(parseInt(e.target.value, 10));
+                setPage(0);
+              }}
+            />
+          </Box>
+        )}
       </Box>
     </Box>
   );

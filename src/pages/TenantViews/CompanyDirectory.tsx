@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Box,
   Typography,
-  TextField,
   CircularProgress,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
@@ -13,7 +12,15 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import WorkersTable from '../../componentBlocks/WorkersTable';
 
-const CompanyDirectory: React.FC = () => {
+interface CompanyDirectoryProps {
+  search?: string;
+  onSearchChange?: (value: string) => void;
+}
+
+const CompanyDirectory: React.FC<CompanyDirectoryProps> = ({
+  search = '',
+  onSearchChange,
+}) => {
   const { tenantId, activeTenant } = useAuth();
   const navigate = useNavigate();
   
@@ -25,7 +32,6 @@ const CompanyDirectory: React.FC = () => {
   const [divisions, setDivisions] = useState<any[]>([]);
   const [regions, setRegions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
 
   // Create breadcrumb path
   const breadcrumbPath = [
@@ -224,20 +230,7 @@ const CompanyDirectory: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Header with search */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Workers ({getCompanyDirectoryWorkers().length})</Typography>
-        <TextField
-          size="small"
-          variant="outlined"
-          placeholder="Search workers..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          sx={{ width: 300 }}
-        />
-      </Box>
-      
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <WorkersTable
         contacts={getCompanyDirectoryWorkers()}
         locations={locations}
@@ -251,7 +244,7 @@ const CompanyDirectory: React.FC = () => {
         contextType="agency"
         loading={false}
         search={search}
-        onSearchChange={setSearch}
+        onSearchChange={onSearchChange || (() => {})}
         effectiveTenantId={effectiveTenantId}
       />
     </Box>

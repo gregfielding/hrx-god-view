@@ -11,6 +11,7 @@ import {
   Business as BusinessIcon,
 } from '@mui/icons-material';
 import FavoriteButton from './FavoriteButton';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 interface CompanyTableRowProps {
   company: any;
@@ -21,6 +22,7 @@ interface CompanyTableRowProps {
   getAvatarTextColor: (name: string) => string;
   columns: {
     favorites?: boolean;
+    avatar?: boolean;
     companyName?: boolean;
     contacts?: boolean;
     deals?: boolean;
@@ -123,6 +125,35 @@ const CompanyTableRow: React.FC<CompanyTableRowProps> = ({
         </TableCell>
       )}
 
+      {/* Avatar Column (no header label) */}
+      {columns.avatar && (
+        <TableCell
+          sx={{
+            width: '60px',
+            px: 1,
+            py: 1.5,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          }}
+          align="center"
+        >
+          <Avatar
+            src={company.logo || company.logoUrl || company.logo_url || company.avatar}
+            sx={{
+              width: TABLE_AVATAR_SIZE,
+              height: TABLE_AVATAR_SIZE,
+              backgroundColor: getAvatarColor(companyName),
+              color: getAvatarTextColor(companyName),
+              fontWeight: 600,
+              fontSize: '12px',
+              mx: 'auto',
+            }}
+          >
+            {getInitials(companyName)}
+          </Avatar>
+        </TableCell>
+      )}
+
       {/* Company Name Column */}
       {columns.companyName && (
         <TableCell
@@ -133,20 +164,7 @@ const CompanyTableRow: React.FC<CompanyTableRowProps> = ({
             borderColor: 'divider',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Avatar
-              src={company.logo || company.logoUrl || company.logo_url || company.avatar}
-              sx={{
-                width: 32,
-                height: 32,
-                backgroundColor: getAvatarColor(companyName),
-                color: getAvatarTextColor(companyName),
-                fontWeight: 600,
-                fontSize: '12px',
-              }}
-            >
-              {getInitials(companyName)}
-            </Avatar>
+          {columns.avatar ? (
             <Typography
               variant="body2"
               fontWeight={600}
@@ -156,13 +174,44 @@ const CompanyTableRow: React.FC<CompanyTableRowProps> = ({
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
-                maxWidth: '300px',
+                maxWidth: '340px',
               }}
               title={companyName}
             >
               {companyName}
             </Typography>
-          </Box>
+          ) : (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Avatar
+                src={company.logo || company.logoUrl || company.logo_url || company.avatar}
+                sx={{
+                  width: TABLE_AVATAR_SIZE,
+                  height: TABLE_AVATAR_SIZE,
+                  backgroundColor: getAvatarColor(companyName),
+                  color: getAvatarTextColor(companyName),
+                  fontWeight: 600,
+                  fontSize: '12px',
+                }}
+              >
+                {getInitials(companyName)}
+              </Avatar>
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                color="text.primary"
+                sx={{
+                  fontSize: '0.9375rem',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '300px',
+                }}
+                title={companyName}
+              >
+                {companyName}
+              </Typography>
+            </Box>
+          )}
         </TableCell>
       )}
 

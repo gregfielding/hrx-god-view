@@ -13,6 +13,7 @@ import {
   IconButton,
   Button,
   Avatar,
+  AvatarGroup,
   Divider,
   Alert,
   Snackbar,
@@ -20,8 +21,6 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
-import StarIcon from '@mui/icons-material/Star';
-import StarBorderIcon from '@mui/icons-material/StarBorder';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import { useAuth } from '../contexts/AuthContext';
@@ -30,10 +29,12 @@ import { useSlackChannelThread } from '../hooks/useSlackChannelThread';
 import SlackMessageList from './SlackMessageList';
 import SlackChannelComposer from './SlackChannelComposer';
 import { getChannelColor } from '../utils/slackChannelUtils';
+import type { MemberPreview } from '../hooks/useSlackChannelMembership';
 
 interface SlackChannelDrawerProps {
   open: boolean;
   channel: SlackChannelView | null;
+  members?: MemberPreview[];
   onClose: () => void;
   onToggleWatch?: (channelId: string) => Promise<void>;
   onToggleMute?: (channelId: string) => Promise<void>;
@@ -42,6 +43,7 @@ interface SlackChannelDrawerProps {
 const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
   open,
   channel,
+  members = [],
   onClose,
   onToggleWatch,
   onToggleMute,
@@ -67,15 +69,6 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
       setSnackbarMessage(`Message sent to ${channel?.displayName || 'channel'}`);
     } catch (err: any) {
       setSnackbarError(err.message || 'Could not send message to Slack');
-    }
-  };
-
-  const handleToggleWatch = async () => {
-    if (!channel || !onToggleWatch) return;
-    try {
-      await onToggleWatch(channel.id);
-    } catch (err: any) {
-      setSnackbarError(err.message || 'Failed to update watch status');
     }
   };
 
@@ -192,15 +185,34 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
 
             {/* Action buttons */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1.5 }}>
-              <IconButton
-                size="small"
-                onClick={handleToggleWatch}
-                sx={{
-                  color: channel.isWatched ? '#0057B8' : 'text.secondary',
-                }}
-              >
-                {channel.isWatched ? <StarIcon fontSize="small" /> : <StarBorderIcon fontSize="small" />}
-              </IconButton>
+              {members.length > 0 && (
+                <AvatarGroup
+                  max={4}
+                  sx={{
+                    '& .MuiAvatar-root': {
+                      width: 24,
+                      height: 24,
+                      fontSize: '0.75rem',
+                      border: '2px solid #fff',
+                      boxSizing: 'content-box',
+                    },
+                    '& .MuiAvatarGroup-avatar': {
+                      borderColor: '#fff',
+                    },
+                    mr: 0.5,
+                  }}
+                >
+                  {members.map((m) => (
+                    <Avatar
+                      key={m.userId}
+                      src={m.avatarUrl}
+                      alt={m.displayName || m.email || m.userId}
+                    >
+                      {(m.displayName || m.email || 'U').charAt(0).toUpperCase()}
+                    </Avatar>
+                  ))}
+                </AvatarGroup>
+              )}
               <IconButton size="small" onClick={handleToggleMute}>
                 {channel.isMuted ? (
                   <VolumeOffIcon fontSize="small" />

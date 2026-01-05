@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge } from '@mui/material';
+import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack } from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
+import MessageIcon from '@mui/icons-material/Message';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import DescriptionIcon from '@mui/icons-material/Description';
+import NoteIcon from '@mui/icons-material/Note';
+import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import PageHeader from '../../components/PageHeader';
+import ContactActionButtons from './components/ContactActionButtons';
+import { httpsCallable } from 'firebase/functions';
 import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs, getCountFromServer } from 'firebase/firestore';
 
-import { db } from '../../firebase'; // adjust path
+import { db, functions } from '../../firebase'; // adjust path
 import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
@@ -26,7 +36,9 @@ import SystemAccessTab from './components/SystemAccessTab';
 import OnboardingTab from './components/OnboardingTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';
+import StartOnboardingDialog from './components/StartOnboardingDialog';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
+import AddUserNoteDialog from './components/AddUserNoteDialog';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -90,6 +102,78 @@ const UserProfilePage = () => {
   const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
   const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [emailComposeOpen, setEmailComposeOpen] = useState(false);
+  const [viewerGmailConnected, setViewerGmailConnected] = useState(false);
+  const [smsComposeOpen, setSmsComposeOpen] = useState(false);
+  const [viewerHasSmsSender, setViewerHasSmsSender] = useState(false);
+  const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
+  const [showAddUserNoteDialog, setShowAddUserNoteDialog] = useState(false);
+
+  const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
+
+  // Determine if viewer has Gmail connected (for conditional Email icon behavior)
+  useEffect(() => {
+    let mounted = true;
+
+    const checkViewerGmail = async () => {
+      if (!user?.uid) {
+        if (mounted) setViewerGmailConnected(false);
+        return;
+      }
+
+      try {
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+        const result = await getGmailStatus({ userId: user.uid, force: true });
+        const data = result.data as any;
+        // If rate-limited/sampled, treat as connected to avoid false negatives; MessageDrawer will validate senders.
+        const connected = !!data?.connected || !!data?.rateLimited || !!data?.sampled;
+        if (mounted) setViewerGmailConnected(connected);
+      } catch {
+        // Fallback: check tokens on user doc
+        try {
+          const viewerSnap = await getDoc(doc(db, 'users', user.uid));
+          const viewerData: any = viewerSnap.exists() ? viewerSnap.data() : null;
+          if (mounted) setViewerGmailConnected(!!viewerData?.gmailTokens?.access_token);
+        } catch {
+          if (mounted) setViewerGmailConnected(false);
+        }
+      }
+    };
+
+    checkViewerGmail();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid]);
+
+  // Determine if viewer has a recruiter SMS sender (Twilio number assignment)
+  useEffect(() => {
+    let mounted = true;
+
+    const checkSmsSender = async () => {
+      if (!user?.uid || !effectiveTenantIdForMessaging) {
+        if (mounted) setViewerHasSmsSender(false);
+        return;
+      }
+
+      try {
+        const recruiterNumberDoc = await getDoc(
+          doc(db, 'tenants', effectiveTenantIdForMessaging, 'recruiterNumbers', user.uid)
+        );
+        const hasNumber =
+          recruiterNumberDoc.exists() &&
+          !!(recruiterNumberDoc.data()?.twilioNumber || recruiterNumberDoc.data()?.useMainNumber);
+        if (mounted) setViewerHasSmsSender(!!hasNumber);
+      } catch {
+        if (mounted) setViewerHasSmsSender(false);
+      }
+    };
+
+    checkSmsSender();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid, effectiveTenantIdForMessaging]);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -647,6 +731,7 @@ const UserProfilePage = () => {
                           (pathname.includes('/recruiter/users') && pathname.split('/').length > 3);
   // Check if this is a workforce route (from Company Directory)
   const isWorkforceRoute = pathname.includes('/workforce/users/');
+  const useRecordHeader = isWorkforceRoute || isRecruiterRoute;
   // Also check if viewing someone else's profile (not own profile) - treat as recruiter view
   const isViewingOtherProfile = user?.uid !== uid;
   const displayName = `${firstName} ${lastName}${preferredName && preferredName !== firstName ? ` (${preferredName})` : ''}`;
@@ -674,10 +759,16 @@ const UserProfilePage = () => {
   }
 
   const isAdminView = parseInt(securityLevel) >= 5;
+  const viewerSecurityLevel = parseInt(securityLevel);
+  const canViewAdminContent = viewerSecurityLevel >= 5;
+  const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+
+  const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
   return (
-    <Box className="user-profile-page">
-      <Box sx={{ p: 0 }}>
+    <Box className="user-profile-page" sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {!useRecordHeader && (
         <UserProfileHeader
           uid={uid}
           firstName={firstName}
@@ -685,12 +776,10 @@ const UserProfilePage = () => {
           preferredName={preferredName}
           avatarUrl={avatarUrl}
           onAvatarUpdated={setAvatarUrl}
-          showBackButton={isRecruiterRoute || isWorkforceRoute || user?.uid !== uid}
+          showBackButton={(isRecruiterRoute || user?.uid !== uid) && !isWorkforceRoute}
           onBack={() => {
             if (isRecruiterRoute) {
               navigate('/recruiter/users');
-            } else if (isWorkforceRoute) {
-              navigate('/workforce/company-directory');
             } else {
               navigate(-1);
             }
@@ -869,7 +958,484 @@ const UserProfilePage = () => {
             }
           }}
         />
+        )}
 
+        {/* Use Record PageHeader for Workforce + Recruiter record views */}
+        {useRecordHeader ? (
+          <PageHeader
+            title={
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+                  <Avatar
+                    src={avatarUrl || undefined}
+                    sx={{
+                      width: 108,
+                      height: 108,
+                      bgcolor: 'primary.main',
+                      fontSize: '40px',
+                      fontWeight: 600,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {!avatarUrl && initials}
+                  </Avatar>
+                  <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 108 }}>
+                    {/* Line 1: Name */}
+                    <Typography
+                      variant="h6"
+                      sx={{
+                        fontSize: { xs: '20px', md: '24px' },
+                        fontWeight: 600,
+                        lineHeight: 1.2,
+                        mb: 1,
+                      }}
+                    >
+                      {`${firstName} ${lastName}`.trim() || 'User Profile'}
+                    </Typography>
+                    {/* Line 2: Contact Action Icons Row */}
+                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" sx={{ mb: 1 }}>
+                  {phone && (
+                    <>
+                      <Tooltip title={`Call ${phone}`}>
+                        <IconButton
+                          size="small"
+                          component="a"
+                          href={`tel:${phone.replace(/\D/g, '')}`}
+                          sx={{ 
+                            p: 1,
+                            color: 'primary.main',
+                            bgcolor: 'action.hover',
+                            borderRadius: 1,
+                            '&:hover': {
+                              color: 'primary.dark',
+                              bgcolor: 'primary.light',
+                              transform: 'translateY(-1px)',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            },
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Send Message">
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            if (viewerHasSmsSender) {
+                              setSmsComposeOpen(true);
+                              return;
+                            }
+                            const digits = phone.replace(/\D/g, '');
+                            if (digits) {
+                              window.location.href = `sms:${digits}`;
+                            }
+                          }}
+                          sx={{ 
+                            p: 1,
+                            color: 'primary.main',
+                            bgcolor: 'action.hover',
+                            borderRadius: 1,
+                            '&:hover': {
+                              color: 'primary.dark',
+                              bgcolor: 'primary.light',
+                              transform: 'translateY(-1px)',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            },
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <MessageIcon sx={{ fontSize: 20 }} />
+                        </IconButton>
+                      </Tooltip>
+                    </>
+                  )}
+                  {email && (
+                    <Tooltip
+                      title={
+                        viewerGmailConnected
+                          ? `Email ${email} (send via HRX)`
+                          : `Email ${email} (open mail app)`
+                      }
+                    >
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (viewerGmailConnected) {
+                            setEmailComposeOpen(true);
+                          } else {
+                            window.location.href = `mailto:${email}`;
+                          }
+                        }}
+                        sx={{
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          },
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {skillsData?.resume && skillsData.resume.fileName && (
+                    <Tooltip title={`View Resume: ${skillsData.resume.fileName}`}>
+                      <IconButton
+                        size="small"
+                        onClick={async () => {
+                          const resume = skillsData.resume;
+                          if (resume.downloadUrl) {
+                            window.open(resume.downloadUrl, '_blank');
+                          } else if (resume.storagePath) {
+                            const encodedPath = encodeURIComponent(resume.storagePath);
+                            const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                            window.open(publicUrl, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <DescriptionIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {linkedinUrl && (
+                    <Tooltip title="LinkedIn Profile">
+                      <IconButton
+                        size="small"
+                        component="a"
+                        href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://${linkedinUrl}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LinkedInIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {isAdminView && (
+                    <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                      <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setShowAddUserNoteDialog(true);
+                          }}
+                          sx={{ 
+                            p: 1,
+                            color: 'primary.main',
+                            bgcolor: 'action.hover',
+                            borderRadius: 1,
+                            '&:hover': {
+                              color: 'primary.dark',
+                              bgcolor: 'primary.light',
+                              transform: 'translateY(-1px)',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            },
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <NoteIcon sx={{ fontSize: 20 }} />
+                        </IconButton>
+                      </Badge>
+                    </Tooltip>
+                  )}
+                    </Stack>
+                    {/* Line 3: Metadata subtitle */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                      {email && (
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 400,
+                            color: 'rgba(0, 0, 0, 0.55)',
+                          }}
+                        >
+                          {email}
+                        </Typography>
+                      )}
+                      {uid && (
+                        <>
+                          <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                          <Typography
+                            component="span"
+                            variant="body2"
+                            sx={{
+                              fontSize: '14px',
+                              fontWeight: 400,
+                              color: 'rgba(0, 0, 0, 0.55)',
+                            }}
+                          >
+                            ID: {uid.slice(0, 8)}
+                          </Typography>
+                        </>
+                      )}
+                      {createdAt && (() => {
+                        try {
+                          // Handle Firestore Timestamp
+                          let date: Date | null = null;
+                          if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
+                            date = createdAt.toDate();
+                          } else if (createdAt instanceof Date) {
+                            date = createdAt;
+                          } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+                            date = new Date(createdAt);
+                          } else if (createdAt?._seconds && typeof createdAt._seconds === 'number') {
+                            date = new Date(createdAt._seconds * 1000);
+                          }
+                          
+                          if (date && !isNaN(date.getTime())) {
+                            const formattedDate = date.toLocaleDateString('en-US', { 
+                              month: 'short', 
+                              day: 'numeric', 
+                              year: 'numeric' 
+                            });
+                            return (
+                              <>
+                                <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                                <Typography
+                                  component="span"
+                                  variant="body2"
+                                  sx={{
+                                    fontSize: '14px',
+                                    fontWeight: 400,
+                                    color: 'rgba(0, 0, 0, 0.55)',
+                                  }}
+                                >
+                                  Created {formattedDate}
+                                </Typography>
+                              </>
+                            );
+                          }
+                        } catch {
+                          // Silently fail if date parsing fails
+                        }
+                        return null;
+                      })()}
+                      {!email && !uid && !createdAt && jobTitle && (
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 400,
+                            color: 'rgba(0, 0, 0, 0.55)',
+                          }}
+                        >
+                          {jobTitle}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Box>
+                </Box>
+              </Box>
+            }
+            subtitle={undefined}
+            filters={
+              isRecruiterRoute ? (
+                <Box display="flex" gap={0.5}>
+                  {availableTabs.map((tab, i) => {
+                    const isActive = tabValue === tab.label;
+                    const hasCount = tab.count !== undefined && tab.count > 0;
+                    return (
+                      <Button
+                        key={`${tab.label}-${i}`}
+                        onClick={() => handleTabChange({} as React.SyntheticEvent, tab.label)}
+                        variant="text"
+                        sx={{
+                          textTransform: 'none',
+                          borderRadius: '999px',
+                          fontSize: '14px',
+                          fontWeight: isActive ? 500 : 400,
+                          color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                          bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                          px: 1.5,
+                          py: 0.75,
+                          minWidth: 'auto',
+                          whiteSpace: 'nowrap',
+                          '&:hover': {
+                            bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                          },
+                        }}
+                      >
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {tab.label}
+                          {hasCount && <Badge badgeContent={tab.count} color="primary" />}
+                        </Box>
+                      </Button>
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Box display="flex" gap={0.5}>
+                  <Button
+                    onClick={() => handleTabChange({} as React.SyntheticEvent, 'Overview')}
+                    variant="text"
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '14px',
+                      fontWeight: tabValue === 'Overview' ? 500 : 400,
+                      color: tabValue === 'Overview' ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      bgcolor: tabValue === 'Overview' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                      px: 1.5,
+                      py: 0.75,
+                      minWidth: 'auto',
+                      whiteSpace: 'nowrap',
+                      '&:hover': {
+                        bgcolor: tabValue === 'Overview' ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                      },
+                    }}
+                  >
+                    Overview
+                  </Button>
+                  {availableTabs.some((t) => t.label === 'Settings') && (
+                    <Button
+                      onClick={() => handleTabChange({} as React.SyntheticEvent, 'Settings')}
+                      variant="text"
+                      sx={{
+                        textTransform: 'none',
+                        borderRadius: '999px',
+                        fontSize: '14px',
+                        fontWeight: tabValue === 'Settings' ? 500 : 400,
+                        color: tabValue === 'Settings' ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                        bgcolor: tabValue === 'Settings' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                        px: 1.5,
+                        py: 0.75,
+                        minWidth: 'auto',
+                        whiteSpace: 'nowrap',
+                        '&:hover': {
+                          bgcolor: tabValue === 'Settings' ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                        },
+                      }}
+                    >
+                      Settings
+                    </Button>
+                  )}
+                </Box>
+              )
+            }
+            rightActions={
+              isRecruiterRoute ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Button
+                    startIcon={<ArrowBackIcon />}
+                    onClick={() => navigate('/recruiter/users')}
+                    variant="outlined"
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '14px',
+                      fontWeight: 500,
+                      px: 1.5,
+                      py: 0.75,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Back
+                  </Button>
+
+                  {canViewAdminContent && isAdminView && (
+                    onboardingInProgress ? (
+                      <Button
+                        variant="contained"
+                        disabled
+                        sx={{
+                          textTransform: 'none',
+                          borderRadius: '999px',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          px: 1.5,
+                          py: 0.75,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Onboarding
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outlined"
+                        onClick={() => setShowStartOnboardingDialog(true)}
+                        sx={{
+                          borderColor: 'success.main',
+                          color: 'success.main',
+                          textTransform: 'none',
+                          borderRadius: '999px',
+                          fontSize: '14px',
+                          fontWeight: 500,
+                          px: 1.5,
+                          py: 0.75,
+                          whiteSpace: 'nowrap',
+                          '&:hover': {
+                            borderColor: 'success.dark',
+                            backgroundColor: 'success.light',
+                            color: 'success.dark',
+                          },
+                        }}
+                      >
+                        Start Onboarding
+                      </Button>
+                    )
+                  )}
+                </Box>
+              ) : (
+                <Button
+                  startIcon={<ArrowBackIcon />}
+                  onClick={() => {
+                    if (isWorkforceRoute) {
+                      navigate('/workforce/company-directory');
+                    } else {
+                      navigate(-1);
+                    }
+                  }}
+                  variant="outlined"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    px: 1.5,
+                    py: 0.75,
+                  }}
+                >
+                  Back
+                </Button>
+              )
+            }
+          />
+        ) : (
         <Paper 
           elevation={1} 
           sx={{ 
@@ -911,8 +1477,9 @@ const UserProfilePage = () => {
             })}
           </Tabs>
         </Paper>
+        )}
 
-        <Box sx={{ mt: 2 }} className="profile-tab-content">
+        <Box sx={{ mt: 2, px: { xs: 2, md: 3 }, pb: 2 }} className="profile-tab-content">
           {(() => {
             const label = currentLabel;
             if (!label || !availableTabLabels.includes(label)) return null;
@@ -965,6 +1532,79 @@ const UserProfilePage = () => {
           onSend={(result) => {
             console.log('Message sent:', result);
             // Could show a success snackbar here
+          }}
+        />
+      )}
+
+      {/* Email Compose Drawer (opens from Email icon when viewer has Gmail connected) */}
+      {uid && (tenantId || authTenantId || activeTenant?.id) && (
+        <MessageDrawer
+          open={emailComposeOpen}
+          onClose={() => setEmailComposeOpen(false)}
+          recipients={[
+            {
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || preferredName || 'User',
+              email: email || undefined,
+              phone: phone || undefined,
+              avatar: avatarUrl || undefined,
+            },
+          ]}
+          tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
+          defaultChannels={['email']}
+        />
+      )}
+
+      {/* SMS Compose Drawer (opens from SMS icon when viewer has recruiter SMS sender) */}
+      {uid && (tenantId || authTenantId || activeTenant?.id) && (
+        <MessageDrawer
+          open={smsComposeOpen}
+          onClose={() => setSmsComposeOpen(false)}
+          recipients={[
+            {
+              userId: uid,
+              name: `${firstName} ${lastName}`.trim() || preferredName || 'User',
+              email: email || undefined,
+              phone: phone || undefined,
+              avatar: avatarUrl || undefined,
+            },
+          ]}
+          tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
+          defaultChannels={['sms']}
+        />
+      )}
+
+      {/* Add Note Dialog (opens from Note icon in Record header) */}
+      {uid && isAdminView && (
+        <AddUserNoteDialog
+          open={showAddUserNoteDialog}
+          onClose={() => setShowAddUserNoteDialog(false)}
+          userId={uid}
+          userName={`${firstName} ${lastName}`.trim() || preferredName || 'User'}
+          onNoteAdded={() => {
+            setNotesCount((c) => c + 1);
+            setTabValue('Notes');
+          }}
+        />
+      )}
+
+      {/* Start Onboarding Dialog (Recruiter record view) */}
+      {uid && (tenantId || authTenantId || activeTenant?.id) && (
+        <StartOnboardingDialog
+          open={showStartOnboardingDialog}
+          onClose={() => setShowStartOnboardingDialog(false)}
+          userId={uid}
+          tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
+          employeeOnboardStatus={employeeOnboardStatus}
+          contractorOnboardStatus={contractorOnboardStatus}
+          onOnboardingStarted={async () => {
+            const userRef = doc(db, 'users', uid);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+              const data = userSnap.data();
+              setEmployeeOnboardStatus(data.employeeOnboardStatus);
+              setContractorOnboardStatus(data.contractorOnboardStatus);
+            }
           }}
         />
       )}

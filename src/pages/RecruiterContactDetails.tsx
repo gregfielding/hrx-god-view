@@ -12,8 +12,6 @@ import {
   IconButton,
   CircularProgress,
   Paper,
-  Tabs,
-  Tab,
   Avatar,
   Snackbar,
   Alert,
@@ -55,6 +53,9 @@ import {
   Info as InfoIcon,
   Delete as DeleteIcon,
   Timeline as TimelineIcon,
+  Add as AddIcon,
+  SmartToy as AIIcon,
+  CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -73,11 +74,11 @@ import CRMNotesTab from '../components/CRMNotesTab';
 import ContactActivityTab from '../components/ContactActivityTab';
 import { formatDateForDisplay } from '../utils/dateUtils';
 import { formatPhoneNumber } from '../utils/formatPhone';
-import ContactHeader from '../components/ContactHeader';
 import { useFavorites } from '../hooks/useFavorites';
 import AddNoteDialog from '../components/AddNoteDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
+import PageHeader from '../components/PageHeader';
+import FavoriteButton from '../components/FavoriteButton';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -96,7 +97,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`contact-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
+      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -695,8 +696,15 @@ const RecruiterContactDetails: React.FC = () => {
     }
   };
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+  const setTabAndPersist = (newValue: number) => {
     setTabValue(newValue);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', String(newValue));
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // ignore
+    }
   };
 
   if (loading) {
@@ -721,105 +729,263 @@ const RecruiterContactDetails: React.FC = () => {
     );
   }
 
-  // Build navigation links for ContactHeader
-  const navigationLinks: Array<{ type: 'company' | 'location' | 'deal' | 'jobOrder'; id: string; name: string; companyId?: string }> = [];
-  
-  // Add company link
-  if (company?.id) {
-    navigationLinks.push({
-      type: 'company',
-      id: company.id,
-      name: company.companyName || company.name || 'Company'
-    });
-  }
-  
-  // Add location link if available
-  if (location?.id && company?.id) {
-    navigationLinks.push({
-      type: 'location',
-      id: location.id,
-      name: location.name || location.nickname || location.title || 'Location',
-      companyId: company.id
-    });
-  }
-
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            ...(company ? [{ label: company.companyName || company.name, href: `/recruiter/companies/${company.id}` }] : []),
-            { label: 'Contacts', href: '/recruiter/contacts' },
-            { label: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact' },
-          ]}
-        />
-      </Box>
-      
-      {/* Contact Header Component */}
-      <ContactHeader
-        contact={contact}
-        tenantId={tenantId}
-        favoriteType="contacts"
-        isFavorite={isFavorite}
-        toggleFavorite={toggleFavorite}
-        navigationLinks={navigationLinks}
-        metrics={{
-          completedTasks: 0,
-          totalTasks: 0
-        }}
-        onAddNote={() => setShowAddNoteDialog(true)}
-        onAIEnhance={handleAIEnhancement}
-        onLogActivity={() => setShowLogActivityDialog(true)}
-        aiEnhancing={aiEnhancing}
-        routePrefix="/recruiter"
-        companyLocations={location ? [location] : []}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+            <Avatar
+              src={contact.avatar || undefined}
+              alt={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Contact'}
+              sx={{
+                width: 108,
+                height: 108,
+                bgcolor: 'primary.main',
+                fontSize: '40px',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              {(contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'C')
+                .trim()
+                .split(' ')
+                .slice(0, 2)
+                .map((p: string) => p?.[0])
+                .join('')
+                .toUpperCase()}
+            </Avatar>
+
+            <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
+              {/* Line 1: Name + favorite */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontSize: { xs: '20px', md: '24px' },
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
+                  {contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Contact'}
+                </Typography>
+                <FavoriteButton
+                  itemId={contact.id}
+                  favoriteType="contacts"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                />
+              </Box>
+
+              {/* Line 2: Title */}
+              {(contact.title || contact.jobTitle) && (
+                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.65)', fontWeight: 500, mt: 0.75 }}>
+                  {contact.title || contact.jobTitle}
+                </Typography>
+              )}
+
+              {/* Line 3: Company link */}
+              {company?.id && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.75, flexWrap: 'wrap' }}>
+                  <BusinessIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
+                  <Typography
+                    component="a"
+                    href={`/recruiter/companies/${company.id}`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(`/recruiter/companies/${company.id}`);
+                    }}
+                    sx={{
+                      fontSize: '0.875rem',
+                      color: 'rgb(74, 144, 226)',
+                      fontWeight: 600,
+                      textDecoration: 'none',
+                      '&:hover': { textDecoration: 'underline' },
+                    }}
+                  >
+                    {company.companyName || company.name || 'Company'}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* Line 4: Social / contact icons */}
+              {(contact.linkedInUrl || contact.website) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
+                  {contact.website && (
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={String(contact.website).startsWith('http') ? contact.website : `https://${contact.website}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <LanguageIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                  {contact.linkedInUrl && (
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={String(contact.linkedInUrl).startsWith('http') ? contact.linkedInUrl : `https://${contact.linkedInUrl}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <LinkedInIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
+              )}
+
+              {/* Line 5: Chips (retain content) */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                <Chip
+                  label="Low"
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    borderRadius: '999px',
+                    fontSize: '0.75rem',
+                    height: 28,
+                    color: 'error.main',
+                    borderColor: 'rgba(211, 47, 47, 0.35)',
+                    bgcolor: 'rgba(211, 47, 47, 0.06)',
+                  }}
+                />
+                {!!contact.inferredSeniority && (
+                  <Chip
+                    label={String(contact.inferredSeniority).toLowerCase()}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      borderRadius: '999px',
+                      fontSize: '0.75rem',
+                      height: 28,
+                      color: 'text.secondary',
+                      borderColor: 'rgba(0,0,0,0.12)',
+                      bgcolor: 'rgba(0,0,0,0.02)',
+                      textTransform: 'lowercase',
+                    }}
+                  />
+                )}
+              </Box>
+            </Box>
+          </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {[
+              { label: 'Overview', icon: <DashboardIcon fontSize="small" />, index: 0 },
+              { label: 'Notes', icon: <NotesIcon fontSize="small" />, index: 1 },
+              { label: 'Activity', icon: <TimelineIcon fontSize="small" />, index: 2 },
+            ].map((t) => {
+              const isActive = tabValue === t.index;
+              return (
+                <Button
+                  key={t.label}
+                  onClick={() => setTabAndPersist(t.index)}
+                  variant="text"
+                  startIcon={t.icon}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/recruiter/contacts')}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back
+            </Button>
+
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setShowAddNoteDialog(true)}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Add Note
+            </Button>
+
+            <Button
+              variant="contained"
+              startIcon={<AIIcon />}
+              onClick={handleAIEnhancement}
+              disabled={aiEnhancing}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+                bgcolor: '#4A90E2',
+                '&:hover': { bgcolor: '#3a7fcd' },
+              }}
+            >
+              {aiEnhancing ? 'Enhancing…' : 'AI Enhance'}
+            </Button>
+
+            <Button
+              variant="contained"
+              startIcon={<CheckCircleIcon />}
+              onClick={() => setShowLogActivityDialog(true)}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+                bgcolor: '#0057B8',
+                '&:hover': { bgcolor: '#004a9f' },
+              }}
+            >
+              Log Activity
+            </Button>
+          </Box>
+        }
       />
 
-      {/* Tabs */}
-      <Paper sx={{ mb: 3 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            borderBottom: 1,
-            borderColor: 'divider',
-            '& .MuiTab-root': {
-              textTransform: 'none',
-              fontWeight: 500,
-              minHeight: 48,
-            },
-          }}
-        >
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Overview
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            }
-          />
-        </Tabs>
-      </Paper>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
@@ -2015,6 +2181,7 @@ const RecruiterContactDetails: React.FC = () => {
           <ContactActivityTab contact={contact} tenantId={tenantId} />
         )}
       </TabPanel>
+      </Box>
 
       {/* Add Note Dialog */}
       <AddNoteDialog

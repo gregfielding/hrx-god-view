@@ -8,8 +8,6 @@ import {
   Alert,
   Paper,
   Breadcrumbs,
-  Tabs,
-  Tab,
   Avatar,
   Chip,
   Table,
@@ -20,15 +18,18 @@ import {
   TableRow,
 } from '@mui/material';
 import { ArrowBack, NavigateNext, Email as EmailIcon, Phone as PhoneIcon, Star as StarIcon, Groups as GroupIcon, Insights as InsightsIcon } from '@mui/icons-material';
-import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+
+import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import JobPostForm from '../../components/JobPostForm';
-import { BreadcrumbNav } from '../../components/BreadcrumbNav';
-import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import FavoriteButton from '../../components/FavoriteButton';
 import { useFavorites } from '../../hooks/useFavorites';
 import { calculateProfileScore } from '../../utils/applicantScoring';
+import PageHeader from '../../components/PageHeader';
+import StandardTablePagination from '../../components/StandardTablePagination';
+import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
 
 const EditJobPost: React.FC = () => {
   const { tenantId } = useAuth();
@@ -50,7 +51,10 @@ const EditJobPost: React.FC = () => {
   const [allGroups, setAllGroups] = useState<any[]>([]);
 
   const jobsBoardService = JobsBoardService.getInstance();
-  const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
+  const { isFavorite, toggleFavorite } = useFavorites('users');
+
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   useEffect(() => {
     if (postId && tenantId) {
@@ -78,12 +82,10 @@ const EditJobPost: React.FC = () => {
 
   const loadApplications = async () => {
     if (!tenantId || !postId) {
-      console.log('loadApplications: missing tenantId or postId', { tenantId, postId });
       return;
     }
 
     try {
-      console.log('loadApplications: fetching for', { tenantId, postId });
       setLoadingApplications(true);
       const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
       
@@ -94,9 +96,7 @@ const EditJobPost: React.FC = () => {
         orderBy('createdAt', 'desc')
       );
       
-      console.log('loadApplications: executing query with postId and orderBy');
       const snapshot = await getDocs(q);
-      console.log('loadApplications: query returned', snapshot.docs.length, 'documents');
       let applicationsData: any[] = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
@@ -104,14 +104,12 @@ const EditJobPost: React.FC = () => {
 
       // If no results with postId, try jobId
       if (applicationsData.length === 0) {
-        console.log('loadApplications: no results with postId, trying jobId field');
         const q2 = query(
           applicationsRef,
           where('jobId', '==', postId),
           orderBy('createdAt', 'desc')
         );
         const snapshot2 = await getDocs(q2);
-        console.log('loadApplications: jobId field query returned', snapshot2.docs.length, 'documents');
         applicationsData = snapshot2.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
@@ -228,6 +226,10 @@ const EditJobPost: React.FC = () => {
       setLoadingApplications(false);
     }
   };
+
+  useEffect(() => {
+    setPage(0);
+  }, [applicantUsers.length, activeTab]);
 
   const loadGroups = async () => {
     if (!tenantId) return;
@@ -474,15 +476,93 @@ const EditJobPost: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 0, width: '100%' }}>
-      {/* Breadcrumb Navigation */}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       {isFromRecruiter ? (
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Jobs Board', href: '/recruiter/jobs-board' },
-            { label: post.postTitle },
-          ]}
+        <PageHeader
+          title={
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+              <Avatar
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 700,
+                  flexShrink: 0,
+                }}
+              >
+                {(post.postTitle || 'J').trim().charAt(0).toUpperCase()}
+              </Avatar>
+              <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontSize: { xs: '20px', md: '24px' },
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {post.postTitle}
+                </Typography>
+                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
+                  Status: {(post.status || 'draft').toUpperCase()} • Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
+                </Typography>
+                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
+                  {post.companyName || '—'} • {post.worksiteName || '—'}
+                </Typography>
+              </Box>
+            </Box>
+          }
+          filters={
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              {[
+                { label: 'Post Details', index: 0 },
+                { label: `Applicants (${applicantUsers.length})`, index: 1 },
+              ].map((t) => {
+                const isActive = activeTab === t.index;
+                return (
+                  <Button
+                    key={t.index}
+                    onClick={() => setActiveTab(t.index)}
+                    variant="text"
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '14px',
+                      fontWeight: isActive ? 500 : 400,
+                      color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                      px: 1.5,
+                      py: 0.75,
+                      minWidth: 'auto',
+                      whiteSpace: 'nowrap',
+                      '&:hover': {
+                        bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                      },
+                    }}
+                  >
+                    {t.label}
+                  </Button>
+                );
+              })}
+            </Box>
+          }
+          rightActions={
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBack />}
+              onClick={handleCancel}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back
+            </Button>
+          }
         />
       ) : (
         <Box sx={{ mb: 3 }}>
@@ -523,19 +603,33 @@ const EditJobPost: React.FC = () => {
         </Box>
       )}
 
-      <Paper elevation={1} sx={{ p: 4, borderRadius: 2 }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
+        <Paper elevation={1} sx={{ p: 4, borderRadius: 2 }}>
         {error && (
           <Alert severity="error" sx={{ mb: 3 }}>
             {error}
           </Alert>
         )}
-
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-          <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
-            <Tab label="Post Details" />
-            <Tab label={`Applicants (${applicantUsers.length})`} />
-          </Tabs>
-        </Box>
+        {!isFromRecruiter && (
+          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                onClick={() => setActiveTab(0)}
+                variant={activeTab === 0 ? 'contained' : 'text'}
+                sx={{ textTransform: 'none' }}
+              >
+                Post Details
+              </Button>
+              <Button
+                onClick={() => setActiveTab(1)}
+                variant={activeTab === 1 ? 'contained' : 'text'}
+                sx={{ textTransform: 'none' }}
+              >
+                Applicants ({applicantUsers.length})
+              </Button>
+            </Box>
+          </Box>
+        )}
 
         {activeTab === 0 && (
           <JobPostForm
@@ -561,12 +655,26 @@ const EditJobPost: React.FC = () => {
               </Alert>
             ) : (
               <>
-                <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell sx={{ width: 60 }} />
+                {(() => {
+                  const paginated = applicantUsers.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+                  return (
+                    <>
+                      <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
+                        <TableContainer
+                          sx={{
+                            overflowY: 'auto',
+                            overflowX: 'auto',
+                            '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+                            '&::-webkit-scrollbar-track': { background: 'rgba(0,0,0,0.02)' },
+                            '&::-webkit-scrollbar-thumb': { background: 'rgba(0,0,0,0.15)', borderRadius: '4px' },
+                            scrollbarWidth: 'thin',
+                            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+                          }}
+                        >
+                          <Table size="small" stickyHeader>
+                            <TableHead sx={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: '#FFFFFF' }}>
+                              <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+                                <TableCell sx={{ width: 60, bgcolor: '#FFFFFF' }} />
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Person
                           </TableCell>
@@ -588,10 +696,10 @@ const EditJobPost: React.FC = () => {
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Last Login
                           </TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {applicantUsers.map((user, index) => (
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {paginated.map((user, index) => (
                           <TableRow
                             key={user.id}
                             hover
@@ -621,7 +729,7 @@ const EditJobPost: React.FC = () => {
                             </TableCell>
                             <TableCell>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                <Avatar src={user.avatar} alt={`${user.firstName} ${user.lastName}`} sx={{ width: 40, height: 40 }}>
+                                <Avatar src={user.avatar} alt={`${user.firstName} ${user.lastName}`} sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}>
                                   {user.firstName?.[0]}
                                 </Avatar>
                                 <Box>
@@ -713,24 +821,30 @@ const EditJobPost: React.FC = () => {
                               <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
                             </TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Paper>
-                <Box sx={{ mt: 2, textAlign: 'center', color: 'text.secondary' }}>
-                  <Typography variant="body2">
-                    Showing {applicantUsers.length} applicant{applicantUsers.length !== 1 ? 's' : ''}
-                    {applications.length > applicantUsers.length && (
-                      <span> ({applications.length - applicantUsers.length} guest applicant{applications.length - applicantUsers.length !== 1 ? 's' : ''} not shown)</span>
-                    )}
-                  </Typography>
-                </Box>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      </Paper>
+                      <StandardTablePagination
+                        count={applicantUsers.length}
+                        page={page}
+                        onPageChange={(_e, newPage) => setPage(newPage)}
+                        rowsPerPage={rowsPerPage}
+                        onRowsPerPageChange={(e) => {
+                          setRowsPerPage(parseInt(e.target.value, 10));
+                          setPage(0);
+                        }}
+                      />
+                    </>
+                  );
+                })()}
               </>
             )}
           </Box>
         )}
-      </Paper>
+        </Paper>
+      </Box>
     </Box>
   );
 };

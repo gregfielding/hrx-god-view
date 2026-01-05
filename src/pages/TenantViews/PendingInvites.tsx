@@ -14,6 +14,7 @@ import {
   TableSortLabel,
   CircularProgress,
 } from '@mui/material';
+import StandardTablePagination from '../../components/StandardTablePagination';
 import { useNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -33,6 +34,8 @@ const PendingInvites: React.FC = () => {
   const [search, setSearch] = useState('');
   const [orderBy, setOrderBy] = useState<'name' | 'email' | 'department' | 'role' | 'inviteSentAt'>('inviteSentAt');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   useEffect(() => {
     if (effectiveTenantId) {
@@ -91,6 +94,11 @@ const PendingInvites: React.FC = () => {
       setDepartments([]);
     }
   };
+
+  // Reset page when search changes
+  useEffect(() => {
+    setPage(0);
+  }, [search]);
 
   // Helper functions for sorting and filtering
   const getSortedAndFilteredPendingInvites = () => {
@@ -205,26 +213,56 @@ const PendingInvites: React.FC = () => {
     );
   }
 
+  const sortedAndFilteredInvites = getSortedAndFilteredPendingInvites();
+  const paginatedInvites = sortedAndFilteredInvites.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage
+  );
+
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Header with search */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">Pending Invites ({getSortedAndFilteredPendingInvites().length})</Typography>
-        <TextField
-          size="small"
-          variant="outlined"
-          placeholder="Search by name..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          sx={{ width: 300 }}
-        />
-      </Box>
-      
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            <TableRow sx={{ height: 48 }}>
-              <TableCell sx={{ py: 1, px: 2 }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', px: 2 }}>
+      <TableContainer 
+        component={Paper}
+        sx={{
+          borderRadius: 2,
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+          width: '100%',
+          // Custom scrollbar styling (lighter and thinner)
+          '&::-webkit-scrollbar': {
+            width: '8px',
+            height: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': {
+              background: 'rgba(0, 0, 0, 0.25)',
+            },
+          },
+          // Firefox scrollbar styling
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        <Table size="small" stickyHeader sx={{ width: '100%' }}>
+          <TableHead sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            backgroundColor: 'background.paper',
+          }}>
+            <TableRow sx={{ backgroundColor: 'background.paper' }}>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>
                 <TableSortLabel
                   active={orderBy === 'name'}
                   direction={orderBy === 'name' ? order : 'asc'}
@@ -233,7 +271,7 @@ const PendingInvites: React.FC = () => {
                   Name
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ py: 1, px: 2 }}>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>
                 <TableSortLabel
                   active={orderBy === 'email'}
                   direction={orderBy === 'email' ? order : 'asc'}
@@ -242,7 +280,7 @@ const PendingInvites: React.FC = () => {
                   Email
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ py: 1, px: 2 }}>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>
                 <TableSortLabel
                   active={orderBy === 'department'}
                   direction={orderBy === 'department' ? order : 'asc'}
@@ -251,7 +289,7 @@ const PendingInvites: React.FC = () => {
                   Department
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ py: 1, px: 2 }}>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>
                 <TableSortLabel
                   active={orderBy === 'role'}
                   direction={orderBy === 'role' ? order : 'asc'}
@@ -260,7 +298,7 @@ const PendingInvites: React.FC = () => {
                   Role
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ py: 1, px: 2 }}>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>
                 <TableSortLabel
                   active={orderBy === 'inviteSentAt'}
                   direction={orderBy === 'inviteSentAt' ? order : 'asc'}
@@ -269,11 +307,11 @@ const PendingInvites: React.FC = () => {
                   Invite Sent At
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ py: 1, px: 2 }}>Actions</TableCell>
+              <TableCell sx={{ py: 1, px: 2, fontWeight: 700, bgcolor: '#FFFFFF' }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {getSortedAndFilteredPendingInvites().map((invite) => (
+            {paginatedInvites.map((invite) => (
               <TableRow key={invite.id}>
                 <TableCell>{invite.firstName} {invite.lastName}</TableCell>
                 <TableCell>{invite.email}</TableCell>
@@ -287,9 +325,28 @@ const PendingInvites: React.FC = () => {
                 </TableCell>
               </TableRow>
             ))}
+            {sortedAndFilteredInvites.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} align="center">
+                  No pending invites found.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Pagination Footer */}
+      <StandardTablePagination
+        count={sortedAndFilteredInvites.length}
+        page={page}
+        onPageChange={(_, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(e) => {
+          setRowsPerPage(parseInt(e.target.value, 10));
+          setPage(0);
+        }}
+      />
     </Box>
   );
 };

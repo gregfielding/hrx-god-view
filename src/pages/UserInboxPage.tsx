@@ -2273,6 +2273,25 @@ const UserInboxPage: React.FC = () => {
                         overflowY: 'auto',
                         overflowX: 'auto',
                         width: '100%',
+                        // Scrollbar styling per Inbox Standard
+                        '&::-webkit-scrollbar': {
+                          width: '8px',
+                          height: '8px',
+                        },
+                        '&::-webkit-scrollbar-track': {
+                          background: 'rgba(0, 0, 0, 0.02)',
+                          borderRadius: '4px',
+                        },
+                        '&::-webkit-scrollbar-thumb': {
+                          background: 'rgba(0, 0, 0, 0.15)',
+                          borderRadius: '4px',
+                          '&:hover': {
+                            background: 'rgba(0, 0, 0, 0.25)',
+                          },
+                        },
+                        // Firefox scrollbar styling
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
                       }}
                     >
                 <Table size="medium" stickyHeader sx={{ width: '100%' }}>

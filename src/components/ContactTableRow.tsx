@@ -15,6 +15,7 @@ import {
 } from '@mui/icons-material';
 import FavoriteButton from './FavoriteButton';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 interface ContactTableRowProps {
   contact: any;
@@ -161,8 +162,8 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
             <Avatar 
               src={contact.avatar || contact.logoUrl}
               sx={{ 
-                width: 32, 
-                height: 32,
+                width: TABLE_AVATAR_SIZE, 
+                height: TABLE_AVATAR_SIZE,
                 backgroundColor: getAvatarColor(fullName),
                 color: getAvatarTextColor(fullName),
                 fontWeight: 600,

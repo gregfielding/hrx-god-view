@@ -15,14 +15,23 @@ import {
   CircularProgress,
 } from '@mui/material';
 import CompanyTableRow from './CompanyTableRow';
+import StandardTablePagination from './StandardTablePagination';
 
 interface CompanyTableProps {
   companies: any[];
   loading: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  pagination?: {
+    count: number;
+    page: number;
+    rowsPerPage: number;
+    onPageChange: (event: React.MouseEvent<HTMLButtonElement> | null, page: number) => void;
+    onRowsPerPageChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  };
   columns: {
     favorites?: boolean;
+    avatar?: boolean;
     companyName?: boolean;
     contacts?: boolean;
     deals?: boolean;
@@ -52,6 +61,7 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
   loading,
   hasMore = false,
   onLoadMore,
+  pagination,
   columns,
   sortField,
   sortDirection,
@@ -73,6 +83,7 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
   const getColumnWidth = (columnKey: string): number | string | undefined => {
     const widths: { [key: string]: number } = {
       favorites: 60,
+      avatar: 60,
       companyName: 250,
       contacts: 100,
       deals: 100,
@@ -129,6 +140,7 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
         align={align}
         sx={{
           ...(width && { width, minWidth: width, ...(columnKey === 'favorites' && { maxWidth: width }) }),
+          bgcolor: '#FFFFFF',
           fontSize: '0.75rem',
           fontWeight: 600,
           color: '#374151',
@@ -136,6 +148,7 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
           letterSpacing: '0.05em',
           py: 1.75,
           ...(columnKey === 'favorites' && { px: 1 }),
+          ...(columnKey === 'avatar' && { px: 1 }),
           ...(columnKey === 'companyName' && { pl: 2 }),
         }}
       >
@@ -149,22 +162,44 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
       <TableContainer
         component={Paper}
         sx={{
-          borderRadius: 1,
-          border: '1px solid',
-          borderColor: 'divider',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+          borderRadius: 2,
+          border: '1px solid #EAEEF4',
+          boxShadow: 'none',
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'auto',
+          width: '100%',
+          // Scrollbar styling per Inbox Standard
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
-        <Table sx={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+        <Table size="small" stickyHeader sx={{ width: '100%' }}>
           <TableHead
             sx={{
-              backgroundColor: 'grey.50',
-              borderBottom: '2px solid',
-              borderColor: 'divider',
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              backgroundColor: '#FFFFFF',
             }}
           >
-            <TableRow>
+            <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
               {columns.favorites && renderHeaderCell('', undefined, 'favorites')}
+              {columns.avatar && renderHeaderCell('', undefined, 'avatar', 'center')}
               {columns.companyName && renderHeaderCell('Company Name', 'companyName', 'companyName')}
               {columns.contacts && renderHeaderCell('Contacts', undefined, 'contacts')}
               {columns.deals && renderHeaderCell('Deals', undefined, 'deals')}
@@ -190,12 +225,21 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
                       </Box>
                     </TableCell>
                   )}
+                  {columns.avatar && (
+                    <TableCell sx={{ py: 1.5, px: 1, borderBottom: '1px solid', borderColor: 'divider' }} align="center">
+                      <Skeleton variant="circular" width={32} height={32} sx={{ mx: 'auto' }} />
+                    </TableCell>
+                  )}
                   {columns.companyName && (
                     <TableCell sx={{ py: 1.5, px: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Skeleton variant="circular" width={32} height={32} />
-                        <Skeleton variant="text" width={150} height={20} />
-                      </Box>
+                      {columns.avatar ? (
+                        <Skeleton variant="text" width={180} height={20} />
+                      ) : (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <Skeleton variant="circular" width={32} height={32} />
+                          <Skeleton variant="text" width={150} height={20} />
+                        </Box>
+                      )}
                     </TableCell>
                   )}
                   {columns.contacts && (
@@ -250,8 +294,19 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
         </Table>
       </TableContainer>
 
-      {/* Pagination Controls */}
-      {hasMore !== undefined && (
+      {/* Inbox-standard pagination footer (when enabled by parent) */}
+      {pagination && (
+        <StandardTablePagination
+          count={pagination.count}
+          page={pagination.page}
+          onPageChange={pagination.onPageChange}
+          rowsPerPage={pagination.rowsPerPage}
+          onRowsPerPageChange={pagination.onRowsPerPageChange}
+        />
+      )}
+
+      {/* Legacy Load More Controls (used by TenantCRM) */}
+      {!pagination && hasMore !== undefined && (
         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, gap: 2 }}>
           {loading && companies.length > 0 && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

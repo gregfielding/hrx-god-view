@@ -1633,7 +1633,8 @@ const Layout: React.FC = React.memo(function Layout() {
         <Box
           sx={{
             flex: 1,
-            overflow: 'hidden',
+            overflowY: 'auto',
+            overflowX: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,

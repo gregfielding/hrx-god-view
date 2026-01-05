@@ -12,6 +12,7 @@ import {
   Box,
   Typography,
 } from '@mui/material';
+import StandardTablePagination from './StandardTablePagination';
 
 interface ContactTableProps {
   contacts: any[];
@@ -31,6 +32,13 @@ interface ContactTableProps {
   sortDirection?: 'asc' | 'desc';
   onSort?: (field: string) => void;
   renderRow: (contact: any, index: number) => React.ReactNode;
+  pagination?: {
+    count: number;
+    page: number;
+    rowsPerPage: number;
+    onPageChange: (event: React.MouseEvent<HTMLButtonElement> | null, page: number) => void;
+    onRowsPerPageChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  };
 }
 
 const ContactTable: React.FC<ContactTableProps> = ({
@@ -41,6 +49,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
   sortDirection,
   onSort,
   renderRow,
+  pagination,
 }) => {
   // Standardized column widths
   const getColumnWidth = (columnKey: string): number | string | undefined => {
@@ -101,6 +110,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
       <TableCell 
         sx={{ 
           ...(width && { width, minWidth: width, ...(columnKey === 'favorites' && { maxWidth: width }) }),
+          bgcolor: '#FFFFFF',
           fontSize: '0.75rem',
           fontWeight: 600, 
           color: '#374151',
@@ -117,33 +127,45 @@ const ContactTable: React.FC<ContactTableProps> = ({
   };
 
   return (
-      <TableContainer 
-        component={Paper} 
-        variant="outlined"
-        sx={{ 
+    <>
+      <TableContainer
+        component={Paper}
+        elevation={0}
+        sx={{
+          borderRadius: 2,
+          border: '1px solid #EAEEF4',
+          position: 'relative',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflowY: 'auto',
           overflowX: 'auto',
-          borderRadius: 1,
-          border: '1px solid',
-          borderColor: 'divider',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
-          '& .MuiTable-root': {
-            borderCollapse: 'separate',
-            borderSpacing: 0
-          }
+          width: '100%',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
-        <Table sx={{ minWidth: 1200 }}>
-          <TableHead>
-            <TableRow sx={{ 
-              backgroundColor: 'grey.50',
-              borderBottom: '2px solid',
-              borderColor: 'divider',
-              '& th': {
-                borderBottom: '2px solid',
-                borderColor: 'divider',
-                fontWeight: 600
-              }
-            }}>
+        <Table size="small" stickyHeader sx={{ minWidth: 1200, width: '100%' }}>
+          <TableHead
+            sx={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              backgroundColor: '#FFFFFF',
+            }}
+          >
+            <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
               {columns.favorites && renderHeaderCell('', undefined, 'favorites')}
               {columns.name && renderHeaderCell('Contact Name', 'fullName', 'name')}
               {(columns.jobTitle || columns.title) && renderHeaderCell('Job Title', 'jobTitle', 'jobTitle')}
@@ -154,77 +176,88 @@ const ContactTable: React.FC<ContactTableProps> = ({
               {columns.lastActivity && renderHeaderCell('Last Activity', 'lastActivity', 'lastActivity')}
             </TableRow>
           </TableHead>
-        <TableBody>
-          {loading || contacts.length === 0 ? (
-            // Skeleton loader rows
-            Array.from({ length: 8 }).map((_, index) => (
-              <TableRow 
-                key={`skeleton-${index}`} 
-                sx={{ 
-                  height: '48px',
-                  bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
-                  '& td': {
-                    borderBottom: '1px solid',
-                    borderColor: 'divider'
-                  }
-                }}
-              >
-                {columns.favorites && (
-                  <TableCell sx={{ width: 60, minWidth: 60, maxWidth: 60, px: 1, py: 1.5 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                      <Skeleton variant="circular" width={24} height={24} />
-                    </Box>
-                  </TableCell>
-                )}
-                {columns.name && (
-                  <TableCell sx={{ pl: 2, pr: 2, py: 1.5 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                      <Skeleton variant="circular" width={32} height={32} />
-                      <Skeleton variant="text" width={140} height={20} />
-                    </Box>
-                  </TableCell>
-                )}
-                {(columns.jobTitle || columns.title) && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                )}
-                {columns.role && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Skeleton variant="rectangular" width={80} height={24} sx={{ borderRadius: 1 }} />
-                  </TableCell>
-                )}
-                {columns.contactInfo && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Skeleton variant="text" width={140} height={16} />
-                      <Skeleton variant="text" width={100} height={16} />
-                    </Box>
-                  </TableCell>
-                )}
-                {columns.company && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Skeleton variant="text" width={120} height={20} />
-                  </TableCell>
-                )}
-                {columns.location && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Skeleton variant="text" width={100} height={20} />
-                  </TableCell>
-                )}
-                {columns.lastActivity && (
-                  <TableCell sx={{ px: 1.5, py: 1.5 }}>
-                    <Skeleton variant="text" width={90} height={20} />
-                  </TableCell>
-                )}
-              </TableRow>
-            ))
-          ) : (
-            contacts.map((contact, index) => renderRow(contact, index))
-          )}
-        </TableBody>
-      </Table>
-    </TableContainer>
+          <TableBody>
+            {loading || contacts.length === 0 ? (
+              // Skeleton loader rows
+              Array.from({ length: 8 }).map((_, index) => (
+                <TableRow
+                  key={`skeleton-${index}`}
+                  sx={{
+                    height: '48px',
+                    bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                    '& td': {
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                    },
+                  }}
+                >
+                  {columns.favorites && (
+                    <TableCell sx={{ width: 60, minWidth: 60, maxWidth: 60, px: 1, py: 1.5 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                        <Skeleton variant="circular" width={24} height={24} />
+                      </Box>
+                    </TableCell>
+                  )}
+                  {columns.name && (
+                    <TableCell sx={{ pl: 2, pr: 2, py: 1.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Skeleton variant="circular" width={32} height={32} />
+                        <Skeleton variant="text" width={140} height={20} />
+                      </Box>
+                    </TableCell>
+                  )}
+                  {(columns.jobTitle || columns.title) && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Skeleton variant="text" width={100} height={20} />
+                    </TableCell>
+                  )}
+                  {columns.role && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Skeleton variant="rectangular" width={80} height={24} sx={{ borderRadius: 1 }} />
+                    </TableCell>
+                  )}
+                  {columns.contactInfo && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                        <Skeleton variant="text" width={140} height={16} />
+                        <Skeleton variant="text" width={100} height={16} />
+                      </Box>
+                    </TableCell>
+                  )}
+                  {columns.company && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Skeleton variant="text" width={120} height={20} />
+                    </TableCell>
+                  )}
+                  {columns.location && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Skeleton variant="text" width={100} height={20} />
+                    </TableCell>
+                  )}
+                  {columns.lastActivity && (
+                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                      <Skeleton variant="text" width={90} height={20} />
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))
+            ) : (
+              contacts.map((contact, index) => renderRow(contact, index))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      {pagination && (
+        <StandardTablePagination
+          count={pagination.count}
+          page={pagination.page}
+          onPageChange={pagination.onPageChange}
+          rowsPerPage={pagination.rowsPerPage}
+          onRowsPerPageChange={pagination.onRowsPerPageChange}
+        />
+      )}
+    </>
   );
 };
 

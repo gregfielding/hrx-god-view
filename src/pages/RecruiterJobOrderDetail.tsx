@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
-console.log('🔍 RecruiterJobOrderDetail: Module loaded');
 import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
 import {
   Box,
@@ -10,8 +9,6 @@ import {
   CardContent,
   CardHeader,
   Grid,
-  Tabs,
-  Tab,
   IconButton,
   Menu,
   MenuItem,
@@ -72,6 +69,7 @@ import {
   Edit as EditIcon,
   ContentCopy as ContentCopyIcon,
   Language as ExternalLinkIcon,
+  ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -82,6 +80,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/recruiter/jobOrder';
+import PageHeader from '../components/PageHeader';
 import JobOrderForm from '../components/JobOrderForm';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import ManageContactsDialog from '../components/ManageContactsDialog';
@@ -95,7 +94,6 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist from '../components/recruiter/JobOrderChecklist';
@@ -117,7 +115,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`job-order-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
+      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -230,7 +228,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
         // Build list of connected job post IDs (if any)
         const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
-        console.log('🔍 ApplicantsTable: connected job posts', jobPostIds);
 
         // Source of truth: tenant applications collection
         const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
@@ -249,7 +246,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         }
 
         if (appDocs.length === 0) {
-          console.log('🔍 ApplicantsTable: no application documents found for this job order/post(s)');
           setApplicants([]);
           setLoading(false);
           return;
@@ -301,7 +297,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           return dateB.getTime() - dateA.getTime();
         });
 
-        console.log('🔍 ApplicantsTable: found', applicantsData.length, 'applicant(s)');
         setApplicants(applicantsData);
       } catch (error) {
         console.error('Error fetching applicants:', error);
@@ -347,13 +342,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
-      console.log('🔄 Changing application status:', { 
-        uid: applicant.uid, 
-        applicationId: Object.keys(applicant.applicationData)[0],
-        oldStatus: applicant.applicationStatus,
-        newStatus 
-      });
-
       // Find the application ID from applicationData
       const applicationId = Object.keys(applicant.applicationData)[0] || 
         `${tenantId}_${applicant.applicationData.jobId}`;
@@ -366,7 +354,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
 
       // TODO: Log activity
-      console.log('✅ Application status updated to:', newStatus);
 
       // Update local state
       setApplicants(prev => 
@@ -385,12 +372,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleChangeLevel = async (applicant: Applicant, newLevel: 'applicant' | 'candidate') => {
     try {
-      console.log('🔄 Changing applicant level:', { 
-        uid: applicant.uid, 
-        applicationId: applicant.applicationData?.id,
-        oldLevel: applicant.applicationData?.candidate ? 'candidate' : 'applicant',
-        newLevel 
-      });
 
       if (!applicant.applicationData?.id) {
         console.error('❌ No application ID found for applicant');
@@ -419,7 +400,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       await updateDoc(applicationRef, updateData);
 
       // TODO: Log activity
-      console.log(`✅ Level changed to ${newLevel} for application ${applicant.applicationData.id}`);
 
       // Update local state to reflect the change
       setApplicants(prev => 
@@ -456,7 +436,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
 
     try {
-      console.log('🗑️ Removing application for:', applicant.uid);
 
       // Get the user's full application data map
       const userRef = doc(db, 'users', applicant.uid);
@@ -491,7 +470,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         return;
       }
       
-      console.log('Removing application ID:', applicationIdToRemove);
 
       // Remove the application from the map
       const updatedApplicationData = { ...allApplicationData };
@@ -520,14 +498,11 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             deletedBy: user?.uid,
             updatedAt: serverTimestamp()
           });
-          console.log('✅ Tenant application marked as deleted');
         }
       } catch (tenantAppErr) {
-        console.warn('Could not update tenant application:', tenantAppErr);
         // Don't fail the whole operation if this fails
       }
 
-      console.log('✅ Application removed completely');
 
       // Update local state
       setApplicants(prev => prev.filter(a => a.uid !== applicant.uid));
@@ -556,12 +531,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (!selectedApplicant || !targetJobOrderId) return;
 
     try {
-      console.log('🔄 Switching applicant to different job:', {
-        applicant: selectedApplicant.displayName,
-        fromJobOrder: jobOrderId,
-        toJobOrder: targetJobOrderId
-      });
-
       // Get the target job order details
       const targetJobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', targetJobOrderId);
       const targetJobOrderDoc = await getDoc(targetJobOrderRef);
@@ -601,7 +570,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         return;
       }
 
-      console.log('🔍 Found application to switch:', targetApplicationId);
 
       // Create a unique application ID for the new job order
       const newApplicationId = `${tenantId}_${targetJobOrderId}_${Date.now()}`;
@@ -641,7 +609,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
 
       // TODO: Log activity
-      console.log('✅ Application switched to different job');
 
       // Remove from current list
       setApplicants(prev => prev.filter(a => a.uid !== selectedApplicant.uid));
@@ -702,7 +669,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       // Sort by name
       users.sort((a, b) => a.displayName.localeCompare(b.displayName));
       
-      console.log(`🔍 Found ${users.length} eligible users to add as applicants`);
       setAvailableUsers(users);
     } catch (error) {
       console.error('Error loading users:', error);
@@ -720,7 +686,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (!selectedUserId || !jobOrder) return;
     
     try {
-      console.log('➕ Adding applicant manually:', selectedUserId);
       
       // Get the first connected job post to use as the jobId
       const jobId = connectedJobPosts[0]?.id || `manual_${Date.now()}`;
@@ -755,7 +720,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       
       // TODO: Log activity
-      console.log('✅ Applicant added manually');
 
       try {
         const functions = getFunctions();
@@ -766,9 +730,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           tenantId,
           source: 'recruiter_manual_add'
         });
-        console.log('🧠 Applicant score queued for manual add');
       } catch (queueErr) {
-        console.warn('Failed to enqueue applicant score for manual add:', queueErr);
       }
       
       // Refresh applicants list - re-fetch to get Firestore Timestamp
@@ -1537,7 +1499,6 @@ const JobOrderJobsBoardTab: React.FC<{
         return isNaN(date.getTime()) ? '' : date.toISOString().split('T')[0];
       }
     } catch (error) {
-      console.warn('Error formatting date:', dateValue, error);
       return '';
     }
   };
@@ -1769,14 +1730,6 @@ const JobOrderJobsBoardTab: React.FC<{
   // Memoize initial data to avoid recalculating on every render
   const initialData = React.useMemo(() => {
     const data = getInitialData();
-    console.log('🔍 JobOrderJobsBoardTab - Initial Data:', {
-      skills: data.skills,
-      showSkills: data.showSkills,
-      uniformRequirements: data.uniformRequirements,
-      showUniformRequirements: data.showUniformRequirements,
-      jobOrderSkills: jobOrder?.skillsRequired,
-      jobOrderUniform: jobOrder?.uniformRequirements,
-    });
     return data;
   }, [existingPost, jobOrder]);
 
@@ -1809,7 +1762,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const navigate = useNavigate();
   const { user, tenantId } = useAuth();
   
-  console.log('🔍 RecruiterJobOrderDetail: Component mounted with params:', { jobOrderId, tenantId, user: user?.uid });
   
   // State
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
@@ -1860,16 +1812,134 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
+  // Helper functions (defined before useEffect that uses them)
+  const loadCompanyData = useCallback(async (companyId: string) => {
+    if (!companyId || !tenantId) return;
+    
+    try {
+      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+      const companyDoc = await getDoc(companyRef);
+      
+      if (companyDoc.exists()) {
+        const companyData = { id: companyDoc.id, ...companyDoc.data() };
+        setCompany(companyData);
+      }
+    } catch (error) {
+      console.error('Error loading company data:', error);
+    }
+  }, [tenantId]);
+
+  const loadConnectedJobPosts = useCallback(async (jobOrderId: string) => {
+    if (!jobOrderId || !tenantId) return;
+    
+    try {
+      const jobsBoardService = JobsBoardService.getInstance();
+      const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
+      setConnectedJobPosts(posts);
+    } catch (error) {
+      console.error('Error loading connected job posts:', error);
+    }
+  }, [tenantId]);
+
+  const fetchJobOrder = useCallback(async () => {
+    if (!jobOrderId || !tenantId) {
+      setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      // First try the current tenant-scoped path
+      const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+      
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      
+      if (jobOrderSnap.exists()) {
+        const data = jobOrderSnap.data() as JobOrder;
+        setJobOrder({ ...data, id: jobOrderSnap.id });
+        
+        // Load company data if companyId exists in deal data
+        const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+        if (flatCompanyId) {
+          await loadCompanyData(flatCompanyId);
+        }
+        
+        // Load connected job board posts
+        await loadConnectedJobPosts(jobOrderId);
+      } else {
+        // Try the top-level collection as fallback
+        const topLevelJobOrderRef = doc(db, 'jobOrders', jobOrderId);
+        const topLevelJobOrderSnap = await getDoc(topLevelJobOrderRef);
+        
+        if (topLevelJobOrderSnap.exists()) {
+          const data = topLevelJobOrderSnap.data() as JobOrder;
+          setJobOrder({ ...data, id: topLevelJobOrderSnap.id });
+          
+          // Load company data if companyId exists in deal data
+          const flatCompanyIdTop = (data as any).companyId || data.deal?.companyId;
+          if (flatCompanyIdTop) {
+            await loadCompanyData(flatCompanyIdTop);
+          }
+          
+          // Load connected job board posts
+          await loadConnectedJobPosts(jobOrderId);
+          setLoading(false);
+          return; // Exit early since we found the job order
+        }
+        // Job order not found - let's see what job orders actually exist
+        
+        try {
+          const { collection, getDocs } = await import('firebase/firestore');
+          
+          // Check the current path
+          const jobOrdersRef = collection(db, p.jobOrders(tenantId));
+          const jobOrdersSnapshot = await getDocs(jobOrdersRef);
+          
+          // Check legacy path
+          const legacyJobOrdersRef = collection(db, `tenants/${tenantId}/recruiter_jobOrders`);
+          const legacyJobOrdersSnapshot = await getDocs(legacyJobOrdersRef);
+          
+          // Check top-level jobOrders collection (legacy)
+          const topLevelJobOrdersRef = collection(db, 'jobOrders');
+          const topLevelJobOrdersSnapshot = await getDocs(topLevelJobOrdersRef);
+          
+          // Check if the specific job order exists in top-level path
+          const foundJobOrder = topLevelJobOrdersSnapshot.docs.find(doc => doc.id === jobOrderId);
+          if (foundJobOrder) {
+            // Load the job order from the top-level collection
+            const data = foundJobOrder.data() as JobOrder;
+            setJobOrder({ ...data, id: foundJobOrder.id });
+            
+            // Load company data if companyId exists in deal data
+            const flatCompanyIdLegacy = (data as any).companyId || data.deal?.companyId;
+            if (flatCompanyIdLegacy) {
+              await loadCompanyData(flatCompanyIdLegacy);
+            }
+            setLoading(false);
+            return; // Exit early since we found the job order
+          }
+        } catch (error) {
+          console.error('Error listing job orders:', error);
+        }
+        
+        setJobOrder(null);
+      }
+    } catch (error) {
+      console.error('Error fetching job order:', error);
+      setJobOrder(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
+
   // Load job order
   useEffect(() => {
-    console.log('🔍 RecruiterJobOrderDetail: useEffect triggered with:', { jobOrderId, tenantId });
     if (jobOrderId && tenantId) {
-      console.log('🔍 RecruiterJobOrderDetail: Calling fetchJobOrder');
       fetchJobOrder();
     } else {
-      console.log('🔍 RecruiterJobOrderDetail: Missing jobOrderId or tenantId, not fetching');
+      setLoading(false);
     }
-  }, [jobOrderId, tenantId]);
+  }, [jobOrderId, tenantId, fetchJobOrder]);
 
   // Load shifts for this job order
   useEffect(() => {
@@ -1931,192 +2001,37 @@ const RecruiterJobOrderDetail: React.FC = () => {
     fetchAssignmentsCount();
   }, [tenantId, jobOrderId]);
 
-  const loadCompanyData = async (companyId: string) => {
-    if (!companyId || !tenantId) return;
-    
-    try {
-      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
-      const companyDoc = await getDoc(companyRef);
-      
-      if (companyDoc.exists()) {
-        const companyData = { id: companyDoc.id, ...companyDoc.data() };
-        setCompany(companyData);
-      }
-    } catch (error) {
-      console.error('Error loading company data:', error);
-    }
-  };
-
-  const loadLocationData = async (companyId: string, locationId: string) => {
+  const loadLocationData = useCallback(async (companyId: string, locationId: string) => {
     if (!companyId || !locationId || !tenantId) return;
     
     try {
-      console.log('🔍 Loading location:', { companyId, locationId, tenantId });
       const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
       const locationDoc = await getDoc(locationRef);
       
       if (locationDoc.exists()) {
         const locationData = { id: locationDoc.id, ...locationDoc.data() };
-        console.log('🔍 Location loaded:', locationData);
         setLocation(locationData);
-      } else {
-        console.log('🔍 Location not found');
       }
     } catch (error) {
       console.error('Error loading location data:', error);
     }
-  };
+  }, [tenantId]);
 
-  const loadConnectedJobPosts = async (jobOrderId: string) => {
-    if (!jobOrderId || !tenantId) return;
-    
-    try {
-      console.log('🔍 Loading connected job posts for job order:', jobOrderId);
-      const jobsBoardService = JobsBoardService.getInstance();
-      const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
-      setConnectedJobPosts(posts);
-      console.log('🔍 Connected job posts loaded:', posts);
-    } catch (error) {
-      console.error('Error loading connected job posts:', error);
-    }
-  };
-
-  const loadDealData = async (dealId: string) => {
+  const loadDealData = useCallback(async (dealId: string) => {
     if (!dealId || !tenantId) return;
     
     try {
-      console.log('🔍 Loading deal:', { dealId, tenantId });
       const dealRef = doc(db, 'tenants', tenantId, 'crm_deals', dealId);
       const dealDoc = await getDoc(dealRef);
       
       if (dealDoc.exists()) {
         const dealData = { id: dealDoc.id, ...dealDoc.data() };
-        console.log('🔍 Deal loaded:', dealData);
         setDeal(dealData);
-      } else {
-        console.log('🔍 Deal not found');
       }
     } catch (error) {
       console.error('Error loading deal data:', error);
     }
-  };
-
-  const fetchJobOrder = async () => {
-    if (!jobOrderId || !tenantId) {
-      console.log('🔍 RecruiterJobOrderDetail: Missing jobOrderId or tenantId:', { jobOrderId, tenantId });
-      return;
-    }
-    
-    console.log('🔍 RecruiterJobOrderDetail: Fetching job order:', { jobOrderId, tenantId });
-    setLoading(true);
-    try {
-      // First try the current tenant-scoped path
-      const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
-      console.log('🔍 RecruiterJobOrderDetail: Job order ref path:', jobOrderRef.path);
-      
-      const jobOrderSnap = await getDoc(jobOrderRef);
-      console.log('🔍 RecruiterJobOrderDetail: Job order exists in tenant path:', jobOrderSnap.exists());
-      
-      if (jobOrderSnap.exists()) {
-        const data = jobOrderSnap.data() as JobOrder;
-        console.log('🔍 RecruiterJobOrderDetail: Job order data:', data);
-        console.log('🔍 RecruiterJobOrderDetail: Date fields:', {
-          createdAt: data.createdAt,
-          startDate: data.startDate,
-          endDate: data.endDate
-        });
-        setJobOrder({ ...data, id: jobOrderSnap.id });
-        
-        // Load company data if companyId exists in deal data
-        const flatCompanyId = (data as any).companyId || data.deal?.companyId;
-        if (flatCompanyId) {
-          await loadCompanyData(flatCompanyId);
-        }
-        
-        // Load connected job board posts
-        await loadConnectedJobPosts(jobOrderId);
-      } else {
-        // Try the top-level collection as fallback
-        console.log('🔍 RecruiterJobOrderDetail: Job order not found in tenant path, checking top-level collection...');
-        const topLevelJobOrderRef = doc(db, 'jobOrders', jobOrderId);
-        const topLevelJobOrderSnap = await getDoc(topLevelJobOrderRef);
-        
-        if (topLevelJobOrderSnap.exists()) {
-          console.log('🔍 RecruiterJobOrderDetail: Job order found in top-level collection!');
-          const data = topLevelJobOrderSnap.data() as JobOrder;
-          console.log('🔍 RecruiterJobOrderDetail: Date fields:', {
-            createdAt: data.createdAt,
-            startDate: data.startDate,
-            endDate: data.endDate
-          });
-          setJobOrder({ ...data, id: topLevelJobOrderSnap.id });
-          
-          // Load company data if companyId exists in deal data
-          const flatCompanyIdTop = (data as any).companyId || data.deal?.companyId;
-          if (flatCompanyIdTop) {
-            await loadCompanyData(flatCompanyIdTop);
-          }
-          
-          // Load connected job board posts
-          await loadConnectedJobPosts(jobOrderId);
-          return; // Exit early since we found the job order
-        }
-        // Job order not found - let's see what job orders actually exist
-        console.log('🔍 RecruiterJobOrderDetail: Job order not found in database');
-        console.log('🔍 RecruiterJobOrderDetail: Checking what job orders exist...');
-        
-        try {
-          const { collection, getDocs } = await import('firebase/firestore');
-          
-          // Check the current path
-          const jobOrdersRef = collection(db, p.jobOrders(tenantId));
-          const jobOrdersSnapshot = await getDocs(jobOrdersRef);
-          console.log('🔍 RecruiterJobOrderDetail: Found job orders in current path:', jobOrdersSnapshot.docs.map(doc => ({ id: doc.id, data: doc.data() })));
-          
-          // Check legacy path
-          const legacyJobOrdersRef = collection(db, `tenants/${tenantId}/recruiter_jobOrders`);
-          const legacyJobOrdersSnapshot = await getDocs(legacyJobOrdersRef);
-          console.log('🔍 RecruiterJobOrderDetail: Found job orders in legacy path:', legacyJobOrdersSnapshot.docs.map(doc => ({ id: doc.id, data: doc.data() })));
-          
-          // Check if the specific job order exists in legacy path
-          if (legacyJobOrdersSnapshot.docs.some(doc => doc.id === jobOrderId)) {
-            console.log('🔍 RecruiterJobOrderDetail: Job order found in legacy path!');
-          }
-          
-          // Check top-level jobOrders collection (legacy)
-          const topLevelJobOrdersRef = collection(db, 'jobOrders');
-          const topLevelJobOrdersSnapshot = await getDocs(topLevelJobOrdersRef);
-          console.log('🔍 RecruiterJobOrderDetail: Found job orders in top-level path:', topLevelJobOrdersSnapshot.docs.map(doc => ({ id: doc.id, data: doc.data() })));
-          
-          // Check if the specific job order exists in top-level path
-          const foundJobOrder = topLevelJobOrdersSnapshot.docs.find(doc => doc.id === jobOrderId);
-          if (foundJobOrder) {
-            console.log('🔍 RecruiterJobOrderDetail: Job order found in top-level path!', foundJobOrder.data());
-            // Load the job order from the top-level collection
-            const data = foundJobOrder.data() as JobOrder;
-            setJobOrder({ ...data, id: foundJobOrder.id });
-            
-            // Load company data if companyId exists in deal data
-            const flatCompanyIdLegacy = (data as any).companyId || data.deal?.companyId;
-            if (flatCompanyIdLegacy) {
-              await loadCompanyData(flatCompanyIdLegacy);
-            }
-            return; // Exit early since we found the job order
-          } else {
-            console.log('🔍 RecruiterJobOrderDetail: Job order not found in any path');
-          }
-        } catch (error) {
-          console.error('🔍 RecruiterJobOrderDetail: Error listing job orders:', error);
-        }
-        
-        setJobOrder(null);
-      }
-    } catch (error) {
-      console.error('Error fetching job order:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [tenantId]);
 
   // Load assigned recruiter user names for header display
   const loadAssignedRecruiters = async (ids: string[]) => {
@@ -2246,14 +2161,12 @@ const RecruiterJobOrderDetail: React.FC = () => {
     try {
       const hasEmbeddedAssociations = !!jobOrder.deal?.associations;
       if (!hasEmbeddedAssociations && jobOrder.dealId) {
-        console.log('🔍 No associations in job order deal, loading from original deal:', jobOrder.dealId);
         try {
           const dealRef = doc(db, 'tenants', tenantId!, 'crm_deals', jobOrder.dealId);
           const dealDoc = await getDoc(dealRef);
           
           if (dealDoc.exists()) {
             const originalDealData = dealDoc.data();
-            console.log('🔍 Original deal associations:', originalDealData.associations);
             
             if (originalDealData.associations) {
               // Use the original deal associations
@@ -2304,8 +2217,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 setAssociatedSalespeople([]);
               }
               
-              console.log('🔍 Loaded contacts from original deal:', contacts);
-              console.log('🔍 Loaded salespeople from original deal:', salespeople);
               return;
             }
           }
@@ -2315,7 +2226,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
       }
       
       if (!hasEmbeddedAssociations) {
-        console.log('🔍 No associations found in deal data');
         setAssociatedContacts([]);
         setAssociatedSalespeople([]);
         return;
@@ -2367,8 +2277,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
         setAssociatedSalespeople([]);
       }
       
-      console.log('🔍 Loaded contacts:', associatedContacts);
-      console.log('🔍 Loaded salespeople:', associatedSalespeople);
     } catch (error) {
       console.error('Error loading associated contacts and salespeople:', error);
       setAssociatedContacts([]);
@@ -2387,14 +2295,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
   // Load associated contacts and salespeople when job order deal data changes
   useEffect(() => {
-    console.log('🔍 useEffect triggered for contacts/salespeople:', {
-      hasJobOrder: !!jobOrder,
-      hasDeal: !!jobOrder?.deal,
-      hasDealId: !!jobOrder?.dealId,
-      hasAssociations: !!jobOrder?.deal?.associations,
-      associations: jobOrder?.deal?.associations
-    });
-    
     if (jobOrder) {
       loadAssociatedContactsAndSalespeople();
     } else {
@@ -2409,16 +2309,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
     const hasWorksiteName = jobOrder?.worksiteName;
     const hasCompanyId = jobOrder?.companyId || company?.id;
     
-    console.log('🔍 Location loading check:', {
-      hasWorksiteId,
-      hasWorksiteName,
-      hasCompanyId,
-      worksiteId: jobOrder?.worksiteId,
-      companyId: hasCompanyId
-    });
-    
     if (hasWorksiteId && !hasWorksiteName && hasCompanyId) {
-      console.log('🔍 Loading location data because worksiteName is missing');
       loadLocationData(hasCompanyId, jobOrder!.worksiteId!);
     }
   }, [jobOrder?.worksiteId, jobOrder?.worksiteName, jobOrder?.companyId, company?.id]);
@@ -2429,7 +2320,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
     const hasEmbeddedDeal = jobOrder?.deal?.name;
     
     if (hasDealId && !hasEmbeddedDeal && !deal) {
-      console.log('🔍 Loading deal data for deal link');
       loadDealData(jobOrder!.dealId);
     }
   }, [jobOrder?.dealId, jobOrder?.deal?.name, deal]);
@@ -2444,7 +2334,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
   const handleEditLocation = () => {
     // TODO: Open manage location dialog
-    console.log('Manage location for job order');
   };
 
 
@@ -2469,13 +2358,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const handleContactsChange = async (updatedContacts: any[]) => {
     if (!jobOrder || !tenantId || !jobOrderId) return;
     
-    console.log('🔍 handleContactsChange called:', {
-      updatedContacts: updatedContacts.length,
-      hasDeal: !!jobOrder.deal,
-      dealId: jobOrder.dealId,
-      jobOrderId
-    });
-    
     try {
       // Update local state immediately for responsive UI
       setAssociatedContacts(updatedContacts);
@@ -2496,19 +2378,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
         }))
       };
       
-      console.log('🔍 Prepared associations:', updatedAssociations);
       
       // If job order has a deal object (created from deal OR manually created)
       if (jobOrder.deal) {
-        console.log('🔍 JobOrder has deal object - updating deal.associations');
         // Update the existing deal object with new associations
         await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
           'deal.associations': updatedAssociations,
           updatedAt: new Date()
         });
-        console.log('✅ Updated existing deal.associations');
       } else {
-        console.log('🔍 JobOrder has NO deal object - creating minimal deal structure');
         // Job order has no deal object - create minimal deal structure to store associations
         const minimalDeal = {
           id: null,
@@ -2530,30 +2408,24 @@ const RecruiterJobOrderDetail: React.FC = () => {
           updatedAt: new Date()
         };
         
-        console.log('🔍 Minimal deal to save:', minimalDeal);
         
         await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
           deal: minimalDeal,
           updatedAt: new Date()
         });
-        console.log('✅ Created and saved minimal deal structure');
       }
       
       // If there's a source deal, also update it
       if (jobOrder.dealId) {
-        console.log('🔍 JobOrder has dealId - also updating source deal:', jobOrder.dealId);
         try {
           await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', jobOrder.dealId), {
             associations: updatedAssociations,
             updatedAt: new Date()
           });
-          console.log('✅ Updated source deal');
         } catch (error) {
-          console.warn('Could not update source deal:', error);
         }
       }
       
-      console.log('✅ Contacts updated successfully - total:', updatedContacts.length);
       
       // Reload job order to get fresh data
       await fetchJobOrder();
@@ -2564,10 +2436,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
-  console.log('🔍 RecruiterJobOrderDetail: Rendering with state:', { loading, jobOrder: !!jobOrder, jobOrderId, tenantId });
 
   if (loading) {
-    console.log('🔍 RecruiterJobOrderDetail: Showing loading spinner');
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
         <CircularProgress />
@@ -2585,709 +2455,338 @@ const RecruiterJobOrderDetail: React.FC = () => {
     );
   }
 
+  const setTabAndPersist = (newValue: number) => {
+    setActiveTab(newValue);
+    if (jobOrderId) {
+      try {
+        localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, String(newValue));
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const activeJobPost = connectedJobPosts.find((post) => post.status === 'active');
+  const shareUrl = activeJobPost ? `${window.location.origin}/c1/jobs-board/${activeJobPost.id}` : null;
+
+  const displayCompanyName =
+    jobOrder.companyName || company?.companyName || company?.name || 'Company';
+  const companyInitial = String(displayCompanyName || 'C').trim().charAt(0).toUpperCase();
+
+  const jobTypeRaw = (jobOrder as any).jobType;
+  const jobTypeLabel =
+    jobTypeRaw === 'gig' ? 'Gig' : jobTypeRaw === 'career' ? 'Career' : jobTypeRaw ? String(jobTypeRaw) : '';
+
+  const displayCompanyId = (jobOrder as any).companyId || jobOrder?.deal?.companyId || company?.id;
+
+  const worksiteName = (jobOrder as any).worksiteName || (jobOrder as any).deal?.worksiteName;
+  const worksiteId = (jobOrder as any).worksiteId || (jobOrder as any).deal?.worksiteId || location?.id;
+  const loadedLocationName = location?.name || location?.locationName;
+  const dealLocations = (jobOrder as any)?.deal?.locations || [];
+  const dealLocationName = dealLocations?.[0]?.locationName || dealLocations?.[0]?.name;
+  const dealLocationId = dealLocations?.[0]?.id;
+              const displayLocationId = worksiteId || dealLocationId;
+
+  const worksiteCity: string | undefined =
+    (jobOrder as any).worksiteAddress?.city || (jobOrder as any).city || undefined;
+  const worksiteState: string | undefined =
+    (jobOrder as any).worksiteAddress?.state || (jobOrder as any).state || undefined;
+
+  const displayLocationName =
+    worksiteName ||
+    loadedLocationName ||
+    dealLocationName ||
+    ([worksiteCity, worksiteState].filter(Boolean).join(', ') || '');
+
+  const startDate = safeToDate((jobOrder as any).startDate);
+  const createdAt = safeToDate((jobOrder as any).createdAt);
+
   return (
     <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Job Orders', href: '/recruiter/job-orders' },
-            { label: jobOrder.jobOrderName || 'Job Order' }
-          ]}
-        />
-      </Box>
-      {/* Enhanced Header - Matching Deal Details Layout */}
-      <Box sx={{ 
-        mb: 3,
-        p: { xs: 2, md: 3 },
-        borderRadius: 2,
-        bgcolor: 'background.paper',
-        border: '1px solid',
-        borderColor: 'divider',
-        boxShadow: 'none'
-      }}>
-        {/* Mobile Layout */}
-        <Box sx={{ display: { xs: 'block', md: 'none' } }}>
-          {/* Mobile: Avatar and Title Row */}
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
-            <Avatar
-              src={company?.logo}
-              alt={jobOrder.companyName || company?.companyName || company?.name || 'Company'}
-              sx={{ 
-                width: 96, 
-                height: 96,
-                bgcolor: 'primary.main',
-                fontSize: '1.75rem',
-                fontWeight: 'bold',
-                flexShrink: 0
-              }}
-            >
-              {(jobOrder.companyName || company?.companyName || company?.name || 'C').charAt(0).toUpperCase()}
-            </Avatar>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
-                <Typography 
-                  variant="h5" 
-                  sx={{ 
-                    fontWeight: 'bold', 
-                    color: 'text.primary',
-                    fontSize: { xs: '1.25rem', sm: '1.5rem' },
-                    lineHeight: 1.2,
-                    flex: 1
-                  }}
-                >
-                  {jobOrder.jobOrderName}
-                </Typography>
-                {/* Share Button - Mobile - Show if there's an active Job Board Post */}
-                {(() => {
-                  const activeJobPost = connectedJobPosts.find(post => post.status === 'active');
-                  if (activeJobPost) {
-                    return (
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        startIcon={<ContentCopyIcon />}
-                        onClick={() => {
-                          const url = `${window.location.origin}/c1/jobs-board/${activeJobPost.id}`;
-                          navigator.clipboard.writeText(url);
-                          setShareSnackbarOpen(true);
-                        }}
-                      >
-                        Share
-                      </Button>
-                    );
-                  }
-                  return null;
-                })()}
-              </Box>
-              {/* E-Verify Image - Mobile */}
-              {(() => {
-                const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
-                const shouldShowEVerify = jobOrderEVerify !== undefined 
-                  ? jobOrderEVerify === true
-                  : (company?.defaults?.eVerify?.eVerifyRequired || false);
-                
-                return shouldShowEVerify ? (
-                  <Box
-                    component="img"
-                    src="/img/everify.png"
-                    alt="E-Verify"
-                    sx={{
-                      height: 24,
-                      width: 'auto',
-                      objectFit: 'contain',
-                      mt: 0.5
-                    }}
-                  />
-                ) : null;
-              })()}
-            </Box>
-          </Box>
-
-          {/* Mobile: Status Chips */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1.5, flexWrap: 'wrap' }}>
-            <Chip
-              label={`#${jobOrder.jobOrderNumber || '0002'}`}
-              size="small"
-              sx={{ bgcolor: 'grey.200', color: 'text.primary', fontWeight: 600, fontSize: '0.7rem', height: 22 }}
-            />
-            {(jobOrder as any).jobType && (
-              <Chip
-                label={(jobOrder as any).jobType === 'gig' ? 'Gig' : 'Career'}
-                size="small"
-                color="default"
-                sx={{ fontSize: '0.7rem', height: 22 }}
-              />
-            )}
-            <Chip
-              label={jobOrder.status}
-              color={getStatusColor(jobOrder.status) as any}
-              size="small"
-              sx={{ fontSize: '0.7rem', height: 22 }}
-            />
-            {location && (
-              <Chip
-                label={`${location.city || ''}${location.city && location.state ? ', ' : ''}${location.state || ''}`}
-                color="default"
-                size="small"
-                sx={{ fontSize: '0.7rem', height: 22 }}
-              />
-            )}
-            {(jobOrder as any).jobType === 'gig' ? (
-              shifts.length > 0 && (
-                <Chip
-                  label={format(new Date(shifts[0].shiftDate), 'MMM dd')}
-                  color="default"
-                  size="small"
-                  sx={{ fontSize: '0.7rem', height: 22 }}
-                />
-              )
-            ) : (
-              jobOrder.startDate && (
-                <Chip
-                  label={format(safeToDate(jobOrder.startDate), 'MMM dd')}
-                  color="default"
-                  size="small"
-                  sx={{ fontSize: '0.7rem', height: 22 }}
-                />
-              )
-            )}
-          </Box>
-
-          {/* Mobile: Company & Location Links */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1.5 }}>
-            {(() => {
-              const companyName = jobOrder?.companyName || company?.companyName || company?.name || jobOrder?.deal?.companyName;
-              const companyId = jobOrder?.companyId || company?.id || jobOrder?.deal?.companyId;
-              
-              if (companyName && companyId) {
-                return (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <BusinessIcon fontSize="small" color="primary" />
-                    <MUILink
-                      underline="hover"
-                      color="primary"
-                      href={`/recruiter/companies/${companyId}`}
-                      onClick={(e) => { e.preventDefault(); navigate(`/recruiter/companies/${companyId}`); }}
-                      sx={{ fontSize: '0.8125rem', fontWeight: 500 }}
-                    >
-                      {companyName}
-                    </MUILink>
-                  </Box>
-                );
-              }
-              return null;
-            })()}
-
-            {(() => {
-              const worksiteName = jobOrder?.worksiteName;
-              const worksiteId = jobOrder?.worksiteId;
-              const loadedLocationName = location?.nickname || location?.name;
-              const dealLocations = jobOrder?.deal?.associations?.locations || [];
-              const locationEntry = dealLocations.length > 0 ? dealLocations[0] : null;
-              const dealLocationId = typeof locationEntry === 'string' ? locationEntry : locationEntry?.id;
-              const dealLocationName = typeof locationEntry === 'string' ? '' : (locationEntry?.snapshot?.name || locationEntry?.snapshot?.nickname || locationEntry?.name || '');
-              const displayLocationId = worksiteId || dealLocationId;
-              const displayLocationName = worksiteName || loadedLocationName || dealLocationName;
-              const displayCompanyId = jobOrder?.companyId || jobOrder?.deal?.companyId;
-              
-              if (displayLocationName && displayLocationId && displayCompanyId) {
-                return (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <LocationIcon fontSize="small" color="primary" />
-                    <MUILink
-                      underline="hover"
-                      color="primary"
-                      href={`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`);
-                      }}
-                      sx={{ fontSize: '0.8125rem', fontWeight: 500 }}
-                    >
-                      {displayLocationName}
-                    </MUILink>
-                  </Box>
-                );
-              }
-              return null;
-            })()}
-          </Box>
-        </Box>
-
-        {/* Desktop Layout */}
-        <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Company Logo/Avatar */}
-            <Box sx={{ position: 'relative' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
               <Avatar
                 src={company?.logo}
-                alt={jobOrder.companyName || company?.companyName || company?.name || 'Company'}
+              alt={displayCompanyName}
                 sx={{ 
-                  width: 128, 
-                  height: 128,
+                width: 108,
+                height: 108,
                   bgcolor: 'primary.main',
-                  fontSize: '2rem',
-                  fontWeight: 'bold'
+                fontSize: '40px',
+                fontWeight: 700,
+                flexShrink: 0,
                 }}
               >
-                {(jobOrder.companyName || company?.companyName || company?.name || 'C').charAt(0).toUpperCase()}
+              {companyInitial}
               </Avatar>
-            </Box>
 
-            {/* Job Order Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                  {jobOrder.jobOrderName}
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {/* Share Button - Show if there's an active Job Board Post */}
-                  {(() => {
-                    const activeJobPost = connectedJobPosts.find(post => post.status === 'active');
-                    if (activeJobPost) {
-                      return (
+            <Box
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                minHeight: '108px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'flex-start',
+                gap: 0.75,
+              }}
+            >
+              {/* Line 1: Name */}
+              <Typography
+                variant="h6"
+                        sx={{
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {jobOrder.jobOrderName || 'Job Order'}
+              </Typography>
+
+              {/* Line 2: Job Order meta (two-row style from prod) */}
+              <Box sx={{ mt: 0.25, display: 'flex', flexWrap: 'wrap', gap: 1.25, alignItems: 'center' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
+                  >
+                    Job Order:
+                  </Typography>
+                  <Chip
+                    label={`#${jobOrder.jobOrderNumber || ''}`}
+                    size="small"
+                    sx={{
+                      bgcolor: 'rgba(0,0,0,0.08)',
+                      '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
+                    }}
+                  />
+                </Box>
+                
+                {jobTypeLabel && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
+                    >
+                      Job Type:
+                    </Typography>
+                    <Chip
+                      label={jobTypeLabel}
+                      size="small"
+                      sx={{
+                        bgcolor: 'rgba(0,0,0,0.08)',
+                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
+                      }}
+                    />
+                  </Box>
+                )}
+                
+                {jobOrder.status && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
+                    >
+                      Status:
+                    </Typography>
+          <Chip
+            label={jobOrder.status}
+                    size="small"
+                      sx={{
+                        bgcolor: 'rgba(0, 180, 90, 0.12)',
+                        color: '#0A7A3B',
+                        '& .MuiChip-label': { fontWeight: 700, fontSize: '0.875rem' },
+                      }}
+                    />
+                  </Box>
+                )}
+                
+                {displayLocationName && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
+                    >
+                      Location:
+                    </Typography>
+                    <Chip
+                      label={displayLocationName}
+                      size="small"
+                      sx={{
+                        bgcolor: 'rgba(0,0,0,0.08)',
+                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
+                      }}
+                    />
+                  </Box>
+                )}
+                
+                {startDate && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: 'rgba(0,0,0,0.55)', fontWeight: 500, fontSize: '0.875rem' }}
+                    >
+                      Start Date:
+                    </Typography>
+                      <Chip
+                      label={format(startDate, 'MMM dd, yyyy')}
+                        size="small"
+                      sx={{
+                        bgcolor: 'rgba(0,0,0,0.08)',
+                        '& .MuiChip-label': { fontWeight: 600, fontSize: '0.875rem' },
+                      }}
+                      />
+                    </Box>
+                )}
+              </Box>
+
+              {/* Line 3: Blue link row */}
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mt: 0.25, flexWrap: 'wrap' }}>
+                <BusinessIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
+                {displayCompanyId ? (
+                        <MUILink
+                    component="button"
+                    type="button"
+                          underline="hover"
+                    onClick={() => navigate(`/recruiter/companies/${displayCompanyId}`)}
+                    sx={{
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      color: 'rgb(74, 144, 226)',
+                      '&:hover': { color: 'rgb(74, 144, 226)' },
+                    }}
+                  >
+                    {displayCompanyName}
+                        </MUILink>
+                ) : (
+                  <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
+                    {displayCompanyName}
+                  </Typography>
+                )}
+
+                {displayLocationName && (
+                  <>
+                    <LocationIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
+                    {displayCompanyId && displayLocationId ? (
+                            <MUILink
+                        component="button"
+                        type="button"
+                              underline="hover"
+                        onClick={() =>
+                          navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`)
+                        }
+                        sx={{
+                          fontSize: '0.875rem',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          '&:hover': { color: 'rgb(74, 144, 226)' },
+                        }}
+                      >
+                        {displayLocationName}
+                            </MUILink>
+                    ) : (
+                      <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
+                        {displayLocationName}
+                          </Typography>
+                    )}
+                  </>
+                )}
+
+                <BriefcaseIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
+                <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
+                  {jobOrder.jobOrderName || 'Job Order'}
+                        </Typography>
+              </Stack>
+                      </Box>
+                  </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {[
+              { label: 'Overview', index: 0 },
+              { label: 'Checklist', index: 1 },
+              { label: 'Defaults', index: 2 },
+              { label: 'Staff Instructions', index: 3 },
+              { label: 'Jobs Board', index: 4 },
+              { label: 'Shift Setup', index: 5 },
+              ...(jobOrder?.jobType === 'gig'
+                ? [{ label: 'Job Board Visibility', index: 6 }]
+                : []),
+              { label: 'Applications', index: jobOrder?.jobType === 'gig' ? 7 : 6 },
+              { label: 'Placements', index: jobOrder?.jobType === 'gig' ? 8 : 7 },
+              { label: 'Notes', index: jobOrder?.jobType === 'gig' ? 9 : 8 },
+              { label: 'Activity', index: jobOrder?.jobType === 'gig' ? 10 : 9 },
+            ].map((t) => {
+              const isActive = activeTab === t.index;
+                return (
+                <Button
+                  key={t.label}
+                  onClick={() => setTabAndPersist(t.index)}
+                  variant="text"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+              </Box>
+            } 
+        rightActions={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/recruiter/job-orders')}
+                    sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back
+            </Button>
+
+            {shareUrl && (
                         <Button
                           variant="outlined"
-                          size="small"
                           startIcon={<ContentCopyIcon />}
                           onClick={() => {
-                            const url = `${window.location.origin}/c1/jobs-board/${activeJobPost.id}`;
-                            navigator.clipboard.writeText(url);
+                  navigator.clipboard.writeText(shareUrl);
                             setShareSnackbarOpen(true);
+                          }}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
                           }}
                         >
                           Share
                         </Button>
-                      );
-                    }
-                    return null;
-                  })()}
-                  {/* E-Verify Image */}
-                  {(() => {
-                    // Check if job order has explicit eVerify setting
-                    const jobOrderEVerify = jobOrder?.deal?.stageData?.scoping?.compliance?.eVerify;
-                    // If explicitly set (true or false), use that value
-                    // Otherwise, fall back to company defaults
-                    const shouldShowEVerify = jobOrderEVerify !== undefined 
-                      ? jobOrderEVerify === true
-                      : (company?.defaults?.eVerify?.eVerifyRequired || false);
-                    
-                    return shouldShowEVerify ? (
-                      <Box
-                        component="img"
-                        src="/img/everify.png"
-                        alt="E-Verify"
-                        sx={{
-                          height: 30,
-                          width: 'auto',
-                          objectFit: 'contain'
-                        }}
-                      />
-                    ) : null;
-                  })()}
-                </Box>
-              </Box>
-        
-              {/* Status Row with Job Order Number */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Job Order:</Typography>
-                  <Chip
-                    label={`#${jobOrder.jobOrderNumber || '0002'}`}
-                    size="small"
-                    sx={{ bgcolor: 'grey.200', color: 'text.primary', fontWeight: 600 }}
-                  />
-                </Box>
-                
-                {(jobOrder as any).jobType && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Job Type:</Typography>
-                    <Chip
-                      label={(jobOrder as any).jobType === 'gig' ? 'Gig' : 'Career'}
-                      size="small"
-                      color="default"
-                    />
-                  </Box>
-                )}
-                
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
-          <Chip
-            label={jobOrder.status}
-            color={getStatusColor(jobOrder.status) as any}
-                    size="small"
-                  />
-                </Box>
-
-                {/* External Job Board Links */}
-                {((jobOrder as any).indeedUrl && String((jobOrder as any).indeedUrl).trim()) && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Tooltip title="Open Indeed posting">
-                      <Chip
-                        component="a"
-                        href={String((jobOrder as any).indeedUrl)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        label="Indeed"
-                        size="small"
-                        icon={<ExternalLinkIcon sx={{ fontSize: 16 }} />}
-                        clickable
-                      />
-                    </Tooltip>
-                  </Box>
-                )}
-                {((jobOrder as any).craigslistUrl && String((jobOrder as any).craigslistUrl).trim()) && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Tooltip title="Open Craigslist posting">
-                      <Chip
-                        component="a"
-                        href={String((jobOrder as any).craigslistUrl)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        label="Craigslist"
-                        size="small"
-                        icon={<ExternalLinkIcon sx={{ fontSize: 16 }} />}
-                        clickable
-                      />
-                    </Tooltip>
-                  </Box>
-                )}
-                
-                {location && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Location:</Typography>
-                    <Chip
-                      label={`${location.city || ''}${location.city && location.state ? ', ' : ''}${location.state || ''}`}
-                      color="default"
-                      size="small"
-                    />
-                  </Box>
-                )}
-                
-                {/* For Gig jobs, show Next Shift Date; for Career jobs, show Start Date */}
-                {(jobOrder as any).jobType === 'gig' ? (
-                  shifts.length > 0 && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Next Shift:</Typography>
-                      <Chip
-                        label={format(new Date(shifts[0].shiftDate), 'MMM dd, yyyy')}
-                        color="default"
-                        size="small"
-                      />
-                    </Box>
-                  )
-                ) : (
-                  jobOrder.startDate && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Start Date:</Typography>
-                      <Chip
-                        label={format(safeToDate(jobOrder.startDate), 'MMM dd, yyyy')}
-                        color="default"
-                        size="small"
-                      />
-                    </Box>
-                  )
-                )}
-              </Box>
-
-              {/* Company & Location Row */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                {/* Company - with fallback to company object or deal */}
-                {(() => {
-                  const companyName = jobOrder?.companyName || company?.companyName || company?.name || jobOrder?.deal?.companyName;
-                  const companyId = jobOrder?.companyId || company?.id || jobOrder?.deal?.companyId;
-                  
-                  if (companyName && companyId) {
-                    return (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                        <BusinessIcon fontSize="small" color="primary" />
-                        <MUILink
-                          underline="hover"
-                          color="primary"
-                          href={`/recruiter/companies/${companyId}`}
-                          onClick={(e) => { e.preventDefault(); navigate(`/recruiter/companies/${companyId}`); }}
-                          sx={{ fontSize: '0.875rem', fontWeight: 500 }}
-                        >
-                          {companyName}
-                        </MUILink>
-                      </Box>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* Location - with fallback to loaded location data or deal associations */}
-                {(() => {
-                  const worksiteName = jobOrder?.worksiteName;
-                  const worksiteId = jobOrder?.worksiteId;
-                  
-                  // Try loaded location data first
-                  const loadedLocationName = location?.nickname || location?.name;
-                  
-                  // Fallback to deal associations if no worksite name and no loaded location
-                  const dealLocations = jobOrder?.deal?.associations?.locations || [];
-                  const locationEntry = dealLocations.length > 0 ? dealLocations[0] : null;
-                  const dealLocationId = typeof locationEntry === 'string' ? locationEntry : locationEntry?.id;
-                  const dealLocationName = typeof locationEntry === 'string' ? '' : (locationEntry?.snapshot?.name || locationEntry?.snapshot?.nickname || locationEntry?.name || '');
-                  
-                  const displayLocationId = worksiteId || dealLocationId;
-                  const displayLocationName = worksiteName || loadedLocationName || dealLocationName;
-                  const displayCompanyId = jobOrder?.companyId || jobOrder?.deal?.companyId;
-                  
-                  console.log('🔍 Location header debug:', {
-                    worksiteName,
-                    worksiteId,
-                    loadedLocationName,
-                    dealLocations,
-                    dealLocationName,
-                    displayLocationName,
-                    displayLocationId,
-                    displayCompanyId
-                  });
-                  
-                  if (displayLocationName && displayLocationId && displayCompanyId) {
-                    return (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                        <LocationIcon fontSize="small" color="primary" />
-                        <MUILink
-                          underline="hover"
-                          color="primary"
-                          href={`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`);
-                          }}
-                          sx={{ fontSize: '0.875rem', fontWeight: 500 }}
-                        >
-                          {displayLocationName}
-                        </MUILink>
-                      </Box>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* Deal Link - if job order was created from a deal */}
-                {jobOrder?.dealId && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <DealIcon fontSize="small" color="primary" />
-                    <MUILink
-                      underline="hover"
-                      color="primary"
-                      href={`/recruiter/deals/${jobOrder.dealId}`}
-                      onClick={(e) => { 
-                        e.preventDefault(); 
-                        navigate(`/recruiter/deals/${jobOrder.dealId}`); 
-                      }}
-                      sx={{ fontSize: '0.875rem', fontWeight: 500 }}
-                    >
-                      {jobOrder.deal?.name || deal?.name || 'Loading...'}
-                    </MUILink>
-                  </Box>
-                )}
-
-                {/* Connected Job Posts */}
-                {connectedJobPosts.length > 0 && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <BriefcaseIcon fontSize="small" color="primary" />
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                      {connectedJobPosts.map((post, index) => {
-                        // For Gig jobs, link to public jobs board; for Career jobs, link to admin edit page
-                        const postUrl = jobOrder?.jobType === 'gig' 
-                          ? `/c1/jobs-board/${post.id}`
-                          : `/jobs-dashboard/edit/${post.id}`;
-                        
-                        return (
-                          <Box key={post.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <MUILink
-                              underline="hover"
-                              color="primary"
-                              href={postUrl}
-                              onClick={(e) => { 
-                                e.preventDefault(); 
-                                navigate(postUrl); 
-                              }}
-                              sx={{ fontSize: '0.875rem', fontWeight: 500 }}
-                              {...(jobOrder?.jobType === 'gig' ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                            >
-                              {post.postTitle}
-                            </MUILink>
-                            {index < connectedJobPosts.length - 1 && (
-                              <Typography variant="body2" color="text.secondary">•</Typography>
-                            )}
-                          </Box>
-                        );
-                      })}
-                    </Box>
-                  </Box>
-                )}
-              </Box>
-
-              {/* Associated Contacts Row */}
-              {Array.isArray(associatedContacts) && associatedContacts.length > 0 && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <GroupIcon fontSize="small" color="primary" />
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                    {associatedContacts.slice(0, 10).map((contact: any, index: number) => (
-                      <Box key={contact.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <MUILink
-                          underline="hover"
-                          color="primary"
-                          href={`/recruiter/contacts/${contact.id}`}
-                          onClick={(e) => { e.preventDefault(); navigate(`/recruiter/contacts/${contact.id}`); }}
-                        >
-                          <Typography variant="body2" color="primary">
-                            {(contact.fullName || contact.name || 'Contact')}
-                          </Typography>
-                        </MUILink>
-                        {index < Math.min(associatedContacts.length, 10) - 1 && (
-                          <Typography variant="body2" color="text.secondary">•</Typography>
-                        )}
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              {/* Associated Salespeople Row */}
-              {Array.isArray(associatedSalespeople) && associatedSalespeople.length > 0 && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <PersonIcon fontSize="small" color="primary" />
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                    {associatedSalespeople.slice(0, 10).map((sp: any, index: number) => (
-                      <Box key={sp.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography variant="body2" color="text.primary">
-                          {sp.displayName || sp.fullName || sp.name || sp.email || 'Salesperson'}
-                        </Typography>
-                        {index < Math.min(associatedSalespeople.length, 10) - 1 && (
-                          <Typography variant="body2" color="text.secondary">•</Typography>
-                        )}
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              )}
-            </Box>
-          </Box>
-
-          
-        </Box>
-      </Box>
-
-      {/* Tabs */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
-        <Tabs
-          value={activeTab}
-          onChange={(_, newValue) => {
-            setActiveTab(newValue);
-            // Persist tab selection
-            if (jobOrderId) {
-              try {
-                localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, String(newValue));
-              } catch (error) {
-                console.warn('Failed to persist tab selection:', error);
-              }
-            }
-          }}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="Job order details tabs"
-        >
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <InfoIcon fontSize="small" />
-                Overview
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <CheckCircleIcon fontSize="small" />
-                Checklist
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <SettingsIcon fontSize="small" />
-                Defaults
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DescriptionIcon fontSize="small" />
-                Staff Instructions
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BriefcaseIcon fontSize="small" />
-                Jobs Board
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <CalendarIcon fontSize="small" />
-                Shift Setup
-              </Box>
-            } 
-          />
-          {jobOrder?.jobType === 'gig' && (
-            <Tab 
-              label={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <VisibilityIcon fontSize="small" />
-                  Job Board Visibility
-                </Box>
-              } 
-            />
-          )}
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AssignmentIcon fontSize="small" />
-                Applications
-                {applicantsCount > 0 && (
-                  <Box
-                    sx={{
-                      backgroundColor: 'primary.main',
-                      color: 'white',
-                      borderRadius: '50%',
-                      width: 20,
-                      height: 20,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      ml: 0.5,
-                    }}
-                  >
-                    {applicantsCount}
-                  </Box>
                 )}
               </Box>
             } 
           />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <GroupIcon fontSize="small" />
-                Placements
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            } 
-          />
-        </Tabs>
-      </Paper>
 
       {/* Tab Panels */}
       <TabPanel value={activeTab} index={0}>
@@ -3723,7 +3222,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   size="small"
                   onClick={() => {
                     // TODO: Open manage salespeople dialog
-                    console.log('Manage salespeople for job order');
                   }}
                   sx={{ 
                     minWidth: 'auto',

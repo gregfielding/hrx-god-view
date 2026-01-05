@@ -362,6 +362,153 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
       
+      // --- SLACK CHANNEL MEMBERSHIPS (Tenants) ---
+      match /slackChannelMembers/{membershipId} {
+        // Allow authenticated users assigned to tenant to read memberships
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Allow users to create their own membership (join channel)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.channelId != null &&
+                         request.resource.data.tenantId == tenantId;
+        
+        // Allow users to update their own membership (if needed in future)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         resource.data.userId == request.auth.uid &&
+                         request.resource.data.userId == request.auth.uid;
+        
+        // Allow users to delete their own membership (leave channel)
+        allow delete: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         resource.data.userId == request.auth.uid;
+        
+        // Allow admins to manage all memberships
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SLACK CHANNELS (Tenants) ---
+      match /slackChannels/{channelId} {
+        // Allow authenticated users assigned to tenant to read channels
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Allow users to update channel status (mute/unmute, watch/unwatch)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
+                         (request.resource.data.status == 'watching' || 
+                          request.resource.data.status == 'unlinked' || 
+                          request.resource.data.status == 'muted');
+        
+        // Allow admins to delete channels
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Create is backend-only
+        allow create: if false;
+      }
+      
+      // --- DM THREADS (Tenants) ---
+      match /dmThreads/{threadId} {
+        // Allow authenticated users to read threads where they are a participant
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       request.auth.uid in resource.data.participantIds;
+        
+        // Allow authenticated users to create threads where they are a participant
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in request.resource.data.participantIds;
+        
+        // Allow users to update threads where they are a participant
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in resource.data.participantIds;
+        
+        // Allow admins to manage all threads
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // DM Messages subcollection
+        match /messages/{messageId} {
+          // Allow authenticated users to read messages in threads where they are a participant
+          allow read: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data.participantIds;
+          
+          // Allow authenticated users to create messages in threads where they are a participant
+          allow create: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) &&
+                           request.auth.uid in get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data.participantIds &&
+                           request.resource.data.senderId == request.auth.uid;
+          
+          // Allow users to update their own messages
+          allow update: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) &&
+                           resource.data.senderId == request.auth.uid;
+          
+          // Allow admins to manage all messages
+          allow write: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // --- INTERNAL DMs (Tenants) - for unread count listening ---
+      match /internalDMs/{dmId} {
+        // Allow authenticated users to read DMs where they are a participant
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       (request.auth.uid in resource.data.participants || 
+                        resource.data.participants == null);
+        
+        // Allow authenticated users to create DMs where they are a participant
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in request.resource.data.participants ||
+                          request.resource.data.participants == null);
+        
+        // Allow users to update DMs where they are a participant (for unread counts, etc.)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in resource.data.participants ||
+                          resource.data.participants == null);
+        
+        // Allow admins to manage all DMs
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- INTERNAL CHANNELS (Tenants) - for unread count listening ---
+      match /internalChannels/{channelId} {
+        // Allow authenticated users to read channels where they are a member
+        allow read: if isAuthenticated() && 
+                       isAssignedToTenant(tenantId) &&
+                       (request.auth.uid in resource.data.memberIds ||
+                        resource.data.memberIds == null);
+        
+        // Allow authenticated users to create channels (with proper membership)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in request.resource.data.memberIds ||
+                          request.resource.data.memberIds == null);
+        
+        // Allow users to update channels where they are a member (for unread counts, mute status, etc.)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) &&
+                         (request.auth.uid in resource.data.memberIds ||
+                          resource.data.memberIds == null);
+        
+        // Allow admins to manage all channels
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SLACK MESSAGES (Tenant Subcollection) ---
+      match /slack_messages/{messageId} {
+        // Allow authenticated users assigned to tenant to read messages
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        
+        // Create/update/delete are backend-only
+        allow write: if false;
+      }
+      
       // --- BRANDING (Tenants) ---
       match /branding/{brandingId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -845,6 +992,17 @@ service cloud.firestore {
       allow read, write: if isAuthenticated() && isTenantAdmin(resource.data.tenantId);
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId) && hasRecruiterAccess();
       allow read: if isAuthenticated() && isAssignedToTenant(resource.data.tenantId);
+    }
+
+    // --- SLACK MESSAGES (Root-level collection) ---
+    match /slack_messages/{messageId} {
+      // Allow authenticated users to read messages for their active tenant
+      allow read: if isAuthenticated() && 
+                     resource.data.tenantId != null &&
+                     isAssignedToTenant(resource.data.tenantId);
+      
+      // Write is backend-only (Cloud Functions)
+      allow write: if false;
     }
 
     // --- MOMENT ANALYSIS ---

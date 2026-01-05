@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
 import {
   Box,
   Typography,
-  TextField,
   Button,
   Table,
   TableBody,
@@ -27,33 +26,30 @@ import {
   Card,
   CardContent,
   Grid,
-  InputAdornment
 } from '@mui/material';
+import StandardTablePagination from '../components/StandardTablePagination';
 import {
   MoreVert as MoreVertIcon,
   Visibility as VisibilityIcon,
   ContentCopy as CopyIcon,
   FilterList as FilterIcon,
-  Search as SearchIcon,
-  Add as AddIcon,
   Work as WorkIcon,
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Person as PersonIcon,
   Schedule as ScheduleIcon,
-  Clear as ClearIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { collection, query, where, orderBy, limit, startAfter, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
 import FavoriteButton from '../components/FavoriteButton';
-import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
+import type { RecruiterOutletContext } from './RecruiterDashboard';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -68,24 +64,32 @@ interface JobOrderWithDetails extends JobOrder {
 
 const PAGE_SIZE = 20;
 
-const RecruiterJobOrders: React.FC = () => {
+interface RecruiterJobOrdersProps {
+  search?: string;
+  showFavoritesOnly?: boolean;
+}
+
+const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({ 
+  search: searchProp = '', 
+  showFavoritesOnly: showFavoritesOnlyProp = false 
+}) => {
   const { user, tenantId } = useAuth();
   const navigate = useNavigate();
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const effectiveSearch = searchProp || outletCtx?.search || '';
+  const effectiveShowFavoritesOnly = showFavoritesOnlyProp || outletCtx?.showFavoritesOnly || false;
   
   // State
   const [jobOrders, setJobOrders] = useState<JobOrderWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
-  const [lastDoc, setLastDoc] = useState<any>(null);
-  const [isEnd, setIsEnd] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderWithDetails | null>(null);
   const [sortField, setSortField] = useState<string>('createdAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [companyFilter, setCompanyFilter] = useState<string>('all');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
   const firstLoadRef = useRef(true);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
@@ -101,31 +105,20 @@ const RecruiterJobOrders: React.FC = () => {
 
   // Force re-render when favorites change
   useEffect(() => {
-    console.log('Favorites changed:', favorites);
-    console.log('showFavoritesOnly:', showFavoritesOnly);
-  }, [favorites, showFavoritesOnly]);
+    // Logging removed for production
+  }, [favorites, effectiveShowFavoritesOnly]);
 
-  const fetchJobOrders = useCallback(async (startDoc: any = null, isInitialLoad = false) => {
+  const fetchJobOrders = useCallback(async () => {
     if (!tenantId) return;
     
-    console.log('🔍 RecruiterJobOrders: Fetching job orders for tenant:', tenantId);
-    if (isInitialLoad) {
-      setLoading(true);
-    } else {
-      setLoadingMore(true);
-    }
+    setLoading(true);
     try {
       // Use the tenant-scoped job_orders collection
       const baseRef = collection(db, p.jobOrders(tenantId));
       
-      // When search or filters are active, load more aggressively (up to 200 job orders)
-      // This ensures search/filters query a larger dataset from Firestore
-      const hasActiveFilters = search || 
-        statusFilter || 
-        companyFilter !== 'all';
-      
-      const effectivePageSize = hasActiveFilters ? 200 : PAGE_SIZE;
-      
+      // Load a reasonable number of job orders for client-side filtering and pagination
+      const effectivePageSize = 500; // Load enough for filtering/pagination
+
       const constraints: any[] = [
         orderBy(sortField, sortDirection),
         limit(effectivePageSize)
@@ -136,19 +129,12 @@ const RecruiterJobOrders: React.FC = () => {
         constraints.push(where('status', '==', statusFilter));
       }
 
-      if (startDoc) {
-        constraints.push(startAfter(startDoc));
-      }
-
       const jobOrderQuery = query(baseRef, ...constraints);
       const snap = await getDocs(jobOrderQuery);
-
-      console.log('🔍 RecruiterJobOrders: Found', snap.docs.length, 'job orders');
 
       const newJobOrders: JobOrderWithDetails[] = await Promise.all(
         snap.docs.map(async (jobOrderDoc) => {
           const data = jobOrderDoc.data() as JobOrder;
-          console.log('🔍 RecruiterJobOrders: Raw job order data:', data);
           
           // Derive job title from flat field or gig position
           const derivedJobTitle =
@@ -159,26 +145,17 @@ const RecruiterJobOrders: React.FC = () => {
           // Fetch company name
           let companyName = 'Unknown Company';
           const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
-          console.log('🔍 RecruiterJobOrders: Job order companyId (flat or deal):', flatCompanyId);
           if (flatCompanyId) {
             try {
               const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId);
-              console.log('🔍 RecruiterJobOrders: Fetching company from path:', companyRef.path);
               const companySnap = await getDoc(companyRef);
-              console.log('🔍 RecruiterJobOrders: Company exists:', companySnap.exists());
               if (companySnap.exists()) {
                 const companyData = companySnap.data() as any;
-                console.log('🔍 RecruiterJobOrders: Company data:', companyData);
                 companyName = companyData.companyName || companyData.name || 'Unknown Company';
-                console.log('🔍 RecruiterJobOrders: Final company name:', companyName);
-              } else {
-                console.warn('🔍 RecruiterJobOrders: Company document does not exist for ID:', flatCompanyId);
               }
             } catch (error) {
-              console.warn('Failed to fetch company name for ID:', flatCompanyId, error);
+              // Silently handle errors
             }
-          } else {
-            console.log('🔍 RecruiterJobOrders: No companyId found in job order data');
           }
           
           // Fetch location nickname
@@ -189,33 +166,22 @@ const RecruiterJobOrders: React.FC = () => {
             (data as any).worksiteAddress?.city ||
             (data as any).city ||
             undefined;
-          console.log('🔍 RecruiterJobOrders: Job order worksiteId (flat or deal):', flatWorksiteId);
-          console.log('🔍 RecruiterJobOrders: Job order worksiteName (flat or deal):', flatWorksiteName);
           
           // First try to use worksiteName if available
           if (flatWorksiteName) {
             locationName = flatWorksiteName;
-            console.log('🔍 RecruiterJobOrders: Using worksiteName:', locationName);
           } else if (flatWorksiteId && flatCompanyId) {
             try {
               const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId, 'locations', flatWorksiteId);
-              console.log('🔍 RecruiterJobOrders: Fetching location from path:', locationRef.path);
               const locationSnap = await getDoc(locationRef);
-              console.log('🔍 RecruiterJobOrders: Location exists:', locationSnap.exists());
               if (locationSnap.exists()) {
                 const locationData = locationSnap.data() as any;
-                console.log('🔍 RecruiterJobOrders: Location data:', locationData);
                 locationName = locationData.nickname || locationData.name || 'Unknown Location';
                 worksiteCity = worksiteCity || locationData.city || locationData.address?.city;
-                console.log('🔍 RecruiterJobOrders: Final location name:', locationName);
-              } else {
-                console.warn('🔍 RecruiterJobOrders: Location document does not exist for ID:', flatWorksiteId);
               }
             } catch (error) {
-              console.warn('Failed to fetch location name for ID:', flatWorksiteId, error);
+              // Silently handle errors
             }
-          } else {
-            console.log('🔍 RecruiterJobOrders: No worksiteId or worksiteName found in job order data');
           }
           
           // Fetch recruiter names from assignedRecruiters array
@@ -236,7 +202,7 @@ const RecruiterJobOrders: React.FC = () => {
                 }
               }
             } catch (error) {
-              console.warn('Failed to fetch recruiter name:', error);
+              // Silently handle errors
               recruiterName = assignedRecruiters.length > 1 
                 ? `${assignedRecruiters.length} recruiters`
                 : 'Unassigned';
@@ -255,27 +221,12 @@ const RecruiterJobOrders: React.FC = () => {
         })
       );
 
-      if (firstLoadRef.current) {
-        setJobOrders(newJobOrders);
-        firstLoadRef.current = false;
-      } else {
-        setJobOrders(prev => {
-          const existingIds = new Set(prev.map(jo => jo.id));
-          const deduped = newJobOrders.filter(jo => !existingIds.has(jo.id));
-          return [...prev, ...deduped];
-        });
-      }
-
-      if (newJobOrders.length < effectivePageSize) {
-        setIsEnd(true);
-      } else {
-        setLastDoc(snap.docs[snap.docs.length - 1]);
-      }
+      setJobOrders(newJobOrders);
+      firstLoadRef.current = false;
     } catch (error) {
       console.error('❌ RecruiterJobOrders: Error fetching job orders:', error);
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   }, [tenantId, statusFilter, sortField, sortDirection]);
 
@@ -284,41 +235,33 @@ const RecruiterJobOrders: React.FC = () => {
     if (tenantId) {
       // Reset pagination state
       setJobOrders([]);
-      setLastDoc(null);
-      setIsEnd(false);
+      setPage(0); // Reset to first page when filters change
       firstLoadRef.current = true;
       // Load fresh data
-      fetchJobOrders(null, true);
+      fetchJobOrders();
     }
-  }, [tenantId, statusFilter, sortField, sortDirection, companyFilter]);
+  }, [tenantId, statusFilter, sortField, sortDirection, companyFilter, fetchJobOrders]);
   
-  // Debounce search to avoid too many queries
+  // Reset and reload when search or favorites filter changes (from props)
   useEffect(() => {
     if (!tenantId) return;
     
     const timeoutId = setTimeout(() => {
-      // Reset pagination when search changes
+      // Reset pagination when search/favorites change
       setJobOrders([]);
-      setLastDoc(null);
-      setIsEnd(false);
+      setPage(0); // Reset to first page when search/favorites change
       firstLoadRef.current = true;
-      fetchJobOrders(null, true);
+      fetchJobOrders();
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timeoutId);
-  }, [search, tenantId]);
-
-  const handleLoadMore = () => {
-    if (!loadingMore && !isEnd) {
-      fetchJobOrders(lastDoc, false);
-    }
-  };
+  }, [effectiveSearch, effectiveShowFavoritesOnly, tenantId, fetchJobOrders]);
 
   // Client-side filtering for real-time search and other filters
   const filteredJobOrders = jobOrders.filter(jo => {
     // Search filter
-    if (search) {
-      const searchLower = search.toLowerCase();
+    if (effectiveSearch) {
+      const searchLower = effectiveSearch.toLowerCase();
       const matchesSearch = (
         (jo.jobOrderName && jo.jobOrderName.toLowerCase().includes(searchLower)) ||
         (jo.companyName && jo.companyName.toLowerCase().includes(searchLower)) ||
@@ -330,7 +273,7 @@ const RecruiterJobOrders: React.FC = () => {
     }
     
     // Favorites filter
-    if (showFavoritesOnly && !isFavorite(jo.id)) {
+    if (effectiveShowFavoritesOnly && !isFavorite(jo.id)) {
       return false;
     }
     
@@ -347,15 +290,25 @@ const RecruiterJobOrders: React.FC = () => {
     return true;
   });
 
+  // Paginate filtered job orders
+  const paginatedJobOrders = useMemo(() => {
+    const startIndex = page * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return filteredJobOrders.slice(startIndex, endIndex);
+  }, [filteredJobOrders, page, rowsPerPage]);
+
+  // Reset page when filtered results change
+  useEffect(() => {
+    setPage(0);
+  }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter]);
+
   const handleSort = (field: string) => {
     if (field === 'Requested/Filled') return; // Don't sort this column
     
     const newDirection = sortField === field && sortDirection === 'desc' ? 'asc' : 'desc';
     setSortField(field);
     setSortDirection(newDirection);
-    firstLoadRef.current = true;
-    setLastDoc(null);
-    setIsEnd(false);
+    setPage(0); // Reset to first page when sorting changes
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, jobOrder: JobOrderWithDetails) => {
@@ -414,7 +367,15 @@ const RecruiterJobOrders: React.FC = () => {
 
 
   return (
-    <Box sx={{ p: 0 }}>
+    <Box sx={{ 
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      px: { xs: 2, md: 3 },
+      pb: 2,
+      pt: 2,
+    }}>
       {/* Filter & Toolbar Area */}
       <Box sx={{ 
         mb: 2,
@@ -425,61 +386,6 @@ const RecruiterJobOrders: React.FC = () => {
         borderBottom: '1px solid #D1D5DB'
       }}>
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search job orders..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="jobOrders"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {search && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setSearch('')}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
         
         <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
           <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
@@ -561,22 +467,6 @@ const RecruiterJobOrders: React.FC = () => {
             <MenuItem value="status">Status</MenuItem>
           </Select>
         </FormControl>
-        
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => navigate('/recruiter/job-orders/new')}
-            sx={{
-              height: 36,
-              px: 2,
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              borderRadius: '6px',
-              textTransform: 'none',
-            }}
-          >
-            New Order
-          </Button>
         </Box>
       </Box>
 
@@ -592,61 +482,146 @@ const RecruiterJobOrders: React.FC = () => {
             No job orders found
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            {search || statusFilter
+            {effectiveSearch || statusFilter
               ? 'Try adjusting your search criteria'
               : 'Create your first job order to get started'
             }
           </Typography>
-          {!search && !statusFilter && (
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/recruiter/job-orders/new')}
-            >
-              Create Job Order
-            </Button>
-          )}
         </Box>
       ) : (
-        <>
-          <TableContainer component={Paper}>
-            <Table>
-              <TableHead>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <TableContainer 
+            component={Paper}
+            sx={{ 
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              overflowX: 'auto',
+              // Scrollbar styling per Inbox Standard
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: 'rgba(0, 0, 0, 0.25)',
+                },
+              },
+              // Firefox scrollbar styling
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader>
+              <TableHead sx={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 10,
+                backgroundColor: '#FFFFFF',
+              }}>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', width: 60 }}>
-                    Favorites
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem', 
+                    width: 60,
+                  }}>
+                    {/* Empty - just for spacing the favorites column */}
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                    Order #
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
+                    #
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Title
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Job Title
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Account
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Location
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Status
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Requested/Filled
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Recruiter(s)
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableCell sx={{ 
+                    fontWeight: 700, 
+                    bgcolor: '#FFFFFF',
+                    color: 'text.secondary', 
+                    textTransform: 'uppercase', 
+                    fontSize: '0.75rem',
+                  }}>
                     Age
                   </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredJobOrders.map((jobOrder, index) => (
+                {paginatedJobOrders.map((jobOrder, index) => (
                   <TableRow 
                     key={jobOrder.id} 
                     hover 
@@ -743,27 +718,18 @@ const RecruiterJobOrders: React.FC = () => {
             </Table>
           </TableContainer>
 
-          {/* Load More */}
-          {!isEnd && (
-            <Box sx={{ mt: 3, textAlign: 'center' }}>
-              <Button 
-                onClick={handleLoadMore} 
-                disabled={loadingMore || loading}
-                variant="outlined"
-                size="large"
-                startIcon={loadingMore && <CircularProgress size={16} />}
-              >
-                {loadingMore ? 'Loading More...' : 'Load More Job Orders'}
-              </Button>
-            </Box>
-          )}
-
-          {isEnd && jobOrders.length > 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 3, textAlign: 'center' }}>
-              End of results
-            </Typography>
-          )}
-        </>
+          {/* Pagination Footer */}
+          <StandardTablePagination
+            count={filteredJobOrders.length}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
+          />
+        </Box>
       )}
 
       {/* Action Menu */}

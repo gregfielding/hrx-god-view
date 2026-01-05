@@ -313,6 +313,7 @@ const SlackPage: React.FC = () => {
       <SlackChannelDrawer
         open={drawerOpen}
         channel={selectedChannel}
+        members={selectedChannel ? (membersByChannel[selectedChannel.id] || []) : []}
         onClose={handleDrawerClose}
         onToggleWatch={async () => {}} // No longer used
         onToggleMute={toggleMute}

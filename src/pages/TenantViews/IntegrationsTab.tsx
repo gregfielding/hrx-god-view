@@ -436,13 +436,24 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
 
 
   return (
-    <Box sx={{ p: 0 }}>
-      <Typography variant="h6" gutterBottom>
-        Enterprise Integrations
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Connect your enterprise identity systems, HRIS, and communication platforms for seamless user management.
-      </Typography>
+    <Box sx={{ 
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      p: 2, // 16px padding all around
+    }}>
+      <Box sx={{ 
+        flex: 1,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+      }}>
+        <Typography variant="h6" gutterBottom>
+          Enterprise Integrations
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          Connect your enterprise identity systems, HRIS, and communication platforms for seamless user management.
+        </Typography>
 
       {/* Error and Success Messages */}
       {error && (
@@ -1192,8 +1203,7 @@ const IntegrationsTab: React.FC<IntegrationsTabProps> = ({ tenantId }) => {
           <Button variant="contained">Connect Slack</Button>
         </DialogActions>
       </Dialog>
-
-
+      </Box>
     </Box>
   );
 };

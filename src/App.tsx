@@ -402,47 +402,27 @@ function App() {
         } />
         <Route path="workforce" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforceDashboard />
+            <Navigate to="/workforce/company-directory" replace />
           </ProtectedRoute>
         } />
         <Route path="workforce/company-directory" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Company Directory' }
-            ]}>
-              <CompanyDirectory />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/add-workers" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Add Workers' }
-            ]}>
-              <AddWorkers />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/pending-invites" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Pending Invites' }
-            ]}>
-              <PendingInvites />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/integrations" element={
           <ProtectedRoute requiredSecurityLevel="4">
-            <WorkforcePageWrapper breadcrumbPath={[
-              { label: 'Workforce Management', href: '/workforce' },
-              { label: 'Integrations' }
-            ]}>
-              <IntegrationsTabWrapper />
-            </WorkforcePageWrapper>
+            <WorkforceDashboard />
           </ProtectedRoute>
         } />
         <Route path="workforce/users/:uid" element={<UserProfile />} />
@@ -840,11 +820,11 @@ function App() {
         <Route path="recruiter" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <RecruiterAccessGuard>
-              <RecruiterMain />
+              <RecruiterDashboard />
             </RecruiterAccessGuard>
           </ProtectedRoute>
         }>
-          <Route index element={<RecruiterDashboard />} />
+          <Route index element={<Navigate to="/recruiter/job-orders" replace />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />

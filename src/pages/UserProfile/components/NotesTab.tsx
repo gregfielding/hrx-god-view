@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  TextField,
   Button,
   Card,
   CardContent,
@@ -17,11 +16,6 @@ import {
   IconButton,
   Chip,
   Avatar,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
   Snackbar,
   Tooltip,
@@ -31,21 +25,15 @@ import {
   DialogActions,
 } from '@mui/material';
 import {
-  Add as AddIcon,
   AttachFile as AttachFileIcon,
   Visibility as ViewIcon,
   Delete as DeleteIcon,
-  Note as NoteIcon,
   Person as PersonIcon,
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
-import { doc, collection, addDoc, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { doc, collection, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
-import { useAuth } from '../../../contexts/AuthContext';
-import { logger } from '../../../utils/logger';
-import { logNoteActivity } from '../../../utils/activityLogger';
-
 
 interface Note {
   id: string;
@@ -71,41 +59,16 @@ interface NotesTabProps {
   user: any;
 }
 
-const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
-  const { currentUser, securityLevel } = useAuth();
+const NotesTab: React.FC<NotesTabProps> = ({ uid }) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
-  const [newNote, setNewNote] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [noteCategory, setNoteCategory] = useState<'general' | 'performance' | 'behavior' | 'compliance' | 'training' | 'other'>('general');
-  const [notePriority, setNotePriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [viewNoteDialog, setViewNoteDialog] = useState<{ open: boolean; note: Note | null }>({ open: false, note: null });
-  const [userRole, setUserRole] = useState<'hrx' | 'agency' | 'customer'>('customer');
-
-  // Predefined tags for easy selection
-  const availableTags = [
-    'Attendance', 'Performance', 'Skills', 'Training', 'Compliance', 
-    'Behavior', 'Communication', 'Teamwork', 'Leadership', 'Technical',
-    'Safety', 'Quality', 'Customer Service', 'Initiative', 'Reliability'
-  ];
 
   useEffect(() => {
     loadNotes();
-    determineUserRole();
   }, [uid]);
-
-  const determineUserRole = () => {
-    if (currentUser?.email?.includes('hrx')) {
-      setUserRole('hrx');
-    } else if (user?.tenantId) {
-      setUserRole('agency');
-    } else {
-      setUserRole('customer');
-    }
-  };
 
   const loadNotes = async () => {
     setLoading(true);
@@ -128,166 +91,6 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
       console.error('Error loading notes:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const filesArray = Array.from(event.target.files);
-      setSelectedFiles(prev => [...prev, ...filesArray]);
-    }
-  };
-
-  const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSubmitNote = async () => {
-    if (!newNote.trim()) return;
-
-    setLoading(true);
-    try {
-      // Upload files if any
-      const uploadedFiles = [];
-      for (const file of selectedFiles) {
-        // In a real implementation, you'd upload to Firebase Storage
-        // For now, we'll simulate the upload
-        uploadedFiles.push({
-          name: file.name,
-          url: `https://storage.googleapis.com/example/${file.name}`,
-          type: file.type,
-        });
-      }
-
-      // Create note document
-      const noteData = {
-        content: newNote,
-        authorId: currentUser?.uid || '',
-        authorName: currentUser?.displayName || currentUser?.email || 'Unknown',
-        authorRole: userRole,
-        timestamp: new Date(),
-        files: uploadedFiles,
-        category: noteCategory,
-        priority: notePriority,
-        tags: selectedTags,
-        aiReviewed: false,
-        aiInsights: '',
-      };
-
-      const notesRef = collection(db, 'users', uid, 'notes');
-      const docRef = await addDoc(notesRef, noteData);
-
-      // Log the note creation
-      await logNoteCreation(docRef.id, noteData);
-
-      // Log note activity to user's activity log if author is internal worker (security level 5-7)
-      try {
-        const authorSecurityLevel = parseInt(securityLevel || '0');
-        if (authorSecurityLevel >= 5 && authorSecurityLevel <= 7) {
-          await logNoteActivity(
-            uid,
-            docRef.id,
-            noteData.authorName,
-            noteData.authorId,
-            noteData.category,
-            noteData.priority,
-            {
-              tags: noteData.tags,
-              hasFiles: noteData.files?.length > 0,
-            }
-          );
-        }
-      } catch (activityLogError) {
-        console.warn('Failed to log note activity:', activityLogError);
-        // Don't block note creation if activity logging fails
-      }
-
-      // Trigger AI review
-      await triggerAIReview(uid, 'note_created', {
-        noteId: docRef.id,
-        content: newNote,
-        category: noteCategory,
-        priority: notePriority,
-        tags: selectedTags,
-      });
-
-      // Reset form
-      setNewNote('');
-      setSelectedFiles([]);
-      setNoteCategory('general');
-      setNotePriority('medium');
-      setSelectedTags([]);
-
-      // Reload notes
-      await loadNotes();
-
-      setSuccessMessage('Note added successfully and AI review triggered');
-      setShowSuccess(true);
-    } catch (error) {
-      console.error('Error adding note:', error);
-      setSuccessMessage('Error adding note');
-      setShowSuccess(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const logNoteCreation = async (noteId: string, noteData: any) => {
-    try {
-      await logger.aiEvent({
-        actionType: 'note_created',
-        sourceModule: 'NotesTab',
-        userId: uid,
-        targetId: noteId,
-        targetType: 'note',
-        aiRelevant: true,
-        contextType: 'worker_notes',
-        urgencyScore: noteData.priority === 'urgent' ? 8 : noteData.priority === 'high' ? 6 : 4,
-        eventType: 'worker.note.created',
-        reason: `Note created: ${noteData.category} - ${noteData.priority} priority`,
-        success: true,
-        latencyMs: 0,
-        versionTag: 'v1',
-        metadata: {
-          noteCategory: noteData.category,
-          notePriority: noteData.priority,
-          authorRole: noteData.authorRole,
-          hasFiles: noteData.files?.length > 0,
-          tags: noteData.tags,
-        }
-      });
-    } catch (error) {
-      console.error('Error logging note creation:', error);
-    }
-  };
-
-  const triggerAIReview = async (workerId: string, triggerType: string, context: any) => {
-    try {
-      await logger.aiEvent({
-        actionType: 'ai_review_triggered',
-        sourceModule: 'NotesTab',
-        userId: workerId,
-        targetId: workerId,
-        targetType: 'worker_profile',
-        aiRelevant: true,
-        contextType: 'worker_notes',
-        urgencyScore: context.priority === 'urgent' ? 8 : context.priority === 'high' ? 6 : 4,
-        eventType: 'worker.ai_review.triggered',
-        reason: `AI review triggered by ${triggerType}`,
-        success: true,
-        latencyMs: 0,
-        versionTag: 'v1',
-        metadata: {
-          triggerType,
-          context,
-          reviewType: 'worker_profile_update',
-          priority: context.priority || 'medium',
-        }
-      });
-      
-      console.log('AI review trigger logged successfully. The AI engine processor will handle the review.');
-    } catch (error) {
-      console.error('Error triggering AI review:', error);
     }
   };
 
@@ -342,152 +145,19 @@ const NotesTab: React.FC<NotesTabProps> = ({ uid, user }) => {
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {/* Add Note Form Card */}
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <Card>
         <CardHeader 
-          title="Add New Note" 
-          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-        />
-        <CardContent sx={{ p: 2 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
-            Add notes, observations, and feedback about this worker. All notes trigger AI review for insights.
-          </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12}>
-              <TextField
-                label="Note Content"
-                multiline
-                rows={4}
-                fullWidth
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                placeholder="Enter your note, observation, or feedback about this worker..."
-                variant="outlined"
-              />
-            </Grid>
-            
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
-                <Select
-                  value={noteCategory}
-                  onChange={(e) => setNoteCategory(e.target.value as any)}
-                  label="Category"
-                >
-                  <MenuItem value="general">General</MenuItem>
-                  <MenuItem value="performance">Performance</MenuItem>
-                  <MenuItem value="behavior">Behavior</MenuItem>
-                  <MenuItem value="compliance">Compliance</MenuItem>
-                  <MenuItem value="training">Training</MenuItem>
-                  <MenuItem value="other">Other</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Priority</InputLabel>
-                <Select
-                  value={notePriority}
-                  onChange={(e) => setNotePriority(e.target.value as any)}
-                  label="Priority"
-                >
-                  <MenuItem value="low">Low</MenuItem>
-                  <MenuItem value="medium">Medium</MenuItem>
-                  <MenuItem value="high">High</MenuItem>
-                  <MenuItem value="urgent">Urgent</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12}>
-              <Typography variant="subtitle2" gutterBottom>
-                Tags (optional)
-              </Typography>
-              <Box display="flex" flexWrap="wrap" gap={1}>
-                {availableTags.map((tag) => (
-                  <Chip
-                    key={tag}
-                    label={tag}
-                    onClick={() => {
-                      if (selectedTags.includes(tag)) {
-                        setSelectedTags(selectedTags.filter(t => t !== tag));
-                      } else {
-                        setSelectedTags([...selectedTags, tag]);
-                      }
-                    }}
-                    color={selectedTags.includes(tag) ? 'primary' : 'default'}
-                    variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
-                    size="small"
-                  />
-                ))}
-              </Box>
-            </Grid>
-
-            <Grid item xs={12}>
-              <Box display="flex" alignItems="center" gap={2}>
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<AttachFileIcon />}
-                >
-                  Attach Files
-                  <input
-                    type="file"
-                    hidden
-                    multiple
-                    onChange={handleFileSelect}
-                  />
-                </Button>
-                {selectedFiles.length > 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    {selectedFiles.length} file(s) selected
-                  </Typography>
-                )}
-              </Box>
-              
-              {selectedFiles.length > 0 && (
-                <Box mt={1}>
-                  {selectedFiles.map((file, index) => (
-                    <Chip
-                      key={index}
-                      label={file.name}
-                      onDelete={() => removeFile(index)}
-                      size="small"
-                      sx={{ mr: 1, mb: 1 }}
-                    />
-                  ))}
-                </Box>
-              )}
-            </Grid>
-
-            <Grid item xs={12}>
-              <Button
-                variant="contained"
-                onClick={handleSubmitNote}
-                disabled={!newNote.trim() || loading}
-                startIcon={<AddIcon />}
-                size="large"
-              >
-                {loading ? 'Adding Note...' : 'Add Note & Trigger AI Review'}
-              </Button>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
-
-      {/* Notes History Card */}
-      <Card>
-        <CardHeader 
-          title={`Notes History (${notes.length})`}
+          title={`Notes (${notes.length})`}
           titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
         />
         <CardContent sx={{ p: 2 }}>
           {loading ? (
             <Typography>Loading notes...</Typography>
           ) : notes.length === 0 ? (
-            <Typography color="text.secondary">No notes yet. Add the first note above.</Typography>
+            <Typography color="text.secondary">
+              No notes yet. Use the Add Note button in the header.
+            </Typography>
           ) : (
             <TableContainer component={Paper} variant="outlined">
               <Table>

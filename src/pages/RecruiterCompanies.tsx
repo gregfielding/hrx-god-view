@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -16,38 +16,37 @@ import {
   Grid,
 } from '@mui/material';
 import {
-  Search as SearchIcon,
   Clear as ClearIcon,
   Add as AddIcon,
   Business as BusinessIcon,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { Autocomplete } from '@mui/material';
-import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import CompanyTable from '../components/CompanyTable';
 import { CircularProgress, Snackbar, Alert } from '@mui/material';
+import StandardTablePagination from '../components/StandardTablePagination';
+import type { RecruiterOutletContext } from './RecruiterDashboard';
 
 const RecruiterCompanies: React.FC = () => {
   const navigate = useNavigate();
   const { tenantId, currentUser } = useAuth();
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const headerSearch = outletCtx?.search ?? '';
+  const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
   
   // State
   const [companies, setCompanies] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(false);
-  const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null);
-  const companiesPageSize = 50; // Same as CRM
-  const [search, setSearch] = useState('');
   const [locationStateFilter, setLocationStateFilter] = useState('all');
   const [sortField, setSortField] = useState<string>('companyName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
   const [companyForm, setCompanyForm] = useState({
@@ -61,18 +60,33 @@ const RecruiterCompanies: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
 
   // Favorites
   const { favorites, isFavorite, toggleFavorite } = useFavorites('companies');
 
-  // Load companies when filters/search change
+  // Load companies + supporting data
   useEffect(() => {
     if (tenantId) {
-      loadCompanies('', null, false);
+      loadCompanies();
       loadAllCompanies();
       loadContacts();
     }
-  }, [tenantId, search, locationStateFilter, showFavoritesOnly]);
+  }, [tenantId]);
+
+  // Open "Add Company" dialog when navigated with ?new=1 from the header button
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      handleAddNew();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Reset pagination when filters/search change
+  useEffect(() => {
+    setPage(0);
+  }, [headerSearch, headerShowFavoritesOnly, locationStateFilter, sortField, sortDirection]);
   
   // Load contacts for contact counts
   const loadContacts = async () => {
@@ -113,123 +127,27 @@ const RecruiterCompanies: React.FC = () => {
     }
   };
 
-  const loadCompanies = async (searchQuery = '', startDoc: DocumentSnapshot | null = null, append = false) => {
+  const loadCompanies = async () => {
     if (!tenantId) return;
     
     setLoading(true);
     
     try {
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-      const hasActiveFilters = searchQuery.trim() || locationStateFilter !== 'all' || showFavoritesOnly;
-      
-      if (hasActiveFilters) {
-        // When filtering/searching, query ALL companies and filter client-side
-        const q = query(companiesRef, orderBy('createdAt', 'desc'));
-        const snapshot = await getDocs(q);
-        
-        let filtered = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as any[];
-        
-        // Apply search filter
-        if (searchQuery.trim()) {
-          const searchLower = searchQuery.toLowerCase().trim();
-          filtered = filtered.filter(company => {
-            const companyName = (company.companyName || company.name || '').toLowerCase();
-            const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
-            const city = (company.city || '').toLowerCase();
-            const industry = (company.industry || '').toLowerCase();
-            
-            return companyName.includes(searchLower) ||
-                   companyUrl.includes(searchLower) ||
-                   city.includes(searchLower) ||
-                   industry.includes(searchLower);
-          });
-        }
-        
-        // Apply state filter
-        if (locationStateFilter !== 'all') {
-          filtered = filtered.filter(company => {
-            const state = company.state || company.address?.state || '';
-            return state === locationStateFilter;
-          });
-        }
-        
-        // Apply favorites filter
-        if (showFavoritesOnly) {
-          filtered = filtered.filter(company => isFavorite(company.id));
-        }
-        
-        // Sort the filtered results
-        filtered.sort((a, b) => {
-          const aValue = getSortableValue(a, sortField);
-          const bValue = getSortableValue(b, sortField);
-          
-          if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-          if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-          return 0;
-        });
-        
-        // Apply pagination to filtered results
-        if (!append) {
-          const limitedData = filtered.slice(0, companiesPageSize);
-          setCompanies(limitedData);
-          setHasMore(filtered.length > companiesPageSize);
-          setLastDoc(null); // Can't use lastDoc with filtered results
-        } else {
-          // For "Load More", we need to track how many we've already shown
-          const currentCount = companies.length;
-          const limitedData = filtered.slice(currentCount, currentCount + companiesPageSize);
-          setCompanies(prev => [...prev, ...limitedData]);
-          setHasMore(filtered.length > currentCount + limitedData.length);
-        }
-      } else {
-        // No filters - use Firestore pagination
-        const constraints: any[] = [orderBy('createdAt', 'desc'), limit(companiesPageSize)];
-        
-        if (startDoc) {
-          constraints.push(startAfter(startDoc));
-        }
-        
-        const q = query(companiesRef, ...constraints);
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-          const companiesData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          
-          setCompanies(prev => append ? [...prev, ...companiesData] : companiesData);
-          setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-          setHasMore(snapshot.size === companiesPageSize);
-        } else {
-          if (!append) {
-            setCompanies([]);
-          }
-          setHasMore(false);
-        }
-      }
+      const q = query(companiesRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(q);
+
+      const companiesData = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      }));
+
+      setCompanies(companiesData);
     } catch (error) {
       console.error('Error loading companies:', error);
       setCompanies([]);
-      setHasMore(false);
     } finally {
       setLoading(false);
-    }
-  };
-  
-  const loadMoreCompanies = () => {
-    if (hasMore && !loading) {
-      const hasActiveFilters = search.trim() || locationStateFilter !== 'all' || showFavoritesOnly;
-      if (hasActiveFilters) {
-        // For filtered results, load more from the same filtered set
-        loadCompanies(search, null, true);
-      } else {
-        // For normal pagination, use lastDoc
-        loadCompanies('', lastDoc, true);
-      }
     }
   };
 
@@ -263,22 +181,55 @@ const RecruiterCompanies: React.FC = () => {
     }
   };
 
-  // Sort companies (filtering is now done in loadCompanies)
-  const filteredCompanies = React.useMemo(() => {
-    // Apply client-side sorting only (filtering is handled in loadCompanies)
-    const sorted = [...companies];
-    
-    sorted.sort((a, b) => {
+  const filteredSortedCompanies = useMemo(() => {
+    let filtered = [...companies];
+
+    // Search (from Inbox-standard header)
+    if (headerSearch.trim()) {
+      const searchLower = headerSearch.toLowerCase().trim();
+      filtered = filtered.filter((company) => {
+        const companyName = (company.companyName || company.name || '').toLowerCase();
+        const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+        const city = (company.city || '').toLowerCase();
+        const industry = (company.industry || '').toLowerCase();
+        return (
+          companyName.includes(searchLower) ||
+          companyUrl.includes(searchLower) ||
+          city.includes(searchLower) ||
+          industry.includes(searchLower)
+        );
+      });
+    }
+
+    // State filter
+    if (locationStateFilter !== 'all') {
+      filtered = filtered.filter((company) => {
+        const state = company.state || company.address?.state || '';
+        return state === locationStateFilter;
+      });
+    }
+
+    // Favorites filter (from header)
+    if (headerShowFavoritesOnly) {
+      filtered = filtered.filter((company) => isFavorite(company.id));
+    }
+
+    // Sort
+    filtered.sort((a, b) => {
       const aValue = getSortableValue(a, sortField);
       const bValue = getSortableValue(b, sortField);
-      
       if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-    
-    return sorted;
-  }, [companies, sortField, sortDirection]);
+
+    return filtered;
+  }, [companies, headerSearch, headerShowFavoritesOnly, locationStateFilter, sortField, sortDirection, favorites, isFavorite]);
+
+  const paginatedCompanies = useMemo(() => {
+    const start = page * rowsPerPage;
+    return filteredSortedCompanies.slice(start, start + rowsPerPage);
+  }, [filteredSortedCompanies, page, rowsPerPage]);
 
   // Helper function to get avatar background color
   const getAvatarColor = (name: string) => {
@@ -397,11 +348,14 @@ const RecruiterCompanies: React.FC = () => {
       // Reset form and close dialog
       setCompanyForm({ name: '', website: '', parentCompany: '' });
       setShowCompanyDialog(false);
+      if (searchParams.get('new') === '1') {
+        setSearchParams({});
+      }
       setSuccess(true);
       setSuccessMessage('Company added successfully!');
       
-      // Reload companies with current filters
-      await loadCompanies(search, null, false);
+      // Reload companies
+      await loadCompanies();
       await loadAllCompanies();
     } catch (err: any) {
       console.error('Error adding company:', err);
@@ -412,144 +366,69 @@ const RecruiterCompanies: React.FC = () => {
   };
 
   return (
-    <Box>
-      {/* Filter & Toolbar Area */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search by company name, URL, or city..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        px: { xs: 2, md: 3 },
+        pt: 2,
+      }}
+    >
+      {/* Secondary filters (search + favorites live in the Inbox-standard header) */}
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
+        {/* State Filter */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+            <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
+            <Select
+              value={locationStateFilter}
+              onChange={(e) => setLocationStateFilter(String(e.target.value))}
+              label="State Filter"
+              sx={{
                 height: 36,
                 borderRadius: '6px',
                 backgroundColor: 'white',
                 fontSize: '0.875rem',
-                '& fieldset': {
+                '& .MuiOutlinedInput-notchedOutline': {
                   borderColor: '#E5E7EB',
                 },
-                '&:hover fieldset': {
+                '&:hover .MuiOutlinedInput-notchedOutline': {
                   borderColor: '#D1D5DB',
                 },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="companies"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {search && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setSearch('')}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
-
-          {/* State Filter */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-              <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
-              <Select
-                value={locationStateFilter}
-                onChange={(e) => setLocationStateFilter(String(e.target.value))}
-                label="State Filter"
-                sx={{
-                  height: 36,
-                  borderRadius: '6px',
-                  backgroundColor: 'white',
-                  fontSize: '0.875rem',
-                  '& .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#E5E7EB',
-                  },
-                  '&:hover .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#D1D5DB',
-                  },
-                }}
-              >
-                <MenuItem value="all">All States</MenuItem>
-                {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
-                  <MenuItem key={st} value={st}>{st}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <IconButton
-              size="small"
-              aria-label="Clear state filter"
-              onClick={() => setLocationStateFilter('all')}
-              disabled={locationStateFilter === 'all'}
-              sx={{ height: 36, width: 36, p: 0.75 }}
-            >
-              <ClearIcon fontSize="small" />
-            </IconButton>
-          </Box>
-
-          <Box sx={{ ml: 'auto' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={handleAddNew}
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                textTransform: 'none',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                px: 2.5,
-                py: 0.75
               }}
             >
-              Add Company
-            </Button>
-          </Box>
+              <MenuItem value="all">All States</MenuItem>
+              {[
+                'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+              ].map((st) => (
+                <MenuItem key={st} value={st}>
+                  {st}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <IconButton
+            size="small"
+            aria-label="Clear state filter"
+            onClick={() => setLocationStateFilter('all')}
+            disabled={locationStateFilter === 'all'}
+            sx={{ height: 36, width: 36, p: 0.75 }}
+          >
+            <ClearIcon fontSize="small" />
+          </IconButton>
         </Box>
       </Box>
-      
-      {/* Divider */}
-      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
 
       {/* Companies Table */}
       <CompanyTable
-        companies={filteredCompanies}
+        companies={paginatedCompanies}
         loading={loading}
-        hasMore={hasMore}
-        onLoadMore={loadMoreCompanies}
         columns={{
           favorites: true,
+          avatar: true,
           companyName: true,
           contacts: true,
           deals: true,
@@ -572,7 +451,7 @@ const RecruiterCompanies: React.FC = () => {
         formatCurrency={formatCurrency}
         emptyStateMessage="No companies found"
         emptyStateAction={
-          filteredCompanies.length === 0 && !loading ? (
+          filteredSortedCompanies.length === 0 && !loading ? (
             <Box sx={{ textAlign: 'center' }}>
               <Box
                 sx={{
@@ -611,6 +490,16 @@ const RecruiterCompanies: React.FC = () => {
             </Box>
           ) : undefined
         }
+        pagination={{
+          count: filteredSortedCompanies.length,
+          page,
+          rowsPerPage,
+          onPageChange: (_e, newPage) => setPage(newPage),
+          onRowsPerPageChange: (e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          },
+        }}
       />
 
       {/* Company Dialog */}
@@ -620,6 +509,9 @@ const RecruiterCompanies: React.FC = () => {
           if (!savingCompany) {
             setShowCompanyDialog(false);
             setError('');
+            if (searchParams.get('new') === '1') {
+              setSearchParams({});
+            }
           }
         }} 
         maxWidth="md" 

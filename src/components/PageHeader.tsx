@@ -10,8 +10,8 @@ import { Box, Typography, useTheme, useMediaQuery } from '@mui/material';
 import { Divider } from '@mui/material';
 
 interface PageHeaderProps {
-  title: string;
-  subtitle?: string;
+  title: string | React.ReactNode; // Can be string or custom React element (e.g., with avatar)
+  subtitle?: string | React.ReactNode; // Can be string or custom React element (e.g., metadata line)
   filters?: React.ReactNode;     // Left side: filter chips, toggles, etc.
   rightActions?: React.ReactNode; // Right side: search + primary CTA
   showDivider?: boolean;          // Default: true
@@ -38,29 +38,41 @@ const PageHeader: React.FC<PageHeaderProps> = ({
     >
       {/* Title and Subtitle */}
       <Box sx={{ mb: subtitle ? 1 : 2 }}> {/* 8px if subtitle, 16px if not */}
-        <Typography
-          variant="h6"
-          sx={{
-            fontSize: { xs: '20px', md: '24px' },
-            fontWeight: 600,
-            lineHeight: 1.2,
-            mb: subtitle ? 1 : 0, // 8px if subtitle exists
-          }}
-        >
-          {title}
-        </Typography>
-        {subtitle && (
+        {typeof title === 'string' ? (
           <Typography
-            variant="body2"
+            variant="h6"
             sx={{
-              fontSize: '14px',
-              fontWeight: 400,
-              color: 'rgba(0, 0, 0, 0.55)',
-              mt: 1, // 8px spacing from title
+              fontSize: { xs: '20px', md: '24px' },
+              fontWeight: 600,
+              lineHeight: 1.2,
+              mb: subtitle ? 1 : 0, // 8px if subtitle exists
             }}
           >
-            {subtitle}
+            {title}
           </Typography>
+        ) : (
+          <Box sx={{ mb: subtitle ? 1 : 0 }}>
+            {title}
+          </Box>
+        )}
+        {subtitle && (
+          typeof subtitle === 'string' ? (
+            <Typography
+              variant="body2"
+              sx={{
+                fontSize: '14px',
+                fontWeight: 400,
+                color: 'rgba(0, 0, 0, 0.55)',
+                mt: 1, // 8px spacing from title
+              }}
+            >
+              {subtitle}
+            </Typography>
+          ) : (
+            <Box sx={{ mt: 1 }}>
+              {subtitle}
+            </Box>
+          )
         )}
       </Box>
 

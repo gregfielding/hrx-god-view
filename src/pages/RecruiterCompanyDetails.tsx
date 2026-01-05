@@ -48,6 +48,7 @@ import {
 import {
   Phone as PhoneIcon,
   Add as AddIcon,
+  ArrowBack as ArrowBackIcon,
   LocationOn as LocationIcon,
   Language as LanguageIcon,
   Work as WorkIcon,
@@ -128,8 +129,7 @@ import HealthBadge from '../components/HealthBadge';
 import { calculateDealHealth, calculateDealAge } from '../utils/dealHealthCalculator';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
-import { BreadcrumbNav } from '../components/BreadcrumbNav';
-import CompanyHeader from '../components/CompanyHeader';
+import PageHeader from '../components/PageHeader';
 
 // Helper function to get sub-industries
 const getSubIndustries = (mainIndustryCode: string) => {
@@ -171,7 +171,7 @@ function TabPanel(props: TabPanelProps) {
       {...other}
     >
       {value === index && (
-        <Box sx={{ p: 0 }}>
+        <Box sx={{ p: 2 }}>
           {children}
         </Box>
       )}
@@ -253,6 +253,20 @@ const RecruiterCompanyDetails: React.FC = () => {
       loadCompanyData();
     }
   }, [companyId, tenantId]);
+
+  const safeToDate = (value: any): Date | null => {
+    try {
+      if (!value) return null;
+      if (value instanceof Date) return value;
+      if (typeof value?.toDate === 'function') return value.toDate();
+      if (typeof value?._seconds === 'number') return new Date(value._seconds * 1000);
+      if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  };
 
   const loadCompanyData = async () => {
     if (!companyId || !tenantId) return;
@@ -674,135 +688,294 @@ const RecruiterCompanyDetails: React.FC = () => {
     );
   }
 
+  const setTabAndPersist = (newValue: number) => {
+    setTabValue(newValue);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', String(newValue));
+      window.history.replaceState({}, '', url.toString());
+    } catch {
+      // ignore
+    }
+  };
+
   const ensureUrlProtocol = (url?: string) => {
     if (!url) return '';
     if (url.startsWith('http://') || url.startsWith('https://')) return url;
     return `https://${url}`;
   };
 
+  const companyName = company?.companyName || company?.name || 'Company';
+  const companyInitial = String(companyName || 'C').trim().charAt(0).toUpperCase();
+
+  const pipelineLow = Number(company?.pipelineValue?.low ?? 0);
+  const pipelineHigh = Number(company?.pipelineValue?.high ?? 0);
+  const revenueLine =
+    Number.isFinite(pipelineLow) && Number.isFinite(pipelineHigh)
+      ? `$${pipelineLow.toLocaleString()} \u2013 $${pipelineHigh.toLocaleString()}`
+      : '';
+
+  const employeesCount = company?.estimatedEmployees ?? company?.employees ?? company?.employeeCount ?? null;
+  const employeesLine = employeesCount ? `Employees: ${Number(employeesCount).toLocaleString()}` : '';
+
+  const addressParts = [
+    company?.address,
+    company?.city,
+    company?.state,
+    company?.zip || company?.zipcode,
+  ].filter(Boolean);
+  const addressLine = addressParts.join(', ');
+
+  const lastUpdatedDate =
+    safeToDate(company?.updatedAt) ||
+    safeToDate(company?.lastUpdatedAt) ||
+    safeToDate(company?.lastEnrichedAt) ||
+    null;
+  const lastUpdatedText = lastUpdatedDate ? `Last updated: ${lastUpdatedDate.toLocaleString()}` : '';
+
   return (
-    <Box sx={{ p: 0 }}>
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Companies', href: '/recruiter/companies' },
-            { label: company?.companyName || company?.name || 'Company' },
-          ]}
-        />
-      </Box>
-      {/* Company Header */}
-      <CompanyHeader
-        company={company}
-        tenantId={tenantId!}
-        routePrefix="recruiter"
-        favoriteType="companies"
-        isFavorite={isFavorite}
-        toggleFavorite={toggleFavorite}
-        metrics={{
-          contactsCount: contacts.length,
-          dealsCount: deals.length,
-        }}
-        onAddNote={() => setShowAddNoteDialog(true)}
-        onLogActivity={() => setShowLogActivityDialog(true)}
-        onAIEnhance={handleEnhanceWithAI}
-        aiEnhancing={aiEnhancing}
-        onAvatarUpload={handleLogoUpload}
-        onAvatarDelete={handleLogoDelete}
-        getIndustryByCode={getIndustryByCode}
-        CompanyNameDisplay={CompanyNameDisplay}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+            <Avatar
+              src={company?.logo || undefined}
+              alt={companyName}
+              sx={{
+                width: 108,
+                height: 108,
+                bgcolor: 'primary.main',
+                fontSize: '40px',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              {companyInitial}
+            </Avatar>
+
+            <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
+              {/* Line 1: Name + favorite */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontSize: { xs: '20px', md: '24px' },
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
+                  {companyName}
+                </Typography>
+                <FavoriteButton
+                  itemId={company.id}
+                  favoriteType="companies"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                />
+              </Box>
+
+              {/* Line 2: key metadata (keep from screenshot) */}
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.5,
+                  mt: 0.75,
+                  flexWrap: 'wrap',
+                  fontSize: '0.875rem',
+                }}
+              >
+                {revenueLine && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <DealIcon sx={{ fontSize: 18, color: '#2E7D32' }} />
+                    <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: '#2E7D32' }}>
+                      {revenueLine}
+                    </Typography>
+                  </Box>
+                )}
+
+                {employeesLine && (
+                  <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.65)', fontWeight: 500 }}>
+                    {employeesLine}
+                  </Typography>
+                )}
+              </Box>
+
+              {/* Line 3: address (keep from screenshot) */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 0.75, flexWrap: 'wrap' }}>
+                {addressLine && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <LocationOnIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.55)' }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      {addressLine}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+
+              {/* Line 4: Social / contact icons */}
+              {(company?.website || company?.linkedin) && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
+                  {company?.website && (
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={ensureUrlProtocol(company.website)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <LanguageIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                  {company?.linkedin && (
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={ensureUrlProtocol(company.linkedin)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <LinkedInIcon fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
+              )}
+            </Box>
+          </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {[
+              { label: 'Overview', icon: <DashboardIcon fontSize="small" />, index: 0, badge: undefined },
+              { label: 'Locations', icon: <PlaceIcon fontSize="small" />, index: 1, badge: locations?.length || 0 },
+              { label: 'Contacts', icon: <PersonIcon fontSize="small" />, index: 2, badge: contacts?.length || 0 },
+              { label: 'Opportunities', icon: <OpportunitiesIcon fontSize="small" />, index: 3, badge: deals?.length || 0 },
+              { label: 'Notes', icon: <NotesIcon fontSize="small" />, index: 4, badge: notesCount || 0 },
+              { label: 'Job Orders', icon: <WorkIcon fontSize="small" />, index: 5, badge: jobOrders?.length || 0 },
+              { label: 'Defaults', icon: <BillingIcon fontSize="small" />, index: 6, badge: undefined },
+            ].map((t) => {
+              const isActive = tabValue === t.index;
+              const hasBadge = typeof t.badge === 'number' && t.badge > 0;
+              return (
+                <Button
+                  key={t.label}
+                  onClick={() => setTabAndPersist(t.index)}
+                  variant="text"
+                  startIcon={t.icon}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 500 : 400,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 1.5,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    {t.label}
+                    {hasBadge && <Badge badgeContent={t.badge} color="primary" />}
+                  </Box>
+                </Button>
+              );
+            })}
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Button
+                variant="outlined"
+                startIcon={<ArrowBackIcon />}
+                onClick={() => navigate('/recruiter/companies')}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Back
+              </Button>
+
+              {/* Keep these buttons and functions */}
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddNoteDialog(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Add Note
+              </Button>
+
+              <Button
+                variant="contained"
+                startIcon={<CheckCircleIcon />}
+                onClick={() => setShowLogActivityDialog(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
+                  bgcolor: '#0057B8',
+                  '&:hover': { bgcolor: '#004a9f' },
+                }}
+              >
+                Log Activity
+              </Button>
+
+              <Button
+                variant="contained"
+                startIcon={<AIIcon />}
+                onClick={handleEnhanceWithAI}
+                disabled={aiEnhancing}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
+                  bgcolor: '#4A90E2',
+                  '&:hover': { bgcolor: '#3a7fcd' },
+                }}
+              >
+                {aiEnhancing ? 'Enhancing…' : 'AI Enhance'}
+              </Button>
+            </Box>
+
+            {lastUpdatedText && (
+              <Typography sx={{ fontSize: '14px', color: 'rgba(0, 0, 0, 0.55)' }}>
+                {lastUpdatedText}
+              </Typography>
+            )}
+          </Box>
+        }
       />
 
-      {/* Tabs */}
-      <Paper sx={{ mb: 3 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            borderBottom: 1,
-            borderColor: 'divider',
-            '& .MuiTab-root': {
-              textTransform: 'none',
-              fontWeight: 500,
-              minHeight: 48,
-            },
-          }}
-        >
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Overview
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PlaceIcon fontSize="small" />
-                Locations
-                {locations.length > 0 && (
-                  <Badge badgeContent={locations.length} color="primary" />
-                )}
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PersonIcon fontSize="small" />
-                Contacts
-                {contacts.length > 0 && (
-                  <Badge badgeContent={contacts.length} color="primary" />
-                )}
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <OpportunitiesIcon fontSize="small" />
-                Opportunities
-                {deals.length > 0 && (
-                  <Badge badgeContent={deals.length} color="primary" />
-                )}
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-                {notesCount > 0 && (
-                  <Badge badgeContent={notesCount} color="primary" />
-                )}
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <WorkIcon fontSize="small" />
-                Job Orders
-                {jobOrders && jobOrders.length > 0 && (
-                  <Badge badgeContent={jobOrders.length} color="primary" />
-                )}
-              </Box>
-            }
-          />
-          <Tab
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BillingIcon fontSize="small" />
-                Defaults
-              </Box>
-            }
-          />
-        </Tabs>
-      </Paper>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
@@ -915,6 +1088,7 @@ const RecruiterCompanyDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Box>
   );
 };

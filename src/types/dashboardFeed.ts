@@ -1,0 +1,30 @@
+/**
+ * Dashboard Feed Types
+ * 
+ * Unified feed item types for the Dashboard activity stream.
+ */
+
+export type FeedSourceType = 'email' | 'slack_dm' | 'slack_channel';
+
+export interface DashboardFeedItem {
+  id: string;                 // global unique ID for the feed item
+  sourceType: FeedSourceType; // which subsystem
+  sourceId: string;           // ID in that subsystem (e.g. email threadId, slack channelId, DM threadId)
+  messageId?: string;         // optional: specific message id in that source
+  title: string;              // subject line, channel name + snippet, etc.
+  snippet: string;            // short text preview
+  fromLabel: string;          // "From" contact name or author
+  avatarUrl?: string;         // primary avatar (optional)
+  isUnread: boolean;
+  hasMentions?: boolean;      // for Slack – @mentions of this user
+  isMuted: boolean;           // true if muted at the source level (e.g. channel muted)
+  timestamp: number;          // ms since epoch – used for sorting
+  // linking info for Drawer
+  drawerScope: {
+    scopeType: 'email' | 'slack_dm' | 'slack_channel';
+    threadId?: string;
+    channelId?: string;
+    dmUserId?: string;
+  };
+}
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -13,7 +13,6 @@ import {
   Autocomplete,
 } from '@mui/material';
 import {
-  Search as SearchIcon,
   Clear as ClearIcon,
   Add as AddIcon,
   Email as EmailIcon,
@@ -21,16 +20,15 @@ import {
   Business as BusinessIcon,
   LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { collection, query, orderBy, getDocs, doc, getDoc, limit, startAfter } from 'firebase/firestore';
 import { db } from '../firebase';
-import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
-import FavoriteButton from '../components/FavoriteButton';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import ContactTable from '../components/ContactTable';
 import ContactTableRow from '../components/ContactTableRow';
+import type { RecruiterOutletContext } from './RecruiterDashboard';
 
 interface Contact {
   id: string;
@@ -54,24 +52,28 @@ interface Contact {
 const RecruiterContacts: React.FC = () => {
   const navigate = useNavigate();
   const { tenantId, currentUser } = useAuth();
+  const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  const headerSearch = outletCtx?.search ?? '';
+  const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
   
   // State
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [stateFilter, setStateFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<string>('fullName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
   
   // Pagination state
-  const [contactsPageSize] = useState(20);
+  const contactsPageSize = 50;
   const [contactsLastDoc, setContactsLastDoc] = useState<any>(null);
   const [contactsHasMore, setContactsHasMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   // Favorites
   const { favorites, isFavorite, toggleFavorite } = useFavorites('contacts');
@@ -94,7 +96,12 @@ const RecruiterContacts: React.FC = () => {
       loadContacts(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [headerSearch]);
+
+  // Reset UI pagination when filters/search/sort change
+  useEffect(() => {
+    setPage(0);
+  }, [headerSearch, headerShowFavoritesOnly, companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection]);
 
   const loadCompanies = async () => {
     if (!tenantId) return;
@@ -117,7 +124,6 @@ const RecruiterContacts: React.FC = () => {
 
   const loadContacts = async (append = false) => {
     if (!tenantId) {
-      console.error('❌ Cannot load contacts: tenantId is missing');
       setLoading(false);
       return;
     }
@@ -127,14 +133,12 @@ const RecruiterContacts: React.FC = () => {
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       
       // If searching, fetch ALL contacts and filter client-side (like CRM does)
-      if (search.trim()) {
-        const searchLower = search.toLowerCase().trim();
-        console.log('🔍 Searching contacts for:', searchLower);
+      if (headerSearch.trim()) {
+        const searchLower = headerSearch.toLowerCase().trim();
         
         // Query ALL contacts without limit for comprehensive search
         const q = query(contactsRef, orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        console.log('Found', snapshot.size, 'contacts in database (searching through ALL contacts)');
         
         if (!snapshot.empty) {
           const contactsData: Contact[] = [];
@@ -215,16 +219,8 @@ const RecruiterContacts: React.FC = () => {
           });
           
           // Paginate results
-          if (append) {
-            const currentLength = contacts.length;
-            const nextPage = filteredData.slice(currentLength, currentLength + contactsPageSize);
-            setContacts(prev => [...prev, ...nextPage]);
-            setContactsHasMore(filteredData.length > currentLength + nextPage.length);
-          } else {
-            const limitedData = filteredData.slice(0, contactsPageSize);
-            setContacts(limitedData);
-            setContactsHasMore(filteredData.length > contactsPageSize);
-          }
+          setContacts(filteredData);
+          setContactsHasMore(false);
           setContactsLastDoc(null); // No lastDoc for search results
         } else {
           if (!append) {
@@ -298,10 +294,8 @@ const RecruiterContacts: React.FC = () => {
           setContactsHasMore(false);
         }
       }
-      
-      console.log(`✅ Successfully loaded ${contacts.length} contacts`);
     } catch (error: any) {
-      console.error('❌ Error loading contacts:', error);
+      console.error('Error loading contacts:', error);
       setContacts([]);
       setContactsHasMore(false);
     } finally {
@@ -309,11 +303,22 @@ const RecruiterContacts: React.FC = () => {
     }
   };
 
-  const loadMoreContacts = () => {
-    if (contactsHasMore && !loading) {
-      loadContacts(true);
+  // Prefetch more contacts when user paginates past loaded data (non-search mode)
+  useEffect(() => {
+    if (loadingMoreRef.current) return;
+    if (headerSearch.trim()) return; // search mode has full dataset in memory
+    if (!contactsHasMore) return;
+    if (loading) return;
+
+    const needCount = (page + 1) * rowsPerPage;
+    if (needCount > contacts.length) {
+      loadingMoreRef.current = true;
+      loadContacts(true).finally(() => {
+        loadingMoreRef.current = false;
+      });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, rowsPerPage, contacts.length, contactsHasMore, loading, headerSearch]);
 
   // Handle sorting
   const handleSort = (field: string) => {
@@ -351,13 +356,13 @@ const RecruiterContacts: React.FC = () => {
     let filtered = contacts;
     
     // Apply favorites filter
-    if (showFavoritesOnly) {
+    if (headerShowFavoritesOnly) {
       filtered = filtered.filter(contact => isFavorite(contact.id));
     }
     
     // Apply search filter
-    if (search.trim()) {
-      const searchLower = search.toLowerCase().trim();
+    if (headerSearch.trim()) {
+      const searchLower = headerSearch.toLowerCase().trim();
       filtered = filtered.filter(contact => {
         const fullName = (contact.fullName || `${contact.firstName} ${contact.lastName}` || '').toLowerCase();
         const email = (contact.email || '').toLowerCase();
@@ -408,7 +413,12 @@ const RecruiterContacts: React.FC = () => {
     });
     
     return filtered;
-  }, [contacts, search, sortField, sortDirection, companyFilter, roleFilter, statusFilter, stateFilter, showFavoritesOnly, isFavorite, companies]);
+  }, [contacts, headerSearch, sortField, sortDirection, companyFilter, roleFilter, statusFilter, stateFilter, headerShowFavoritesOnly, isFavorite, companies, favorites]);
+
+  const paginatedContacts = useMemo(() => {
+    const start = page * rowsPerPage;
+    return filteredContacts.slice(start, start + rowsPerPage);
+  }, [filteredContacts, page, rowsPerPage]);
 
   // Helper function to get avatar background color
   const getAvatarColor = (name: string) => {
@@ -493,8 +503,18 @@ const RecruiterContacts: React.FC = () => {
   }, [companies]);
 
   return (
-    <Box>
-      {/* Filter & Toolbar Area */}
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        px: { xs: 2, md: 3 },
+        pt: 2,
+      }}
+    >
+      {/* Filters (search + favorites + add are in the header per Inbox Standard) */}
       <Box sx={{ 
         mb: 2,
         p: 1.5,
@@ -504,61 +524,6 @@ const RecruiterContacts: React.FC = () => {
         borderBottom: '1px solid #D1D5DB'
       }}>
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search contacts..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="contacts"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {search && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setSearch('')}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
 
           {/* Company Filter */}
           <Autocomplete
@@ -665,35 +630,12 @@ const RecruiterContacts: React.FC = () => {
               ))}
             </Select>
           </FormControl>
-
-          <Box sx={{ ml: 'auto' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={handleAddNew}
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                textTransform: 'none',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                px: 2.5,
-                py: 0.75
-              }}
-            >
-              Add Contact
-            </Button>
-          </Box>
         </Box>
       </Box>
       
-      {/* Divider */}
-      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
-
       {/* Contacts Table */}
       <ContactTable
-        contacts={filteredContacts}
+        contacts={paginatedContacts}
         loading={loading}
         columns={{
           favorites: true,
@@ -733,35 +675,17 @@ const RecruiterContacts: React.FC = () => {
             rowIndex={index}
           />
         )}
+        pagination={{
+          count: filteredContacts.length,
+          page,
+          rowsPerPage,
+          onPageChange: (_e, newPage) => setPage(newPage),
+          onRowsPerPageChange: (e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          },
+        }}
       />
-
-      {/* Load More Button */}
-      {contactsHasMore && !loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, mb: 2 }}>
-          <Button
-            variant="outlined"
-            onClick={loadMoreContacts}
-            sx={{
-              borderRadius: '8px',
-              textTransform: 'none',
-              fontWeight: 500,
-              px: 3
-            }}
-          >
-            Load More Contacts
-          </Button>
-        </Box>
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3, gap: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <CircularProgress size={20} />
-            <Typography variant="body2" color="#6B7280">Loading contacts...</Typography>
-          </Box>
-        </Box>
-      )}
 
       {/* Empty State */}
       {filteredContacts.length === 0 && !loading && (
@@ -789,7 +713,7 @@ const RecruiterContacts: React.FC = () => {
             No contacts found
           </Typography>
           <Typography variant="body2" color="#6B7280" sx={{ mb: 3 }}>
-            {search || companyFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all' || stateFilter !== 'all'
+            {headerSearch || companyFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all' || stateFilter !== 'all'
               ? 'Try adjusting your filters to see more results'
               : 'Add your first contact to start building your CRM'}
           </Typography>
