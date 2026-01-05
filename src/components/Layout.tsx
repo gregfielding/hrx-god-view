@@ -191,7 +191,7 @@ const Layout: React.FC = React.memo(function Layout() {
     }
     
     // Settings routes
-    if (pathname.includes('/settings')) {
+    if (pathname.includes('/privacy-settings')) {
       return 'Settings';
     }
     
@@ -1599,13 +1599,13 @@ const Layout: React.FC = React.memo(function Layout() {
                 My Profile
               </MenuItem>
               <MenuItem onClick={() => {
-                navigate('/settings');
+                navigate('/privacy-settings');
                 setAvatarMenuAnchorEl(null);
               }}>
                 Settings
               </MenuItem>
               <MenuItem onClick={() => {
-                navigate('/settings?tab=notifications');
+                navigate('/privacy-settings');
                 setAvatarMenuAnchorEl(null);
               }}>
                 Notifications

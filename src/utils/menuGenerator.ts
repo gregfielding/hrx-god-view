@@ -255,7 +255,7 @@ export async function generateMenuItems(
 
       {
         text: 'Settings',
-        to: '/settings',
+        to: '/privacy-settings',
         icon: 'settings',
         requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
