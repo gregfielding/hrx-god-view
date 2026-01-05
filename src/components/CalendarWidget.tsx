@@ -798,7 +798,13 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           >
             <ChevronLeftIcon />
           </IconButton>
-          <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+          <Typography
+            variant={isDashboard ? 'subtitle1' : 'h6'}
+            sx={{
+              fontWeight: 'bold',
+              ...(isDashboard ? { fontSize: '1.05rem' } : null),
+            }}
+          >
             {view === 'month'
               ? format(currentDate, 'MMMM yyyy')
               : view === 'week'
@@ -965,7 +971,14 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
               const dayEvents = getEventsForDaySorted(day);
               return (
                 <Box key={day.toISOString()} sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 700,
+                      mb: 0.75,
+                      ...(isDashboard ? { fontSize: '0.8125rem' } : null),
+                    }}
+                  >
                     {format(day, 'EEE, MMM d')}
                   </Typography>
                   {dayEvents.length === 0 ? (
