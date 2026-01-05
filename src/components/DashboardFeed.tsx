@@ -661,7 +661,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                       }}
                     >
                       {/* Source Column */}
-                      <TableCell sx={{ width: 64, minWidth: 64, maxWidth: 64, textAlign: 'center' }}>
+                      <TableCell sx={{ width: 64, minWidth: 64, maxWidth: 64, textAlign: 'center', pl: 2 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
                           <Tooltip title={sourceMeta.label}>
                             <Box sx={{ display: 'flex', justifyContent: 'center' }}>
