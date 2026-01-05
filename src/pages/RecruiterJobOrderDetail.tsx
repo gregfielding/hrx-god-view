@@ -1775,9 +1775,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
     if (!jobOrderId) return 0;
     try {
       const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
-      return stored ? parseInt(stored, 10) : 0;
+      // Default to "Checklist" tab (index 1) when opening a job order record directly.
+      return stored ? parseInt(stored, 10) : 1;
     } catch {
-      return 0;
+      return 1;
     }
   };
   
@@ -1790,10 +1791,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
     if (jobOrderId) {
       try {
         const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
-        const storedTab = stored ? parseInt(stored, 10) : 0;
+        const storedTab = stored ? parseInt(stored, 10) : 1;
         setActiveTab(storedTab);
       } catch {
-        setActiveTab(0);
+        setActiveTab(1);
       }
     }
   }, [jobOrderId]);
