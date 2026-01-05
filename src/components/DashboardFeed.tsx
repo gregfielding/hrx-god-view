@@ -36,7 +36,6 @@ import { alpha } from '@mui/material/styles';
 import EmailIcon from '@mui/icons-material/Email';
 import MessageIcon from '@mui/icons-material/Message';
 import TagIcon from '@mui/icons-material/Tag';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import PersonIcon from '@mui/icons-material/Person';
@@ -713,24 +712,40 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                           bgcolor: 'action.hover',
                         },
                         minHeight: 56,
-                        '& .feedRowActions': {
-                          opacity: 0,
-                          pointerEvents: 'none',
-                          transition: 'opacity 150ms ease',
-                        },
-                        '&:hover .feedRowActions, &:focus-within .feedRowActions': {
-                          opacity: 1,
-                          pointerEvents: 'auto',
-                        },
                       }}
                     >
                       {/* Source Column */}
                       <TableCell sx={{ width: 64, minWidth: 64, maxWidth: 64, textAlign: 'center' }}>
-                        <Tooltip title={sourceMeta.label}>
-                          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                            {renderSourceIcon(item)}
-                          </Box>
-                        </Tooltip>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                          <Tooltip title={sourceMeta.label}>
+                            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                              {renderSourceIcon(item)}
+                            </Box>
+                          </Tooltip>
+                          <Tooltip title={pinned ? 'Unpin' : 'Pin'}>
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinned(item.id);
+                              }}
+                              sx={{ width: 28, height: 28 }}
+                            >
+                              {pinned ? (
+                                <PushPinIcon sx={{ fontSize: 16, color: '#0057B8' }} />
+                              ) : (
+                                <PushPinOutlinedIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
+                              )}
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
+
+                      {/* Time Column (2nd column) */}
+                      <TableCell sx={{ width: 110, whiteSpace: 'nowrap' }}>
+                        <Typography variant="body2" color="text.secondary">
+                          {formatTime(item.timestamp)}
+                        </Typography>
                       </TableCell>
 
                       {/* Activity Column (Title + Snippet) */}
@@ -777,7 +792,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                                 whiteSpace: 'nowrap',
                               }}
                             >
-                              From: {fromLabel} · {formatTime(item.timestamp)}
+                              From: {fromLabel}
                             </Typography>
                           )}
                         </Box>
@@ -861,45 +876,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                         </TableCell>
                       )}
 
-                      {/* Time Column */}
-                      <TableCell align="right">
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
-                          <Box className="feedRowActions" sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-                            <Tooltip title="Open">
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRowClick(item);
-                                }}
-                                sx={{ width: 28, height: 28 }}
-                              >
-                                <OpenInNewIcon sx={{ fontSize: 16 }} />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title={pinned ? 'Unpin' : 'Pin'}>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  togglePinned(item.id);
-                                }}
-                                sx={{ width: 28, height: 28 }}
-                              >
-                                {pinned ? (
-                                  <PushPinIcon sx={{ fontSize: 16, color: '#0057B8' }} />
-                                ) : (
-                                  <PushPinOutlinedIcon sx={{ fontSize: 16, color: 'text.disabled' }} />
-                                )}
-                              </IconButton>
-                            </Tooltip>
-                          </Box>
-
-                          <Typography variant="body2" color="text.secondary">
-                            {formatTime(item.timestamp)}
-                          </Typography>
-                        </Box>
-                      </TableCell>
                     </TableRow>,
                   );
                 });
