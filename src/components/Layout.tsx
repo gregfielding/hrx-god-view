@@ -1604,24 +1604,6 @@ const Layout: React.FC = React.memo(function Layout() {
               }}>
                 Settings
               </MenuItem>
-              <MenuItem onClick={() => {
-                navigate('/privacy-settings');
-                setAvatarMenuAnchorEl(null);
-              }}>
-                Notifications
-              </MenuItem>
-              <MenuItem onClick={() => {
-                // TODO: Open help/support
-                setAvatarMenuAnchorEl(null);
-              }}>
-                Help & Support
-              </MenuItem>
-              <MenuItem onClick={() => {
-                // TODO: Show keyboard shortcuts dialog
-                setAvatarMenuAnchorEl(null);
-              }}>
-                Keyboard Shortcuts
-              </MenuItem>
               <Divider />
               <MenuItem onClick={async () => {
                 setAvatarMenuAnchorEl(null);
