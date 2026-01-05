@@ -313,7 +313,7 @@ export const listCalendarEventsOptimized = onCall({
     }
     
     // Validate and normalize time parameters
-    const { timeMin: validatedTimeMin, timeMax: validatedTimeMax } = validateTimeParameters(timeMin, timeMin);
+    const { timeMin: validatedTimeMin, timeMax: validatedTimeMax } = validateTimeParameters(timeMin, timeMax);
     
     // Validate maxResults
     const safeMaxResults = Math.min(maxResults, CALENDAR_EVENTS_CONFIG.MAX_EVENTS_PER_REQUEST);
