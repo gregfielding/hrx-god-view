@@ -1120,7 +1120,21 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           anchor="right"
           open={showEventDrawer}
           onClose={handleCloseEventDrawer}
-          PaperProps={{ sx: { width: { xs: '100%', sm: 420 } } }}
+          PaperProps={{
+            sx: {
+              width: { xs: '100%', sm: 420 },
+              minWidth: { sm: 420 },
+              maxWidth: { sm: 420 },
+              // Prevent any perceived "shrink" when scrollbars appear on hover.
+              overflowY: 'scroll',
+              scrollbarGutter: 'stable',
+              '&:hover': {
+                width: { xs: '100%', sm: 420 },
+                minWidth: { sm: 420 },
+                maxWidth: { sm: 420 },
+              },
+            },
+          }}
         >
           <Box sx={{ p: 2.5, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
             <Box sx={{ minWidth: 0 }}>
