@@ -793,65 +793,52 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
                       {/* Activity Column (Title + Snippet) */}
                       <TableCell sx={{ minWidth: 0 }}>
-                        <Tooltip
-                          title={
-                            <Box sx={{ maxWidth: 520 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                                {item.title}
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                {item.snippet || '(no preview)'}
-                              </Typography>
-                            </Box>
-                          }
-                        >
-                          <Box sx={{ minWidth: 0 }}>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: unread ? 600 : 500,
+                              fontSize: '14px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {item.title}
+                          </Typography>
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{
+                              fontWeight: 400,
+                              fontSize: '13px',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.35,
+                              mt: 0.25,
+                            }}
+                          >
+                            {item.snippet || '(no preview)'}
+                          </Typography>
+
+                          {isTablet && (
                             <Typography
-                              variant="body2"
-                              sx={{
-                                fontWeight: unread ? 600 : 500,
-                                fontSize: '14px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                lineHeight: 1.4,
-                              }}
-                            >
-                              {item.title}
-                            </Typography>
-                            <Typography
-                              variant="body2"
+                              variant="caption"
                               color="text.secondary"
                               sx={{
-                                fontWeight: 400,
-                                fontSize: '13px',
+                                display: 'block',
+                                mt: 0.25,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
-                                lineHeight: 1.35,
-                                mt: 0.25,
                               }}
                             >
-                              {item.snippet || '(no preview)'}
+                              From: {fromLabel} · {formatTime(item.timestamp)}
                             </Typography>
-
-                            {isTablet && (
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                                sx={{
-                                  display: 'block',
-                                  mt: 0.25,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                From: {fromLabel} · {formatTime(item.timestamp)}
-                              </Typography>
-                            )}
-                          </Box>
-                        </Tooltip>
+                          )}
+                        </Box>
                       </TableCell>
 
                       {/* From Column (desktop only) */}
@@ -966,11 +953,9 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                             </Tooltip>
                           </Box>
 
-                          <Tooltip title={getFullDateTime(item.timestamp)}>
-                            <Typography variant="body2" color="text.secondary">
-                              {formatTime(item.timestamp)}
-                            </Typography>
-                          </Tooltip>
+                          <Typography variant="body2" color="text.secondary">
+                            {formatTime(item.timestamp)}
+                          </Typography>
                         </Box>
                       </TableCell>
                     </TableRow>,
