@@ -615,7 +615,11 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
           }}
         >
-          <Table stickyHeader={false} size="small" sx={{ width: '100%' }}>
+          <Table
+            stickyHeader={false}
+            size="small"
+            sx={{ width: '100%', tableLayout: 'fixed' }}
+          >
           <TableBody>
             {visibleItems.length === 0 ? (
               <TableRow>
@@ -691,14 +695,14 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                       </TableCell>
 
                       {/* Time Column (2nd column) */}
-                      <TableCell sx={{ width: 110, whiteSpace: 'nowrap' }}>
+                      <TableCell sx={{ width: 96, whiteSpace: 'nowrap' }}>
                         <Typography variant="body2" color="text.secondary">
                           {formatTime(item.timestamp)}
                         </Typography>
                       </TableCell>
 
                       {/* Activity Column (Title + Snippet) */}
-                      <TableCell sx={{ minWidth: 0 }}>
+                      <TableCell sx={{ width: 360, maxWidth: 360 }}>
                         <Box sx={{ minWidth: 0 }}>
                           <Typography
                             variant="body2"
@@ -706,8 +710,10 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                               fontWeight: unread ? 600 : 500,
                               fontSize: '14px',
                               overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 1,
+                              WebkitBoxOrient: 'vertical',
+                              overflowWrap: 'anywhere',
                               lineHeight: 1.4,
                             }}
                           >
@@ -720,8 +726,10 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                               fontWeight: 400,
                               fontSize: '13px',
                               overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflowWrap: 'anywhere',
                               lineHeight: 1.35,
                               mt: 0.25,
                             }}
