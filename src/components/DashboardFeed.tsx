@@ -5,7 +5,7 @@
  * Follows the Inbox Standard UI patterns.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -44,7 +44,6 @@ import { DashboardFeedItem } from '../types/dashboardFeed';
 import { openDrawerFromFeedItem, DrawerOpenCallbacks } from '../utils/dashboardFeedDrawer';
 import { useAuth } from '../contexts/AuthContext';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import StandardTablePagination from './StandardTablePagination';
 import InboxSearchBar from './InboxSearchBar';
 import { fetchEmailThreadCached } from '../utils/emailThreadCache';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
@@ -83,12 +82,16 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   onOpenSlackChannelDrawer,
 }) => {
   const { activeTenant, user } = useAuth();
-  const { feedItems, loading, error } = useDashboardFeed({ limit: 100 });
+  // Fetch a generous cap; UI reveals items progressively via infinite scroll.
+  const { feedItems, loading, error } = useDashboardFeed({ limit: 500 });
   const isMobile = useMediaQuery('(max-width:767px)');
   const isTablet = useMediaQuery('(min-width:768px) and (max-width:1199px)');
   
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const LOAD_STEP = 40;
+  const [visibleCount, setVisibleCount] = useState(60);
+  const desktopScrollRef = useRef<HTMLDivElement | null>(null);
+  const desktopSentinelRef = useRef<HTMLDivElement | null>(null);
+  const mobileSentinelRef = useRef<HTMLDivElement | null>(null);
 
   const tenantId = activeTenant?.id || '';
   const userId = user?.uid || '';
@@ -179,10 +182,57 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   }, [feedItems, quickFilter, search, sourceFilter, pinnedOverrides, readOverrides]);
 
   // Paginate feed items (after filter)
-  const paginatedItems = useMemo(() => {
-    const start = page * rowsPerPage;
-    return filteredItems.slice(start, start + rowsPerPage);
-  }, [filteredItems, page, rowsPerPage]);
+  const visibleItems = useMemo(
+    () => filteredItems.slice(0, visibleCount),
+    [filteredItems, visibleCount],
+  );
+
+  // Reset reveal count when filters/search change
+  useEffect(() => {
+    setVisibleCount(60);
+    try {
+      desktopScrollRef.current?.scrollTo({ top: 0 });
+    } catch {}
+  }, [quickFilter, sourceFilter, search]);
+
+  // Desktop infinite scroll sentinel (TableContainer is the scroll root)
+  useEffect(() => {
+    const root = desktopScrollRef.current;
+    const target = desktopSentinelRef.current;
+    if (!root || !target) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (!e?.isIntersecting) return;
+        setVisibleCount((prev) =>
+          prev >= filteredItems.length ? prev : Math.min(filteredItems.length, prev + LOAD_STEP),
+        );
+      },
+      { root, rootMargin: '200px 0px 200px 0px', threshold: 0 },
+    );
+
+    obs.observe(target);
+    return () => obs.disconnect();
+  }, [filteredItems.length]);
+
+  // Mobile infinite scroll sentinel (scrolling inside the Paper content Box)
+  useEffect(() => {
+    const target = mobileSentinelRef.current;
+    if (!target) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (!e?.isIntersecting) return;
+        setVisibleCount((prev) =>
+          prev >= filteredItems.length ? prev : Math.min(filteredItems.length, prev + LOAD_STEP),
+        );
+      },
+      { root: null, rootMargin: '200px 0px 200px 0px', threshold: 0 },
+    );
+    obs.observe(target);
+    return () => obs.disconnect();
+  }, [filteredItems.length]);
 
   // Format relative time
   const formatTime = (timestamp: number): string => {
@@ -299,7 +349,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
           }}
         >
         <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, overflowY: 'auto', pb: 2 }}>
-          {paginatedItems.length === 0 ? (
+          {visibleItems.length === 0 ? (
             <Paper
               elevation={0}
               sx={{
@@ -314,7 +364,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               </Typography>
             </Paper>
           ) : (
-            paginatedItems.map((item) => {
+            visibleItems.map((item) => {
               const sourceMeta = SOURCE_META[item.sourceType];
               const unread = !isRead(item);
               const pinned = isPinned(item.id);
@@ -444,19 +494,8 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               );
             })
           )}
+          <Box ref={mobileSentinelRef} sx={{ height: 1 }} />
         </Box>
-
-        <StandardTablePagination
-          count={filteredItems.length}
-          page={page}
-          onPageChange={(_, newPage) => setPage(newPage)}
-          rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={(e) => {
-            setRowsPerPage(parseInt(e.target.value, 10));
-            setPage(0);
-          }}
-          sx={{ borderTop: 1, borderColor: 'divider' }}
-        />
         </Paper>
       </Box>
     );
@@ -501,7 +540,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                   key={f.key}
                   onClick={() => {
                     setQuickFilter(f.key);
-                    setPage(0);
+                    setVisibleCount(60);
                   }}
                   variant="text"
                   sx={{
@@ -532,7 +571,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               label="Source"
               onChange={(e: SelectChangeEvent<typeof sourceFilter>) => {
                 setSourceFilter(e.target.value as typeof sourceFilter);
-                setPage(0);
+                setVisibleCount(60);
               }}
               renderValue={(selected) => (selected.length === 0 ? 'All Sources' : selected.join(', '))}
               sx={{
@@ -565,11 +604,11 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               value={search}
               onChange={(v) => {
                 setSearch(v);
-                setPage(0);
+                setVisibleCount(60);
               }}
               onSearch={(v) => {
                 setSearch(v);
-                setPage(0);
+                setVisibleCount(60);
               }}
               placeholder="Search feed..."
             />
@@ -577,6 +616,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
         </Box>
 
         <TableContainer
+          ref={desktopScrollRef}
           sx={{
             flex: 1,
             minHeight: 0,
@@ -599,7 +639,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
         >
           <Table stickyHeader={false} size="small" sx={{ width: '100%' }}>
           <TableBody>
-            {paginatedItems.length === 0 ? (
+            {visibleItems.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={isTablet ? 3 : 5} align="center" sx={{ py: 4 }}>
                   <Typography variant="body2" color="text.secondary">
@@ -611,7 +651,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               (() => {
                 const rows: React.ReactNode[] = [];
 
-                paginatedItems.forEach((item) => {
+                visibleItems.forEach((item) => {
                   const sourceMeta = SOURCE_META[item.sourceType];
                   const unread = !isRead(item);
                   const pinned = isPinned(item.id);
@@ -814,22 +854,14 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 return rows;
               })()
             )}
+            <TableRow>
+              <TableCell colSpan={isTablet ? 4 : 6} sx={{ p: 0 }}>
+                <Box ref={desktopSentinelRef} sx={{ height: 1 }} />
+              </TableCell>
+            </TableRow>
           </TableBody>
         </Table>
         </TableContainer>
-
-        {/* Pagination */}
-        <StandardTablePagination
-          count={filteredItems.length}
-          page={page}
-          onPageChange={(_, newPage) => setPage(newPage)}
-          rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={(e) => {
-            setRowsPerPage(parseInt(e.target.value, 10));
-            setPage(0);
-          }}
-          sx={{ borderTop: 1, borderColor: 'divider' }}
-        />
       </Paper>
     </Box>
   );
