@@ -30,6 +30,32 @@ const db = admin.firestore();
 const SLACK_SIGNING_SECRET = defineSecret('SLACK_SIGNING_SECRET');
 const SLACK_BOT_TOKEN = defineSecret('SLACK_BOT_TOKEN');
 
+// Fallback config cache (Firestore) for when Secret Manager isn't configured.
+// This keeps Slack inbound working in single-tenant deployments.
+const slackSecretsCache = new Map<string, { at: number; signingSecret?: string; botToken?: string }>();
+const SLACK_SECRETS_TTL_MS = 5 * 60 * 1000;
+
+async function getSlackSecretsFallback(tenantId: string): Promise<{ signingSecret?: string; botToken?: string }> {
+  const cached = slackSecretsCache.get(tenantId);
+  const now = Date.now();
+  if (cached && now - cached.at < SLACK_SECRETS_TTL_MS) {
+    return { signingSecret: cached.signingSecret, botToken: cached.botToken };
+  }
+
+  try {
+    const snap = await db.collection('tenants').doc(tenantId).collection('integrations').doc('slack').get();
+    const data = snap.data() as any;
+    const signingSecret = typeof data?.signingSecret === 'string' ? data.signingSecret : undefined;
+    const botToken = typeof data?.botToken === 'string' ? data.botToken : undefined;
+    slackSecretsCache.set(tenantId, { at: now, signingSecret, botToken });
+    return { signingSecret, botToken };
+  } catch (err: any) {
+    logger.warn('Failed to load Slack integration secrets from Firestore', { tenantId, error: err?.message });
+    slackSecretsCache.set(tenantId, { at: now });
+    return {};
+  }
+}
+
 interface SlackUrlVerificationPayload {
   token?: string;
   challenge: string;
@@ -70,17 +96,23 @@ function verifySlackRequest({
   rawBody,
   timestamp,
   slackSignature,
+  signingSecretOverride,
 }: {
   rawBody: string;
   timestamp: string | undefined;
   slackSignature: string | undefined;
+  signingSecretOverride?: string;
 }): boolean {
   let signingSecret: string;
+  if (signingSecretOverride) {
+    signingSecret = signingSecretOverride;
+  } else {
   try {
     signingSecret = SLACK_SIGNING_SECRET.value();
   } catch (err) {
     logger.warn('SLACK_SIGNING_SECRET is not accessible. Slack verification will fail.', err);
     return false;
+  }
   }
   
   if (!signingSecret) {
@@ -303,10 +335,18 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     return;
   }
 
-  // Ignore bot messages (including our own) to avoid loops
-  if (event.subtype === 'bot_message') {
-    logger.info('Ignoring bot message', { channel: event.channel, user: event.user });
+  // Ignore our own HRX messages to avoid loops/duplication, but DO allow other apps/bots (e.g. Slack Email app).
+  const metadata = (event as any)?.metadata;
+  if (metadata?.event_type === 'hrx_message') {
+    logger.info('Ignoring HRX-tagged message', { channel: event.channel, eventId: payload.event_id });
     return;
+  }
+  if (event.subtype === 'bot_message') {
+    const botName = ((event as any)?.bot_profile?.name || (event as any)?.username || '').toString().toLowerCase();
+    if (botName.includes('hrx')) {
+      logger.info('Ignoring HRX bot_message', { channel: event.channel, botName, eventId: payload.event_id });
+      return;
+    }
   }
 
   // Skip other subtypes that aren't regular messages
@@ -316,15 +356,12 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     return;
   }
 
-  // Skip if no user (shouldn't happen for regular messages, but be safe)
-  if (!event.user) {
-    logger.warn('Message event missing user', { channel: event.channel, eventId: payload.event_id });
-    return;
-  }
+  // Some app/bot messages may not include event.user; allow them through with a synthetic user id.
+  const slackUserId = event.user || (event as any)?.bot_id || (event as any)?.username || 'unknown';
 
-  // Skip if no text (e.g., file-only messages, app messages)
+  // Skip if no text (e.g., file-only messages)
   if (!event.text || event.text.trim().length === 0) {
-    logger.info('Ignoring message with no text', { channel: event.channel, user: event.user });
+    logger.info('Ignoring message with no text', { channel: event.channel });
     return;
   }
 
@@ -365,7 +402,7 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     teamId: payload.team_id,
     channelId: event.channel || '',
     channelType,
-    slackUserId: event.user,
+    slackUserId,
     text: event.text,
     ts: event.ts || '',
     threadTs: event.thread_ts || undefined,
@@ -736,7 +773,20 @@ export const slackEvents = onRequest(
       const timestamp = req.headers['x-slack-request-timestamp'] as string | undefined;
       const slackSignature = req.headers['x-slack-signature'] as string | undefined;
 
-      if (!verifySlackRequest({ rawBody, timestamp, slackSignature })) {
+      let signingSecretOverride: string | undefined;
+      try {
+        // Prefer Secret Manager
+        signingSecretOverride = SLACK_SIGNING_SECRET.value();
+      } catch {
+        signingSecretOverride = undefined;
+      }
+      if (!signingSecretOverride) {
+        // Fallback to tenant integration config (single-tenant)
+        const fallback = await getSlackSecretsFallback(DEFAULT_TENANT_ID);
+        signingSecretOverride = fallback.signingSecret;
+      }
+
+      if (!verifySlackRequest({ rawBody, timestamp, slackSignature, signingSecretOverride })) {
         logger.warn('Invalid Slack signature. Rejecting request.', {
           hasTimestamp: !!timestamp,
           hasSignature: !!slackSignature,
