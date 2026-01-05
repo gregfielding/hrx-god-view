@@ -16,10 +16,13 @@ import {
   adaptEmailThreadToFeedItem,
   adaptSlackDMToFeedItem,
   adaptSlackChannelToFeedItem,
+  adaptSlackChannelMessageToFeedItem,
   EmailThreadSource,
 } from '../utils/dashboardFeedAdapters';
 import { SlackChannelView } from '../types/slackChannels';
 import { normalizeSecurityLevel } from '../utils/security';
+import { collection, limit as fbLimit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface UseDashboardFeedOptions {
   limit?: number;
@@ -98,6 +101,54 @@ export function useDashboardFeed(
     canAccessSlack ? tenantId : null,
     memberChannelIds,
   );
+
+  // ---------------------------------------------------------------------------
+  // Slack Channel Messages (per-message feed items)
+  // We subscribe to recent slack_messages and filter down to member channels.
+  // ---------------------------------------------------------------------------
+  const [slackChannelMessages, setSlackChannelMessages] = useState<any[]>([]);
+  const [slackMessagesLoading, setSlackMessagesLoading] = useState(true);
+  const [slackMessagesError, setSlackMessagesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canAccessSlack || !tenantId || !userId) {
+      setSlackChannelMessages([]);
+      setSlackMessagesLoading(false);
+      setSlackMessagesError(null);
+      return;
+    }
+
+    setSlackMessagesLoading(true);
+    setSlackMessagesError(null);
+
+    // Fetch a window of recent messages; membership filtering happens client-side.
+    const qy = query(
+      collection(db, 'slack_messages'),
+      where('tenantId', '==', tenantId),
+      orderBy('sentAt', 'desc'),
+      fbLimit(200),
+    );
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        try {
+          const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setSlackChannelMessages(docs);
+          setSlackMessagesLoading(false);
+        } catch (err: any) {
+          setSlackMessagesError(err?.message || 'Failed to load Slack messages');
+          setSlackMessagesLoading(false);
+        }
+      },
+      (err) => {
+        setSlackMessagesError(err?.message || 'Failed to load Slack messages');
+        setSlackMessagesLoading(false);
+      },
+    );
+
+    return () => unsub();
+  }, [canAccessSlack, tenantId, userId]);
 
   // Fetch email threads
   const fetchEmailThreads = useCallback(async () => {
@@ -192,37 +243,36 @@ export function useDashboardFeed(
       });
     }
 
-    // Add Slack channel items (only for channels user is a member of and not muted)
-    // IMPORTANT: Do not gate on slackChannelMembers loading; the canonical membership source is slackChannels.memberIds.
-    if (canAccessSlack) {
-      slackChannels.forEach((channel: SlackChannelView) => {
-        // Only include channels where user is a member and not muted
+    // Add Slack channel message items (per-message feed) — social-feed style.
+    if (canAccessSlack && userId) {
+      const channelNameById = new Map(
+        slackChannels.map((c) => [c.id, c.displayName || c.name || `#${c.id}`]),
+      );
+
+      slackChannelMessages.forEach((m: any) => {
+        const channelId = m.channelId;
+        if (!channelId) return;
+
+        // Filter to channel/group messages only
+        const ct = (m.channelType || '').toString();
+        if (ct === 'im' || ct === 'mpim') return;
+
+        // Membership filter (use both known sources)
         const isMember =
-          (!!userId && Array.isArray(channel.memberIds) && channel.memberIds.includes(userId)) ||
-          !!isMemberByChannel[channel.id];
-        if (!isMember || channel.status === 'muted') {
-          return;
-        }
+          memberChannelIds.includes(channelId) ||
+          !!isMemberByChannel[channelId];
+        if (!isMember) return;
 
-        try {
-          const fallback = slackLastActivityByChannel[channel.id];
-          const enrichedChannel: SlackChannelView = fallback && !channel.lastMessageAt
-            ? {
-                ...channel,
-                lastMessageAt: fallback.lastMessageAt,
-                lastMessageText: fallback.lastMessageText,
-                lastMessageUserName: fallback.lastMessageUserName,
-              }
-            : channel;
-
-          const item = adaptSlackChannelToFeedItem(enrichedChannel, userId || '');
-          // Filter out null items (muted/unlinked channels)
-          if (item) {
-            allItems.push(item);
-          }
-        } catch (err) {
-          console.error('Error adapting Slack channel:', err);
-        }
+        const channelName = channelNameById.get(channelId) || `#${channelId}`;
+        const item = adaptSlackChannelMessageToFeedItem({
+          id: m.id,
+          channelId,
+          channelName,
+          text: m.text || '',
+          userName: m.userName || m.slackUserName || m.username || 'Unknown',
+          sentAt: m.sentAt || null,
+        });
+        if (item) allItems.push(item);
       });
     }
 
@@ -237,6 +287,8 @@ export function useDashboardFeed(
     slackChannels,
     isMemberByChannel,
     slackLastActivityByChannel,
+    slackChannelMessages,
+    memberChannelIds,
     tenantId,
     userId,
     canAccessSlack,
@@ -246,12 +298,14 @@ export function useDashboardFeed(
   // Combined loading state
   const loading = emailLoading || 
                   (canAccessSlack && dmLoading) || 
-                  (canAccessSlack && slackChannelsLoading);
+                  (canAccessSlack && slackChannelsLoading) ||
+                  (canAccessSlack && slackMessagesLoading);
 
   // Combined error state
   const error = emailError || 
                 (canAccessSlack && dmError?.message) || 
                 (canAccessSlack && slackChannelsError?.message) || 
+                (canAccessSlack && slackMessagesError) ||
                 null;
 
   // Refresh function

@@ -176,3 +176,41 @@ export function adaptSlackChannelToFeedItem(
   };
 }
 
+// Slack Channel Message Adapter (per-message feed items)
+export interface SlackChannelMessageSource {
+  id: string; // slack_messages doc id
+  channelId: string;
+  channelName: string; // "#benefits"
+  text: string;
+  userName: string;
+  sentAt: any; // Timestamp | Date | ISO | number
+}
+
+export function adaptSlackChannelMessageToFeedItem(
+  msg: SlackChannelMessageSource
+): DashboardFeedItem | null {
+  const timestamp = toEpochMs(msg.sentAt);
+  if (!timestamp) return null;
+
+  const channelName = msg.channelName?.startsWith('#')
+    ? msg.channelName
+    : `#${msg.channelName || msg.channelId}`;
+
+  return {
+    id: `slack_channel_msg_${msg.id}`,
+    sourceType: 'slack_channel',
+    sourceId: msg.channelId,
+    messageId: msg.id,
+    title: channelName,
+    snippet: msg.text || '',
+    fromLabel: msg.userName || 'Unknown',
+    isUnread: false, // unread not reliably computed for channel messages yet
+    isMuted: false,
+    timestamp,
+    drawerScope: {
+      scopeType: 'slack_channel',
+      channelId: msg.channelId,
+    },
+  };
+}
+
