@@ -603,7 +603,13 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             </Select>
           </FormControl>
 
-          <Box sx={{ flex: 1, minWidth: 240 }}>
+          <Box
+            sx={{
+              ml: 'auto',
+              minWidth: 280,
+              flex: { xs: '1 1 100%', sm: '0 0 360px' },
+            }}
+          >
             <InboxSearchBar
               value={search}
               onChange={(v) => {
