@@ -701,56 +701,75 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
   };
 
   return (
-    <Box>
-      {/* Combined Task List - Show all non-completed tasks for the main dashboard */}
-      {activeTab === 0 && (
-        <TasksList
-          tasks={dashboardData?.mainDashboardTasks || []}
-          emptyStateMessage={`No tasks for this ${entityType}`}
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
-      
-
-      {activeTab === 1 && (
-        <TasksList
-          tasks={(() => {
-            // Combine tasks but ensure uniqueness by ID
-            const thisWeekTasks = dashboardData?.thisWeek?.tasks || [];
-            const completedTasks = dashboardData?.completed?.tasks || [];
-            
-            // Create a Map to ensure unique tasks by ID
-            const uniqueTasksMap = new Map();
-            
-            // Add this week tasks first
-            thisWeekTasks.forEach(task => {
-              uniqueTasksMap.set(task.id, task);
-            });
-            
-            // Add completed tasks (will overwrite if same ID exists)
-            completedTasks.forEach(task => {
-              uniqueTasksMap.set(task.id, task);
-            });
-            
-            return Array.from(uniqueTasksMap.values());
-          })()}
-          emptyStateMessage="No tasks for this period"
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
-      {activeTab === 2 && (
-        <TasksList
-          tasks={dashboardData?.completed?.tasks || []}
-          emptyStateMessage="No completed tasks"
-          preloadedContacts={associatedContacts || preloadedContacts}
-          preloadedSalespeople={preloadedSalespeople}
-          preloadedCompany={associatedCompany || preloadedCompany}
-        />
-      )}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {/* Scroll container for task items (so the widget content scrolls, not the whole page) */}
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          // Lighter/thinner scrollbar to match app standard
+          '&::-webkit-scrollbar': { width: '8px' },
+          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)' },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        {/* Combined Task List - Show all non-completed tasks for the main dashboard */}
+        {activeTab === 0 && (
+          <TasksList
+            tasks={dashboardData?.mainDashboardTasks || []}
+            emptyStateMessage={`No tasks for this ${entityType}`}
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+        
+        {activeTab === 1 && (
+          <TasksList
+            tasks={(() => {
+              // Combine tasks but ensure uniqueness by ID
+              const thisWeekTasks = dashboardData?.thisWeek?.tasks || [];
+              const completedTasks = dashboardData?.completed?.tasks || [];
+              
+              // Create a Map to ensure unique tasks by ID
+              const uniqueTasksMap = new Map();
+              
+              // Add this week tasks first
+              thisWeekTasks.forEach(task => {
+                uniqueTasksMap.set(task.id, task);
+              });
+              
+              // Add completed tasks (will overwrite if same ID exists)
+              completedTasks.forEach(task => {
+                uniqueTasksMap.set(task.id, task);
+              });
+              
+              return Array.from(uniqueTasksMap.values());
+            })()}
+            emptyStateMessage="No tasks for this period"
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+        {activeTab === 2 && (
+          <TasksList
+            tasks={dashboardData?.completed?.tasks || []}
+            emptyStateMessage="No completed tasks"
+            preloadedContacts={associatedContacts || preloadedContacts}
+            preloadedSalespeople={preloadedSalespeople}
+            preloadedCompany={associatedCompany || preloadedCompany}
+          />
+        )}
+      </Box>
 
       {/* Create Task Dialog */}
       {showCreateDialog && (
