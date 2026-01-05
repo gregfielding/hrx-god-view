@@ -22,11 +22,9 @@ import {
   TableBody,
   TableCell,
   TableContainer,
-  TableHead,
   TableRow,
   Typography,
   Avatar,
-  Chip,
   Tooltip,
   CircularProgress,
   Alert,
@@ -464,29 +462,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                         >
                           From: {fromLabel}
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
-                          {unread && (
-                            <Chip
-                              label="Unread"
-                              size="small"
-                              sx={{
-                                height: 22,
-                                fontSize: '0.7rem',
-                                bgcolor: 'rgba(0, 87, 184, 0.12)',
-                                color: '#0057B8',
-                                fontWeight: 700,
-                              }}
-                            />
-                          )}
-                          {pinned && (
-                            <Chip
-                              label="Pinned"
-                              size="small"
-                              variant="outlined"
-                              sx={{ height: 22, fontSize: '0.7rem' }}
-                            />
-                          )}
-                        </Box>
                       </Box>
                     </Box>
                   </Box>
@@ -641,7 +616,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
           <TableBody>
             {visibleItems.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={isTablet ? 3 : 5} align="center" sx={{ py: 4 }}>
+                <TableCell colSpan={isTablet ? 3 : 4} align="center" sx={{ py: 4 }}>
                   <Typography variant="body2" color="text.secondary">
                     No activity to display
                   </Typography>
@@ -807,46 +782,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                         </TableCell>
                       )}
 
-                      {/* Status Column (desktop only) */}
-                      {!isTablet && (
-                        <TableCell sx={{ width: 140, whiteSpace: 'nowrap' }}>
-                          <Box display="flex" alignItems="center" gap={0.75}>
-                            {unread && (
-                              <Chip
-                                label="Unread"
-                                size="small"
-                                sx={{
-                                  height: 22,
-                                  fontSize: '0.7rem',
-                                  bgcolor: 'rgba(0, 87, 184, 0.12)',
-                                  color: '#0057B8',
-                                  fontWeight: 700,
-                                }}
-                              />
-                            )}
-                            {pinned && (
-                              <Chip
-                                label="Pinned"
-                                size="small"
-                                variant="outlined"
-                                sx={{
-                                  height: 22,
-                                  fontSize: '0.7rem',
-                                  borderColor: 'rgba(0,0,0,0.15)',
-                                  color: 'rgba(0,0,0,0.65)',
-                                  fontWeight: 600,
-                                }}
-                              />
-                            )}
-                            {!unread && !pinned && (
-                              <Typography variant="body2" color="text.disabled">
-                                —
-                              </Typography>
-                            )}
-                          </Box>
-                        </TableCell>
-                      )}
-
                     </TableRow>,
                   );
                 });
@@ -855,7 +790,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               })()
             )}
             <TableRow>
-              <TableCell colSpan={isTablet ? 4 : 6} sx={{ p: 0 }}>
+              <TableCell colSpan={isTablet ? 3 : 4} sx={{ p: 0 }}>
                 <Box ref={desktopSentinelRef} sx={{ height: 1 }} />
               </TableCell>
             </TableRow>

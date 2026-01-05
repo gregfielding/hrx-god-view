@@ -61,13 +61,21 @@ export function adaptEmailThreadToFeedItem(
 ): DashboardFeedItem {
   const timestamp = toEpochMs(thread.lastMessageAt);
 
-  // Get primary sender from participant contacts
-  const primaryContact = thread.participantContacts?.[0];
-  const fromLabel = primaryContact?.contactName || 
-                    primaryContact?.userName || 
-                    primaryContact?.email?.split('@')[0] || 
-                    'Unknown';
-  const avatarUrl = primaryContact?.avatarUrl;
+  // "From" (best-effort): prefer enriched participantContacts, fallback to raw participants list.
+  const contacts = thread.participantContacts || [];
+  const bestContact =
+    contacts.find((c) => !!(c.contactName || c.userName || c.email)) || contacts[0];
+
+  const fallbackEmail =
+    bestContact?.email ||
+    (Array.isArray(thread.participants) ? thread.participants.find((p) => !!p) : undefined);
+
+  const fromLabel =
+    bestContact?.contactName ||
+    bestContact?.userName ||
+    (fallbackEmail ? fallbackEmail.split('@')[0] : 'Unknown');
+
+  const avatarUrl = bestContact?.avatarUrl;
 
   return {
     id: `email_${thread.id}`,
