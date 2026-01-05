@@ -272,12 +272,13 @@ export async function generateMenuItems(
         icon: 'extension',
         requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
       },
-      {
-        text: 'Reports',
-        to: '/reports',
-        icon: 'assessment',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin only
-      },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Reports',
+      //   to: '/reports',
+      //   icon: 'assessment',
+      //   requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin only
+      // },
       // {
       //   text: 'Team Access',
       //   to: '/users',
@@ -290,12 +291,13 @@ export async function generateMenuItems(
       //   icon: 'auto_fix_high',
       //   accessRoles: ['tenant_7'], // Admin only
       // },
-      {
-        text: 'Mobile App',
-        to: '/mobile-app',
-        icon: 'phone_iphone',
-        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
-      },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Mobile App',
+      //   to: '/mobile-app',
+      //   icon: 'phone_iphone',
+      //   requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
+      // },
       {
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
