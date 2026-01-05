@@ -191,7 +191,7 @@ const Layout: React.FC = React.memo(function Layout() {
     }
     
     // Settings routes
-    if (pathname.includes('/privacy-settings')) {
+    if (pathname.includes('/settings') || pathname.includes('/privacy-settings')) {
       return 'Settings';
     }
     
