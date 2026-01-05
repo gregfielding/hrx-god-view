@@ -97,8 +97,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   type QuickFilter = 'all' | 'unread' | 'pinned';
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<Array<DashboardFeedItem['sourceType']>>([]);
-  type TimeRange = 'all' | 'today' | 'last7' | 'last30';
-  const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [search, setSearch] = useState('');
 
   // Per-user lightweight UI state (Phase 2): read + pinned
@@ -168,7 +166,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const now = new Date();
 
     return feedItems.filter((item) => {
       if (sourceFilter.length > 0 && !sourceFilter.includes(item.sourceType)) return false;
@@ -176,30 +173,11 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
       if (quickFilter === 'unread' && isRead(item)) return false;
       if (quickFilter === 'pinned' && !isPinned(item.id)) return false;
 
-      if (timeRange === 'today') {
-        const d = new Date(item.timestamp);
-        if (
-          d.getFullYear() !== now.getFullYear() ||
-          d.getMonth() !== now.getMonth() ||
-          d.getDate() !== now.getDate()
-        ) return false;
-      }
-
-      if (timeRange === 'last7') {
-        const diffDays = Math.floor((now.getTime() - item.timestamp) / (24 * 60 * 60 * 1000));
-        if (diffDays >= 7) return false;
-      }
-
-      if (timeRange === 'last30') {
-        const diffDays = Math.floor((now.getTime() - item.timestamp) / (24 * 60 * 60 * 1000));
-        if (diffDays >= 30) return false;
-      }
-
       if (!q) return true;
       const hay = `${item.title} ${item.snippet || ''} ${item.fromLabel || ''}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [feedItems, quickFilter, search, sourceFilter, pinnedOverrides, readOverrides, timeRange]);
+  }, [feedItems, quickFilter, search, sourceFilter, pinnedOverrides, readOverrides]);
 
   // Paginate feed items (after filter)
   const paginatedItems = useMemo(() => {
@@ -595,28 +573,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               );
             })}
           </Box>
-
-          <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel>Time range</InputLabel>
-            <Select
-              value={timeRange}
-              label="Time range"
-              onChange={(e) => {
-                setTimeRange(e.target.value as TimeRange);
-                setPage(0);
-              }}
-              sx={{
-                height: 40,
-                borderRadius: '999px',
-                backgroundColor: 'white',
-              }}
-            >
-              <MenuItem value="all">All time</MenuItem>
-              <MenuItem value="today">Today</MenuItem>
-              <MenuItem value="last7">Last 7 days</MenuItem>
-              <MenuItem value="last30">Last 30 days</MenuItem>
-            </Select>
-          </FormControl>
 
           <FormControl size="small" sx={{ minWidth: 180 }}>
             <InputLabel>Source</InputLabel>
