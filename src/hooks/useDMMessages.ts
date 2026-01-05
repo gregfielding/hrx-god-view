@@ -125,10 +125,12 @@ export function useDMMessages({
           const messagesList: DMMessageView[] = snapshot.docs
             .filter((doc) => {
               const data = doc.data() as DMMessage;
-              return !data.deletedAt; // Only include non-deleted messages
+              // Only include non-deleted messages with valid createdAt (filter out race conditions during send)
+              return !data.deletedAt && data.createdAt != null;
             })
             .map((doc, index, filteredDocs) => {
               const data = doc.data() as DMMessage;
+              // createdAt is guaranteed to be non-null Timestamp due to filter above
               const createdAt = data.createdAt.toDate();
               const editedAt = data.editedAt?.toDate();
               const deletedAt = data.deletedAt?.toDate();

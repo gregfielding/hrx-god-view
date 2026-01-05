@@ -648,7 +648,9 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                         // Hover-prefetch emails so opening the drawer feels instant (stale-while-revalidate cache)
                         if (!tenantId) return;
                         if (item.sourceType !== 'email') return;
-                        void fetchEmailThreadCached({ tenantId, threadId: item.sourceId, limit: 50 });
+                        fetchEmailThreadCached({ tenantId, threadId: item.sourceId, limit: 50 }).catch(() => {
+                          // Silently ignore errors from hover prefetch (non-critical)
+                        });
                       }}
                       tabIndex={0}
                       role="button"

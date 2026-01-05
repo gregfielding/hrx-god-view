@@ -105,13 +105,22 @@ async function fetchEmailThreadNetwork(options: {
 
   const url = `${API_BASE_URL}/getEmailThreadApi?threadId=${encodeURIComponent(threadId)}&tenantId=${encodeURIComponent(tenantId)}&limit=${encodeURIComponent(String(limit))}`;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    const errorText = await response.text();
-    return { success: false, error: `Failed to load email thread: ${response.status} ${response.statusText} ${errorText}` };
-  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Failed to load email thread: ${response.status} ${response.statusText} ${errorText}` };
+    }
 
-  return (await response.json()) as EmailThreadApiResult;
+    return (await response.json()) as EmailThreadApiResult;
+  } catch (error: any) {
+    // Handle network errors (Failed to fetch, CORS, etc.)
+    const errorMessage = error?.message || 'Network error';
+    return { 
+      success: false, 
+      error: `Failed to fetch email thread: ${errorMessage}` 
+    };
+  }
 }
 
 
