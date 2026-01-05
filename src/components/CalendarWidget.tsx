@@ -773,8 +773,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         sx={
           isDashboard
             ? {
-                px: 2,     // 16px side padding (down from 24px target)
-                pt: 2,     // 16px top padding (down from 24px target)
+                px: 1,     // 8px side padding
+                pt: 1,     // 8px top padding
                 pb: 0.75,
                 '& .MuiCardHeader-action': { alignSelf: 'center' },
               }
@@ -784,7 +784,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       <CardContent
         sx={
           isDashboard
-            ? { px: 2, pb: 2, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 16px sides + bottom
+            ? { px: 1, pb: 1, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 8px sides + bottom
             : isPage
               ? { px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }
               : undefined
@@ -960,10 +960,12 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
             sx={{
               border: '1px solid #e0e0e0',
               borderRadius: `${DASHBOARD_WIDGET.innerRadiusPx}px`,
+              flex: 1,
+              minHeight: 0,
               overflow: 'auto',
-              maxHeight: 520,
-              p: isDashboard ? 1.25 : 1,
-              pb: 2, // 16px bottom padding inside scroll area
+              maxHeight: 'none',
+              p: isDashboard ? 1 : 1,
+              pb: 1, // 8px bottom padding inside scroll area
               ...thinLightScrollbarSx,
             }}
           >
@@ -1019,7 +1021,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           </Box>
         ) : (
           /* Today-first view (agenda) */
-          <Box>
+          <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             {!isDashboard && (
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -1041,10 +1043,12 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
               sx={{
                 border: '1px solid #EAEEF4',
                 borderRadius: `${DASHBOARD_WIDGET.innerRadiusPx}px`,
-                p: isDashboard ? 1.5 : 1,
+                flex: 1,
+                minHeight: 0,
+                p: isDashboard ? 1 : 1,
                 overflow: 'auto',
-                maxHeight: 520,
-                pb: 2, // 16px bottom padding inside scroll area
+                maxHeight: 'none',
+                pb: 1, // 8px bottom padding inside scroll area
                 ...thinLightScrollbarSx,
               }}
             >
