@@ -785,6 +785,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
+              padding: '8px',
             }
           : isPage
             ? {

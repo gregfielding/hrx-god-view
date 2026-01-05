@@ -17,20 +17,20 @@ import {
   CircularProgress,
 } from '@mui/material';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
-import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { Tooltip } from '@mui/material';
 import { SlackChannelView } from '../types/slackChannels';
 import { getChannelColor, isRecentlyActive } from '../utils/slackChannelUtils';
 import { MemberPreview } from '../hooks/useSlackChannelMembership';
+import type { SlackChannelLastActivity } from '../hooks/useSlackChannelLastActivityFallback';
 
 interface SlackChannelsMobileListProps {
   channels: SlackChannelView[];
   membersByChannel: Record<string, MemberPreview[]>;
   isMemberByChannel: Record<string, boolean>;
+  lastActivityByChannel?: Record<string, SlackChannelLastActivity>;
   onJoin: (channelId: string) => Promise<void>;
   onLeave: (channelId: string) => Promise<void>;
-  onToggleMute: (id: string) => void;
   onDelete?: (id: string) => void;
   isAdmin?: boolean;
   onRowClick?: (channel: SlackChannelView) => void;
@@ -40,9 +40,9 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
   channels,
   membersByChannel,
   isMemberByChannel,
+  lastActivityByChannel = {},
   onJoin,
   onLeave,
-  onToggleMute,
   onDelete,
   isAdmin = false,
   onRowClick,
@@ -187,7 +187,30 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
             </Box>
 
             {/* Middle: Activity Preview */}
-            {channel.latestActivityLabel && channel.latestActivityLabel !== 'No recent activity' ? (
+            {(() => {
+              const fallback = lastActivityByChannel[channel.id];
+              const label =
+                channel.latestActivityLabel && channel.latestActivityLabel !== 'No recent activity'
+                  ? channel.latestActivityLabel
+                  : fallback?.latestActivityLabel && fallback.latestActivityLabel !== 'No recent activity'
+                    ? fallback.latestActivityLabel
+                    : null;
+              const timeLabel =
+                channel.latestActivityTimeLabel && channel.latestActivityLabel !== 'No recent activity'
+                  ? channel.latestActivityTimeLabel
+                  : fallback?.latestActivityTimeLabel || '';
+
+              if (!label) {
+                return (
+                  <Box mb={1.5}>
+                    <Typography variant="body2" color="text.secondary">
+                      No recent activity
+                    </Typography>
+                  </Box>
+                );
+              }
+
+              return (
               <Box mb={1.5}>
                 <Box display="flex" alignItems="center" gap={0.5} mb={0.5}>
                   {recentlyActive && !isMuted && channel.activityBucket === 'active' && (
@@ -205,9 +228,9 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                       }}
                     />
                   )}
-                  {channel.latestActivityTimeLabel && (
+                  {timeLabel && (
                     <Typography variant="caption" color="text.secondary">
-                      {channel.latestActivityTimeLabel}
+                      {timeLabel}
                     </Typography>
                   )}
                 </Box>
@@ -217,16 +240,11 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                   WebkitBoxOrient: 'vertical',
                   overflow: 'hidden',
                 }}>
-                  {channel.latestActivityLabel}
+                  {label}
                 </Typography>
               </Box>
-            ) : (
-              <Box mb={1.5}>
-                <Typography variant="body2" color="text.secondary">
-                  No recent activity
-                </Typography>
-              </Box>
-            )}
+              );
+            })()}
 
             {/* Bottom: Chips and Footer actions */}
             <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
@@ -278,19 +296,6 @@ const SlackChannelsMobileList: React.FC<SlackChannelsMobileListProps> = ({
                   </Button>
                 )}
 
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleMute(channel.id);
-                  }}
-                >
-                  {channel.isMuted ? (
-                    <VolumeOffIcon fontSize="small" />
-                  ) : (
-                    <NotificationsOutlinedIcon fontSize="small" />
-                  )}
-                </IconButton>
                 {isAdmin && onDelete && (
                   <Tooltip title="Delete channel">
                     <IconButton

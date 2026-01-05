@@ -23,20 +23,20 @@ import {
   CircularProgress,
 } from '@mui/material';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
-import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { SlackChannelView } from '../types/slackChannels';
 import { getChannelColor, isRecentlyActive } from '../utils/slackChannelUtils';
 import StandardTablePagination from './StandardTablePagination';
 import { MemberPreview } from '../hooks/useSlackChannelMembership';
+import type { SlackChannelLastActivity } from '../hooks/useSlackChannelLastActivityFallback';
 
 interface SlackChannelsTableProps {
   channels: SlackChannelView[];
   membersByChannel: Record<string, MemberPreview[]>;
   isMemberByChannel: Record<string, boolean>;
+  lastActivityByChannel?: Record<string, SlackChannelLastActivity>;
   onJoin: (channelId: string) => Promise<void>;
   onLeave: (channelId: string) => Promise<void>;
-  onToggleMute: (id: string) => void;
   onDelete?: (id: string) => void;
   isAdmin?: boolean;
   onRowClick?: (channel: SlackChannelView) => void;
@@ -46,9 +46,9 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
   channels,
   membersByChannel,
   isMemberByChannel,
+  lastActivityByChannel = {},
   onJoin,
   onLeave,
-  onToggleMute,
   onDelete,
   isAdmin = false,
   onRowClick,
@@ -228,7 +228,28 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
 
                 {/* Latest Activity Column */}
                 <TableCell>
-                  {channel.latestActivityLabel && channel.latestActivityLabel !== 'No recent activity' ? (
+                  {(() => {
+                    const fallback = lastActivityByChannel[channel.id];
+                    const label =
+                      channel.latestActivityLabel && channel.latestActivityLabel !== 'No recent activity'
+                        ? channel.latestActivityLabel
+                        : fallback?.latestActivityLabel && fallback.latestActivityLabel !== 'No recent activity'
+                          ? fallback.latestActivityLabel
+                          : null;
+                    const timeLabel =
+                      channel.latestActivityTimeLabel && channel.latestActivityLabel !== 'No recent activity'
+                        ? channel.latestActivityTimeLabel
+                        : fallback?.latestActivityTimeLabel || '';
+
+                    if (!label) {
+                      return (
+                        <Typography variant="body2" color="text.secondary">
+                          No recent activity
+                        </Typography>
+                      );
+                    }
+
+                    return (
                     <Box>
                       <Box display="flex" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
                         {recentlyActive && !isMuted && channel.activityBucket === 'active' && (
@@ -247,20 +268,17 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                           />
                         )}
                         <Typography variant="body2" noWrap sx={{ maxWidth: 400, flex: 1 }}>
-                          {channel.latestActivityLabel}
+                          {label}
                         </Typography>
                       </Box>
-                      {channel.latestActivityTimeLabel && (
+                      {timeLabel && (
                         <Typography variant="caption" color="text.secondary">
-                          {channel.latestActivityTimeLabel}
+                          {timeLabel}
                         </Typography>
                       )}
                     </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">
-                      No recent activity
-                    </Typography>
-                  )}
+                    );
+                  })()}
                 </TableCell>
 
                 {/* Linked To Column */}
@@ -335,23 +353,6 @@ const SlackChannelsTable: React.FC<SlackChannelsTableProps> = ({
                         {isLoadingAction ? <CircularProgress size={16} /> : 'Join'}
                       </Button>
                     )}
-
-                    {/* Mute Button */}
-                    <Tooltip title={channel.isMuted ? 'Unmute' : 'Mute'}>
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onToggleMute(channel.id);
-                        }}
-                      >
-                        {channel.isMuted ? (
-                          <VolumeOffIcon fontSize="small" />
-                        ) : (
-                          <NotificationsOutlinedIcon fontSize="small" />
-                        )}
-                      </IconButton>
-                    </Tooltip>
 
                     {/* Admin Delete Button (only if securityLevel >= 7) */}
                     {isAdmin && onDelete && (

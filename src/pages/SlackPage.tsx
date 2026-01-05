@@ -24,6 +24,7 @@ import PageHeader from '../components/PageHeader';
 import { SlackChannelView } from '../types/slackChannels';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { useSlackChannelLastActivityFallback } from '../hooks/useSlackChannelLastActivityFallback';
 
 const SlackPage: React.FC = () => {
   const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
@@ -70,7 +71,6 @@ const SlackPage: React.FC = () => {
     error,
     filter,
     setFilter,
-    toggleMute,
     deleteChannel,
     refresh,
   } = useSlackChannels(effectiveTenantId);
@@ -82,6 +82,12 @@ const SlackPage: React.FC = () => {
     }
     return channels;
   }, [channels, filter.membershipFilter, isMemberByChannel]);
+
+  // Fallback: for channels missing slackChannels.lastMessage* snapshot fields, use newest stored slack_messages.
+  const lastActivityByChannel = useSlackChannelLastActivityFallback(
+    effectiveTenantId,
+    filteredChannels.map((c) => c.id),
+  );
 
   // Drawer state
   const [selectedChannel, setSelectedChannel] = useState<SlackChannelView | null>(null);
@@ -287,9 +293,9 @@ const SlackPage: React.FC = () => {
             channels={filteredChannels}
             membersByChannel={membersByChannel}
             isMemberByChannel={isMemberByChannel}
+            lastActivityByChannel={lastActivityByChannel}
             onJoin={joinChannel}
             onLeave={leaveChannel}
-            onToggleMute={toggleMute}
             onDelete={deleteChannel}
             isAdmin={isAdmin}
             onRowClick={handleRowClick}
@@ -299,9 +305,9 @@ const SlackPage: React.FC = () => {
             channels={filteredChannels}
             membersByChannel={membersByChannel}
             isMemberByChannel={isMemberByChannel}
+            lastActivityByChannel={lastActivityByChannel}
             onJoin={joinChannel}
             onLeave={leaveChannel}
-            onToggleMute={toggleMute}
             onDelete={deleteChannel}
             isAdmin={isAdmin}
             onRowClick={handleRowClick}
@@ -316,7 +322,6 @@ const SlackPage: React.FC = () => {
         members={selectedChannel ? (membersByChannel[selectedChannel.id] || []) : []}
         onClose={handleDrawerClose}
         onToggleWatch={async () => {}} // No longer used
-        onToggleMute={toggleMute}
       />
     </Box>
   );

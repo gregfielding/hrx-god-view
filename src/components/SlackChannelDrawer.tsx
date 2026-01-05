@@ -21,8 +21,6 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
-import VolumeOffIcon from '@mui/icons-material/VolumeOff';
-import NotificationsOutlinedIcon from '@mui/icons-material/NotificationsOutlined';
 import { useAuth } from '../contexts/AuthContext';
 import { SlackChannelView } from '../types/slackChannels';
 import { useSlackChannelThread } from '../hooks/useSlackChannelThread';
@@ -37,7 +35,6 @@ interface SlackChannelDrawerProps {
   members?: MemberPreview[];
   onClose: () => void;
   onToggleWatch?: (channelId: string) => Promise<void>;
-  onToggleMute?: (channelId: string) => Promise<void>;
 }
 
 const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
@@ -46,7 +43,6 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
   members = [],
   onClose,
   onToggleWatch,
-  onToggleMute,
 }) => {
   const { user, activeTenant } = useAuth();
   const theme = useTheme();
@@ -71,16 +67,6 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
       setSnackbarError(err.message || 'Could not send message to Slack');
     }
   };
-
-  const handleToggleMute = async () => {
-    if (!channel || !onToggleMute) return;
-    try {
-      await onToggleMute(channel.id);
-    } catch (err: any) {
-      setSnackbarError(err.message || 'Failed to update mute status');
-    }
-  };
-
 
   if (!channel) {
     return (
@@ -213,13 +199,6 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
                   ))}
                 </AvatarGroup>
               )}
-              <IconButton size="small" onClick={handleToggleMute}>
-                {channel.isMuted ? (
-                  <VolumeOffIcon fontSize="small" />
-                ) : (
-                  <NotificationsOutlinedIcon fontSize="small" />
-                )}
-              </IconButton>
             </Box>
           </Box>
 
