@@ -110,6 +110,11 @@ export function useDMThreads({
             const lastMessageAt = data.lastMessageAt
               ? data.lastMessageAt.toDate()
               : null;
+            
+            // Defensive defaults: older/newer threads may not have these maps yet
+            const unreadCounts = (data.unreadCounts || {}) as Record<string, number>;
+            const isMutedMap = (data.isMuted || {}) as Record<string, boolean>;
+            const pinnedByMap = (data.pinnedBy || {}) as Record<string, boolean>;
 
             return {
               id: doc.id,
@@ -122,9 +127,9 @@ export function useDMThreads({
               lastMessageText: data.lastMessageText || '',
               lastMessageAt,
               lastMessageTimeLabel: formatTimeLabel(lastMessageAt),
-              unreadCount: data.unreadCounts[currentUserId] || 0,
-              isMuted: data.isMuted[currentUserId] || false,
-              isPinned: data.pinnedBy?.[currentUserId] || false,
+              unreadCount: unreadCounts[currentUserId] || 0,
+              isMuted: isMutedMap[currentUserId] || false,
+              isPinned: pinnedByMap[currentUserId] || false,
               status: data.status,
             };
           })

@@ -15,11 +15,11 @@ import {
   limit,
   addDoc,
   serverTimestamp,
-  runTransaction,
   doc,
   updateDoc,
   getDoc,
   setDoc,
+  increment,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DMMessage, DMMessageView } from '../types/directMessenger';
@@ -359,48 +359,30 @@ export function useDMMessages({
         // Use setDoc with merge to avoid overwriting existing thread fields (unreadCounts, lastMessage*, createdAt, etc.)
         await setDoc(threadRef, ensureThreadData, { merge: true });
 
-        // Create message + update thread atomically
-        console.log('[useDMMessages] Creating message + updating thread (transaction)...');
-        await runTransaction(db, async (tx) => {
-          const threadSnap = await tx.get(threadRef);
-          if (!threadSnap.exists()) {
-            throw new Error('Thread not found');
-          }
+        // Create message (no transaction read). Rules validate sender and membership using the parent thread doc.
+        console.log('[useDMMessages] Creating message (no transaction read)...');
+        await addDoc(messagesRef, {
+          senderId: currentUserId,
+          text: trimmedText,
+          createdAt: serverTimestamp(),
+          type: gifData ? 'gif' : 'message',
+          gifUrl: gifData?.url,
+          stillPreviewUrl: gifData?.stillUrl,
+          gifWidth: gifData?.width,
+          gifHeight: gifData?.height,
+          gifProvider: gifData?.provider,
+        });
 
-          const threadData = threadSnap.data() as any;
-          const participantIds = threadData.participantIds || [];
-          const otherParticipantId =
-            participantIds.find((id: string) => id !== currentUserId) || otherUserId;
-
-          // Create message
-          const messageRef = doc(messagesRef);
-          tx.set(messageRef, {
-            senderId: currentUserId,
-            text: trimmedText,
-            createdAt: serverTimestamp(),
-            type: gifData ? 'gif' : 'message',
-            gifUrl: gifData?.url,
-            stillPreviewUrl: gifData?.stillUrl,
-            gifWidth: gifData?.width,
-            gifHeight: gifData?.height,
-            gifProvider: gifData?.provider,
-          });
-
-          const currentUnreadCounts = threadData.unreadCounts || {};
-          const newUnreadCounts = {
-            ...currentUnreadCounts,
-            [currentUserId]: 0,
-            [otherParticipantId]: (currentUnreadCounts[otherParticipantId] || 0) + 1,
-          };
-
-          const lastMessageText = gifData ? '📎 GIF' : trimmedText;
-          tx.update(threadRef, {
-            lastMessageText,
-            lastMessageAt: serverTimestamp(),
-            lastMessageSenderId: currentUserId,
-            unreadCounts: newUnreadCounts,
-            updatedAt: serverTimestamp(),
-          });
+        // Update thread metadata + unread counts without reading existing values.
+        console.log('[useDMMessages] Updating thread metadata + unread counts (no read)...');
+        const lastMessageText = gifData ? '📎 GIF' : trimmedText;
+        await updateDoc(threadRef, {
+          lastMessageText,
+          lastMessageAt: serverTimestamp(),
+          lastMessageSenderId: currentUserId,
+          updatedAt: serverTimestamp(),
+          [`unreadCounts.${currentUserId}`]: 0,
+          [`unreadCounts.${otherUserId}`]: increment(1),
         });
         
         // Remove optimistic message on success (real message will arrive via snapshot)
@@ -448,28 +430,11 @@ export function useDMMessages({
     try {
       const threadRef = doc(db, 'tenants', tenantId, 'dmThreads', threadId);
 
-      await runTransaction(db, async (tx) => {
-        const threadSnap = await tx.get(threadRef);
-        if (!threadSnap.exists()) {
-          // Thread doesn't exist yet, nothing to mark as read
-          return;
-        }
-
-        const threadData = threadSnap.data();
-        const currentUnreadCounts = threadData.unreadCounts || {};
-
-        // Only update if there are unread messages
-        if (currentUnreadCounts[currentUserId] > 0) {
-          const newUnreadCounts = {
-            ...currentUnreadCounts,
-            [currentUserId]: 0,
-          };
-
-          tx.update(threadRef, {
-            unreadCounts: newUnreadCounts,
-            updatedAt: serverTimestamp(),
-          });
-        }
+      // Use updateDoc with FieldValue to update nested map field
+      // This sets unreadCounts.{currentUserId} to 0 without needing to read the thread first
+      await updateDoc(threadRef, {
+        [`unreadCounts.${currentUserId}`]: 0,
+        updatedAt: serverTimestamp(),
       });
     } catch (err: any) {
       // Silently handle errors - thread might not exist yet, or permission issues
