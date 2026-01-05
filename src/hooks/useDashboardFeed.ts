@@ -64,10 +64,7 @@ export function useDashboardFeed(
     error: slackChannelsError,
   } = useSlackChannels(canAccessSlack ? tenantId : null);
 
-  const {
-    isMemberByChannel,
-    loading: membershipLoading,
-  } = useSlackChannelMembership(tenantId, userId);
+  const { isMemberByChannel } = useSlackChannelMembership(tenantId, userId);
 
   // Fetch email threads
   const fetchEmailThreads = useCallback(async () => {
@@ -162,13 +159,14 @@ export function useDashboardFeed(
       });
     }
 
-    // Add Slack channel items (only for channels user has joined and not muted)
-    if (canAccessSlack && !membershipLoading) {
+    // Add Slack channel items (only for channels user is a member of and not muted)
+    // IMPORTANT: Do not gate on slackChannelMembers loading; the canonical membership source is slackChannels.memberIds.
+    if (canAccessSlack) {
       slackChannels.forEach((channel: SlackChannelView) => {
         // Only include channels where user is a member and not muted
         const isMember =
-          !!isMemberByChannel[channel.id] ||
-          (!!userId && Array.isArray(channel.memberIds) && channel.memberIds.includes(userId));
+          (!!userId && Array.isArray(channel.memberIds) && channel.memberIds.includes(userId)) ||
+          !!isMemberByChannel[channel.id];
         if (!isMember || channel.status === 'muted') {
           return;
         }
@@ -198,15 +196,13 @@ export function useDashboardFeed(
     tenantId,
     userId,
     canAccessSlack,
-    membershipLoading,
     limit,
   ]);
 
   // Combined loading state
   const loading = emailLoading || 
                   (canAccessSlack && dmLoading) || 
-                  (canAccessSlack && slackChannelsLoading) ||
-                  (canAccessSlack && membershipLoading);
+                  (canAccessSlack && slackChannelsLoading);
 
   // Combined error state
   const error = emailError || 

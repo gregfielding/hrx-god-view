@@ -200,13 +200,18 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               // (debug removed)
               
               if (validContactIds.length > 0) {
-                // Try to load from crm_contacts first, then crm_companies as fallback
+                const chunk = <T,>(arr: T[], size: number) =>
+                  Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
                 const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-                const contactsQuery = query(contactsRef, where('__name__', 'in', validContactIds));
-                const contactsSnapshot = await getDocs(contactsQuery);
-                loadedContacts = contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                // (debug removed)
+                const chunks = chunk(validContactIds, 30); // Firestore 'in' supports max 30
+                const all: any[] = [];
+                for (const ids of chunks) {
+                  const contactsQuery = query(contactsRef, where('__name__', 'in', ids));
+                  const contactsSnapshot = await getDocs(contactsQuery);
+                  all.push(...contactsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                }
+                loadedContacts = all;
               }
             } catch (error) {
               console.error('Error loading contacts for tasks:', error);
@@ -228,12 +233,18 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
               // (debug removed)
               
               if (validCompanyIds.length > 0) {
+                const chunk = <T,>(arr: T[], size: number) =>
+                  Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+
                 const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-                const companiesQuery = query(companiesRef, where('__name__', 'in', validCompanyIds));
-                const companiesSnapshot = await getDocs(companiesQuery);
-                loadedCompanies = companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                // (debug removed)
+                const chunks = chunk(validCompanyIds, 30); // Firestore 'in' supports max 30
+                const all: any[] = [];
+                for (const ids of chunks) {
+                  const companiesQuery = query(companiesRef, where('__name__', 'in', ids));
+                  const companiesSnapshot = await getDocs(companiesQuery);
+                  all.push(...companiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                }
+                loadedCompanies = all;
               }
             } catch (error) {
               console.error('Error loading companies for tasks:', error);
