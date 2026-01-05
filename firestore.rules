@@ -452,6 +452,58 @@ service cloud.firestore {
         }
       }
       
+      // --- DM TYPING INDICATORS (Tenants) ---
+      match /dmTyping/{typingId} {
+        // Helper: Check if user is a participant in the thread (for read)
+        function isThreadParticipantForTyping() {
+          let threadId = resource.data.threadId;
+          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
+          return thread != null && 
+                 thread.participantIds != null && 
+                 thread.participantIds is list &&
+                 request.auth.uid in thread.participantIds;
+        }
+        
+        // Helper: Check if user is a participant in the thread (for create)
+        function isThreadParticipantForTypingCreate() {
+          let threadId = request.resource.data.threadId;
+          let thread = get(/databases/$(database)/documents/tenants/$(tenantId)/dmThreads/$(threadId)).data;
+          return thread != null && 
+                 thread.participantIds != null && 
+                 thread.participantIds is list &&
+                 request.auth.uid in thread.participantIds;
+        }
+        
+        // Read: User must be a participant in the thread
+        allow read: if isAuthenticated() && 
+                      isAssignedToTenant(tenantId) && 
+                      isThreadParticipantForTyping();
+        
+        // Create: User must be a participant and can only create their own typing indicator
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isThreadParticipantForTypingCreate() &&
+                         request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.threadId != null;
+        
+        // Update: User can only update their own typing indicator
+        allow update: if isAuthenticated() && 
+                        isAssignedToTenant(tenantId) && 
+                        isThreadParticipantForTyping() &&
+                        resource.data.userId == request.auth.uid &&
+                        request.resource.data.userId == request.auth.uid &&
+                        request.resource.data.threadId == resource.data.threadId;
+        
+        // Delete: User can only delete their own typing indicator
+        allow delete: if isAuthenticated() && 
+                        isAssignedToTenant(tenantId) && 
+                        isThreadParticipantForTyping() &&
+                        resource.data.userId == request.auth.uid;
+        
+        // Allow admins to manage all typing indicators
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
       // --- INTERNAL DMs (Tenants) - for unread count listening ---
       match /internalDMs/{dmId} {
         // Allow authenticated users to read DMs where they are a participant
