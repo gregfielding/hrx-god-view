@@ -12,6 +12,14 @@
     ],
     "rewrites": [
       {
+        "source": "/slack/events",
+        "function": "slackEvents"
+      },
+      {
+        "source": "/slack/events/**",
+        "function": "slackEvents"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
