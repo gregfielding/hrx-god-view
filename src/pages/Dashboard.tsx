@@ -127,9 +127,9 @@ const Dashboard: React.FC = () => {
         title="Dashboard"
         subtitle={
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5, mb: '12px' }}>
-            {(
+              {(
               [
-                { label: 'New Job Order', onClick: () => navigate('/recruiter/job-orders/new'), kind: 'candidates' as const },
+                { label: 'My Job Orders', onClick: () => navigate('/recruiter/my-orders'), kind: 'candidates' as const },
                 { label: 'New Job Post', onClick: () => navigate('/recruiter/jobs-board?new=1'), kind: 'candidates' as const },
                 { label: 'Add Contact', onClick: () => navigate('/crm?tab=contacts'), kind: 'crm' as const },
                 { label: 'Add Company', onClick: () => navigate('/crm?tab=companies'), kind: 'crm' as const },
