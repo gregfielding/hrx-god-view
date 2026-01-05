@@ -266,12 +266,13 @@ export async function generateMenuItems(
       //   icon: 'business_center',
       //   requiredRoles: ['Manager', 'Admin'] as ClaimsRole[], // Manager and Admin only
       // }] : []),
-      {
-        text: 'Modules',
-        to: '/modules',
-        icon: 'extension',
-        requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
-      },
+      // (Temporarily hidden)
+      // {
+      //   text: 'Modules',
+      //   to: '/modules',
+      //   icon: 'extension',
+      //   requiredRoles: ['Admin'] as ClaimsRole[], // Admin only
+      // },
       // (Temporarily hidden)
       // {
       //   text: 'Reports',
