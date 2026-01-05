@@ -865,7 +865,16 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       <CardContent
         sx={
           isDashboard
-            ? { px: 2, pb: 2, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 16px sides + bottom
+            ? {
+                px: 2,
+                pb: 2,
+                pt: 0,
+                flex: 1,
+                minHeight: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              } // 16px sides + bottom
             : isPage
               ? { px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }
               : undefined
@@ -902,10 +911,12 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         </Box>
 
         {/* Calendar Content */}
+        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {view === 'month' ? (
           /* Month View */
           <Box sx={{ 
             display: 'grid', 
+            overflow: 'auto',
             gridTemplateColumns: 'repeat(7, 1fr)', 
             gap: 0,
             width: '100%',
@@ -986,7 +997,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
                   gap: 0.5,
                   width: '100%',
                   minWidth: 0,
-                  overflow: 'hidden'
+                  overflow: 'auto'
                 }}>
                   {dayEvents.slice(0, 2).map((event) => (
                     <Tooltip title={event.title} placement="top" key={event.id}>
@@ -1005,7 +1016,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
                         borderRadius: 1,
                         fontSize: '0.75rem',
                         cursor: 'pointer',
-                        overflow: 'hidden',
+                        overflow: 'auto',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
                         '&:hover': {
@@ -1082,6 +1093,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
                             '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' },
                             display: 'flex',
                             alignItems: 'center',
+                            overflow: 'auto',
                             gap: 1,
                           }}
                         >
@@ -1199,6 +1211,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
             </Box>
           </Box>
         )}
+        </Box>
 
         {/* Event Details Drawer (drawer-first) */}
         <Drawer
