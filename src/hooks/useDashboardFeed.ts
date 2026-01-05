@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useDMThreads } from './useDMThreads';
 import { useSlackChannels } from './useSlackChannels';
 import { useSlackChannelMembership } from './useSlackChannelMembership';
+import { useSlackChannelLastActivityFallback } from './useSlackChannelLastActivityFallback';
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import {
   adaptEmailThreadToFeedItem,
@@ -77,6 +78,26 @@ export function useDashboardFeed(
   } = useSlackChannels(canAccessSlack ? tenantId : null);
 
   const { isMemberByChannel } = useSlackChannelMembership(tenantId, userId);
+
+  // Fallback: for channels missing slackChannels.lastMessage* snapshot fields, query newest stored slack_messages.
+  // This makes the unified feed ordering truly chronological even when slackChannels docs are stale.
+  const memberChannelIds = useMemo(() => {
+    if (!canAccessSlack) return [];
+    if (!userId) return [];
+    return (slackChannels || [])
+      .filter((c: SlackChannelView) => {
+        const isMember =
+          (Array.isArray(c.memberIds) && c.memberIds.includes(userId)) ||
+          !!isMemberByChannel[c.id];
+        return isMember && c.status !== 'muted';
+      })
+      .map((c) => c.id);
+  }, [canAccessSlack, userId, slackChannels, isMemberByChannel]);
+
+  const slackLastActivityByChannel = useSlackChannelLastActivityFallback(
+    canAccessSlack ? tenantId : null,
+    memberChannelIds,
+  );
 
   // Fetch email threads
   const fetchEmailThreads = useCallback(async () => {
@@ -184,7 +205,17 @@ export function useDashboardFeed(
         }
 
         try {
-          const item = adaptSlackChannelToFeedItem(channel, userId || '');
+          const fallback = slackLastActivityByChannel[channel.id];
+          const enrichedChannel: SlackChannelView = fallback && !channel.lastMessageAt
+            ? {
+                ...channel,
+                lastMessageAt: fallback.lastMessageAt,
+                lastMessageText: fallback.lastMessageText,
+                lastMessageUserName: fallback.lastMessageUserName,
+              }
+            : channel;
+
+          const item = adaptSlackChannelToFeedItem(enrichedChannel, userId || '');
           // Filter out null items (muted/unlinked channels)
           if (item) {
             allItems.push(item);
@@ -205,6 +236,7 @@ export function useDashboardFeed(
     dmThreads,
     slackChannels,
     isMemberByChannel,
+    slackLastActivityByChannel,
     tenantId,
     userId,
     canAccessSlack,

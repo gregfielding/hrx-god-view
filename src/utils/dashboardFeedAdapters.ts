@@ -30,7 +30,7 @@ export function adaptEmailThreadToFeedItem(
     ? thread.lastMessageAt.toDate().getTime()
     : thread.lastMessageAt instanceof Date
     ? thread.lastMessageAt.getTime()
-    : Date.now();
+    : 0;
 
   // Get primary sender from participant contacts
   const primaryContact = thread.participantContacts?.[0];
@@ -76,7 +76,7 @@ export interface SlackDMThreadSource {
 export function adaptSlackDMToFeedItem(
   thread: SlackDMThreadSource
 ): DashboardFeedItem {
-  const timestamp = thread.lastMessageAt?.getTime() || Date.now();
+  const timestamp = thread.lastMessageAt?.getTime() || 0;
 
   return {
     id: `slack_dm_${thread.id}`,
@@ -113,13 +113,14 @@ export function adaptSlackChannelToFeedItem(
   channel: SlackChannelSource,
   userId: string
 ): DashboardFeedItem | null {
-  const timestamp = channel.lastMessageAt?.getTime() || Date.now();
+  const timestamp = channel.lastMessageAt?.getTime() || 0;
   const isMuted = channel.status === 'muted';
   
   // Dashboard feed inclusion rule: member + not muted.
   // Channel.status is not a reliable per-user membership indicator (often "unlinked" by default),
   // so we only exclude muted here. Membership filtering happens in the hook.
   if (isMuted) return null;
+  if (!timestamp) return null;
 
   const channelName = channel.name.startsWith('#') 
     ? channel.name 
