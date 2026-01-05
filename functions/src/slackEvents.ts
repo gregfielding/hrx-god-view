@@ -172,6 +172,9 @@ interface SlackMessageDoc {
   channelType: 'im' | 'channel' | 'group' | 'mpim';
   slackUserId: string;
   hrxUserId?: string; // Phase 3.2: Optional HRX user mapping
+  userName?: string; // Display name (Slack or HRX)
+  direction?: 'inbound' | 'outbound';
+  sentAt?: admin.firestore.Timestamp; // Canonical timestamp used by clients (required for orderBy queries)
   text: string;
   ts: string;
   threadTs?: string;
@@ -395,6 +398,13 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
   // const tenantId = dynamicTenantId || DEFAULT_TENANT_ID;
 
   // Create normalized message document (Phase 2)
+  const tsRaw = event.ts || '';
+  const tsMs = (() => {
+    const n = Number.parseFloat(tsRaw);
+    return Number.isFinite(n) ? Math.floor(n * 1000) : null;
+  })();
+  const sentAt = tsMs ? admin.firestore.Timestamp.fromMillis(tsMs) : null;
+
   const messageDoc: SlackMessageDoc = {
     source: 'slack',
     tenantId, // Required - always set to default for now
@@ -403,8 +413,10 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     channelId: event.channel || '',
     channelType,
     slackUserId,
+    direction: 'inbound',
+    sentAt: sentAt || (admin.firestore.FieldValue.serverTimestamp() as admin.firestore.Timestamp),
     text: event.text,
-    ts: event.ts || '',
+    ts: tsRaw,
     threadTs: event.thread_ts || undefined,
     isThreadReply,
     raw: payload, // Full payload for debugging (can trim later)
@@ -451,6 +463,10 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     
     if (hrxUserId) {
       messageDoc.hrxUserId = hrxUserId;
+    }
+    // Best-effort display name for UI
+    if (slackDisplayName) {
+      messageDoc.userName = slackDisplayName;
     }
   } catch (error: any) {
     logger.error(`Error mapping Slack user ${event.user} to HRX user:`, error);
