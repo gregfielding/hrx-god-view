@@ -184,37 +184,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
     return filteredItems.slice(start, start + rowsPerPage);
   }, [filteredItems, page, rowsPerPage]);
 
-  const getTimeBucket = (timestamp: number): 'Now' | 'Earlier Today' | 'Yesterday' | 'This Week' | 'Older' => {
-    if (!timestamp || timestamp <= 0) return 'Older';
-    const now = new Date();
-    const d = new Date(timestamp);
-
-    const sameDay =
-      now.getFullYear() === d.getFullYear() &&
-      now.getMonth() === d.getMonth() &&
-      now.getDate() === d.getDate();
-
-    if (sameDay) {
-      const diffMs = now.getTime() - d.getTime();
-      const diffMinutes = Math.floor(diffMs / (60 * 1000));
-      return diffMinutes <= 60 ? 'Now' : 'Earlier Today';
-    }
-
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    const isYesterday =
-      yesterday.getFullYear() === d.getFullYear() &&
-      yesterday.getMonth() === d.getMonth() &&
-      yesterday.getDate() === d.getDate();
-
-    if (isYesterday) return 'Yesterday';
-
-    const diffDays = Math.floor((now.getTime() - d.getTime()) / (24 * 60 * 60 * 1000));
-    if (diffDays < 7) return 'This Week';
-
-    return 'Older';
-  };
-
   // Format relative time
   const formatTime = (timestamp: number): string => {
     if (!timestamp || timestamp <= 0) return '—';
@@ -315,7 +284,6 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
   if (isMobile) {
     // Mobile: stacked card list (calm + readable; actions always visible)
-    let lastBucket: string | null = null;
     return (
       <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <Paper
@@ -346,28 +314,13 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               </Typography>
             </Paper>
           ) : (
-            paginatedItems.flatMap((item) => {
-              const bucket = getTimeBucket(item.timestamp);
-              const parts: React.ReactNode[] = [];
-              if (bucket !== lastBucket) {
-                parts.push(
-                  <Typography
-                    key={`bucket-${bucket}-${item.id}`}
-                    variant="caption"
-                    sx={{ fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B7280', mt: lastBucket ? 1 : 0 }}
-                  >
-                    {bucket}
-                  </Typography>,
-                );
-                lastBucket = bucket;
-              }
-
+            paginatedItems.map((item) => {
               const sourceMeta = SOURCE_META[item.sourceType];
               const unread = !isRead(item);
               const pinned = isPinned(item.id);
               const fromLabel = item.fromLabel || 'Unknown';
 
-              parts.push(
+              return (
                 <Paper
                   key={item.id}
                   elevation={0}
@@ -487,10 +440,8 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                       </Box>
                     </Box>
                   </Box>
-                </Paper>,
+                </Paper>
               );
-
-              return parts;
             })
           )}
         </Box>
@@ -659,34 +610,8 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             ) : (
               (() => {
                 const rows: React.ReactNode[] = [];
-                let lastBucket: string | null = null;
 
                 paginatedItems.forEach((item) => {
-                  const bucket = getTimeBucket(item.timestamp);
-                  if (bucket !== lastBucket) {
-                    rows.push(
-                      <TableRow key={`bucket-${bucket}-${item.id}`} hover={false}>
-                        <TableCell
-                          colSpan={isTablet ? 3 : 5}
-                          sx={{
-                            bgcolor: '#F9FAFB',
-                            borderTop: '1px solid #EAEEF4',
-                            borderBottom: '1px solid #EAEEF4',
-                            py: 0.75,
-                          }}
-                        >
-                          <Typography
-                            variant="caption"
-                            sx={{ fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#6B7280' }}
-                          >
-                            {bucket}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>,
-                    );
-                    lastBucket = bucket;
-                  }
-
                   const sourceMeta = SOURCE_META[item.sourceType];
                   const unread = !isRead(item);
                   const pinned = isPinned(item.id);
