@@ -1,6 +1,8 @@
 import React from 'react';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip } from '@mui/material';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Typography, Box, TableSortLabel, Chip, Avatar } from '@mui/material';
 import StandardTablePagination from '../components/StandardTablePagination';
+import PersonIcon from '@mui/icons-material/Person';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 export interface WorkersTableProps {
   contacts: any[];
@@ -274,6 +276,26 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
     );
   }
 
+  const getInitials = (firstName?: string, lastName?: string) => {
+    const f = (firstName || '').trim();
+    const l = (lastName || '').trim();
+    const first = f ? f[0] : '';
+    const last = l ? l[0] : '';
+    const initials = `${first}${last}`.toUpperCase();
+    return initials || '?';
+  };
+
+  const getAvatarSrc = (contact: any): string | undefined => {
+    return (
+      contact.avatar ||
+      contact.avatarUrl ||
+      contact.photoURL ||
+      contact.photoUrl ||
+      contact.photo ||
+      undefined
+    );
+  };
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', px: 2 }}>
       <TableContainer 
@@ -317,6 +339,8 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
           backgroundColor: 'background.paper',
         }}>
           <TableRow sx={{ backgroundColor: 'background.paper' }}>
+            {/* Avatar (no label) */}
+            <TableCell sx={{ width: 56, minWidth: 56, maxWidth: 56, bgcolor: '#FFFFFF' }} />
             {/* First Name */}
             <TableCell 
               sortDirection={orderBy === 'firstName' ? order : false}
@@ -432,6 +456,19 @@ const WorkersTable: React.FC<WorkersTableProps> = ({
         <TableBody>
           {paginatedContacts.map((contact) => (
             <TableRow key={contact.id} hover onClick={() => navigateToUser(contact.id)} sx={{ cursor: 'pointer' }}>
+              {/* Avatar */}
+              <TableCell sx={{ width: 56, minWidth: 56, maxWidth: 56 }}>
+                <Avatar
+                  src={getAvatarSrc(contact)}
+                  sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE, fontSize: '0.75rem' }}
+                >
+                  {getAvatarSrc(contact) ? null : (
+                    (contact.firstName || contact.lastName)
+                      ? getInitials(contact.firstName, contact.lastName)
+                      : <PersonIcon sx={{ fontSize: 18 }} />
+                  )}
+                </Avatar>
+              </TableCell>
               {/* First Name */}
               <TableCell>
                 {contact.firstName}
