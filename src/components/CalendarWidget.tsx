@@ -854,8 +854,8 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
         sx={
           isDashboard
             ? {
-                px: 1,     // 8px side padding
-                pt: 1,     // 8px top padding
+                px: 2,     // 16px side padding
+                pt: 2,     // 16px top padding
                 pb: 0.75,
                 '& .MuiCardHeader-action': { alignSelf: 'center' },
               }
@@ -865,7 +865,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       <CardContent
         sx={
           isDashboard
-            ? { px: 1, pb: 1, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 8px sides + bottom
+            ? { px: 2, pb: 2, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' } // 16px sides + bottom
             : isPage
               ? { px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }
               : undefined
