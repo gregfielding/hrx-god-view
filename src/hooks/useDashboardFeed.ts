@@ -36,9 +36,21 @@ export function useDashboardFeed(
   options: UseDashboardFeedOptions = {}
 ): UseDashboardFeedReturn {
   const { limit = 100, refreshInterval = 60000 } = options;
-  const { user, activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
+  const {
+    user,
+    activeTenant,
+    tenantId: primaryTenantId,
+    securityLevel,
+    currentClaimsSecurityLevel,
+  } = useAuth();
   
-  const tenantId = activeTenant?.id || (user as any)?.activeTenantId || '';
+  // Prefer activeTenant.id, but fall back to AuthContext.tenantId (back-compat) before reaching into userAny.
+  const tenantId =
+    activeTenant?.id ||
+    primaryTenantId ||
+    (user as any)?.activeTenantId ||
+    (user as any)?.tenantId ||
+    '';
   const userId = user?.uid || null;
   const canAccessSlack = normalizeSecurityLevel(currentClaimsSecurityLevel || securityLevel) >= 5;
 
