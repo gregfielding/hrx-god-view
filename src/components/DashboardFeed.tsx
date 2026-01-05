@@ -682,24 +682,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
           }}
         >
-          <Table stickyHeader size="small" sx={{ width: '100%' }}>
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', width: 64, minWidth: 64, maxWidth: 64, textAlign: 'center' }}>
-                Source
-              </TableCell>
-              <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Activity</TableCell>
-              {!isTablet && (
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>From</TableCell>
-              )}
-              {!isTablet && (
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF' }}>Status</TableCell>
-              )}
-              <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textAlign: 'right', width: 140, whiteSpace: 'nowrap' }}>
-                Time
-              </TableCell>
-            </TableRow>
-          </TableHead>
+          <Table stickyHeader={false} size="small" sx={{ width: '100%' }}>
           <TableBody>
             {paginatedItems.length === 0 ? (
               <TableRow>
