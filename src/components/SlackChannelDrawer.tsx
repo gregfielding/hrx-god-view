@@ -211,7 +211,7 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
 
           {/* Messages list */}
           <Box sx={{ flex: 1, overflow: 'auto', bgcolor: 'grey.50' }}>
-            <SlackMessageList messages={messages} loading={loading} />
+            <SlackMessageList messages={messages} loading={loading} channelId={channel.slackChannelId} />
           </Box>
 
           {/* Composer */}

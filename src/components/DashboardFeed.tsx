@@ -6,6 +6,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -29,14 +30,20 @@ import {
   CircularProgress,
   Alert,
   useMediaQuery,
+  Chip,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import EmailIcon from '@mui/icons-material/Email';
 import MessageIcon from '@mui/icons-material/Message';
 import TagIcon from '@mui/icons-material/Tag';
+import EventIcon from '@mui/icons-material/Event';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import PersonIcon from '@mui/icons-material/Person';
+import VideocamIcon from '@mui/icons-material/Videocam';
+import CrownIcon from '@mui/icons-material/Star';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import BusinessIcon from '@mui/icons-material/Business';
 import { useDashboardFeed } from '../hooks/useDashboardFeed';
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import { openDrawerFromFeedItem, DrawerOpenCallbacks } from '../utils/dashboardFeedDrawer';
@@ -66,6 +73,11 @@ const SOURCE_META: Record<
     label: 'Slack Channel',
     color: '#6f42c1',
   },
+  calendar: {
+    icon: <EventIcon fontSize="small" />,
+    label: 'Calendar',
+    color: '#1976d2',
+  },
 };
 
 interface DashboardFeedProps {
@@ -79,6 +91,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   onOpenSlackDMDrawer,
   onOpenSlackChannelDrawer,
 }) => {
+  const navigate = useNavigate();
   const { activeTenant, user } = useAuth();
   // Fetch a generous cap; UI reveals items progressively via infinite scroll.
   const { feedItems, loading, error } = useDashboardFeed({ limit: 500 });
@@ -274,6 +287,21 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   const handleRowClick = (item: DashboardFeedItem) => {
     // Phase 2: opening marks as read (per-user UI state for now)
     markAsRead(item);
+    
+    // Calendar items navigate to /calendar page
+    if (item.sourceType === 'calendar' && item.drawerScope.scopeType === 'calendar') {
+      const { eventId, dateKey } = item.drawerScope;
+      if (eventId && dateKey) {
+        navigate(`/calendar?date=${dateKey}&eventId=${eventId}`);
+      } else if (dateKey) {
+        navigate(`/calendar?date=${dateKey}`);
+      } else {
+        navigate('/calendar');
+      }
+      return;
+    }
+    
+    // Other items open drawers
     const callbacks: DrawerOpenCallbacks = {
       openEmailDrawer: onOpenEmailDrawer,
       openSlackDMDrawer: onOpenSlackDMDrawer,
@@ -401,20 +429,99 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
 
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
-                        <Typography
-                          variant="body1"
-                          sx={{
-                            fontSize: '15px',
-                            fontWeight: unread ? 600 : 500,
-                            lineHeight: 1.4,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            minWidth: 0,
-                          }}
-                        >
-                          {item.title}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                          <Typography
+                            variant="body1"
+                            sx={{
+                              fontSize: '15px',
+                              fontWeight: unread ? 600 : 500,
+                              lineHeight: 1.4,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              minWidth: 0,
+                            }}
+                          >
+                            {item.title}
+                          </Typography>
+                          {item.sourceType === 'calendar' && item.eventOwnership && (
+                            <Tooltip
+                              title={
+                                item.eventOwnership === 'owned'
+                                  ? 'You own this event'
+                                  : item.eventOwnership === 'invited'
+                                  ? 'You are invited'
+                                  : 'External organization'
+                              }
+                            >
+                              {item.eventOwnership === 'owned' ? (
+                                <CrownIcon
+                                  fontSize="small"
+                                  sx={{ ml: 0.5, color: 'warning.main', fontSize: '16px', flexShrink: 0 }}
+                                />
+                              ) : item.eventOwnership === 'invited' ? (
+                                <PersonAddIcon
+                                  fontSize="small"
+                                  sx={{ ml: 0.5, color: 'primary.main', fontSize: '16px', flexShrink: 0 }}
+                                />
+                              ) : (
+                                <BusinessIcon
+                                  fontSize="small"
+                                  sx={{ ml: 0.5, color: 'text.secondary', fontSize: '16px', flexShrink: 0 }}
+                                />
+                              )}
+                            </Tooltip>
+                          )}
+                          {item.sourceType === 'calendar' && item.rsvpStatus && (
+                            <Tooltip
+                              title={
+                                item.rsvpStatus === 'accepted'
+                                  ? 'Accepted'
+                                  : item.rsvpStatus === 'tentative'
+                                  ? 'Maybe'
+                                  : item.rsvpStatus === 'declined'
+                                  ? 'Declined'
+                                  : 'No response'
+                              }
+                            >
+                              <Box
+                                component="span"
+                                sx={{
+                                  ml: 0.5,
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: '50%',
+                                  display: 'inline-block',
+                                  bgcolor:
+                                    item.rsvpStatus === 'accepted'
+                                      ? 'success.main'
+                                      : item.rsvpStatus === 'tentative'
+                                      ? 'warning.main'
+                                      : item.rsvpStatus === 'declined'
+                                      ? 'error.main'
+                                      : 'text.disabled',
+                                  border: item.rsvpStatus === 'needsAction' ? '1px solid' : 'none',
+                                  borderColor: 'text.disabled',
+                                  flexShrink: 0,
+                                }}
+                              />
+                            </Tooltip>
+                          )}
+                          {item.sourceType === 'calendar' && item.hangoutLink && (
+                            <Tooltip title="Google Meet">
+                              <VideocamIcon fontSize="small" sx={{ color: 'text.secondary', fontSize: '16px', flexShrink: 0 }} />
+                            </Tooltip>
+                          )}
+                          {item.sourceType === 'calendar' && item.eventStatus && item.eventStatus !== 'confirmed' && (
+                            <Chip
+                              size="small"
+                              label={item.eventStatus === 'tentative' ? 'Tentative' : item.eventStatus === 'cancelled' ? 'Cancelled' : item.eventStatus}
+                              color={item.eventStatus === 'cancelled' ? 'error' : 'warning'}
+                              variant="outlined"
+                              sx={{ height: 20, fontSize: '0.7rem', flexShrink: 0, ml: 0.5 }}
+                            />
+                          )}
+                        </Box>
 
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, flexShrink: 0 }}>
                           <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5, whiteSpace: 'nowrap' }}>
@@ -559,6 +666,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 { value: 'email', label: 'Email' },
                 { value: 'slack_dm', label: 'DMs' },
                 { value: 'slack_channel', label: 'Slack Channels' },
+                { value: 'calendar', label: 'Calendar' },
               ] as Array<{ value: DashboardFeedItem['sourceType']; label: string }>).map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>
                   <Checkbox checked={sourceFilter.indexOf(opt.value) > -1} />
@@ -706,21 +814,98 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                       {/* Activity Column (Title + Snippet) */}
                       <TableCell sx={{ width: 600, maxWidth: 600 }}>
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: unread ? 600 : 500,
-                              fontSize: '14px',
-                              overflow: 'hidden',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 1,
-                              WebkitBoxOrient: 'vertical',
-                              overflowWrap: 'anywhere',
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            {item.title}
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontWeight: unread ? 600 : 500,
+                                fontSize: '14px',
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 1,
+                                WebkitBoxOrient: 'vertical',
+                                overflowWrap: 'anywhere',
+                                lineHeight: 1.4,
+                              }}
+                            >
+                              {item.title}
+                            </Typography>
+                            {item.sourceType === 'calendar' && item.eventOwnership && (
+                              <Tooltip
+                                title={
+                                  item.eventOwnership === 'owned'
+                                    ? 'You own this event'
+                                    : item.eventOwnership === 'invited'
+                                    ? 'You are invited'
+                                    : 'External organization'
+                                }
+                              >
+                                {item.eventOwnership === 'owned' ? (
+                                  <CrownIcon
+                                    fontSize="small"
+                                    sx={{ color: 'warning.main', fontSize: '14px' }}
+                                  />
+                                ) : item.eventOwnership === 'invited' ? (
+                                  <PersonAddIcon
+                                    fontSize="small"
+                                    sx={{ color: 'primary.main', fontSize: '14px' }}
+                                  />
+                                ) : (
+                                  <BusinessIcon
+                                    fontSize="small"
+                                    sx={{ color: 'text.secondary', fontSize: '14px' }}
+                                  />
+                                )}
+                              </Tooltip>
+                            )}
+                            {item.sourceType === 'calendar' && item.rsvpStatus && (
+                              <Tooltip
+                                title={
+                                  item.rsvpStatus === 'accepted'
+                                    ? 'Accepted'
+                                    : item.rsvpStatus === 'tentative'
+                                    ? 'Maybe'
+                                    : item.rsvpStatus === 'declined'
+                                    ? 'Declined'
+                                    : 'No response'
+                                }
+                              >
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    width: 6,
+                                    height: 6,
+                                    borderRadius: '50%',
+                                    display: 'inline-block',
+                                    bgcolor:
+                                      item.rsvpStatus === 'accepted'
+                                        ? 'success.main'
+                                        : item.rsvpStatus === 'tentative'
+                                        ? 'warning.main'
+                                        : item.rsvpStatus === 'declined'
+                                        ? 'error.main'
+                                        : 'text.disabled',
+                                    border: item.rsvpStatus === 'needsAction' ? '1px solid' : 'none',
+                                    borderColor: 'text.disabled',
+                                  }}
+                                />
+                              </Tooltip>
+                            )}
+                            {item.sourceType === 'calendar' && item.hangoutLink && (
+                              <Tooltip title="Google Meet">
+                                <VideocamIcon fontSize="small" sx={{ color: 'text.secondary', fontSize: '14px' }} />
+                              </Tooltip>
+                            )}
+                            {item.sourceType === 'calendar' && item.eventStatus && item.eventStatus !== 'confirmed' && (
+                              <Chip
+                                size="small"
+                                label={item.eventStatus === 'tentative' ? 'Tentative' : item.eventStatus === 'cancelled' ? 'Cancelled' : item.eventStatus}
+                                color={item.eventStatus === 'cancelled' ? 'error' : 'warning'}
+                                variant="outlined"
+                                sx={{ height: 18, fontSize: '0.65rem' }}
+                              />
+                            )}
+                          </Box>
                           <Typography
                             variant="body2"
                             color="text.secondary"

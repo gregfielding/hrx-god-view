@@ -5,6 +5,8 @@
  */
 
 import { DashboardFeedItem } from '../types/dashboardFeed';
+import { CalendarEvent, CalendarSummary } from '../types/calendar';
+import { format, isToday, isTomorrow, isSameDay, addDays } from 'date-fns';
 
 function toEpochMs(value: any): number {
   if (!value) return 0;
@@ -218,6 +220,157 @@ export function adaptSlackChannelMessageToFeedItem(
     drawerScope: {
       scopeType: 'slack_channel',
       channelId: msg.channelId,
+    },
+  };
+}
+
+// Calendar Event Adapter
+export interface CalendarEventSource {
+  event: CalendarEvent;
+  calendar: CalendarSummary;
+}
+
+export function adaptCalendarEventToFeedItem(
+  source: CalendarEventSource,
+  userEmail?: string | null
+): DashboardFeedItem {
+  const { event, calendar } = source;
+  
+  // Parse start date to get timestamp and dateKey
+  const startDate = event.start.dateTime 
+    ? new Date(event.start.dateTime)
+    : (event.start.date ? new Date(event.start.date + 'T00:00:00') : new Date());
+  const timestamp = startDate.getTime();
+  
+  // Generate dateKey (YYYY-MM-DD) for navigation
+  const dateKey = event.start.date 
+    ? event.start.date
+    : startDate.toISOString().split('T')[0];
+  
+  // Format snippet with date + time range
+  // Format: "Today · 3:00–3:30 PM" or "Tomorrow · All day" or "Mon Jan 12 · 9:00–10:00 AM"
+  let dateLabel = '';
+  const now = new Date();
+  const today = startDate;
+  
+  if (isToday(today)) {
+    dateLabel = 'Today';
+  } else if (isTomorrow(today)) {
+    dateLabel = 'Tomorrow';
+  } else {
+    dateLabel = format(today, 'EEE MMM d');
+  }
+  
+  let timeLabel = '';
+  if (event.isAllDay) {
+    timeLabel = 'All day';
+  } else if (event.start.dateTime && event.end.dateTime) {
+    const start = new Date(event.start.dateTime);
+    const end = new Date(event.end.dateTime);
+    const startTime = format(start, 'h:mm a');
+    const endTime = format(end, 'h:mm a');
+    timeLabel = `${startTime}–${endTime}`;
+  }
+  
+  // Extract recurrence pattern from RRULE if available
+  let recurrenceLabel = '';
+  if (event.recurrence && event.recurrence.length > 0) {
+    const rrule = event.recurrence[0]; // Usually just one RRULE
+    if (rrule.includes('FREQ=DAILY')) {
+      recurrenceLabel = 'repeats daily';
+    } else if (rrule.includes('FREQ=WEEKLY')) {
+      recurrenceLabel = 'repeats weekly';
+    } else if (rrule.includes('FREQ=MONTHLY')) {
+      recurrenceLabel = 'repeats monthly';
+    } else if (rrule.includes('FREQ=YEARLY')) {
+      recurrenceLabel = 'repeats yearly';
+    } else if (rrule.includes('FREQ=HOURLY')) {
+      recurrenceLabel = 'repeats hourly';
+    } else {
+      recurrenceLabel = 'repeats';
+    }
+  } else if (event.isRecurringInstance) {
+    // Fallback: if it's a recurring instance but no RRULE available, use generic label
+    recurrenceLabel = 'repeats';
+  }
+  
+  let snippet = `${dateLabel}${timeLabel ? ` · ${timeLabel}` : ''}${recurrenceLabel ? ` · ${recurrenceLabel}` : ''}`;
+  
+  if (event.location) {
+    snippet += ` · ${event.location}`;
+  }
+  
+  // From label: organizer or creator, or calendar name
+  const fromLabel = event.organizer?.displayName 
+    || event.organizer?.email?.split('@')[0]
+    || event.creator?.displayName
+    || event.creator?.email?.split('@')[0]
+    || calendar.summary;
+  
+  // Get avatar from first attendee if available
+  const avatarUrl = event.attendees?.[0]?.avatarUrl;
+  
+  // Determine event ownership type and RSVP status
+  let eventOwnership: 'owned' | 'invited' | 'external' | undefined;
+  let rsvpStatus: 'accepted' | 'tentative' | 'declined' | 'needsAction' | undefined;
+  if (userEmail) {
+    const organizerEmail = event.organizer?.email?.toLowerCase();
+    const creatorEmail = event.creator?.email?.toLowerCase();
+    const userEmailLower = userEmail.toLowerCase();
+    
+    // Check if user is organizer or creator (owns the event)
+    if (organizerEmail === userEmailLower || creatorEmail === userEmailLower) {
+      eventOwnership = 'owned';
+    } else {
+      // Check if user is an attendee (invited)
+      const userAttendee = event.attendees?.find(
+        (a) => a.email?.toLowerCase() === userEmailLower
+      );
+      if (userAttendee) {
+        eventOwnership = 'invited';
+        // Extract RSVP status from attendee
+        if (userAttendee.responseStatus) {
+          const status = userAttendee.responseStatus.toLowerCase();
+          if (status === 'accepted') {
+            rsvpStatus = 'accepted';
+          } else if (status === 'tentative') {
+            rsvpStatus = 'tentative';
+          } else if (status === 'declined') {
+            rsvpStatus = 'declined';
+          } else if (status === 'needsaction') {
+            rsvpStatus = 'needsAction';
+          }
+        }
+      } else if (organizerEmail) {
+        // External organization (different domain)
+        const userDomain = userEmailLower.split('@')[1];
+        const organizerDomain = organizerEmail.split('@')[1];
+        if (userDomain !== organizerDomain) {
+          eventOwnership = 'external';
+        }
+      }
+    }
+  }
+  
+  return {
+    id: `calendar_${event.id}`,
+    sourceType: 'calendar',
+    sourceId: event.id,
+    title: event.summary || 'Untitled Event',
+    snippet: snippet || calendar.summary,
+    fromLabel,
+    avatarUrl,
+    isUnread: false, // Calendar events don't have unread state
+    isMuted: false,
+    timestamp,
+    hangoutLink: event.hangoutLink,
+    eventStatus: event.status,
+    eventOwnership,
+    rsvpStatus,
+    drawerScope: {
+      scopeType: 'calendar',
+      eventId: event.id,
+      dateKey,
     },
   };
 }

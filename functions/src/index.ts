@@ -10988,6 +10988,15 @@ export {
   testCalendarTokenValidity
 } from './calendarIntegration';
 
+// Calendar API Functions (new)
+export {
+  listCalendars,
+  listEvents,
+  createEvent,
+  updateEvent,
+  deleteEvent
+} from './calendar/calendarApi';
+
 // Gmail-Tasks Integration Functions
 export {
   syncGmailAndCreateTasks,
@@ -11337,6 +11346,7 @@ export { sendMessageToSlackApi } from './messaging/sendMessageToSlack';
 export { backfillSlackChannels } from './slack/backfillSlackChannels';
 export { onSlackMessageActivity } from './slack/onSlackMessageActivity';
 export { sendSlackChannelMessage } from './slack/sendSlackChannelMessage';
+export { reactToSlackMessage } from './slack/reactToSlackMessage';
 
 // Unified Messaging Framework - Email Provider
 export { getEmailProvider } from './messaging/emailProviderFactory';

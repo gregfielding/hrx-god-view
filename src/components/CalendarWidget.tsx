@@ -20,13 +20,8 @@ import {
   Badge,
   ToggleButton,
   ToggleButtonGroup,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Switch,
   FormControlLabel,
-  Autocomplete,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -66,6 +61,8 @@ import { db } from '../firebase';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
 import type { DashboardCalendarEventInput } from '../types/dashboardCalendar';
 import { CallableCache } from '../utils/callableCache';
+import EventModal from './calendar/EventModal';
+import type { CalendarEvent as SpecCalendarEvent } from '../types/calendar';
 
 type CachedGoogleEventsPayload = {
   at: number;
@@ -175,25 +172,10 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     return { start: startOfDay(base), end: endOfDay(base) };
   }, [view, selectedDate, currentDate]);
 
-  // Dashboard quick-add modal state (UI only; backend integration deferred)
-  const [showAddEventModal, setShowAddEventModal] = useState(false);
-  const [addTitle, setAddTitle] = useState('');
-  const [addDate, setAddDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
-  const [addAllDay, setAddAllDay] = useState(false);
-  const [addStartTime, setAddStartTime] = useState('09:00');
-  const [addEndTime, setAddEndTime] = useState('10:00');
-  const [addLocation, setAddLocation] = useState('');
-  const [addInvitees, setAddInvitees] = useState<string[]>([]);
-  const [addMeetLink, setAddMeetLink] = useState(false);
-  const [addDescription, setAddDescription] = useState('');
-  const [addValidationError, setAddValidationError] = useState<string | null>(null);
-  const [addSaveError, setAddSaveError] = useState<string | null>(null);
-  const [addSaving, setAddSaving] = useState(false);
-
-  // When the selected date changes, keep the add-modal default date in sync
-  useEffect(() => {
-    setAddDate(format(selectedDate, 'yyyy-MM-dd'));
-  }, [selectedDate]);
+  // EventModal state
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [eventModalMode, setEventModalMode] = useState<'create' | 'edit'>('create');
+  const [eventModalInitialEvent, setEventModalInitialEvent] = useState<SpecCalendarEvent | null>(null);
 
   // Dashboard variant: if month was persisted, don't show month in UI. Snap back to Today.
   useEffect(() => {
@@ -283,142 +265,47 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       window.location.assign('/crm?tab=tasks');
       return;
     }
-    setAddValidationError(null);
-    setAddSaveError(null);
-    setShowAddEventModal(true);
+    setEventModalMode('create');
+    setEventModalInitialEvent(null);
+    setShowEventModal(true);
   };
 
-  const handleCloseAddEvent = () => {
-    if (addSaving) return;
-    setShowAddEventModal(false);
-    setAddValidationError(null);
-    setAddSaveError(null);
-  };
-
-  const handleCreateCalendarEvent = async (payload: DashboardCalendarEventInput) => {
-    if (!userId) throw new Error('User not authenticated');
-    if (!tenantId) throw new Error('Missing tenant');
-
-    setAddSaving(true);
-    setAddSaveError(null);
+  const handleEventModalSaved = async (savedEvent: SpecCalendarEvent) => {
+    // Convert spec CalendarEvent to widget CalendarEvent format and add to events
+    // For now, since we're using mocked data, we'll just trigger a refresh of Google events
+    // In the future, we can optimistically add the event or refresh from the backend
+    
+    // Force-refresh Google events (bypass the 90m client cache used in the initial load)
     try {
       const functions = getFunctions();
-      const createCalendarEventFn = httpsCallable(functions, 'createCalendarEvent');
-
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const attendees = (payload.invitees || [])
-        .map((i) => ({ email: i.email, displayName: i.name }))
-        .filter((a) => !!a.email);
-
-      const eventData: any = {
-        summary: payload.title,
-        description: payload.description || '',
-        location: payload.location || '',
-        attendees: attendees.length ? attendees : undefined,
+      const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEventsOptimized');
+      const payloadList = {
+        userId,
+        maxResults: 50,
+        timeMin: googleFetchRange.start.toISOString(),
+        timeMax: googleFetchRange.end.toISOString(),
       };
-
-      if (payload.allDay) {
-        const startDate = payload.date;
-        const endDateObj = new Date(`${payload.date}T00:00:00`);
-        endDateObj.setDate(endDateObj.getDate() + 1);
-        const endDate = format(endDateObj, 'yyyy-MM-dd');
-
-        eventData.start = { date: startDate, timeZone };
-        eventData.end = { date: endDate, timeZone };
-      } else {
-        const startDateTime = new Date(`${payload.date}T${payload.startTime || '09:00'}`);
-        const endDateTime = new Date(`${payload.date}T${payload.endTime || '10:00'}`);
-
-        eventData.start = { dateTime: startDateTime.toISOString(), timeZone };
-        eventData.end = { dateTime: endDateTime.toISOString(), timeZone };
+      const calendarData: any = (await listCalendarEventsFn(payloadList)).data as any;
+      if (calendarData?.success && Array.isArray(calendarData.events)) {
+        const googleEvents: CalendarEvent[] = calendarData.events.map((event: any) => ({
+          id: event.id,
+          title: event.summary || 'Untitled Event',
+          start: safeDateConversion(event.start?.dateTime || event.start?.date),
+          end: safeDateConversion(event.end?.dateTime || event.end?.date),
+          type: 'google_calendar',
+          description: event.description,
+          location: event.location,
+          attendees: event.attendees || [],
+          color: '#4caf50',
+          relatedTo: event.relatedTo,
+        }));
+        setEvents((prev) => {
+          const filtered = prev.filter((e) => e.type !== 'google_calendar');
+          return [...filtered, ...googleEvents];
+        });
       }
-
-      // Note: backend currently ignores conferenceData / meet link creation; we keep the UI toggle for later.
-      await createCalendarEventFn({ userId, eventData });
-
-      // Force-refresh Google events (bypass the 90m client cache used in the initial load)
-      try {
-        const listCalendarEventsFn = httpsCallable(functions, 'listCalendarEventsOptimized');
-        const payloadList = {
-          userId,
-          maxResults: 50,
-          timeMin: googleFetchRange.start.toISOString(),
-          timeMax: googleFetchRange.end.toISOString(),
-        };
-        const calendarData: any = (await listCalendarEventsFn(payloadList)).data as any;
-        if (calendarData?.success && Array.isArray(calendarData.events)) {
-          const googleEvents: CalendarEvent[] = calendarData.events.map((event: any) => ({
-            id: event.id,
-            title: event.summary || 'Untitled Event',
-            start: safeDateConversion(event.start?.dateTime || event.start?.date),
-            end: safeDateConversion(event.end?.dateTime || event.end?.date),
-            type: 'google_calendar',
-            description: event.description,
-            location: event.location,
-            attendees: event.attendees || [],
-            color: '#4caf50',
-            relatedTo: event.relatedTo,
-          }));
-          setEvents((prev) => {
-            const filtered = prev.filter((e) => e.type !== 'google_calendar');
-            return [...filtered, ...googleEvents];
-          });
-        }
-      } catch {
-        // If refresh fails, event was still created; the next reload will pick it up.
-      }
-    } catch (err: any) {
-      const msg =
-        typeof err?.message === 'string'
-          ? err.message
-          : 'Failed to create calendar event.';
-      setAddSaveError(msg);
-      throw err;
-    } finally {
-      setAddSaving(false);
-    }
-  };
-
-  const handleSubmitAddEvent = async () => {
-    const title = addTitle.trim();
-    if (!title) {
-      setAddValidationError('Title is required.');
-      return;
-    }
-    if (!addAllDay) {
-      if (!addStartTime || !addEndTime) {
-        setAddValidationError('Start and end time are required (or choose All-day).');
-        return;
-      }
-      if (addEndTime <= addStartTime) {
-        setAddValidationError('End time must be after start time.');
-        return;
-      }
-    }
-
-    setAddValidationError(null);
-    setAddSaveError(null);
-    const payload: DashboardCalendarEventInput = {
-      source: 'google',
-      title,
-      date: addDate,
-      startTime: addAllDay ? undefined : addStartTime,
-      endTime: addAllDay ? undefined : addEndTime,
-      allDay: addAllDay,
-      location: addLocation.trim() || undefined,
-      invitees: addInvitees
-        .map((v) => v.trim())
-        .filter(Boolean)
-        .map((email) => ({ email })),
-      addMeetLink,
-      description: addDescription.trim() || undefined,
-    };
-
-    try {
-      await handleCreateCalendarEvent(payload);
-      handleCloseAddEvent();
     } catch {
-      // error state already set; keep modal open
+      // If refresh fails, event was still created; the next reload will pick it up.
     }
   };
 
@@ -1313,121 +1200,18 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
           </Box>
         </Drawer>
 
-        {/* Add Event Modal (dashboard quick add) */}
-        <Dialog
-          open={showAddEventModal}
-          onClose={handleCloseAddEvent}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle sx={{ fontWeight: 700 }}>
-            Add Event
-          </DialogTitle>
-          <DialogContent sx={{ pt: 1 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <TextField
-                label="Title"
-                value={addTitle}
-                onChange={(e) => setAddTitle(e.target.value)}
-                autoFocus
-                required
-                fullWidth
-              />
-
-              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                <TextField
-                  label="Date"
-                  type="date"
-                  value={addDate}
-                  onChange={(e) => setAddDate(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                  sx={{ flex: 1, minWidth: 180 }}
-                />
-                <FormControlLabel
-                  control={<Switch checked={addAllDay} onChange={(e) => setAddAllDay(e.target.checked)} />}
-                  label="All-day"
-                />
-              </Box>
-
-              {!addAllDay && (
-                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                  <TextField
-                    label="Start time"
-                    type="time"
-                    value={addStartTime}
-                    onChange={(e) => setAddStartTime(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    sx={{ flex: 1, minWidth: 180 }}
-                  />
-                  <TextField
-                    label="End time"
-                    type="time"
-                    value={addEndTime}
-                    onChange={(e) => setAddEndTime(e.target.value)}
-                    InputLabelProps={{ shrink: true }}
-                    sx={{ flex: 1, minWidth: 180 }}
-                  />
-                </Box>
-              )}
-
-              <TextField
-                label="Location (optional)"
-                value={addLocation}
-                onChange={(e) => setAddLocation(e.target.value)}
-                fullWidth
-              />
-
-              <Autocomplete
-                multiple
-                freeSolo
-                options={[]}
-                value={addInvitees}
-                onChange={(_, newValue) => setAddInvitees(newValue as string[])}
-                renderInput={(params) => (
-                  <TextField {...params} label="Invitees (optional)" placeholder="Type an email and press Enter" />
-                )}
-              />
-
-              <FormControlLabel
-                control={<Switch checked={addMeetLink} onChange={(e) => setAddMeetLink(e.target.checked)} />}
-                label="Add Google Meet link"
-              />
-
-              <TextField
-                label="Description / Notes (optional)"
-                value={addDescription}
-                onChange={(e) => setAddDescription(e.target.value)}
-                fullWidth
-                multiline
-                minRows={3}
-              />
-
-              {addValidationError && (
-                <Typography color="error" variant="body2">
-                  {addValidationError}
-                </Typography>
-              )}
-              {addSaveError && (
-                <Typography color="error" variant="body2">
-                  {addSaveError}
-                </Typography>
-              )}
-            </Box>
-          </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={handleCloseAddEvent} sx={{ textTransform: 'none' }} disabled={addSaving}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSubmitAddEvent}
-              variant="contained"
-              disabled={!addTitle.trim() || addSaving}
-              sx={{ textTransform: 'none' }}
-            >
-              {addSaving ? 'Saving…' : 'Save Event'}
-            </Button>
-          </DialogActions>
-        </Dialog>
+        {/* EventModal (shared component) */}
+        {isDashboard && (
+          <EventModal
+            open={showEventModal}
+            mode={eventModalMode}
+            userId={userId}
+            initialEvent={eventModalInitialEvent}
+            defaultStart={selectedDate}
+            onClose={() => setShowEventModal(false)}
+            onSaved={handleEventModalSaved}
+          />
+        )}
       </CardContent>
     </Card>
   );

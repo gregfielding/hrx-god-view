@@ -56,6 +56,7 @@ import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
+import { useHeartbeatPresence } from '../hooks/useHeartbeatPresence';
 import { getAccessRole } from '../utils/AccessRoles'; // Import AccessRoles helpers
 import { generateMenuItems, MenuItem as MenuItemType, filterMenuItemsByClaims } from '../utils/menuGenerator';
 import { Role, SecurityLevel } from '../utils/AccessRoles';
@@ -94,6 +95,7 @@ const Layout: React.FC = React.memo(function Layout() {
     recruiterEnabled,
     jobsBoardEnabled,
   } = useAuth();
+  useHeartbeatPresence(); // Write user presence to Firestore
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();

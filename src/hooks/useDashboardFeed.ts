@@ -1,7 +1,7 @@
 /**
  * useDashboardFeed Hook
  * 
- * Aggregates feed items from Email, Slack DMs, and Slack Channels
+ * Aggregates feed items from Email, Slack DMs, Slack Channels, and Calendar
  * into a unified time-sorted activity stream.
  */
 
@@ -11,18 +11,22 @@ import { useDMThreads } from './useDMThreads';
 import { useSlackChannels } from './useSlackChannels';
 import { useSlackChannelMembership } from './useSlackChannelMembership';
 import { useSlackChannelLastActivityFallback } from './useSlackChannelLastActivityFallback';
+import { useCalendarList } from './useCalendarList';
+import { useCalendarEvents } from './useCalendarEvents';
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import {
   adaptEmailThreadToFeedItem,
   adaptSlackDMToFeedItem,
   adaptSlackChannelToFeedItem,
   adaptSlackChannelMessageToFeedItem,
+  adaptCalendarEventToFeedItem,
   EmailThreadSource,
 } from '../utils/dashboardFeedAdapters';
 import { SlackChannelView } from '../types/slackChannels';
 import { normalizeSecurityLevel } from '../utils/security';
 import { collection, limit as fbLimit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
+import { subDays, addDays } from 'date-fns';
 
 interface UseDashboardFeedOptions {
   limit?: number;
@@ -81,6 +85,37 @@ export function useDashboardFeed(
   } = useSlackChannels(canAccessSlack ? tenantId : null);
 
   const { isMemberByChannel } = useSlackChannelMembership(tenantId, userId);
+
+  // Calendar integration
+  const canAccessCalendar = canAccessSlack; // Calendar access requires same security level as Slack
+  const { calendars, loading: calendarsLoading, error: calendarsError } = useCalendarList({
+    userId: userId || '',
+    enabled: canAccessCalendar && !!userId,
+  });
+
+  // Date range for calendar events: now - 1 day to now + 7 days
+  const calendarDateRange = useMemo(() => {
+    const now = new Date();
+    return {
+      timeMin: subDays(now, 1),
+      timeMax: addDays(now, 7),
+    };
+  }, []);
+
+  // Get primary calendar ID (or first calendar)
+  const primaryCalendarId = useMemo(() => {
+    if (calendars.length === 0) return null;
+    const primary = calendars.find((c) => c.isPrimary);
+    return primary?.id || calendars[0]?.id || null;
+  }, [calendars]);
+
+  const { events: calendarEvents, loading: calendarEventsLoading, error: calendarEventsError } = useCalendarEvents({
+    userId: userId || '',
+    calendarIds: primaryCalendarId ? [primaryCalendarId] : [],
+    timeMin: calendarDateRange.timeMin,
+    timeMax: calendarDateRange.timeMax,
+    enabled: canAccessCalendar && !!userId && !!primaryCalendarId,
+  });
 
   // Fallback: for channels missing slackChannels.lastMessage* snapshot fields, query newest stored slack_messages.
   // This makes the unified feed ordering truly chronological even when slackChannels docs are stale.
@@ -276,6 +311,85 @@ export function useDashboardFeed(
       });
     }
 
+    // Add calendar event items (auto-hide past events older than 2-3 hours + deduplicate recurring)
+    if (canAccessCalendar && calendarEvents.length > 0 && calendars.length > 0) {
+      const calendarById = new Map(calendars.map((c) => [c.id, c]));
+      const now = new Date();
+      const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000); // 2 hours ago
+      
+      // Filter past events and group recurring events by series
+      const validEvents: typeof calendarEvents = [];
+      const recurringSeries = new Map<string, typeof calendarEvents[0]>();
+      
+      calendarEvents.forEach((event) => {
+        // Auto-hide past events: skip if event ended more than 2 hours ago
+        if (event.end.dateTime) {
+          const endDate = new Date(event.end.dateTime);
+          if (endDate < twoHoursAgo) {
+            return; // Skip this past event
+          }
+        } else if (event.end.date) {
+          // For all-day events, check if the end date (exclusive) is before today
+          const endDate = new Date(event.end.date + 'T00:00:00');
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          if (endDate <= today) {
+            return; // Skip all-day events that ended before today
+          }
+        }
+        
+        // Deduplicate recurring events: group by series key (summary + calendarId + time pattern)
+        if (event.isRecurringInstance || event.recurrence?.length) {
+          // Create a series key: summary + calendarId + normalized time (hour:minute for timed, "allday" for all-day)
+          let timeKey = 'allday';
+          if (event.start.dateTime) {
+            const startDate = new Date(event.start.dateTime);
+            timeKey = `${startDate.getHours()}:${String(startDate.getMinutes()).padStart(2, '0')}`;
+          }
+          const seriesKey = `${event.calendarId}:${event.summary}:${timeKey}`;
+          
+          // Keep only the next upcoming instance of each series
+          const existing = recurringSeries.get(seriesKey);
+          if (!existing) {
+            recurringSeries.set(seriesKey, event);
+          } else {
+            // Compare start times and keep the earlier one (next occurrence)
+            const existingStart = existing.start.dateTime 
+              ? new Date(existing.start.dateTime).getTime()
+              : (existing.start.date ? new Date(existing.start.date + 'T00:00:00').getTime() : 0);
+            const currentStart = event.start.dateTime 
+              ? new Date(event.start.dateTime).getTime()
+              : (event.start.date ? new Date(event.start.date + 'T00:00:00').getTime() : 0);
+            
+            if (currentStart < existingStart) {
+              recurringSeries.set(seriesKey, event);
+            }
+          }
+        } else {
+          // Non-recurring events go through normally
+          validEvents.push(event);
+        }
+      });
+      
+      // Add deduplicated recurring events
+      recurringSeries.forEach((event) => {
+        validEvents.push(event);
+      });
+      
+      // Adapt all valid events to feed items
+      const userEmail = user?.email || null;
+      validEvents.forEach((event) => {
+        try {
+          const calendar = calendarById.get(event.calendarId);
+          if (!calendar) return; // Skip if calendar not found
+          
+          const item = adaptCalendarEventToFeedItem({ event, calendar }, userEmail);
+          allItems.push(item);
+        } catch (err) {
+          console.error('Error adapting calendar event:', err);
+        }
+      });
+    }
+
     // Sort by timestamp (newest first)
     const sorted = allItems.sort((a, b) => b.timestamp - a.timestamp);
 
@@ -289,9 +403,12 @@ export function useDashboardFeed(
     slackLastActivityByChannel,
     slackChannelMessages,
     memberChannelIds,
+    calendarEvents,
+    calendars,
     tenantId,
     userId,
     canAccessSlack,
+    canAccessCalendar,
     limit,
   ]);
 
@@ -299,13 +416,17 @@ export function useDashboardFeed(
   const loading = emailLoading || 
                   (canAccessSlack && dmLoading) || 
                   (canAccessSlack && slackChannelsLoading) ||
-                  (canAccessSlack && slackMessagesLoading);
+                  (canAccessSlack && slackMessagesLoading) ||
+                  (canAccessCalendar && calendarsLoading) ||
+                  (canAccessCalendar && calendarEventsLoading);
 
   // Combined error state
   const error = emailError || 
                 (canAccessSlack && dmError?.message) || 
                 (canAccessSlack && slackChannelsError?.message) || 
                 (canAccessSlack && slackMessagesError) ||
+                (canAccessCalendar && calendarsError?.message) ||
+                (canAccessCalendar && calendarEventsError?.message) ||
                 null;
 
   // Refresh function

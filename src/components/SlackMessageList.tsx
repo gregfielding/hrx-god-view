@@ -9,10 +9,12 @@ import { Box, Typography, Avatar, CircularProgress, Skeleton } from '@mui/materi
 import { SlackChannelMessage } from '../hooks/useSlackChannelThread';
 import { getChannelColor } from '../utils/slackChannelUtils';
 import { useAuth } from '../contexts/AuthContext';
+import { SlackMessageReactionsBar } from './slack/SlackMessageReactionsBar';
 
 interface SlackMessageListProps {
   messages: SlackChannelMessage[];
   loading: boolean;
+  channelId?: string; // Slack channel ID for reactions context
 }
 
 /**
@@ -45,8 +47,8 @@ function getUserInitials(userName: string): string {
   return userName.substring(0, 2).toUpperCase();
 }
 
-const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading }) => {
-  const { avatarUrl } = useAuth();
+const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, channelId }) => {
+  const { avatarUrl, user } = useAuth();
 
   if (loading) {
     return (
@@ -147,6 +149,18 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading }
               >
                 {message.text}
               </Typography>
+              
+              {/* Reactions Bar */}
+              {channelId && user?.uid && (
+                <SlackMessageReactionsBar
+                  ctx={{
+                    channelId,
+                    messageTs: message.ts,
+                  }}
+                  currentUserId={user.uid}
+                  compact
+                />
+              )}
             </Box>
           </Box>
         );
