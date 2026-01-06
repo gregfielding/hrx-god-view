@@ -412,21 +412,33 @@ service cloud.firestore {
       // --- FEED POSTS (Dashboard Post Composer) ---
       match /feed_posts/{postId} {
         // Allow authenticated tenant members to read posts
-        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        allow read: if isAuthenticated() && (
+          isAssignedToTenant(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+          isHRX()
+        );
         
         // Allow authenticated tenant members to create posts (author must match auth.uid)
         allow create: if isAuthenticated() && 
-                         isAssignedToTenant(tenantId) &&
                          request.resource.data.authorId == request.auth.uid &&
-                         request.resource.data.tenantId == tenantId;
+                         request.resource.data.tenantId == tenantId &&
+                         (
+                           isAssignedToTenant(tenantId) ||
+                           (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+                           isHRX()
+                         );
         
         // Allow authors to update their own posts (with reasonable restrictions)
         allow update: if isAuthenticated() && 
-                         isAssignedToTenant(tenantId) &&
                          resource.data.authorId == request.auth.uid &&
                          request.resource.data.tenantId == resource.data.tenantId &&
                          request.resource.data.authorId == resource.data.authorId &&
-                         request.resource.data.createdAt == resource.data.createdAt;
+                         request.resource.data.createdAt == resource.data.createdAt &&
+                         (
+                           isAssignedToTenant(tenantId) ||
+                           (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+                           isHRX()
+                         );
         
         // Only admins can delete posts
         allow delete: if isAuthenticated() && (isHRX() || isTenantAdmin(tenantId));
@@ -435,7 +447,11 @@ service cloud.firestore {
       // --- MENTIONS INDEX (For quick mention queries) ---
       match /mentions_index/{mentionRefId} {
         // Allow authenticated tenant members to read mentions index
-        allow read: if isAuthenticated() && isAssignedToTenant(tenantId);
+        allow read: if isAuthenticated() && (
+          isAssignedToTenant(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+          isHRX()
+        );
         
         // Only backend (Cloud Functions) can write mentions index
         allow write: if isHRX();

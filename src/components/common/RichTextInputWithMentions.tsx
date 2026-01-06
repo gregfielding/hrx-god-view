@@ -225,6 +225,7 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
         placeholder={placeholder}
         autoFocus={autoFocus}
         multiline
+        fullWidth
       />
       <Popover
         open={Boolean(anchorEl && suggestions.length > 0)}

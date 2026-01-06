@@ -313,11 +313,6 @@ const PeopleList: React.FC<PeopleListProps> = ({ searchQuery: externalSearchQuer
                             {person.department && ` • ${person.department}`}
                           </Typography>
                         )}
-                        {hasExistingThread && (
-                          <Typography variant="caption" color="primary" sx={{ mt: 0.25, display: 'block' }}>
-                            Existing conversation
-                          </Typography>
-                        )}
                       </Box>
                     }
                   />

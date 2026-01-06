@@ -140,33 +140,33 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
           <EmojiEmotionsIcon fontSize="small" />
         </IconButton>
 
-        <Box sx={{ flex: 1 }}>
-          <RichTextInputWithMentions
-            value={messageText}
-            onChange={handleTextChange}
-            placeholder="Type a message... (use @ for users, # for contacts, & for companies, % for deals)"
-            onKeyDown={handleKeyDown}
-            disabled={disabled || sending}
-            multiline
-            maxRows={3}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                borderRadius: '24px',
-                backgroundColor: '#F9FAFB',
-                fontSize: '0.9375rem',
-                '& fieldset': {
-                  borderColor: 'rgba(0,0,0,0.12)',
-                },
-                '&:hover fieldset': {
-                  borderColor: 'rgba(0,0,0,0.2)',
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: '#0057B8',
-                },
+        <RichTextInputWithMentions
+          value={messageText}
+          onChange={handleTextChange}
+          placeholder="Type a message... (use @ for users, # for contacts, & for companies, % for deals)"
+          onKeyDown={handleKeyDown}
+          disabled={disabled || sending}
+          multiline
+          maxRows={3}
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            '& .MuiOutlinedInput-root': {
+              borderRadius: '24px',
+              backgroundColor: '#F9FAFB',
+              fontSize: '0.9375rem',
+              '& fieldset': {
+                borderColor: 'rgba(0,0,0,0.12)',
               },
-            }}
-          />
-        </Box>
+              '&:hover fieldset': {
+                borderColor: 'rgba(0,0,0,0.2)',
+              },
+              '&.Mui-focused fieldset': {
+                borderColor: '#0057B8',
+              },
+            },
+          }}
+        />
         {/* GIF button (only if allowed) */}
         {allowGIFs && (
           <IconButton
