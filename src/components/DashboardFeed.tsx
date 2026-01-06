@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -37,6 +37,7 @@ import EmailIcon from '@mui/icons-material/Email';
 import MessageIcon from '@mui/icons-material/Message';
 import TagIcon from '@mui/icons-material/Tag';
 import EventIcon from '@mui/icons-material/Event';
+import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import PersonIcon from '@mui/icons-material/Person';
@@ -78,20 +79,28 @@ const SOURCE_META: Record<
     label: 'Calendar',
     color: '#1976d2',
   },
+  mention: {
+    icon: <AlternateEmailIcon fontSize="small" />,
+    label: 'Mention',
+    color: '#9c27b0',
+  },
 };
 
 interface DashboardFeedProps {
   onOpenEmailDrawer: (options: { threadId: string; tenantId: string }) => void;
   onOpenSlackDMDrawer: (options: { threadId: string; tenantId: string }) => void;
   onOpenSlackChannelDrawer: (options: { channelId: string }) => void;
+  onOpenMentionsDrawer?: () => void;
 }
 
 const DashboardFeed: React.FC<DashboardFeedProps> = ({
   onOpenEmailDrawer,
   onOpenSlackDMDrawer,
   onOpenSlackChannelDrawer,
+  onOpenMentionsDrawer,
 }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { activeTenant, user } = useAuth();
   // Fetch a generous cap; UI reveals items progressively via infinite scroll.
   const { feedItems, loading, error } = useDashboardFeed({ limit: 500 });
@@ -111,6 +120,22 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<Array<DashboardFeedItem['sourceType']>>([]);
   const [search, setSearch] = useState('');
+
+  // Read source filter from URL query parameter
+  useEffect(() => {
+    const sourceParam = searchParams.get('source');
+    if (sourceParam === 'mention') {
+      setSourceFilter(['mention']);
+    } else if (sourceParam) {
+      // Support other source types if needed
+      const validSource = ['email', 'slack_dm', 'slack_channel', 'calendar', 'mention'].includes(sourceParam);
+      if (validSource) {
+        setSourceFilter([sourceParam as DashboardFeedItem['sourceType']]);
+      }
+    } else {
+      setSourceFilter([]);
+    }
+  }, [searchParams]);
 
   // Per-user lightweight UI state (Phase 2): read + pinned
   const LS_READ = useMemo(() => (userId ? `dashboardFeed.read.v1:${userId}` : ''), [userId]);
@@ -306,6 +331,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
       openEmailDrawer: onOpenEmailDrawer,
       openSlackDMDrawer: onOpenSlackDMDrawer,
       openSlackChannelDrawer: onOpenSlackChannelDrawer,
+      openMentionsDrawer: onOpenMentionsDrawer,
     };
     openDrawerFromFeedItem(item, tenantId, callbacks);
   };
@@ -667,6 +693,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 { value: 'slack_dm', label: 'DMs' },
                 { value: 'slack_channel', label: 'Slack Channels' },
                 { value: 'calendar', label: 'Calendar' },
+                { value: 'mention', label: 'Mentions' },
               ] as Array<{ value: DashboardFeedItem['sourceType']; label: string }>).map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>
                   <Checkbox checked={sourceFilter.indexOf(opt.value) > -1} />

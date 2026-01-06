@@ -10,6 +10,7 @@ export interface DrawerOpenCallbacks {
   openEmailDrawer: (options: { threadId: string; tenantId: string }) => void;
   openSlackDMDrawer: (options: { threadId: string; tenantId: string }) => void;
   openSlackChannelDrawer: (options: { channelId: string }) => void;
+  openMentionsDrawer?: () => void;
 }
 
 /**
@@ -50,6 +51,22 @@ export function openDrawerFromFeedItem(
         });
       } else {
         console.warn('Slack Channel feed item missing channelId', item);
+      }
+      break;
+
+    case 'mention':
+      // Open the mentions drawer to show all mentions
+      if (callbacks.openMentionsDrawer) {
+        callbacks.openMentionsDrawer();
+      } else {
+        // Fallback: For Slack mentions, open the Slack channel drawer
+        if (item.mentionMetadata?.origin === 'slack' && item.drawerScope.channelId) {
+          callbacks.openSlackChannelDrawer({
+            channelId: item.drawerScope.channelId,
+          });
+        } else {
+          console.log('HRX mention clicked', item);
+        }
       }
       break;
 

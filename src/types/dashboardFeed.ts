@@ -4,7 +4,30 @@
  * Unified feed item types for the Dashboard activity stream.
  */
 
-export type FeedSourceType = 'email' | 'slack_dm' | 'slack_channel' | 'calendar';
+export type FeedSourceType = 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention';
+
+// Mention-specific metadata types
+export type MentionOrigin = 'slack' | 'hrx';
+
+export interface MentionMetadataSlack {
+  origin: 'slack';
+  slackTeamId: string;
+  slackChannelId: string;
+  slackChannelName?: string;
+  slackTs: string;            // message timestamp
+  slackMessagePermalink?: string;
+}
+
+export interface MentionMetadataHrx {
+  origin: 'hrx';
+  threadId: string;           // HRX internal thread / conversation
+  messageId: string;
+  contextType: 'deal' | 'company' | 'contact' | 'task' | 'generic';
+  contextId?: string;
+  contextName?: string;
+}
+
+export type MentionMetadata = MentionMetadataSlack | MentionMetadataHrx;
 
 export interface DashboardFeedItem {
   id: string;                 // global unique ID for the feed item
@@ -24,9 +47,14 @@ export interface DashboardFeedItem {
   eventStatus?: 'confirmed' | 'tentative' | 'cancelled'; // Status for calendar events
   eventOwnership?: 'owned' | 'invited' | 'external'; // Event ownership type
   rsvpStatus?: 'accepted' | 'tentative' | 'declined' | 'needsAction'; // User's RSVP status
+  // Mention-specific fields (only when sourceType === 'mention')
+  mentionedUserId?: string;     // HRX uid of the mentioned user
+  mentionedByUserId?: string;   // HRX uid of author (if known)
+  channelLabel?: string;        // e.g. "#dev", "Deal: C1–Sodexo"
+  mentionMetadata?: MentionMetadata;
   // linking info for Drawer
   drawerScope: {
-    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar';
+    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention';
     threadId?: string;
     channelId?: string;
     dmUserId?: string;

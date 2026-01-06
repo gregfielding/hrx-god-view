@@ -46,6 +46,7 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
+import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -67,6 +68,7 @@ import GoogleConnectionChip from './GoogleConnectionChip';
 import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
 import MessengerIconButton from './messenger/MessengerIconButton';
 import MessengerDrawer from './messenger/MessengerDrawer';
+import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -106,6 +108,13 @@ const Layout: React.FC = React.memo(function Layout() {
   const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
   const [avatarMenuAnchorEl, setAvatarMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
+  const { count: mentionsUnreadCount } = useUnreadMentionsCount(user?.uid || null);
+  
+  // Debug logging for mentions
+  useEffect(() => {
+    console.log('[Layout] Mentions hook called with userId:', user?.uid);
+    console.log('[Layout] Mentions unread count:', mentionsUnreadCount);
+  }, [user?.uid, mentionsUnreadCount]);
 
   // Function to get page title based on current route
   const getPageTitle = () => {
@@ -1517,6 +1526,35 @@ const Layout: React.FC = React.memo(function Layout() {
                   </IconButton>
                 </Tooltip>
               )}
+              
+              {/* @ Mentions Icon - Always visible, badge shows when there are unread mentions */}
+              <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Mentions'}>
+                <IconButton
+                  onClick={() => navigate('/slack?tab=mentions')}
+                  sx={{
+                    backgroundColor: 'transparent !important',
+                    color: 'rgba(255,255,255,.8)',
+                    '& svg': {
+                      fill: 'rgba(255,255,255,.8) !important',
+                    },
+                    '&:hover': { 
+                      backgroundColor: 'transparent !important',
+                      color: '#FFFFFF',
+                      '& svg': {
+                        fill: '#FFFFFF',
+                      },
+                    },
+                  }}
+                >
+                  <Badge 
+                    badgeContent={mentionsUnreadCount > 99 ? '99+' : mentionsUnreadCount} 
+                    color="secondary"
+                    invisible={mentionsUnreadCount === 0}
+                  >
+                    <AlternateEmailIcon />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
               
               {/* Direct Messenger Icon */}
               {user && (

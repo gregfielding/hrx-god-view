@@ -11197,6 +11197,9 @@ export {
 // Application SMS Triggers
 export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';
 
+// Mentions Functions
+export { mentionSearch } from './mentions/mentionSearch';
+
 // Group Messaging
 export { sendGroupMessage } from './groupMessaging';
 

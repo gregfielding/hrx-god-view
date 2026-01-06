@@ -145,6 +145,14 @@ export function useDashboardFeed(
   const [slackMessagesLoading, setSlackMessagesLoading] = useState(true);
   const [slackMessagesError, setSlackMessagesError] = useState<string | null>(null);
 
+  // ---------------------------------------------------------------------------
+  // Mentions Feed Items
+  // Subscribe to mention feed items from dashboardFeed collection.
+  // ---------------------------------------------------------------------------
+  const [mentionFeedItems, setMentionFeedItems] = useState<DashboardFeedItem[]>([]);
+  const [mentionsLoading, setMentionsLoading] = useState(true);
+  const [mentionsError, setMentionsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!canAccessSlack || !tenantId || !userId) {
       setSlackChannelMessages([]);
@@ -184,6 +192,106 @@ export function useDashboardFeed(
 
     return () => unsub();
   }, [canAccessSlack, tenantId, userId]);
+
+  // Fetch mention feed items
+  useEffect(() => {
+    console.log('[Mentions Feed] Hook effect triggered, userId:', userId);
+    
+    if (!userId) {
+      console.log('[Mentions Feed] No userId, clearing mention feed items');
+      setMentionFeedItems([]);
+      setMentionsLoading(false);
+      setMentionsError(null);
+      return;
+    }
+
+    console.log('[Mentions Feed] Setting up Firestore query for userId:', userId, 'limit:', limit);
+    setMentionsLoading(true);
+    setMentionsError(null);
+
+    const qy = query(
+      collection(db, 'dashboardFeed'),
+      where('userId', '==', userId),
+      where('sourceType', '==', 'mention'),
+      orderBy('timestamp', 'desc'),
+      fbLimit(limit),
+    );
+
+    console.log('[Mentions Feed] Query created, setting up snapshot listener...');
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        console.log('[Mentions Feed] ✅ Snapshot received, processing...');
+        console.log('[Mentions Feed] Snapshot metadata:', {
+          hasPendingWrites: snap.metadata.hasPendingWrites,
+          fromCache: snap.metadata.fromCache,
+          size: snap.size,
+        });
+        
+        try {
+          const items: DashboardFeedItem[] = snap.docs.map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              sourceType: 'mention' as const,
+              sourceId: data.sourceId || d.id,
+              messageId: data.messageId,
+              title: data.title || data.channelLabel || 'Mention',
+              snippet: data.snippet || '',
+              fromLabel: data.fromLabel || 'Unknown',
+              avatarUrl: data.avatarUrl,
+              isUnread: data.isUnread !== false,
+              isMuted: data.isMuted === true,
+              timestamp: data.timestamp || (data.createdAt?.toMillis?.() || Date.now()),
+              mentionedUserId: data.mentionedUserId,
+              mentionedByUserId: data.mentionedByUserId,
+              channelLabel: data.channelLabel,
+              mentionMetadata: data.mentionMetadata,
+              drawerScope: data.drawerScope || {
+                scopeType: 'mention',
+                channelId: data.mentionMetadata?.slackChannelId,
+              },
+            } as DashboardFeedItem;
+          });
+          console.log(`[Mentions Feed] ✅ Loaded ${items.length} mention feed items for user ${userId}`);
+          setMentionFeedItems(items);
+          setMentionsLoading(false);
+        } catch (err: any) {
+          console.error('[Mentions Feed] ❌ Error processing mention feed items:', err);
+          console.error('[Mentions Feed] Error details:', JSON.stringify(err, null, 2));
+          setMentionsError(err?.message || 'Failed to load mentions');
+          setMentionsLoading(false);
+        }
+      },
+      (err) => {
+        console.error('[Mentions Feed] ❌ Firestore query error:', err);
+        console.error('[Mentions Feed] Error code:', err?.code);
+        console.error('[Mentions Feed] Error message:', err?.message);
+        console.error('[Mentions Feed] Full error object:', JSON.stringify(err, null, 2));
+        
+        // Check if it's a permission error
+        if (err?.code === 'permission-denied') {
+          console.error('[Mentions Feed] 🔒 PERMISSION DENIED - Check Firestore rules for dashboardFeed collection');
+          console.error('[Mentions Feed] User ID:', userId);
+          console.error('[Mentions Feed] Make sure rule allows: request.auth.uid == resource.data.userId');
+        }
+        
+        // Check if it's an index error
+        if (err?.code === 'failed-precondition' || err?.message?.includes('index')) {
+          console.warn('[Mentions Feed] ⚠️ Firestore index required. Create composite index for: userId, sourceType, timestamp');
+        }
+        
+        setMentionsError(err?.message || 'Failed to load mentions');
+        setMentionsLoading(false);
+      },
+    );
+
+    return () => {
+      console.log('[Mentions Feed] Cleaning up snapshot listener');
+      unsub();
+    };
+  }, [userId, limit]);
 
   // Fetch email threads
   const fetchEmailThreads = useCallback(async () => {
@@ -390,6 +498,11 @@ export function useDashboardFeed(
       });
     }
 
+    // Add mention feed items
+    mentionFeedItems.forEach((item) => {
+      allItems.push(item);
+    });
+
     // Sort by timestamp (newest first)
     const sorted = allItems.sort((a, b) => b.timestamp - a.timestamp);
 
@@ -405,6 +518,7 @@ export function useDashboardFeed(
     memberChannelIds,
     calendarEvents,
     calendars,
+    mentionFeedItems,
     tenantId,
     userId,
     canAccessSlack,
@@ -418,7 +532,8 @@ export function useDashboardFeed(
                   (canAccessSlack && slackChannelsLoading) ||
                   (canAccessSlack && slackMessagesLoading) ||
                   (canAccessCalendar && calendarsLoading) ||
-                  (canAccessCalendar && calendarEventsLoading);
+                  (canAccessCalendar && calendarEventsLoading) ||
+                  mentionsLoading;
 
   // Combined error state
   const error = emailError || 
@@ -427,6 +542,7 @@ export function useDashboardFeed(
                 (canAccessSlack && slackMessagesError) ||
                 (canAccessCalendar && calendarsError?.message) ||
                 (canAccessCalendar && calendarEventsError?.message) ||
+                mentionsError ||
                 null;
 
   // Refresh function

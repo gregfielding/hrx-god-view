@@ -1038,6 +1038,20 @@ service cloud.firestore {
       allow read, write: if isHRX();
     }
 
+    // --- DASHBOARD FEED (Mentions, etc.) ---
+    match /dashboardFeed/{feedItemId} {
+      // Users can read their own feed items (primary rule for mentions)
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.userId;
+      // HRX can read any feed items
+      allow read: if isHRX();
+      // Tenant admins can read feed items for their tenant (if tenantId exists)
+      allow read: if isAuthenticated() && 
+                     resource.data.tenantId != null &&
+                     isTenantAdmin(resource.data.tenantId);
+      // Only backend/HRX can write feed items (Cloud Functions create mentions)
+      allow write: if isHRX();
+    }
+
     // --- EVENTS (Event Bus) ---
     match /events/{eventId} {
       allow read, write: if isHRX();

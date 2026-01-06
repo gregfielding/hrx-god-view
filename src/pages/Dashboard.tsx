@@ -11,6 +11,9 @@ import PageHeader from '../components/PageHeader';
 import DashboardFeed from '../components/DashboardFeed';
 import EmailThreadView from '../components/EmailThreadView';
 import SlackChannelDrawer from '../components/SlackChannelDrawer';
+import MentionsDrawer from '../components/MentionsDrawer';
+import { useDashboardFeed } from '../hooks/useDashboardFeed';
+import { DashboardFeedItem } from '../types/dashboardFeed';
 import CalendarWidget from '../components/CalendarWidget';
 import TasksDashboard from '../components/TasksDashboard';
 import AddIcon from '@mui/icons-material/Add';
@@ -42,8 +45,15 @@ const Dashboard: React.FC = () => {
   const [slackChannelDrawerOpen, setSlackChannelDrawerOpen] = useState(false);
   const [selectedSlackChannel, setSelectedSlackChannel] = useState<SlackChannelView | null>(null);
 
+  // Mentions drawer state
+  const [mentionsDrawerOpen, setMentionsDrawerOpen] = useState(false);
+
   // DM drawer uses DirectMessengerContext
   const { openMessenger, setActiveThreadId, setMode } = useDirectMessenger();
+
+  // Get mentions for the drawer
+  const { feedItems } = useDashboardFeed({ limit: 500 });
+  const mentions = feedItems.filter((item) => item.sourceType === 'mention');
 
   // Get Slack channels for drawer (need channel object for SlackChannelDrawer)
   const { channels: slackChannels } = useSlackChannels(
@@ -118,6 +128,19 @@ const Dashboard: React.FC = () => {
       setSlackChannelDrawerOpen(true);
     } else {
       console.warn('Channel not found:', options.channelId);
+    }
+  };
+
+  // Open mentions drawer
+  const handleOpenMentionsDrawer = () => {
+    setMentionsDrawerOpen(true);
+  };
+
+  // Handle mention click - open the specific Slack channel
+  const handleMentionClick = (mention: DashboardFeedItem) => {
+    if (mention.mentionMetadata?.origin === 'slack' && mention.drawerScope.channelId) {
+      handleOpenSlackChannelDrawer({ channelId: mention.drawerScope.channelId });
+      setMentionsDrawerOpen(false);
     }
   };
 
@@ -236,6 +259,7 @@ const Dashboard: React.FC = () => {
                 onOpenEmailDrawer={handleOpenEmailDrawer}
                 onOpenSlackDMDrawer={handleOpenSlackDMDrawer}
                 onOpenSlackChannelDrawer={handleOpenSlackChannelDrawer}
+                onOpenMentionsDrawer={handleOpenMentionsDrawer}
               />
             </Box>
           )}
@@ -462,6 +486,14 @@ const Dashboard: React.FC = () => {
           }}
         />
       )}
+
+      {/* Mentions Drawer */}
+      <MentionsDrawer
+        open={mentionsDrawerOpen}
+        mentions={mentions}
+        onClose={() => setMentionsDrawerOpen(false)}
+        onMentionClick={handleMentionClick}
+      />
     </Box>
   );
 };

@@ -25,7 +25,6 @@ import {
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import SaveIcon from '@mui/icons-material/Save';
-import PreviewIcon from '@mui/icons-material/Preview';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -35,17 +34,18 @@ import {
   generateEmailSignature,
   EmailSignatureData,
 } from '../../../utils/emailSignature';
+import { SignaturePreview } from '../../../components/profile/SignaturePreview';
 
 interface Props {
   uid: string;
 }
 
 const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
-  const { user } = useAuth();
+  const { user, activeTenant } = useAuth();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
 
   const [settings, setSettings] = useState<EmailSignatureSettings>({
     template: 'default',
@@ -75,6 +75,10 @@ const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
       
       if (userSnap.exists()) {
         const userData = userSnap.data();
+        
+        // Store user profile for preview
+        setUserProfile(userData);
+        
         const signatureSettings = userData?.emailSignature as EmailSignatureSettings | undefined;
         
         if (signatureSettings) {
@@ -140,8 +144,6 @@ const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
       },
     });
   };
-
-  const previewHtml = generateEmailSignature(settings);
 
   return (
     <Box sx={{ p: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -304,13 +306,6 @@ const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
 
               <Stack direction="row" spacing={2} justifyContent="flex-end">
                 <Button
-                  variant="outlined"
-                  startIcon={<PreviewIcon />}
-                  onClick={() => setShowPreview(!showPreview)}
-                >
-                  {showPreview ? 'Hide Preview' : 'Show Preview'}
-                </Button>
-                <Button
                   variant="contained"
                   startIcon={<SaveIcon />}
                   onClick={handleSave}
@@ -319,37 +314,31 @@ const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
                   {saving ? 'Saving...' : 'Save Signature'}
                 </Button>
               </Stack>
-
-              {showPreview && (
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    mt: 3,
-                    p: 3,
-                    bgcolor: 'grey.50',
-                    border: '1px solid',
-                    borderColor: 'divider',
-                  }}
-                >
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                    Preview
-                  </Typography>
-                  <Box
-                    sx={{
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      borderRadius: 1,
-                      p: 2,
-                      bgcolor: 'white',
-                    }}
-                    dangerouslySetInnerHTML={{ __html: previewHtml }}
-                  />
-                </Paper>
-              )}
             </>
           )}
         </CardContent>
       </Card>
+
+      {/* Live Signature Preview - Always visible when enabled */}
+      {settings.enabled && userProfile && (
+        <SignaturePreview
+          user={{
+            fullName: settings.data.fullName || `${userProfile?.firstName || ''} ${userProfile?.lastName || ''}`.trim(),
+            firstName: userProfile?.firstName,
+            lastName: userProfile?.lastName,
+            jobTitle: settings.data.jobTitle || userProfile?.jobTitle,
+            phoneNumber: settings.data.phone || userProfile?.phone,
+            phone: settings.data.phone || userProfile?.phone,
+            email: settings.data.email || userProfile?.email,
+            pronouns: settings.data.pronouns || userProfile?.pronouns,
+            officeLocation: settings.data.officeLocation?.trim() || undefined,
+            location: settings.data.officeLocation?.trim() || undefined,
+            includeConfidentialityNotice: settings.data.includeConfidentialityNotice,
+            enableEmailSignature: settings.enabled,
+          }}
+          tenant={activeTenant}
+        />
+      )}
     </Box>
   );
 };

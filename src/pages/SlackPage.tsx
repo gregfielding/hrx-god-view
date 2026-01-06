@@ -5,12 +5,16 @@
  * Focuses on channels only (no DMs).
  */
 
-import React, { useState, useMemo } from 'react';
-import { Box, Typography, Alert, CircularProgress, useMediaQuery, useTheme, Button, Snackbar, TextField } from '@mui/material';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Box, Typography, Alert, CircularProgress, useMediaQuery, useTheme, Button, Snackbar, TextField, Tabs, Tab, Paper, Avatar } from '@mui/material';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import SyncIcon from '@mui/icons-material/Sync';
 import SearchIcon from '@mui/icons-material/Search';
+import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import { useAuth } from '../contexts/AuthContext';
+import { useSearchParams } from 'react-router-dom';
+import { useDashboardFeed } from '../hooks/useDashboardFeed';
+import MentionsDrawer from '../components/MentionsDrawer';
 import { canUserAccessSlack, getSecurityLevelForActiveTenant } from '../utils/security';
 import { useSlackChannels } from '../hooks/useSlackChannels';
 import { useSlackChannelMembership } from '../hooks/useSlackChannelMembership';
@@ -22,15 +26,28 @@ import SlackChannelsSkeleton from '../components/SlackChannelsSkeleton';
 import SlackChannelDrawer from '../components/SlackChannelDrawer';
 import PageHeader from '../components/PageHeader';
 import { SlackChannelView } from '../types/slackChannels';
+import { DashboardFeedItem } from '../types/dashboardFeed';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import { useSlackChannelLastActivityFallback } from '../hooks/useSlackChannelLastActivityFallback';
+import { getChannelColor } from '../utils/slackChannelUtils';
 
 const SlackPage: React.FC = () => {
   const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const effectiveTenantId = activeTenant?.id || '';
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Get active tab from URL, default to 'channels'
+  const activeTab = searchParams.get('tab') || 'channels';
+  
+  // Get mentions for the Mentions tab
+  const { feedItems } = useDashboardFeed({ limit: 500 });
+  const mentions = feedItems.filter((item) => item.sourceType === 'mention');
+  
+  // Mentions drawer state
+  const [mentionsDrawerOpen, setMentionsDrawerOpen] = useState(false);
   
   // Ensure user object has activeTenantId and tenantIds for security check
   const userAny = user as any;
@@ -153,6 +170,27 @@ const SlackPage: React.FC = () => {
     setFilter({ ...filter, membershipFilter: newFilter });
   };
 
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
+    const params = new URLSearchParams(searchParams);
+    if (newValue === 'channels') {
+      params.delete('tab');
+    } else {
+      params.set('tab', newValue);
+    }
+    setSearchParams(params);
+  };
+
+  // Handle mention click - open the specific Slack channel
+  const handleMentionClick = (mention: DashboardFeedItem) => {
+    if (mention.mentionMetadata?.origin === 'slack' && mention.drawerScope.channelId) {
+      const channel = channels.find((c) => c.id === mention.drawerScope.channelId);
+      if (channel) {
+        handleRowClick(channel);
+        setMentionsDrawerOpen(false);
+      }
+    }
+  };
+
   // No access UI
   if (!canAccess) {
     return (
@@ -182,8 +220,10 @@ const SlackPage: React.FC = () => {
     }}>
       {/* Page Header with Standardized Layout */}
       <PageHeader
-        title="Slack Channels"
-        subtitle="View activity across connected Slack channels. Join channels to stay updated."
+        title={activeTab === 'mentions' ? 'Mentions' : 'Slack Channels'}
+        subtitle={activeTab === 'mentions' 
+          ? `You've been mentioned ${mentions.length} time${mentions.length !== 1 ? 's' : ''} in Slack.`
+          : 'View activity across connected Slack channels. Join channels to stay updated.'}
         filters={
           <SlackChannelsFilters
             filter={filter.membershipFilter}
@@ -270,6 +310,53 @@ const SlackPage: React.FC = () => {
         </Alert>
       </Snackbar>
 
+      {/* Tabs */}
+      <Paper sx={{ borderRadius: 0, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          sx={{
+            px: 3,
+            '& .MuiTabs-indicator': { bgcolor: '#0057B8' },
+            '& .MuiTab-root': {
+              textTransform: 'none',
+              fontWeight: 600,
+              minHeight: 48,
+            },
+          }}
+        >
+          <Tab label="Channels" value="channels" />
+          <Tab 
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <AlternateEmailIcon sx={{ fontSize: '1.2rem' }} />
+                Mentions
+                {mentions.length > 0 && (
+                  <Box
+                    sx={{
+                      minWidth: 20,
+                      height: 20,
+                      borderRadius: '10px',
+                      bgcolor: 'primary.main',
+                      color: 'white',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      px: 0.75,
+                    }}
+                  >
+                    {mentions.length > 99 ? '99+' : mentions.length}
+                  </Box>
+                )}
+              </Box>
+            }
+            value="mentions"
+          />
+        </Tabs>
+      </Paper>
+
       {/* Content Area */}
       <Box
         sx={{
@@ -281,7 +368,158 @@ const SlackPage: React.FC = () => {
           pb: 1,
         }}
       >
-        {(loading || membershipLoading) ? (
+        {activeTab === 'mentions' ? (
+          <Box sx={{ p: 3 }}>
+            {mentions.length === 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 400, textAlign: 'center' }}>
+                <AlternateEmailIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2, opacity: 0.5 }} />
+                <Typography variant="h6" color="text.secondary" gutterBottom>
+                  No mentions yet
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  When someone mentions you in Slack, it will appear here.
+                </Typography>
+              </Box>
+            ) : (
+              <Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                  <Typography variant="h6" gutterBottom sx={{ mb: 0 }}>
+                    All Mentions ({mentions.length})
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setMentionsDrawerOpen(true)}
+                    size="small"
+                  >
+                    Open Drawer
+                  </Button>
+                </Box>
+                {/* Show mentions grouped by channel */}
+                {Object.entries(
+                  mentions.reduce((acc, mention) => {
+                    if (mention.mentionMetadata?.origin === 'slack') {
+                      const channelId = mention.mentionMetadata.slackChannelId;
+                      const channelName = mention.mentionMetadata.slackChannelName || mention.channelLabel || 'Unknown Channel';
+                      const key = `${channelId}:${channelName}`;
+                      if (!acc[key]) acc[key] = [];
+                      acc[key].push(mention);
+                    } else {
+                      const key = mention.channelLabel || 'HRX Mentions';
+                      if (!acc[key]) acc[key] = [];
+                      acc[key].push(mention);
+                    }
+                    return acc;
+                  }, {} as Record<string, DashboardFeedItem[]>)
+                )
+                  .sort(([a], [b]) => {
+                    const aMentions = mentions.filter((m) => {
+                      if (m.mentionMetadata?.origin === 'slack') {
+                        const channelName = m.mentionMetadata.slackChannelName || m.channelLabel || '';
+                        return `${m.mentionMetadata.slackChannelId}:${channelName}` === a;
+                      }
+                      return (m.channelLabel || 'HRX Mentions') === a;
+                    });
+                    const bMentions = mentions.filter((m) => {
+                      if (m.mentionMetadata?.origin === 'slack') {
+                        const channelName = m.mentionMetadata.slackChannelName || m.channelLabel || '';
+                        return `${m.mentionMetadata.slackChannelId}:${channelName}` === b;
+                      }
+                      return (m.channelLabel || 'HRX Mentions') === b;
+                    });
+                    const aLatest = Math.max(...aMentions.map((m) => m.timestamp));
+                    const bLatest = Math.max(...bMentions.map((m) => m.timestamp));
+                    return bLatest - aLatest;
+                  })
+                  .map(([channelKey, channelMentions]) => {
+                    const [channelId, channelName] = channelKey.split(':');
+                    const sortedMentions = [...channelMentions].sort((a, b) => b.timestamp - a.timestamp);
+                    const channelColor = getChannelColor(channelName);
+
+                    return (
+                      <Box key={channelKey} sx={{ mb: 3 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                          <Avatar
+                            sx={{
+                              width: 24,
+                              height: 24,
+                              bgcolor: channelColor,
+                              color: 'white',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                            }}
+                          >
+                            #
+                          </Avatar>
+                          <Typography variant="subtitle2" fontWeight={600}>
+                            {channelName}
+                          </Typography>
+                          <Box
+                            sx={{
+                              minWidth: 24,
+                              height: 24,
+                              borderRadius: '12px',
+                              bgcolor: 'primary.main',
+                              color: 'white',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              px: 1,
+                              ml: 'auto',
+                            }}
+                          >
+                            {sortedMentions.length}
+                          </Box>
+                        </Box>
+                        {sortedMentions.map((mention) => (
+                          <Box
+                            key={mention.id}
+                            onClick={() => handleMentionClick(mention)}
+                            sx={{
+                              p: 2,
+                              mb: 1,
+                              borderRadius: 1,
+                              bgcolor: mention.isUnread ? 'action.hover' : 'transparent',
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              cursor: 'pointer',
+                              '&:hover': {
+                                bgcolor: 'action.hover',
+                              },
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                              <Typography variant="body2" fontWeight={500}>
+                                {mention.fromLabel}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {new Date(mention.timestamp).toLocaleString()}
+                              </Typography>
+                              {mention.isUnread && (
+                                <Box
+                                  sx={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    bgcolor: 'primary.main',
+                                    ml: 'auto',
+                                  }}
+                                />
+                              )}
+                            </Box>
+                            <Typography variant="body2" color="text.secondary">
+                              {mention.snippet}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    );
+                  })}
+              </Box>
+            )}
+          </Box>
+        ) : (loading || membershipLoading) ? (
           <SlackChannelsSkeleton />
         ) : filteredChannels.length === 0 ? (
           <SlackChannelsEmptyState 
@@ -322,6 +560,14 @@ const SlackPage: React.FC = () => {
         members={selectedChannel ? (membersByChannel[selectedChannel.id] || []) : []}
         onClose={handleDrawerClose}
         onToggleWatch={async () => {}} // No longer used
+      />
+
+      {/* Mentions Drawer */}
+      <MentionsDrawer
+        open={mentionsDrawerOpen}
+        mentions={mentions}
+        onClose={() => setMentionsDrawerOpen(false)}
+        onMentionClick={handleMentionClick}
       />
     </Box>
   );

@@ -20,6 +20,7 @@ import {
   updateUnreadCountsForSlackMessage,
 } from './messaging/slackMapping';
 import { logSlackTraffic } from './messaging/slackTrafficLogging';
+import { handleSlackMentions } from './mentions/slackMentions';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -732,6 +733,40 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
       hasHrxUserId: !!hrxUserId,
       hasConversationMapping: !!hrxConversationMapping,
     });
+  }
+
+  // ============================================================================
+  // Handle @mentions in Slack messages
+  // ============================================================================
+  // Process mentions for all messages (even if not fully integrated)
+  // This allows mentions to work even for unmapped users
+  if (event.text && tenantId) {
+    try {
+      let botToken: string | undefined;
+      try {
+        botToken = SLACK_BOT_TOKEN.value();
+      } catch (err) {
+        // Try fallback
+        const secrets = await getSlackSecretsFallback(tenantId);
+        botToken = secrets.botToken;
+      }
+
+      await handleSlackMentions(
+        {
+          text: event.text,
+          channel: event.channel || '',
+          ts: event.ts || '',
+          user: event.user,
+          team: payload.team_id,
+        },
+        tenantId,
+        payload.team_id,
+        botToken
+      );
+    } catch (error: any) {
+      logger.error('Error handling Slack mentions:', error);
+      // Don't throw - mention processing is non-critical
+    }
   }
 }
 
