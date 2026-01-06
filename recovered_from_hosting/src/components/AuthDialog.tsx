@@ -724,7 +724,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 }
                 label={
                   <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
-                    By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to job applications, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+                    By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
                   </Typography>
                 }
               />

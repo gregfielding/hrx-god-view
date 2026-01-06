@@ -6,6 +6,7 @@
 
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import { CalendarEvent, CalendarSummary } from '../types/calendar';
+import { FeedPost } from '../types/feed';
 import { format, isToday, isTomorrow, isSameDay, addDays } from 'date-fns';
 
 function toEpochMs(value: any): number {
@@ -371,6 +372,77 @@ export function adaptCalendarEventToFeedItem(
       scopeType: 'calendar',
       eventId: event.id,
       dateKey,
+    },
+  };
+}
+
+// Feed Post Adapter
+export function adaptFeedPostToFeedItem(
+  post: FeedPost,
+  authorName?: string,
+  authorAvatarUrl?: string
+): DashboardFeedItem {
+  const timestamp = toEpochMs(post.createdAt);
+  
+  // Build title from channel or visibility
+  let title = 'Feed Post';
+  if (post.targetChannelId) {
+    title = `Post in ${post.targetChannelId}`;
+  } else {
+    title = `Post (${post.visibility})`;
+  }
+  
+  // Build snippet from body (first 120 chars)
+  const snippet = post.body.length > 120 
+    ? post.body.substring(0, 120) + '...'
+    : post.body;
+  
+  // Map mentions to the format expected by DashboardFeedItem
+  const mappedMentions = (post.mentions || []).map((mention) => {
+    const base: any = {
+      type: mention.type,
+      id: mention.id,
+      label: mention.label,
+      slug: mention.slug,
+    };
+    // Add type-specific ID fields
+    if (mention.type === 'user') {
+      return { ...base, userId: mention.id };
+    } else if (mention.type === 'contact') {
+      return { ...base, contactId: mention.id };
+    } else if (mention.type === 'company') {
+      return { ...base, companyId: mention.id };
+    } else if (mention.type === 'deal') {
+      return { ...base, dealId: mention.id };
+    } else if (mention.type === 'job') {
+      return { ...base, jobId: mention.id };
+    } else if (mention.type === 'candidate') {
+      return { ...base, candidateId: mention.id };
+    } else if (mention.type === 'location') {
+      return { ...base, locationId: mention.id };
+    } else if (mention.type === 'task') {
+      return { ...base, taskId: mention.id };
+    }
+    return base;
+  });
+
+  return {
+    id: `feed_post_${post.id}`,
+    sourceType: 'slack_channel', // Use slack_channel type for now, or we could add 'feed_post' type
+    sourceId: post.targetChannelId || post.id,
+    messageId: post.id,
+    title,
+    snippet: post.body, // Store full body for mention rendering
+    fromLabel: authorName || 'Unknown',
+    avatarUrl: authorAvatarUrl,
+    isUnread: false, // Feed posts are always read when created
+    isMuted: false,
+    timestamp,
+    mentions: mappedMentions, // Include mentions for rendering
+    drawerScope: {
+      scopeType: post.targetChannelId ? 'slack_channel' : 'slack_channel', // Could be 'feed_post' in future
+      channelId: post.targetChannelId || undefined,
+      threadId: post.id,
     },
   };
 }

@@ -5,8 +5,9 @@
  */
 
 import React, { useState, KeyboardEvent } from 'react';
-import { Box, TextField, Button, CircularProgress, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, Typography } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
+import { RichTextInputWithMentions, RichTextValue } from './common/RichTextInputWithMentions';
 
 interface SlackChannelComposerProps {
   sending: boolean;
@@ -20,6 +21,12 @@ const SlackChannelComposer: React.FC<SlackChannelComposerProps> = ({
   channelName,
 }) => {
   const [text, setText] = useState('');
+  const [mentions, setMentions] = useState<RichTextValue['mentions']>([]);
+
+  const handleTextChange = (value: RichTextValue) => {
+    setText(value.text);
+    setMentions(value.mentions);
+  };
 
   const handleSend = async () => {
     const trimmed = text.trim();
@@ -54,22 +61,23 @@ const SlackChannelComposer: React.FC<SlackChannelComposerProps> = ({
       }}
     >
       <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-end' }}>
-        <TextField
-          fullWidth
-          multiline
-          maxRows={4}
-          placeholder={channelName ? `Message #${channelName} in Slack...` : 'Message channel in Slack...'}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={sending}
-          size="small"
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '8px',
-            },
-          }}
-        />
+        <Box sx={{ flex: 1 }}>
+          <RichTextInputWithMentions
+            value={text}
+            onChange={handleTextChange}
+            placeholder={channelName ? `Message #${channelName}... (use @ for users, # for contacts, & for companies, % for deals)` : 'Message channel... (use @ for users, # for contacts, & for companies, % for deals)'}
+            onKeyDown={handleKeyDown}
+            disabled={sending}
+            multiline
+            maxRows={4}
+            size="small"
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: '8px',
+              },
+            }}
+          />
+        </Box>
         <Button
           variant="contained"
           onClick={handleSend}

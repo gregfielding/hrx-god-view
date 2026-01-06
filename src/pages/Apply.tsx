@@ -325,7 +325,7 @@ const Apply: React.FC = () => {
             Get Started with C1 Staffing
           </Typography>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-            Create your worker profile so we can match you with jobs, shifts, and opportunities. You'll receive updates by text message once you give consent below.
+            Create your worker profile so we can match you with jobs, shifts, and opportunities. If you agree to received them, you'll receive updates by text message once you give consent below.
           </Typography>
         </Box>
 
@@ -390,7 +390,7 @@ const Apply: React.FC = () => {
               disabled={loading}
               required
               placeholder="(555) 123-4567"
-              helperText="We'll use this to send you job updates and verification codes."
+              helperText="Please double-check that you enter the number correctly."
               size="medium"
             />
 
@@ -432,7 +432,7 @@ const Apply: React.FC = () => {
                 }
                 label={
                   <Typography variant="body2" sx={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
-                    By checking this box, you agree to receive text messages from C1 Staffing / HRX One related to job applications, scheduling, onboarding, payroll, and employment updates. Message frequency varies. Message & data rates may apply. Reply STOP to cancel and HELP for help. Consent is not a condition of employment. See our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>, <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>, and <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
+                    By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent. See our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>, <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>, and <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
                   </Typography>
                 }
                 sx={{ alignItems: 'flex-start' }}

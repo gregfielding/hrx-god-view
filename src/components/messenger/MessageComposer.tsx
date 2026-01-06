@@ -5,7 +5,7 @@
  */
 
 import React, { useState, KeyboardEvent, useEffect, useRef } from 'react';
-import { Box, TextField, IconButton, CircularProgress, Typography } from '@mui/material';
+import { Box, IconButton, CircularProgress, Typography } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import EmojiEmotionsIcon from '@mui/icons-material/EmojiEmotions';
 import GifIcon from '@mui/icons-material/Gif';
@@ -14,6 +14,7 @@ import { useMyDMTyping } from '../../hooks/useDMTyping';
 import { useTenantGIFSettings } from '../../hooks/useTenantGIFSettings';
 import EmojiPicker from './EmojiPicker';
 import GIFPicker from './GIFPicker';
+import { RichTextInputWithMentions, RichTextValue } from '../common/RichTextInputWithMentions';
 
 interface MessageComposerProps {
   threadId: string;
@@ -28,12 +29,12 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
 }) => {
   const { user, activeTenant } = useAuth();
   const [messageText, setMessageText] = useState('');
+  const [mentions, setMentions] = useState<RichTextValue['mentions']>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const tenantId = activeTenant?.id || '';
   const currentUserId = user?.uid || '';
@@ -88,23 +89,14 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
     }
   };
 
+  const handleTextChange = (value: RichTextValue) => {
+    setMessageText(value.text);
+    setMentions(value.mentions);
+  };
+
   const handleEmojiSelect = (emoji: string) => {
-    if (!inputRef.current) return;
-    
-    const input = inputRef.current;
-    const start = input.selectionStart || 0;
-    const end = input.selectionEnd || 0;
-    const textBefore = messageText.substring(0, start);
-    const textAfter = messageText.substring(end);
-    
-    setMessageText(textBefore + emoji + textAfter);
-    
-    // Restore cursor position after emoji
-    setTimeout(() => {
-      const newPosition = start + emoji.length;
-      input.setSelectionRange(newPosition, newPosition);
-      input.focus();
-    }, 0);
+    // Insert emoji at the end of the current text
+    setMessageText(prev => prev + emoji);
   };
 
   return (
@@ -148,33 +140,33 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
           <EmojiEmotionsIcon fontSize="small" />
         </IconButton>
 
-        <TextField
-          inputRef={inputRef}
-          fullWidth
-          multiline
-          maxRows={3}
-          placeholder="Type a message..."
-          value={messageText}
-          onChange={(e) => setMessageText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={disabled || sending}
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '24px',
-              backgroundColor: '#F9FAFB',
-              fontSize: '0.9375rem',
-              '& fieldset': {
-                borderColor: 'rgba(0,0,0,0.12)',
+        <Box sx={{ flex: 1 }}>
+          <RichTextInputWithMentions
+            value={messageText}
+            onChange={handleTextChange}
+            placeholder="Type a message... (use @ for users, # for contacts, & for companies, % for deals)"
+            onKeyDown={handleKeyDown}
+            disabled={disabled || sending}
+            multiline
+            maxRows={3}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: '24px',
+                backgroundColor: '#F9FAFB',
+                fontSize: '0.9375rem',
+                '& fieldset': {
+                  borderColor: 'rgba(0,0,0,0.12)',
+                },
+                '&:hover fieldset': {
+                  borderColor: 'rgba(0,0,0,0.2)',
+                },
+                '&.Mui-focused fieldset': {
+                  borderColor: '#0057B8',
+                },
               },
-              '&:hover fieldset': {
-                borderColor: 'rgba(0,0,0,0.2)',
-              },
-              '&.Mui-focused fieldset': {
-                borderColor: '#0057B8',
-              },
-            },
-          }}
-        />
+            }}
+          />
+        </Box>
         {/* GIF button (only if allowed) */}
         {allowGIFs && (
           <IconButton

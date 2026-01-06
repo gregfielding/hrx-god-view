@@ -24,9 +24,11 @@ import {
 } from '../utils/dashboardFeedAdapters';
 import { SlackChannelView } from '../types/slackChannels';
 import { normalizeSecurityLevel } from '../utils/security';
-import { collection, limit as fbLimit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, limit as fbLimit, onSnapshot, orderBy, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { subDays, addDays } from 'date-fns';
+import type { FeedPost } from '../types/feed';
+import { adaptFeedPostToFeedItem } from '../utils/dashboardFeedAdapters';
 
 interface UseDashboardFeedOptions {
   limit?: number;
@@ -66,6 +68,12 @@ export function useDashboardFeed(
   const [emailThreads, setEmailThreads] = useState<EmailThreadSource[]>([]);
   const [emailLoading, setEmailLoading] = useState(true);
   const [emailError, setEmailError] = useState<string | null>(null);
+
+  // State for feed posts
+  const [feedPosts, setFeedPosts] = useState<FeedPost[]>([]);
+  const [feedPostsLoading, setFeedPostsLoading] = useState(true);
+  const [feedPostsError, setFeedPostsError] = useState<string | null>(null);
+  const [authorCache, setAuthorCache] = useState<Map<string, { name: string; avatarUrl?: string }>>(new Map());
 
   // Use existing hooks for DM threads and Slack channels
   const {
@@ -360,6 +368,100 @@ export function useDashboardFeed(
     }
   }, [fetchEmailThreads, refreshInterval]);
 
+  // Fetch feed posts
+  useEffect(() => {
+    if (!tenantId) {
+      setFeedPosts([]);
+      setFeedPostsLoading(false);
+      return;
+    }
+
+    setFeedPostsLoading(true);
+    setFeedPostsError(null);
+
+    const feedPostsRef = collection(db, 'tenants', tenantId, 'feed_posts');
+    const feedPostsQuery = query(
+      feedPostsRef,
+      orderBy('createdAt', 'desc'),
+      fbLimit(limit)
+    );
+
+    const unsubscribe = onSnapshot(
+      feedPostsQuery,
+      async (snapshot) => {
+        try {
+          const posts: FeedPost[] = snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              tenantId: data.tenantId || tenantId,
+              authorId: data.authorId,
+              body: data.body || '',
+              mentions: data.mentions || [],
+              visibility: data.visibility || 'tenant',
+              targetChannelId: data.targetChannelId,
+              slackChannelId: data.slackChannelId,
+              slackTs: data.slackTs,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+            } as FeedPost;
+          });
+          setFeedPosts(posts);
+
+          // Fetch author info for new posts
+          const authorIds = new Set<string>();
+          posts.forEach(post => {
+            if (post.authorId && !authorCache.has(post.authorId)) {
+              authorIds.add(post.authorId);
+            }
+          });
+
+          // Fetch author data in parallel
+          if (authorIds.size > 0) {
+            const authorPromises = Array.from(authorIds).map(async (authorId) => {
+              try {
+                const userDoc = await getDoc(doc(db, 'users', authorId));
+                if (userDoc.exists()) {
+                  const userData = userDoc.data();
+                  const name = userData.displayName || 
+                    `${userData.firstName || ''} ${userData.lastName || ''}`.trim() ||
+                    userData.email?.split('@')[0] ||
+                    'Unknown';
+                  const avatarUrl = userData.avatar || userData.avatarUrl;
+                  return { authorId, name, avatarUrl };
+                }
+              } catch (err) {
+                console.warn(`Failed to fetch author info for ${authorId}:`, err);
+              }
+              return { authorId, name: 'Unknown', avatarUrl: undefined };
+            });
+
+            const authorData = await Promise.all(authorPromises);
+            setAuthorCache(prev => {
+              const newCache = new Map(prev);
+              authorData.forEach(({ authorId, name, avatarUrl }) => {
+                newCache.set(authorId, { name, avatarUrl });
+              });
+              return newCache;
+            });
+          }
+        } catch (err: any) {
+          console.error('Error processing feed posts:', err);
+          setFeedPostsError(err.message || 'Failed to load feed posts');
+        } finally {
+          setFeedPostsLoading(false);
+        }
+      },
+      (err) => {
+        console.error('Error subscribing to feed posts:', err);
+        setFeedPostsError(err.message || 'Failed to load feed posts');
+        setFeedPostsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [tenantId, limit, authorCache]);
+
   // Aggregate all feed items
   const feedItems = useMemo(() => {
     const allItems: DashboardFeedItem[] = [];
@@ -498,6 +600,21 @@ export function useDashboardFeed(
       });
     }
 
+    // Add feed posts
+    feedPosts.forEach((post) => {
+      try {
+        const authorInfo = authorCache.get(post.authorId);
+        const item = adaptFeedPostToFeedItem(
+          post,
+          authorInfo?.name,
+          authorInfo?.avatarUrl
+        );
+        allItems.push(item);
+      } catch (err) {
+        console.error('Error adapting feed post:', err);
+      }
+    });
+
     // Add mention feed items
     mentionFeedItems.forEach((item) => {
       allItems.push(item);
@@ -519,6 +636,8 @@ export function useDashboardFeed(
     calendarEvents,
     calendars,
     mentionFeedItems,
+    feedPosts,
+    authorCache,
     tenantId,
     userId,
     canAccessSlack,
@@ -533,7 +652,8 @@ export function useDashboardFeed(
                   (canAccessSlack && slackMessagesLoading) ||
                   (canAccessCalendar && calendarsLoading) ||
                   (canAccessCalendar && calendarEventsLoading) ||
-                  mentionsLoading;
+                  mentionsLoading ||
+                  feedPostsLoading;
 
   // Combined error state
   const error = emailError || 
@@ -543,6 +663,7 @@ export function useDashboardFeed(
                 (canAccessCalendar && calendarsError?.message) ||
                 (canAccessCalendar && calendarEventsError?.message) ||
                 mentionsError ||
+                feedPostsError ||
                 null;
 
   // Refresh function

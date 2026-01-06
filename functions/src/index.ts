@@ -11080,6 +11080,7 @@ export { onCompanyCreatedApollo, onContactCreatedApollo, getFirmographics, getRe
 // RE-ENABLED WITH FIXES - USING SAFE VERSION
 export { syncApolloHeadquartersLocation } from './syncApolloHeadquartersLocationDisabled';
 export { syncApolloHeadquartersLocationCallable } from './syncApolloHeadquartersLocationCallable';
+export { feedCreatePost } from './feed/feedCreatePost';
 export { createHeadquartersLocation } from './createHeadquartersLocation';
 export { fetchLinkedInAvatar } from './linkedInAvatarService';
 

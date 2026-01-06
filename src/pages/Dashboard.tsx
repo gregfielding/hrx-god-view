@@ -9,6 +9,7 @@ import { Box, Button, Card, CardContent, CardHeader, IconButton, Tab, Tabs, Typo
 import { useAuth } from '../contexts/AuthContext';
 import PageHeader from '../components/PageHeader';
 import DashboardFeed from '../components/DashboardFeed';
+import { DashboardFeedComposer } from '../components/DashboardFeedComposer';
 import EmailThreadView from '../components/EmailThreadView';
 import SlackChannelDrawer from '../components/SlackChannelDrawer';
 import MentionsDrawer from '../components/MentionsDrawer';
@@ -255,6 +256,7 @@ const Dashboard: React.FC = () => {
               minHeight: (isMobile || isTablet) ? 'auto' : 0, 
               overflow: (isMobile || isTablet) ? 'visible' : 'hidden' 
             }}>
+              <DashboardFeedComposer />
               <DashboardFeed
                 onOpenEmailDrawer={handleOpenEmailDrawer}
                 onOpenSlackDMDrawer={handleOpenSlackDMDrawer}

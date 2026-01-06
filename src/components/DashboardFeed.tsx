@@ -53,6 +53,8 @@ import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import InboxSearchBar from './InboxSearchBar';
 import { fetchEmailThreadCached } from '../utils/emailThreadCache';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
+import { RenderedTextWithMentions } from './common/RenderedTextWithMentions';
+import type { Mention } from '../types/crossSystemMentions';
 
 // Source metadata for icons and labels
 const SOURCE_META: Record<
@@ -933,23 +935,60 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                               />
                             )}
                           </Box>
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                            sx={{
-                              fontWeight: 400,
-                              fontSize: '13px',
-                              overflow: 'hidden',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical',
-                              overflowWrap: 'anywhere',
-                              lineHeight: 1.35,
-                              mt: 0.25,
-                            }}
-                          >
-                            {item.snippet || '(no preview)'}
-                          </Typography>
+                          {item.mentions && item.mentions.length > 0 ? (
+                            <RenderedTextWithMentions
+                              text={item.snippet || '(no preview)'}
+                              mentions={item.mentions.map(m => {
+                                const base: any = {
+                                  type: m.type,
+                                  id: m.id,
+                                  label: m.label,
+                                  slug: m.slug,
+                                };
+                                if (m.type === 'user' && m.userId) {
+                                  return { ...base, userId: m.userId } as Mention;
+                                } else if (m.type === 'contact' && m.contactId) {
+                                  return { ...base, contactId: m.contactId } as Mention;
+                                } else if (m.type === 'company' && m.companyId) {
+                                  return { ...base, companyId: m.companyId } as Mention;
+                                } else if (m.type === 'deal' && m.dealId) {
+                                  return { ...base, dealId: m.dealId } as Mention;
+                                }
+                                return base as Mention;
+                              })}
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{
+                                fontWeight: 400,
+                                fontSize: '13px',
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflowWrap: 'anywhere',
+                                lineHeight: 1.35,
+                                mt: 0.25,
+                              }}
+                            />
+                          ) : (
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              sx={{
+                                fontWeight: 400,
+                                fontSize: '13px',
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: 'vertical',
+                                overflowWrap: 'anywhere',
+                                lineHeight: 1.35,
+                                mt: 0.25,
+                              }}
+                            >
+                              {item.snippet || '(no preview)'}
+                            </Typography>
+                          )}
 
                           {isTablet && (
                             <Typography
