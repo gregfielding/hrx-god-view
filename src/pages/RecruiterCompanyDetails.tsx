@@ -512,14 +512,107 @@ const RecruiterCompanyDetails: React.FC = () => {
       const resultData = result.data as any;
       console.log('Apollo company enrichment results:', resultData);
       
+      // Check if logo was updated and update local state immediately
+      let logoUpdated = false;
+      if (resultData.status === 'ok' && resultData.data?.logo) {
+        const newLogoUrl = resultData.data.logo;
+        if (newLogoUrl && newLogoUrl !== company.logo) {
+          setCompany((prev: any) => ({ ...prev, logo: newLogoUrl }));
+          logoUpdated = true;
+          console.log('[RecruiterCompanyDetails] Logo updated immediately:', newLogoUrl);
+        }
+      }
+      
+      // Also try to fetch logo directly if not already updated (parallel approach like CRM version)
+      if (!logoUpdated && !company.logo) {
+        try {
+          // Try multiple logo sources
+          const logoSources = [
+            `https://logo.clearbit.com/${companyName.toLowerCase().replace(/\s+/g, '')}.com`,
+            `https://logo.clearbit.com/${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
+            `https://logo.clearbit.com/${companyName.toLowerCase().replace(/\s+/g, '')}.org`,
+            `https://logo.clearbit.com/${companyName.toLowerCase().replace(/[^a-z0-9]/g, '')}.org`
+          ];
+
+          // Add LinkedIn logo sources if we have a LinkedIn URL
+          if (company.linkedin) {
+            const linkedinUrl = company.linkedin;
+            const linkedinLogoSources = [
+              `${linkedinUrl}/logo.png`,
+              `${linkedinUrl}/logo.jpg`,
+              `${linkedinUrl}/logo.jpeg`,
+              `${linkedinUrl}/company-logo.png`,
+              `${linkedinUrl}/company-logo.jpg`,
+              `${linkedinUrl.replace('/company/', '/')}/logo.png`,
+              `${linkedinUrl.replace('/company/', '/')}/logo.jpg`
+            ];
+            logoSources.push(...linkedinLogoSources);
+          }
+
+          // Try each logo source
+          for (const logoSource of logoSources) {
+            try {
+              console.log(`[RecruiterCompanyDetails] Trying logo source: ${logoSource}`);
+              
+              // Try fetching the logo
+              const response = await fetch(logoSource, {
+                method: 'GET',
+                cache: 'no-cache'
+              });
+              
+              if (response.ok) {
+                const blob = await response.blob();
+                
+                // Check if the blob is actually an image (and not empty)
+                if (blob && blob.size > 0 && blob.type.startsWith('image/')) {
+                  const file = new File([blob], `${companyName.toLowerCase().replace(/\s+/g, '')}-logo.png`, { type: blob.type });
+
+                  const storageRef = ref(storage, `companies/${tenantId}/${company.id}/ai-logo.png`);
+                  await uploadBytes(storageRef, file);
+                  const logoUrl = await getDownloadURL(storageRef);
+                  
+                  // Update Firestore
+                  await updateDoc(doc(db, 'tenants', tenantId, 'crm_companies', company.id), {
+                    logo: logoUrl,
+                    updatedAt: serverTimestamp()
+                  });
+                  
+                  // Update local state immediately
+                  setCompany((prev: any) => ({ ...prev, logo: logoUrl }));
+                  logoUpdated = true;
+                  console.log(`[RecruiterCompanyDetails] Successfully uploaded logo from: ${logoSource}`);
+                  break;
+                }
+              }
+            } catch (logoErr: any) {
+              // CORS errors are expected for some sources, continue to next
+              if (logoErr.name === 'TypeError' && logoErr.message.includes('Failed to fetch')) {
+                console.log(`[RecruiterCompanyDetails] CORS error for ${logoSource}, trying next source...`);
+              } else {
+                console.log(`[RecruiterCompanyDetails] Logo source failed: ${logoSource}`, logoErr);
+              }
+              // Continue to next logo source
+            }
+          }
+        } catch (logoErr) {
+          console.log('[RecruiterCompanyDetails] Logo fetching failed, continuing without logo:', logoErr);
+        }
+      }
+      
       if (resultData.status === 'ok') {
-        setSuccess('Company enhanced with Apollo data successfully!');
-        // Reload company data
+        const successMsg = logoUpdated 
+          ? 'Company enhanced with Apollo data successfully! Logo found and uploaded.'
+          : 'Company enhanced with Apollo data successfully!';
+        setSuccess(successMsg);
+        // Reload company data to get any other updates
         await loadCompanyData();
       } else if (resultData.status === 'error') {
         setError(resultData.message || 'Failed to enhance company with Apollo data');
       } else {
-        setSuccess(`Company enhanced: ${resultData.message || 'Success'}`);
+        const successMsg = logoUpdated 
+          ? `Company enhanced: ${resultData.message || 'Success'}. Logo found and uploaded.`
+          : `Company enhanced: ${resultData.message || 'Success'}`;
+        setSuccess(successMsg);
       }
       
     } catch (error: any) {
@@ -2478,6 +2571,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
                       'Retirement Home',
                       'Sports Arena',
                       'Sports Stadium',
+                      'Golf Course',
                       'Fairgrounds',
                       'Concert Venue',
                       'Convention Center',

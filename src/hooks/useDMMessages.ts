@@ -110,25 +110,38 @@ export function useDMMessages({
     setError(null);
 
     const messagesRef = collection(db, 'tenants', tenantId, 'dmThreads', threadId, 'messages');
+    // Query for the most recent messages (descending order), then we'll reverse to display chronologically
     const messagesQuery = query(
       messagesRef,
-      orderBy('createdAt', 'asc'),
+      orderBy('createdAt', 'desc'),
       limit(maxMessages)
     );
 
+    console.log('[useDMMessages] Setting up onSnapshot listener for thread:', threadId);
+    
     const unsubscribe = onSnapshot(
       messagesQuery,
       (snapshot) => {
+        console.log('[useDMMessages] Snapshot received:', {
+          threadId,
+          messageCount: snapshot.docs.length,
+          hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          fromCache: snapshot.metadata.fromCache,
+        });
+        
         try {
           // If we get a permission error, the thread might not exist yet
           // This is fine - we'll just show an empty message list
-          const messagesList: DMMessageView[] = snapshot.docs
+          // Reverse the docs array since we queried in descending order but want to display chronologically
+          const filteredDocs = snapshot.docs
             .filter((doc) => {
               const data = doc.data() as DMMessage;
               // Only include non-deleted messages with valid createdAt (filter out race conditions during send)
               return !data.deletedAt && data.createdAt != null;
             })
-            .map((doc, index, filteredDocs) => {
+            .reverse(); // Reverse to get chronological order (oldest first)
+          
+          const messagesList: DMMessageView[] = filteredDocs.map((doc, index) => {
               const data = doc.data() as DMMessage;
               // createdAt is guaranteed to be non-null Timestamp due to filter above
               const createdAt = data.createdAt.toDate();
@@ -216,30 +229,41 @@ export function useDMMessages({
             }
           });
 
+          console.log('[useDMMessages] Setting messages:', mergedMessages.length, 'total messages');
           setMessages(mergedMessages);
           setLoading(false);
         } catch (err: any) {
-          console.error('Error processing DM messages:', err);
+          console.error('[useDMMessages] Error processing DM messages:', err);
           setError(err);
           setLoading(false);
         }
       },
       (err: any) => {
+        console.error('[useDMMessages] onSnapshot error:', {
+          code: err.code,
+          message: err.message,
+          threadId,
+        });
+        
         // If permission denied, the thread might not exist yet - this is expected
         if (err.code === 'permission-denied' || err.code === 'not-found') {
           // Thread doesn't exist yet, just show empty messages
+          console.log('[useDMMessages] Thread not found or permission denied (expected for new threads)');
           setMessages([]);
           setLoading(false);
           setError(null); // Don't set error for expected case
         } else {
-          console.error('Error loading DM messages:', err);
+          console.error('[useDMMessages] Unexpected error loading DM messages:', err);
           setError(err);
           setLoading(false);
         }
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      console.log('[useDMMessages] Cleaning up onSnapshot listener for thread:', threadId);
+      unsubscribe();
+    };
   }, [tenantId, threadId, currentUserId, maxMessages]);
 
   /**

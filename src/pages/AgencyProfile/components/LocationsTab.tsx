@@ -131,6 +131,7 @@ const locationTypeOptions = [
   'Aquarium',
   'Park',
   'Recreation Center',
+  'Golf Course',
   'Community Center',
   'Senior Center',
   'Day Care',

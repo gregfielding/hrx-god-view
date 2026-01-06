@@ -1223,6 +1223,7 @@ const RecruiterLocationDetails: React.FC = () => {
                           'Retirement Home',
                           'Sports Arena',
                           'Sports Stadium',
+                          'Golf Course',
                           'Fairgrounds',
                           'Concert Venue',
                           'Convention Center',

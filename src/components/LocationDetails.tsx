@@ -528,6 +528,7 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
                       'Retirement Home',
                       'Sports Arena',
                       'Sports Stadium',
+                      'Golf Course',
                       'Fairgrounds',
                       'Concert Venue',
                       'Convention Center',
