@@ -11,10 +11,11 @@ import type { MentionableEntity, MentionType } from '../types/crossSystemMention
 import { useAuth } from '../contexts/AuthContext';
 
 export interface UseMentionSearchResult {
-  searchUsers: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;
+  searchUsers: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;  // Internal team (securityLevel 5-7)
   searchContacts: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;
   searchCompanies: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;
   searchDeals: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;
+  searchWorkers: (query: string, limitCount?: number) => Promise<MentionableEntity[]>;  // Workers (securityLevel 1-4)
 }
 
 /**
@@ -30,22 +31,83 @@ export function useMentionSearch(): UseMentionSearchResult {
     }
 
     try {
-      // Use the existing mentionSearch callable function for users
-      // Allow empty query to get initial list
-      const { httpsCallable } = await import('firebase/functions');
-      const { functions } = await import('../firebase');
-      const mentionSearch = httpsCallable(functions, 'mentionSearch');
+      // Search for internal team members (securityLevel 5-7) in the users collection
+      const searchTerm = (searchQuery || '').toLowerCase().trim();
+      const usersRef = collection(db, 'users');
       
-      const result = await mentionSearch({ query: searchQuery || '', limit: limitCount });
-      const users = (result.data as any)?.users || [];
+      // Fetch users and filter by securityLevel 5-7 and tenant membership
+      const usersQuery = query(usersRef, limit(500)); // Fetch more to filter client-side
+      const snapshot = await getDocs(usersQuery);
+      const results: MentionableEntity[] = [];
       
-      return users.map((user: any) => ({
-        id: user.id,
-        type: 'user' as MentionType,
-        label: user.fullName || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        slug: user.username || user.email?.split('@')[0],
-        avatarUrl: user.avatarUrl || user.avatar,
-      }));
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        const uid = doc.id;
+        
+        // Check if user is in the tenant
+        const userTenantIds = data?.tenantIds || {};
+        const userTenantData = userTenantIds[tenantId];
+        const isInTenant = 
+          !!userTenantData || 
+          data?.activeTenantId === tenantId || 
+          data?.tenantId === tenantId;
+        
+        if (!isInTenant) {
+          continue;
+        }
+        
+        // Get security level from tenant-specific data or global
+        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
+        const securityLevelNum = parseInt(securityLevel || '0', 10);
+        
+        // Only include internal team (securityLevel 5-7)
+        if (securityLevelNum < 5 || securityLevelNum > 7) {
+          continue;
+        }
+        
+        // Extract searchable fields
+        const email = (data?.email || '').toLowerCase();
+        const firstName = (data?.firstName || '').toLowerCase();
+        const lastName = (data?.lastName || '').toLowerCase();
+        const displayName = (data?.displayName || '').toLowerCase();
+        const username = email.split('@')[0] || '';
+        
+        // Get Slack username if available
+        const slackIntegration = data?.integrations?.slack;
+        const slackUsername = slackIntegration?.username?.toLowerCase() || '';
+        
+        // If no search term, include all internal team members (up to limit)
+        // Otherwise, check if matches search term
+        if (
+          searchTerm.length === 0 ||
+          username.startsWith(searchTerm) ||
+          firstName.startsWith(searchTerm) ||
+          lastName.startsWith(searchTerm) ||
+          displayName.startsWith(searchTerm) ||
+          email.startsWith(searchTerm) ||
+          slackUsername.startsWith(searchTerm)
+        ) {
+          const fullName =
+            displayName ||
+            `${data?.firstName || ''} ${data?.lastName || ''}`.trim() ||
+            email.split('@')[0] ||
+            'Unknown';
+          
+          results.push({
+            id: uid,
+            type: 'user',
+            label: fullName,
+            slug: username || email.split('@')[0] || 'user',
+            avatarUrl: data?.avatar || data?.avatarUrl,
+          });
+          
+          if (results.length >= limitCount) {
+            break;
+          }
+        }
+      }
+      
+      return results;
     } catch (error) {
       console.error('Error searching users:', error);
       return [];
@@ -215,11 +277,96 @@ export function useMentionSearch(): UseMentionSearchResult {
     }
   }, [tenantId]);
 
+  const searchWorkers = useCallback(async (searchQuery: string, limitCount = 20): Promise<MentionableEntity[]> => {
+    if (!tenantId) {
+      return [];
+    }
+
+    try {
+      // Search for workers (securityLevel 1-4) in the users collection
+      const searchTerm = (searchQuery || '').toLowerCase().trim();
+      const usersRef = collection(db, 'users');
+      
+      // Fetch users and filter by securityLevel 1-4 and tenant membership
+      const usersQuery = query(usersRef, limit(500)); // Fetch more to filter client-side
+      const snapshot = await getDocs(usersQuery);
+      const results: MentionableEntity[] = [];
+      
+      for (const doc of snapshot.docs) {
+        const data = doc.data();
+        const uid = doc.id;
+        
+        // Check if user is in the tenant
+        const userTenantIds = data?.tenantIds || {};
+        const userTenantData = userTenantIds[tenantId];
+        const isInTenant = 
+          !!userTenantData || 
+          data?.activeTenantId === tenantId || 
+          data?.tenantId === tenantId;
+        
+        if (!isInTenant) {
+          continue;
+        }
+        
+        // Get security level from tenant-specific data or global
+        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
+        const securityLevelNum = parseInt(securityLevel || '0', 10);
+        
+        // Only include workers (securityLevel 1-4)
+        if (securityLevelNum < 1 || securityLevelNum > 4) {
+          continue;
+        }
+        
+        // Extract searchable fields
+        const email = (data?.email || '').toLowerCase();
+        const firstName = (data?.firstName || '').toLowerCase();
+        const lastName = (data?.lastName || '').toLowerCase();
+        const displayName = (data?.displayName || '').toLowerCase();
+        const username = email.split('@')[0] || '';
+        
+        // If no search term, include all workers (up to limit)
+        // Otherwise, check if matches search term
+        if (
+          searchTerm.length === 0 ||
+          username.startsWith(searchTerm) ||
+          firstName.startsWith(searchTerm) ||
+          lastName.startsWith(searchTerm) ||
+          displayName.startsWith(searchTerm) ||
+          email.startsWith(searchTerm)
+        ) {
+          const fullName =
+            displayName ||
+            `${data?.firstName || ''} ${data?.lastName || ''}`.trim() ||
+            email.split('@')[0] ||
+            'Unknown';
+          
+          results.push({
+            id: uid,
+            type: 'worker',
+            label: fullName,
+            slug: username || email.split('@')[0] || 'worker',
+            avatarUrl: data?.avatar || data?.avatarUrl,
+          });
+          
+          if (results.length >= limitCount) {
+            break;
+          }
+        }
+      }
+      
+      return results;
+    } catch (error) {
+      console.error('Error searching workers:', error);
+      return [];
+    }
+  }, [tenantId]);
+
   return {
     searchUsers,
     searchContacts,
     searchCompanies,
     searchDeals,
+    searchWorkers,
   };
 }
 

@@ -27,6 +27,8 @@ function getMentionUrl(mention: Mention): string {
   switch (mention.type) {
     case 'user':
       return `/users/${mention.id}`;
+    case 'worker':
+      return `/users/${mention.id}`;  // Workers are also users
     case 'contact':
       return `/crm/contacts/${mention.id}`;
     case 'company':
@@ -43,9 +45,10 @@ function getMentionUrl(mention: Mention): string {
  */
 function getMentionDisplayText(mention: Mention): string {
   const prefixMap: Record<Mention['type'], string> = {
-    user: '@',
+    user: '@',      // Internal team (securityLevel 5-7)
+    worker: '&',   // Workers (securityLevel 1-4)
     contact: '#',
-    company: '&',
+    company: '&',  // Keep for backward compatibility
     deal: '%',
     job: '!',
     candidate: '^',
@@ -78,8 +81,14 @@ export const RenderedTextWithMentions: React.FC<RenderedTextWithMentionsProps> =
     // Also map by slug if available
     if (mention.slug) {
       const prefix = mention.type === 'user' ? '@' : 
+                     mention.type === 'worker' ? '&' :
                      mention.type === 'contact' ? '#' :
-                     mention.type === 'company' ? '&' : '%';
+                     mention.type === 'company' ? '&' : 
+                     mention.type === 'deal' ? '%' :
+                     mention.type === 'job' ? '!' :
+                     mention.type === 'candidate' ? '^' :
+                     mention.type === 'location' ? '*' :
+                     mention.type === 'task' ? '~' : '@';
       mentionMap.set(`${prefix}${mention.slug}`.toLowerCase(), mention);
     }
   }

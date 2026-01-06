@@ -36,13 +36,13 @@ async function resolveMentionEntity(
   prefix: '@' | '#' | '&' | '%' | '!' | '^' | '*' | '~',
   token: string,
   tenantId: string
-): Promise<{ id: string; label: string; type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' } | null> {
+): Promise<{ id: string; label: string; type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker' } | null> {
   const searchTerm = token.toLowerCase().trim();
   
   switch (prefix) {
     case '@': {
-      // Search users
-      const usersQuery = await db.collection('users').limit(100).get();
+      // Search internal team (securityLevel 5-7)
+      const usersQuery = await db.collection('users').limit(500).get();
       for (const doc of usersQuery.docs) {
         const data = doc.data();
         const userTenantIds = data?.tenantIds || {};
@@ -52,6 +52,16 @@ async function resolveMentionEntity(
           data?.tenantId === tenantId;
         
         if (!isInTenant) continue;
+        
+        // Get security level from tenant-specific data or global
+        const userTenantData = userTenantIds[tenantId];
+        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
+        const securityLevelNum = parseInt(securityLevel || '0', 10);
+        
+        // Only include internal team (securityLevel 5-7)
+        if (securityLevelNum < 5 || securityLevelNum > 7) {
+          continue;
+        }
         
         const email = (data?.email || '').toLowerCase();
         const firstName = (data?.firstName || '').toLowerCase();
@@ -68,7 +78,7 @@ async function resolveMentionEntity(
         ) {
           return {
             id: doc.id,
-            label: displayName || `${firstName} ${lastName}`.trim() || email.split('@')[0] || 'Unknown',
+            label: displayName || `${data?.firstName || ''} ${data?.lastName || ''}`.trim() || email.split('@')[0] || 'Unknown',
             type: 'user',
           };
         }
@@ -105,19 +115,46 @@ async function resolveMentionEntity(
     }
     
     case '&': {
-      // Search companies
-      const companiesRef = db.collection('tenants').doc(tenantId).collection('crm_companies');
-      const companiesQuery = await companiesRef.limit(100).get();
+      // Search workers (securityLevel 1-4)
+      const usersQuery = await db.collection('users').limit(500).get();
       
-      for (const doc of companiesQuery.docs) {
+      for (const doc of usersQuery.docs) {
         const data = doc.data();
-        const companyName = (data?.companyName || data?.name || '').toLowerCase();
+        const userTenantIds = data?.tenantIds || {};
+        const isInTenant = 
+          !!userTenantIds[tenantId] || 
+          data?.activeTenantId === tenantId || 
+          data?.tenantId === tenantId;
         
-        if (companyName.startsWith(searchTerm) || companyName.includes(searchTerm)) {
+        if (!isInTenant) continue;
+        
+        // Get security level from tenant-specific data or global
+        const userTenantData = userTenantIds[tenantId];
+        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
+        const securityLevelNum = parseInt(securityLevel || '0', 10);
+        
+        // Only include workers (securityLevel 1-4)
+        if (securityLevelNum < 1 || securityLevelNum > 4) {
+          continue;
+        }
+        
+        const email = (data?.email || '').toLowerCase();
+        const firstName = (data?.firstName || '').toLowerCase();
+        const lastName = (data?.lastName || '').toLowerCase();
+        const displayName = (data?.displayName || '').toLowerCase();
+        const username = email.split('@')[0] || '';
+        
+        if (
+          username.startsWith(searchTerm) ||
+          firstName.startsWith(searchTerm) ||
+          lastName.startsWith(searchTerm) ||
+          displayName.startsWith(searchTerm) ||
+          email.startsWith(searchTerm)
+        ) {
           return {
             id: doc.id,
-            label: data?.companyName || data?.name || 'Unnamed Company',
-            type: 'company',
+            label: displayName || `${data?.firstName || ''} ${data?.lastName || ''}`.trim() || email.split('@')[0] || 'Unknown',
+            type: 'worker',
           };
         }
       }
@@ -247,9 +284,9 @@ async function resolveMentionEntity(
 async function parseMentions(
   text: string,
   tenantId: string
-): Promise<Array<{ type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task'; id: string; label: string }>> {
+): Promise<Array<{ type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker'; id: string; label: string }>> {
   const MENTION_REGEX = /([@#&%!^*~])([^\s.,!?]+)/g;
-  const mentions: Array<{ type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task'; id: string; label: string }> = [];
+  const mentions: Array<{ type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker'; id: string; label: string }> = [];
   const seen = new Set<string>();
   
   let match;

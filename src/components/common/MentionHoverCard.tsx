@@ -71,6 +71,22 @@ export const MentionHoverCard: React.FC<MentionHoverCardProps> = ({
             }
             break;
           }
+          case 'worker': {
+            // Workers are also users, so fetch from users collection
+            const userDoc = await getDoc(doc(db, 'users', mention.id));
+            if (userDoc.exists()) {
+              const data = userDoc.data();
+              info = {
+                name: data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || mention.label,
+                subtitle: data.jobTitle || 'Worker',
+                avatarUrl: data.avatar || data.avatarUrl,
+                email: data.email,
+                phone: data.phone,
+                location: data.city && data.state ? `${data.city}, ${data.state}` : data.city || data.state || undefined,
+              };
+            }
+            break;
+          }
           case 'contact': {
             // Need tenantId for contact lookup - we'll use activeTenant from context
             // For now, try to find it from the mention context or use a global search
@@ -201,6 +217,8 @@ export const MentionHoverCard: React.FC<MentionHoverCardProps> = ({
     switch (mention.type) {
       case 'user':
         return <AlternateEmailIcon fontSize="small" />;
+      case 'worker':
+        return <PersonIcon fontSize="small" />;  // Workers use PersonIcon
       case 'contact':
         return <PersonIcon fontSize="small" />;
       case 'company':
@@ -222,6 +240,8 @@ export const MentionHoverCard: React.FC<MentionHoverCardProps> = ({
     switch (mention.type) {
       case 'user':
         return `/users/${mention.id}`;
+      case 'worker':
+        return `/users/${mention.id}`;  // Workers are also users
       case 'contact':
         return `/crm/contacts/${mention.id}`;
       case 'company':

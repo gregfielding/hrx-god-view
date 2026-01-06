@@ -5,17 +5,19 @@
  * This extends the existing user-only mention system to support CRM entities.
  */
 
-export type MentionType = 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task';
+export type MentionType = 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker';
 
 export type MentionPrefix = '@' | '#' | '&' | '%' | '!' | '^' | '*' | '~';
 
 /**
  * Prefix to mention type mapping
+ * @ = internal team (securityLevel 5-7)
+ * & = workers (securityLevel 1-4)
  */
 export const MENTION_PREFIX_MAP: Record<MentionPrefix, MentionType> = {
-  '@': 'user',
+  '@': 'user',      // Internal team (securityLevel 5-7)
   '#': 'contact',
-  '&': 'company',
+  '&': 'worker',    // Workers (securityLevel 1-4)
   '%': 'deal',
   '!': 'job',
   '^': 'candidate',
@@ -29,12 +31,13 @@ export const MENTION_PREFIX_MAP: Record<MentionPrefix, MentionType> = {
 export const MENTION_TYPE_PREFIX_MAP: Record<MentionType, MentionPrefix> = {
   user: '@',
   contact: '#',
-  company: '&',
+  company: '&',      // Keep for backward compatibility, but & now maps to worker
   deal: '%',
   job: '!',
   candidate: '^',
   location: '*',
   task: '~',
+  worker: '&',
 };
 
 export interface BaseMention {
@@ -84,7 +87,12 @@ export interface TaskMention extends BaseMention {
   taskId: string;
 }
 
-export type Mention = UserMention | ContactMention | CompanyMention | DealMention | JobMention | CandidateMention | LocationMention | TaskMention;
+export interface WorkerMention extends BaseMention {
+  type: 'worker';
+  workerId: string;  // Alias for id (user ID)
+}
+
+export type Mention = UserMention | ContactMention | CompanyMention | DealMention | JobMention | CandidateMention | LocationMention | TaskMention | WorkerMention;
 
 /**
  * Mentionable entity for autocomplete/search

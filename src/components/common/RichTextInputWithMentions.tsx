@@ -15,7 +15,7 @@ import { Popover, List, ListItem, ListItemText, ListItemAvatar, Avatar, Circular
 export interface RichTextValue {
   text: string;
   mentions: Array<{
-    type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task';
+    type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker';
     id: string;
     label: string;
     slug?: string;
@@ -38,7 +38,7 @@ const MENTION_TRIGGER_REGEX = /(^|\s)([@#&%])([a-zA-Z0-9_.-]*)$/;
 export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps> = ({
   value,
   onChange,
-  placeholder = 'Type @ for users, # for contacts, & for companies, % for deals...',
+  placeholder = 'Type @ for internal team, & for workers, # for contacts, % for deals...',
   autoFocus = false,
   ...rest
 }) => {
@@ -51,7 +51,7 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
   const [loading, setLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const { searchUsers, searchContacts, searchCompanies, searchDeals } = useMentionSearch();
+  const { searchUsers, searchContacts, searchCompanies, searchDeals, searchWorkers } = useMentionSearch();
 
   // Debounced search function
   const performSearch = useCallback(async (prefix: MentionPrefix, query: string) => {
@@ -70,7 +70,7 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
           results = await searchContacts(trimmedQuery, 10);
           break;
         case '&':
-          results = await searchCompanies(trimmedQuery, 10);
+          results = await searchWorkers(trimmedQuery, 10);  // Workers (securityLevel 1-4)
           break;
         case '%':
           results = await searchDeals(trimmedQuery, 10);
@@ -85,7 +85,7 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
     } finally {
       setLoading(false);
     }
-  }, [searchUsers, searchContacts, searchCompanies, searchDeals]);
+  }, [searchUsers, searchContacts, searchCompanies, searchDeals, searchWorkers]);
 
   // Debounce search
   useEffect(() => {

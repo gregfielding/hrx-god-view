@@ -53,20 +53,21 @@ export interface DashboardFeedItem {
   channelLabel?: string;        // e.g. "#dev", "Deal: C1–Sodexo"
   mentionMetadata?: MentionMetadata;
   // Cross-system mentions (for feed posts and messages with mentions)
-  mentions?: Array<{
-    type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task';
-    id: string;
-    label: string;
-    slug?: string;
-    userId?: string;
-    contactId?: string;
-    companyId?: string;
-    dealId?: string;
-    jobId?: string;
-    candidateId?: string;
-    locationId?: string;
-    taskId?: string;
-  }>;
+        mentions?: Array<{
+          type: 'user' | 'contact' | 'company' | 'deal' | 'job' | 'candidate' | 'location' | 'task' | 'worker';
+          id: string;
+          label: string;
+          slug?: string;
+          userId?: string;
+          workerId?: string;  // For worker mentions
+          contactId?: string;
+          companyId?: string;
+          dealId?: string;
+          jobId?: string;
+          candidateId?: string;
+          locationId?: string;
+          taskId?: string;
+        }>;
   // linking info for Drawer
   drawerScope: {
     scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention';

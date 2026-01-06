@@ -143,7 +143,7 @@ const MessageComposer: React.FC<MessageComposerProps> = ({
         <RichTextInputWithMentions
           value={messageText}
           onChange={handleTextChange}
-          placeholder="Type a message... (use @ for users, # for contacts, & for companies, % for deals)"
+          placeholder="Type a message... (use @ for internal team, & for workers, # for contacts, % for deals)"
           onKeyDown={handleKeyDown}
           disabled={disabled || sending}
           multiline

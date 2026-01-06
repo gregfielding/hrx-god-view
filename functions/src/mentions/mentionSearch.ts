@@ -112,6 +112,15 @@ export const mentionSearch = onCall(
         const slackIntegration = data?.integrations?.slack;
         const slackUsername = slackIntegration?.username?.toLowerCase() || '';
 
+        // Get security level from tenant-specific data or global
+        const securityLevel = userTenantData?.securityLevel || data?.securityLevel;
+        const securityLevelNum = parseInt(securityLevel || '0', 10);
+        
+        // Only include internal team members (securityLevel 5-7)
+        if (securityLevelNum < 5 || securityLevelNum > 7) {
+          continue;
+        }
+        
         // If no search term, include all users (up to limit)
         // Otherwise, check if matches search term
         const matches = searchTerm.length === 0 ||
