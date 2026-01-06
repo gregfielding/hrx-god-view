@@ -18,25 +18,39 @@ export function useSlackReactions(
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!ctx.channelId || !ctx.messageTs) {
+      setReactions([]);
+      setLoading(false);
+      return;
+    }
+
     const ref = doc(db, 'slackMessageReactions', `${ctx.channelId}__${ctx.messageTs}`);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (!snap.exists()) {
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) {
+          setReactions([]);
+          setLoading(false);
+          return;
+        }
+        const data = snap.data() as any;
+        const summaries: ReactionSummary[] =
+          (data.reactions ?? []).map((r: any) => ({
+            emoji: r.emoji,
+            count: r.users.length,
+            userHasReacted: r.users.includes(currentUserId),
+            userIds: r.users,
+          }));
+
+        setReactions(summaries);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Error listening to Slack reactions:', error);
         setReactions([]);
         setLoading(false);
-        return;
       }
-      const data = snap.data() as any;
-      const summaries: ReactionSummary[] =
-        (data.reactions ?? []).map((r: any) => ({
-          emoji: r.emoji,
-          count: r.users.length,
-          userHasReacted: r.users.includes(currentUserId),
-          userIds: r.users,
-        }));
-
-      setReactions(summaries);
-      setLoading(false);
-    });
+    );
 
     return () => unsub();
   }, [ctx.channelId, ctx.messageTs, currentUserId]);

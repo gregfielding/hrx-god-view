@@ -5,9 +5,8 @@
  */
 
 import React, { useState, useRef } from 'react';
-import { Box } from '@mui/material';
+import { Box, IconButton } from '@mui/material';
 import MessageBubble from './MessageBubble';
-import EmojiPicker from './EmojiPicker';
 import { useDMReactions } from '../../hooks/useDMReactions';
 import { DMMessageView } from '../../types/directMessenger';
 
@@ -74,12 +73,49 @@ const MessageBubbleWithReactions: React.FC<MessageBubbleWithReactionsProps> = ({
         onReactionClick={handleReactionClick}
         onEmojiPickerOpen={handleEmojiPickerOpen}
       />
-      <EmojiPicker
-        open={emojiPickerOpen}
-        onClose={() => setEmojiPickerOpen(false)}
-        onEmojiSelect={handleEmojiSelect}
-        anchorEl={emojiPickerAnchorRef.current}
-      />
+      {emojiPickerOpen && (
+        <Box
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.25,
+            ml: 0.5,
+            mt: 0.5,
+            p: 0.5,
+            bgcolor: 'grey.50',
+            borderRadius: 1,
+            position: 'absolute',
+            bottom: '100%',
+            left: 0,
+            zIndex: 1000,
+          }}
+          onMouseLeave={() => {
+            // Small delay to allow moving cursor to picker
+            setTimeout(() => setEmojiPickerOpen(false), 200);
+          }}
+        >
+          {['👍', '❤️', '😂', '😮', '😢', '🙌'].map((emoji) => (
+            <IconButton
+              key={emoji}
+              size="small"
+              onClick={() => {
+                handleEmojiSelect(emoji);
+              }}
+              sx={{
+                borderRadius: 1,
+                width: 28,
+                height: 28,
+                fontSize: '1.2rem',
+                '&:hover': {
+                  bgcolor: 'action.hover',
+                },
+              }}
+            >
+              {emoji}
+            </IconButton>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 };

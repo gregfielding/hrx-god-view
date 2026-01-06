@@ -24,51 +24,14 @@ export const SlackMessageReactionsBar: React.FC<Props> = ({
   compact = false,
 }) => {
   const { reactions, toggleReaction } = useSlackReactions(ctx, currentUserId);
-  const [pickerAnchorEl, setPickerAnchorEl] = useState<HTMLElement | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
   const hasReactions = reactions.length > 0;
 
-  const handleOpenPicker = (e: React.MouseEvent<HTMLElement>) => {
-    setPickerAnchorEl(e.currentTarget);
-  };
-
-  const handleClosePicker = () => setPickerAnchorEl(null);
-
   const handleSelectEmoji = (emoji: string) => {
     toggleReaction(emoji);
-    handleClosePicker();
+    setShowPicker(false);
   };
-
-  if (!hasReactions && !pickerAnchorEl) {
-    // Super subtle row – could even be hidden until hover on desktop
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.5,
-          mt: 0.5,
-          pl: compact ? 0 : 1,
-        }}
-      >
-        <Tooltip title="Add reaction">
-          <IconButton
-            size="small"
-            onClick={handleOpenPicker}
-            sx={{ borderRadius: 2, width: 24, height: 24 }}
-          >
-            <AddReactionIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-
-        <ReactionEmojiPicker
-          anchorEl={pickerAnchorEl}
-          onClose={handleClosePicker}
-          onSelect={handleSelectEmoji}
-        />
-      </Box>
-    );
-  }
 
   const visibleReactions = reactions.slice(0, 6);
   const overflowCount = reactions.length - visibleReactions.length;
@@ -134,18 +97,18 @@ export const SlackMessageReactionsBar: React.FC<Props> = ({
       <Tooltip title="Add reaction">
         <IconButton
           size="small"
-          onClick={handleOpenPicker}
+          onClick={() => setShowPicker(!showPicker)}
           sx={{ borderRadius: 2, width: 24, height: 24 }}
         >
           <AddReactionIcon fontSize="small" />
         </IconButton>
       </Tooltip>
 
-      <ReactionEmojiPicker
-        anchorEl={pickerAnchorEl}
-        onClose={handleClosePicker}
-        onSelect={handleSelectEmoji}
-      />
+      {showPicker && (
+        <ReactionEmojiPicker
+          onSelect={handleSelectEmoji}
+        />
+      )}
     </Box>
   );
 };

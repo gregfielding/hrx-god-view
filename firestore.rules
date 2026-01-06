@@ -1057,6 +1057,31 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // --- USER PRESENCE (Root-level collection) ---
+    match /userPresence/{userId} {
+      // Allow authenticated users to read any user's presence (for status indicators)
+      allow read: if isAuthenticated();
+      
+      // Users can only create/update their own presence document
+      allow create: if isAuthenticated() && 
+                      request.auth.uid == userId;
+      
+      allow update: if isAuthenticated() && 
+                      request.auth.uid == userId;
+      
+      // No deletes (presence should be maintained)
+      allow delete: if false;
+    }
+
+    // --- SLACK MESSAGE REACTIONS (Root-level collection) ---
+    match /slackMessageReactions/{reactionId} {
+      // Allow authenticated users to read reactions (for displaying in UI)
+      allow read: if isAuthenticated();
+      
+      // Write is handled by Cloud Function (reactToSlackMessage uses admin SDK)
+      allow write: if false;
+    }
+
     // --- MOMENT ANALYSIS ---
     match /moment_analysis/{analysisId} {
       allow read, write: if isHRX();
