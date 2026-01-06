@@ -29,6 +29,7 @@ import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import EmailSignatureTab from './EmailSignatureTab';
 
 type Props = {
   uid: string;
@@ -729,6 +730,11 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
             </Box>
           )}
         </>
+      )}
+
+      {/* Email Signature Section - Only for users viewing their own profile or admins */}
+      {(user?.uid === uid || parseInt(securityLevel || '0', 10) >= 5) && (
+        <EmailSignatureTab uid={uid} />
       )}
 
       <Snackbar open={showPrivacyToast} autoHideDuration={3000} onClose={() => setShowPrivacyToast(false)}>

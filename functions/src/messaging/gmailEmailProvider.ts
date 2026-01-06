@@ -94,6 +94,36 @@ export class GmailEmailProvider implements EmailProvider {
         messageLines.push(`References: <${options.inReplyTo}>`);
       }
 
+      // Get and append email signature if enabled
+      let htmlBodyWithSignature = options.htmlBody || options.textBody || '';
+      let textBodyWithSignature = options.textBody || '';
+      
+      if (options.gmailUserId) {
+        try {
+          const userDoc = await db.collection('users').doc(options.gmailUserId).get();
+          const userData = userDoc.data();
+          const signatureSettings = userData?.emailSignature;
+          
+          if (signatureSettings?.enabled) {
+            // Import signature generation utilities
+            const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
+            const signatureHtml = generateEmailSignature(signatureSettings);
+            
+            if (signatureHtml) {
+              htmlBodyWithSignature = appendSignatureToEmail(htmlBodyWithSignature, signatureHtml);
+              // For plain text, strip HTML tags
+              const textSignature = signatureHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+              if (textSignature) {
+                textBodyWithSignature = (textBodyWithSignature || '').trim() + '\n\n' + textSignature;
+              }
+            }
+          }
+        } catch (sigError: any) {
+          logger.warn('Failed to load email signature:', sigError);
+          // Continue without signature if there's an error
+        }
+      }
+
       // Build message body - multipart if attachments exist, otherwise simple
       let messageBody: string;
       
@@ -107,7 +137,7 @@ export class GmailEmailProvider implements EmailProvider {
         messageLines.push('Content-Type: text/html; charset=utf-8');
         messageLines.push('Content-Transfer-Encoding: 7bit');
         messageLines.push('');
-        messageLines.push(options.htmlBody || options.textBody || '');
+        messageLines.push(htmlBodyWithSignature);
         
         // Add each attachment
         for (const attachment of options.attachments) {
@@ -141,7 +171,7 @@ export class GmailEmailProvider implements EmailProvider {
         // Simple message without attachments
         messageLines.push('Content-Type: text/html; charset=utf-8');
         messageLines.push('');
-        messageLines.push(options.htmlBody || options.textBody || '');
+        messageLines.push(htmlBodyWithSignature);
         messageBody = messageLines.join('\n');
       }
 

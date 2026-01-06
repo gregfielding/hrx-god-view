@@ -8,6 +8,8 @@ import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout'
 import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
 import CalendarPage from './pages/CalendarPage';
+import TasksPage from './pages/TasksPage';
+import TaskDetailPage from './pages/TaskDetailPage';
 import AIDashboard from './pages/TenantViews/AIDashboard';
 import ChatGPT from './pages/TenantViews/ChatGPT';
 import UserProfile from './pages/UserProfile';
@@ -323,6 +325,16 @@ function App() {
       >
         <Route index element={<HomeRedirect />} />
         <Route path="dashboard" element={<DashboardAdminRedirect />} />
+        <Route path="tasks" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <TasksPage />
+          </ProtectedRoute>
+        } />
+        <Route path="task/:taskId" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <TaskDetailPage />
+          </ProtectedRoute>
+        } />
         <Route path="calendar" element={<CalendarAdminRedirect />} />
         <Route path="chatgpt" element={<ChatGPT />} />
         <Route path="inbox" element={

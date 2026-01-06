@@ -45,6 +45,7 @@ import SmsIcon from '@mui/icons-material/Sms';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import DoneAllIcon from '@mui/icons-material/DoneAll';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -824,6 +825,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Messages': <NotificationsIcon />,
       'Inbox': <InboxIcon />,
       'Text Messages': <SmsIcon />,
+      'Tasks': <DoneAllIcon />,
       'Calendar': <CalendarMonthIcon />,
       'Slack Channels': <SlackHashIcon active={location.pathname.startsWith('/slack')} />,
       'Notifications': <NotificationsIcon />,

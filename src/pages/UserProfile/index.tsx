@@ -33,6 +33,7 @@ import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import SystemAccessTab from './components/SystemAccessTab';
+import EmailSignatureTab from './components/EmailSignatureTab';
 import OnboardingTab from './components/OnboardingTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';

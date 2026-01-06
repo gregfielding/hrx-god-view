@@ -122,7 +122,13 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ 
+      height: '100%', 
+      display: 'flex', 
+      flexDirection: 'column',
+      // On mobile and tablet, allow the page to scroll naturally
+      overflow: (isMobile || isTablet) ? 'auto' : 'hidden',
+    }}>
       <PageHeader
         title="Dashboard"
         subtitle={
@@ -172,7 +178,19 @@ const Dashboard: React.FC = () => {
         showDivider={false}
       />
 
-      <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', px: { xs: 2, md: 3 }, pb: 2 }}>
+      <Box sx={{ 
+        flex: 1, 
+        minHeight: 0, 
+        overflow: (isMobile || isTablet) ? 'auto' : 'hidden', 
+        px: { xs: 2, md: 3 }, 
+        pb: { xs: 2, md: 2 },
+        // Add bottom padding for mobile/tablet scrolling
+        '&::after': (isMobile || isTablet) ? {
+          content: '""',
+          display: 'block',
+          height: '16px',
+        } : {},
+      }}>
         {/* Mobile tabs: Feed | Calendar | To-Dos */}
         {isMobile && (
           <Tabs
@@ -201,14 +219,19 @@ const Dashboard: React.FC = () => {
           sx={{
             display: 'flex',
             gap: 2,
-            height: '100%',
-            minHeight: 0,
+            height: (isMobile || isTablet) ? 'auto' : '100%',
+            minHeight: (isMobile || isTablet) ? 'auto' : 0,
             flexDirection: isMobile || isTablet ? 'column' : 'row',
           }}
         >
           {/* Feed */}
           {(!isMobile || mobileTab === 'feed') && (
-            <Box sx={{ width: '100%', flex: isMobile || isTablet ? 'none' : '0 0 66.666%', minHeight: 0, overflow: 'hidden' }}>
+            <Box sx={{ 
+              width: '100%', 
+              flex: isMobile || isTablet ? 'none' : '0 0 66.666%', 
+              minHeight: (isMobile || isTablet) ? 'auto' : 0, 
+              overflow: (isMobile || isTablet) ? 'visible' : 'hidden' 
+            }}>
               <DashboardFeed
                 onOpenEmailDrawer={handleOpenEmailDrawer}
                 onOpenSlackDMDrawer={handleOpenSlackDMDrawer}
@@ -331,7 +354,7 @@ const Dashboard: React.FC = () => {
 
           {/* Mobile: Calendar panel */}
           {isMobile && mobileTab === 'calendar' && (
-            <Box sx={{ width: '100%', minHeight: 0, overflow: 'hidden' }}>
+            <Box sx={{ width: '100%', minHeight: 'auto', overflow: 'visible', mb: 2 }}>
               {googleStatus.calendar.connected ? (
                 <CalendarWidget
                   userId={user?.uid || ''}
@@ -374,8 +397,8 @@ const Dashboard: React.FC = () => {
 
           {/* Mobile: To-Dos panel */}
           {isMobile && mobileTab === 'todos' && (
-            <Box sx={{ width: '100%', minHeight: 0, overflow: 'hidden' }}>
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
+            <Box sx={{ width: '100%', minHeight: 'auto', overflow: 'visible', mb: 2 }}>
+              <Card sx={{ display: 'flex', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
                 <CardHeader
                   title="To-Dos"
                   action={
@@ -391,7 +414,7 @@ const Dashboard: React.FC = () => {
                   titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
                   sx={{ px: 2, pt: 2, pb: 1 }}
                 />
-                <CardContent sx={{ px: 0, pb: 0, pt: 0, flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <CardContent sx={{ px: 0, pb: 0, pt: 0, flex: 1, minHeight: 'auto', overflow: 'visible' }}>
                   <TasksDashboard
                     entityId={user?.uid || 'dashboard'}
                     entityType="salesperson"

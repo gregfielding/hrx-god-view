@@ -164,6 +164,16 @@ export async function generateMenuItems(
       });
     }
 
+    // Tasks - requires security level 5+ (Worker, Manager, Admin)
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
+      menuItems.push({
+        text: 'Tasks',
+        to: '/tasks',
+        icon: 'tasks',
+        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
+      });
+    }
+
     // Calendar - requires security level 5+ (Worker, Manager, Admin)
     if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
       menuItems.push({
