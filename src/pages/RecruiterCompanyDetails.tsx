@@ -502,15 +502,69 @@ const RecruiterCompanyDetails: React.FC = () => {
       const { functions } = await import('../firebase');
       
       const enrichCompanyOnDemand = httpsCallable(functions, 'enrichCompanyOnDemand');
-      const result = await enrichCompanyOnDemand({
-        tenantId,
-        companyId: company.id,
-        mode: 'full',
-        force: false
-      });
       
-      const resultData = result.data as any;
-      console.log('Apollo company enrichment results:', resultData);
+      let result;
+      let resultData: any;
+      
+      try {
+        console.log('[RecruiterCompanyDetails] Calling enrichCompanyOnDemand', {
+          tenantId,
+          companyId: company.id,
+          mode: 'full'
+        });
+        
+        result = await enrichCompanyOnDemand({
+          tenantId,
+          companyId: company.id,
+          mode: 'full',
+          force: false
+        });
+        
+        resultData = result.data as any;
+        console.log('[RecruiterCompanyDetails] Apollo company enrichment results:', resultData);
+      } catch (firebaseError: any) {
+        // Handle Firebase callable function errors
+        console.error('[RecruiterCompanyDetails] Firebase callable error:', {
+          code: firebaseError.code,
+          message: firebaseError.message,
+          details: firebaseError.details,
+          stack: firebaseError.stack
+        });
+        
+        // Check if it's a FirebaseError with more details
+        if (firebaseError.code === 'internal' || firebaseError.code === 'functions/internal' || firebaseError.code === 'functions/unknown') {
+          const errorMessage = firebaseError.message || firebaseError.details || 'Internal server error in enrichment function';
+          console.error('[RecruiterCompanyDetails] Apollo enrichment failed:', errorMessage);
+          
+          // Even if enrichment fails, try to fetch logo as fallback
+          resultData = { status: 'error', message: errorMessage };
+          
+          // Continue to logo fetching logic below instead of returning early
+          console.log('[RecruiterCompanyDetails] Continuing with logo fetch despite enrichment error');
+        }
+        
+        // Handle other Firebase error codes
+        if (firebaseError.code === 'functions/not-found') {
+          setError('Enrichment function not found. Please contact support.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        if (firebaseError.code === 'functions/permission-denied') {
+          setError('Permission denied. Please check your access rights.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        if (firebaseError.code === 'functions/deadline-exceeded') {
+          setError('Enrichment timed out. The process may still be running. Please wait a moment and refresh the page.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        // Re-throw other errors to be handled by outer catch
+        throw firebaseError;
+      }
       
       // Check if logo was updated and update local state immediately
       let logoUpdated = false;
@@ -599,6 +653,13 @@ const RecruiterCompanyDetails: React.FC = () => {
         }
       }
       
+      // Handle results - check if we have resultData
+      if (!resultData) {
+        // If we got here without resultData, it means we had an unhandled error
+        setError('Failed to enhance company. Please try again or check Firebase function logs.');
+        return;
+      }
+      
       if (resultData.status === 'ok') {
         const successMsg = logoUpdated 
           ? 'Company enhanced with Apollo data successfully! Logo found and uploaded.'
@@ -607,17 +668,46 @@ const RecruiterCompanyDetails: React.FC = () => {
         // Reload company data to get any other updates
         await loadCompanyData();
       } else if (resultData.status === 'error') {
-        setError(resultData.message || 'Failed to enhance company with Apollo data');
+        // If logo was updated despite the error, show a partial success message
+        if (logoUpdated) {
+          setSuccess(`Logo found and uploaded, but enrichment had issues: ${resultData.message || 'Unknown error'}. Please try enrichment again.`);
+          await loadCompanyData(); // Reload to show the new logo
+        } else {
+          setError(`Apollo enrichment failed: ${resultData.message || 'Unknown error'}. Please check Firebase function logs for details.`);
+        }
+      } else if (resultData.status === 'degraded') {
+        // Degraded mode - still a success, just with limited data
+        const successMsg = logoUpdated 
+          ? `Company enhanced (limited mode): ${resultData.message || 'Success'}. Logo found and uploaded.`
+          : `Company enhanced (limited mode): ${resultData.message || 'Success'}`;
+        setSuccess(successMsg);
+        await loadCompanyData();
       } else {
+        // Unknown status
         const successMsg = logoUpdated 
           ? `Company enhanced: ${resultData.message || 'Success'}. Logo found and uploaded.`
           : `Company enhanced: ${resultData.message || 'Success'}`;
         setSuccess(successMsg);
+        await loadCompanyData();
       }
       
     } catch (error: any) {
       console.error('Error enhancing company with AI:', error);
-      setError('Failed to enhance company with AI. Please try again.');
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to enhance company with AI. Please try again.';
+      
+      if (error?.code === 'functions/not-found') {
+        errorMessage = 'Enrichment function not found. Please contact support.';
+      } else if (error?.code === 'functions/permission-denied') {
+        errorMessage = 'Permission denied. Please check your access rights.';
+      } else if (error?.code === 'functions/deadline-exceeded') {
+        errorMessage = 'Enrichment timed out. The process may still be running. Please wait a moment and refresh.';
+      } else if (error?.message) {
+        errorMessage = `Enrichment failed: ${error.message}`;
+      }
+      
+      setError(errorMessage);
     } finally {
       setAiEnhancing(false);
     }
@@ -2572,6 +2662,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
                       'Sports Arena',
                       'Sports Stadium',
                       'Golf Course',
+                      'Race Track',
                       'Fairgrounds',
                       'Concert Venue',
                       'Convention Center',

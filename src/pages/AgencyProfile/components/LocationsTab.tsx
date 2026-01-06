@@ -132,6 +132,7 @@ const locationTypeOptions = [
   'Park',
   'Recreation Center',
   'Golf Course',
+  'Race Track',
   'Community Center',
   'Senior Center',
   'Day Care',

@@ -640,29 +640,194 @@ const RecruiterContactDetails: React.FC = () => {
       setAiEnhancing(true);
       setError(null);
 
-      // Use the Apollo-powered contact enrichment function
-      const { httpsCallable } = await import('firebase/functions');
-      const { functions } = await import('../firebase');
-      const enrichContact = httpsCallable(functions, 'enrichContact');
-
-      const result = await enrichContact({
-        tenantId,
-        contactId,
-        contactData: {
-          email: contact.email,
-          firstName: contact.firstName,
-          lastName: contact.lastName,
-          companyName: company?.companyName || company?.name,
+      // Use the Apollo-powered contact enrichment function (same as CRM)
+      // Note: getDoc, doc, updateDoc, db, functions, and httpsCallable are already imported at the top
+      
+      let result;
+      let resultData: any;
+      
+      try {
+        console.log('[RecruiterContactDetails] Calling enrichContactOnDemand', {
+          tenantId,
+          contactId,
+          mode: 'full'
+        });
+        
+        const enrichContact = httpsCallable(functions, 'enrichContactOnDemand');
+        result = await enrichContact({ 
+          tenantId, 
+          contactId, 
+          mode: 'full', 
+          force: false 
+        });
+        
+        resultData = result.data as any;
+        console.log('[RecruiterContactDetails] Apollo contact enrichment results:', resultData);
+      } catch (firebaseError: any) {
+        // Handle Firebase callable function errors
+        console.error('[RecruiterContactDetails] Firebase callable error:', {
+          code: firebaseError.code,
+          message: firebaseError.message,
+          details: firebaseError.details,
+          stack: firebaseError.stack
+        });
+        
+        // Check if it's a FirebaseError with more details
+        if (firebaseError.code === 'internal' || firebaseError.code === 'functions/internal' || firebaseError.code === 'functions/unknown') {
+          const errorMessage = firebaseError.message || firebaseError.details || 'Internal server error in enrichment function';
+          console.error('[RecruiterContactDetails] Apollo enrichment failed:', errorMessage);
+          setError(`Apollo enrichment failed: ${errorMessage}. This may be due to a temporary server issue. Please try again in a moment, or check the function logs in Firebase Console.`);
+          setAiEnhancing(false);
+          return;
         }
-      });
-
-      // Reload contact data to get updated information
-      await loadContactData();
-
-      setError(null);
+        
+        // Handle other Firebase error codes
+        if (firebaseError.code === 'functions/not-found') {
+          setError('Enrichment function not found. Please contact support.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        if (firebaseError.code === 'functions/permission-denied') {
+          setError('Permission denied. Please check your access rights.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        if (firebaseError.code === 'functions/deadline-exceeded') {
+          setError('Enrichment timed out. The process may still be running. Please wait a moment and refresh the page.');
+          setAiEnhancing(false);
+          return;
+        }
+        
+        // Re-throw other errors to be handled by outer catch
+        throw firebaseError;
+      }
+      
+      if (resultData.status === 'ok') {
+        // Reload the contact to get the enhanced data (same as CRM)
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        let enhancedContactData: any = null;
+        
+        if (contactDoc.exists()) {
+          enhancedContactData = { id: contactDoc.id, ...contactDoc.data() };
+          
+          // Update contact fields with Apollo data if available (same as CRM)
+          if (enhancedContactData.apolloEnrichment?.person) {
+            const apolloPerson = enhancedContactData.apolloEnrichment.person;
+            
+            console.log('[RecruiterContactDetails] Apollo Person Data:', apolloPerson);
+            
+            const updates: any = {};
+            
+            // Update avatar from photo_url
+            if (apolloPerson.photo_url) {
+              updates.avatar = apolloPerson.photo_url;
+            }
+            
+            // Update LinkedIn URL
+            if (apolloPerson.linkedin_url) {
+              updates.linkedInUrl = apolloPerson.linkedin_url;
+            }
+            
+            // Update email if verified
+            if (apolloPerson.email && apolloPerson.email_status === 'verified') {
+              updates.email = apolloPerson.email;
+            }
+            
+            // Update headline
+            if (apolloPerson.headline) {
+              updates.headline = apolloPerson.headline;
+            }
+            
+            // Update Twitter URL
+            if (apolloPerson.twitter_url) {
+              updates.twitterUrl = apolloPerson.twitter_url;
+            }
+            
+            // Update Facebook URL
+            if (apolloPerson.facebook_url) {
+              updates.facebookUrl = apolloPerson.facebook_url;
+            }
+            
+            // Update inferred seniority
+            if (apolloPerson.seniority) {
+              updates.inferredSeniority = apolloPerson.seniority;
+            }
+            
+            // Update location fields
+            if (apolloPerson.formatted_address) {
+              updates.formattedAddress = apolloPerson.formatted_address;
+            }
+            if (apolloPerson.city) {
+              updates.city = apolloPerson.city;
+            }
+            if (apolloPerson.state) {
+              updates.state = apolloPerson.state;
+            }
+            if (apolloPerson.country) {
+              updates.country = apolloPerson.country;
+            }
+            if (apolloPerson.time_zone) {
+              updates.timeZone = apolloPerson.time_zone;
+            }
+            
+            // Update job title
+            if (apolloPerson.title) {
+              updates.jobTitle = apolloPerson.title;
+              updates.title = apolloPerson.title;
+            }
+            
+            // Apply updates if any
+            if (Object.keys(updates).length > 0) {
+              console.log('[RecruiterContactDetails] Applying Apollo updates:', updates);
+              try {
+                await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+                  ...updates,
+                  updatedAt: new Date()
+                });
+                
+                // Update local state
+                enhancedContactData = { ...enhancedContactData, ...updates };
+                console.log('[RecruiterContactDetails] Successfully updated contact with Apollo data');
+              } catch (updateError) {
+                console.error('[RecruiterContactDetails] Error updating contact with Apollo data:', updateError);
+              }
+            }
+          }
+          
+          setContact(enhancedContactData);
+        }
+        
+        // Reload contact data to get any other updates
+        await loadContactData();
+        
+        setError(null);
+      } else if (resultData.status === 'error') {
+        setError(resultData.message || 'Failed to enhance contact with Apollo data');
+      } else {
+        // Handle other status types (like 'degraded')
+        await loadContactData();
+        setError(null);
+      }
+      
     } catch (error: any) {
-      console.error('Error enriching contact:', error);
-      setError(error.message || 'Failed to enhance contact');
+      console.error('[RecruiterContactDetails] Error enriching contact:', error);
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to enhance contact with AI. Please try again.';
+      
+      if (error?.code === 'functions/not-found') {
+        errorMessage = 'Enrichment function not found. Please contact support.';
+      } else if (error?.code === 'functions/permission-denied') {
+        errorMessage = 'Permission denied. Please check your access rights.';
+      } else if (error?.code === 'functions/deadline-exceeded') {
+        errorMessage = 'Enrichment timed out. The process may still be running. Please wait a moment and refresh.';
+      } else if (error?.message) {
+        errorMessage = `Enrichment failed: ${error.message}`;
+      }
+      
+      setError(errorMessage);
     } finally {
       setAiEnhancing(false);
     }
