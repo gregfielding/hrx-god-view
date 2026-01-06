@@ -55,27 +55,25 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
 
   // Debounced search function
   const performSearch = useCallback(async (prefix: MentionPrefix, query: string) => {
-    if (!query || query.trim().length === 0) {
-      setSuggestions([]);
-      return;
-    }
-
+    // Allow empty query to show initial suggestions
+    const trimmedQuery = query?.trim() || '';
+    
     setLoading(true);
     try {
       let results: MentionableEntity[] = [];
       
       switch (prefix) {
         case '@':
-          results = await searchUsers(query, 10);
+          results = await searchUsers(trimmedQuery, 10);
           break;
         case '#':
-          results = await searchContacts(query, 10);
+          results = await searchContacts(trimmedQuery, 10);
           break;
         case '&':
-          results = await searchCompanies(query, 10);
+          results = await searchCompanies(trimmedQuery, 10);
           break;
         case '%':
-          results = await searchDeals(query, 10);
+          results = await searchDeals(trimmedQuery, 10);
           break;
       }
       
@@ -91,14 +89,17 @@ export const RichTextInputWithMentions: React.FC<RichTextInputWithMentionsProps>
 
   // Debounce search
   useEffect(() => {
-    if (!currentPrefix || !currentQuery) {
+    if (!currentPrefix) {
       setSuggestions([]);
       return;
     }
 
+    // Show suggestions immediately when prefix is typed, with debounce for actual search
+    const delay = currentQuery.trim().length > 0 ? 300 : 100; // Faster for empty query (just typed @)
+    
     const timer = setTimeout(() => {
       performSearch(currentPrefix, currentQuery);
-    }, 300);
+    }, delay);
 
     return () => clearTimeout(timer);
   }, [currentPrefix, currentQuery, performSearch]);

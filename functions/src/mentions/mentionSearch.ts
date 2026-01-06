@@ -49,11 +49,7 @@ export const mentionSearch = onCall(
       );
     }
 
-    const { query, limit = 20 } = request.data as MentionSearchRequest;
-
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      return { users: [] };
-    }
+    const { query = '', limit = 20 } = request.data as MentionSearchRequest;
 
     try {
       // Get user's tenant
@@ -69,6 +65,9 @@ export const mentionSearch = onCall(
         return { users: [] };
       }
 
+      // Allow empty query to return initial list of users
+      const searchTerm = (query || '').toLowerCase().trim();
+
       // Get all users in the tenant
       // Note: Firestore doesn't support direct queries on nested map fields like tenantIds.${tenantId}.securityLevel
       // So we'll fetch a larger set and filter client-side, or use a different approach
@@ -78,7 +77,6 @@ export const mentionSearch = onCall(
         .limit(500) // Get a larger set to filter from
         .get();
 
-      const searchTerm = query.toLowerCase().trim();
       const results: MentionableUser[] = [];
 
       for (const doc of usersQuery.docs) {
@@ -114,8 +112,9 @@ export const mentionSearch = onCall(
         const slackIntegration = data?.integrations?.slack;
         const slackUsername = slackIntegration?.username?.toLowerCase() || '';
 
-        // Check if matches search term
-        const matches =
+        // If no search term, include all users (up to limit)
+        // Otherwise, check if matches search term
+        const matches = searchTerm.length === 0 ||
           username.startsWith(searchTerm) ||
           firstName.startsWith(searchTerm) ||
           lastName.startsWith(searchTerm) ||

@@ -25,17 +25,18 @@ export function useMentionSearch(): UseMentionSearchResult {
   const tenantId = activeTenant?.id || '';
 
   const searchUsers = useCallback(async (searchQuery: string, limitCount = 20): Promise<MentionableEntity[]> => {
-    if (!tenantId || !searchQuery.trim()) {
+    if (!tenantId) {
       return [];
     }
 
     try {
       // Use the existing mentionSearch callable function for users
+      // Allow empty query to get initial list
       const { httpsCallable } = await import('firebase/functions');
       const { functions } = await import('../firebase');
       const mentionSearch = httpsCallable(functions, 'mentionSearch');
       
-      const result = await mentionSearch({ query: searchQuery, limit: limitCount });
+      const result = await mentionSearch({ query: searchQuery || '', limit: limitCount });
       const users = (result.data as any)?.users || [];
       
       return users.map((user: any) => ({
@@ -52,12 +53,12 @@ export function useMentionSearch(): UseMentionSearchResult {
   }, [tenantId]);
 
   const searchContacts = useCallback(async (searchQuery: string, limitCount = 20): Promise<MentionableEntity[]> => {
-    if (!tenantId || !searchQuery.trim()) {
+    if (!tenantId) {
       return [];
     }
 
     try {
-      const searchTerm = searchQuery.toLowerCase().trim();
+      const searchTerm = (searchQuery || '').toLowerCase().trim();
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       
       // Search by firstName, lastName, or email
@@ -80,8 +81,10 @@ export function useMentionSearch(): UseMentionSearchResult {
         const email = (data.email || '').toLowerCase();
         const companyName = (data.companyName || '').toLowerCase();
         
-        // Match if search term appears in name or email
+        // If no search term, include all contacts (up to limit)
+        // Otherwise, match if search term appears in name or email
         if (
+          searchTerm.length === 0 ||
           firstName.startsWith(searchTerm) ||
           lastName.startsWith(searchTerm) ||
           fullName.toLowerCase().startsWith(searchTerm) ||
@@ -111,12 +114,12 @@ export function useMentionSearch(): UseMentionSearchResult {
   }, [tenantId]);
 
   const searchCompanies = useCallback(async (searchQuery: string, limitCount = 20): Promise<MentionableEntity[]> => {
-    if (!tenantId || !searchQuery.trim()) {
+    if (!tenantId) {
       return [];
     }
 
     try {
-      const searchTerm = searchQuery.toLowerCase().trim();
+      const searchTerm = (searchQuery || '').toLowerCase().trim();
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       
       // Search by companyName
@@ -134,8 +137,9 @@ export function useMentionSearch(): UseMentionSearchResult {
         const companyName = (data.companyName || data.name || '').toLowerCase();
         const displayName = data.companyName || data.name || 'Unnamed Company';
         
-        // Match if search term appears in company name
-        if (companyName.startsWith(searchTerm) || companyName.includes(searchTerm)) {
+        // If no search term, include all companies (up to limit)
+        // Otherwise, match if search term appears in company name
+        if (searchTerm.length === 0 || companyName.startsWith(searchTerm) || companyName.includes(searchTerm)) {
           results.push({
             id: doc.id,
             type: 'company',
@@ -182,8 +186,10 @@ export function useMentionSearch(): UseMentionSearchResult {
         const companyName = (data.companyName || '').toLowerCase();
         const displayName = data.dealName || data.name || 'Unnamed Deal';
         
-        // Match if search term appears in deal name or company name
+        // If no search term, include all deals (up to limit)
+        // Otherwise, match if search term appears in deal name or company name
         if (
+          searchTerm.length === 0 ||
           dealName.startsWith(searchTerm) ||
           dealName.includes(searchTerm) ||
           companyName.includes(searchTerm)
