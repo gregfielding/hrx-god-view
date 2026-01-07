@@ -43,6 +43,8 @@ import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db } from '../firebase';
 import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
+import { createAutoSave, loadDraft, deleteDraft } from '../utils/emailDrafts';
+import { useMemo } from 'react';
 
 export interface MessageRecipient {
   userId: string;
@@ -111,6 +113,55 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [recipientOptions, setRecipientOptions] = useState<Array<{ id: string; name: string; email: string; phone?: string; type: 'user' | 'contact' }>>([]);
   const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [recipientInputValue, setRecipientInputValue] = useState('');
+  const [draftId, setDraftId] = useState<string | undefined>(undefined);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  // Create auto-save function for drafts
+  const autoSaveDraft = useMemo(
+    () => {
+      if (!user?.uid || !effectiveTenantId) return () => {};
+      return createAutoSave(user.uid, effectiveTenantId, draftId);
+    },
+    [user?.uid, effectiveTenantId, draftId]
+  );
+
+  // Auto-save draft when subject or body changes
+  useEffect(() => {
+    if (!open || !user?.uid || !effectiveTenantId || draftLoaded) return;
+    
+    // Only auto-save if there's actual content
+    if (subject.trim() || messageBody.trim()) {
+      const newDraftId = draftId || `draft-${Date.now()}`;
+      if (!draftId) {
+        setDraftId(newDraftId);
+      }
+      
+      autoSaveDraft({
+        to: internalRecipients.map(r => r.email || r.name).filter(Boolean),
+        cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : [],
+        bcc: bcc ? bcc.split(',').map(e => e.trim()).filter(Boolean) : [],
+        subject,
+        bodyHtml: messageBody,
+        bodyPlain: messageBody.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim(),
+      });
+    }
+  }, [subject, messageBody, cc, bcc, internalRecipients, open, user?.uid, effectiveTenantId, draftId, draftLoaded, autoSaveDraft]);
+
+  // Load draft when drawer opens (if not replying/forwarding)
+  useEffect(() => {
+    if (open && user?.uid && effectiveTenantId && !threadId && !defaultSubject && !defaultBody) {
+      // Try to load the most recent draft
+      // For now, we'll create a new draft ID - in production, you'd want to load existing drafts
+      setDraftLoaded(true);
+    } else if (open && (threadId || defaultSubject || defaultBody)) {
+      // Don't auto-save when replying/forwarding
+      setDraftLoaded(true);
+    } else if (!open) {
+      // Reset draft state when drawer closes
+      setDraftId(undefined);
+      setDraftLoaded(false);
+    }
+  }, [open, user?.uid, effectiveTenantId, threadId, defaultSubject, defaultBody]);
 
   // Pre-load sender information and check Twilio number when drawer opens
   useEffect(() => {

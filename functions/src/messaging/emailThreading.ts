@@ -15,7 +15,7 @@ export type EmailDirection = 'inbound' | 'outbound';
 
 /**
  * Extract Gmail categories from labelIds
- * Gmail categories: CATEGORY_PERSONAL, CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES, CATEGORY_FORUMS, SPAM
+ * Gmail categories: CATEGORY_PERSONAL, CATEGORY_SOCIAL, CATEGORY_PROMOTIONS, CATEGORY_UPDATES, CATEGORY_FORUMS, SPAM, DRAFT
  * If no category is found, default to 'primary' (Gmail's default category)
  */
 export function extractGmailCategories(labelIds?: string[]): string[] {
@@ -30,6 +30,7 @@ export function extractGmailCategories(labelIds?: string[]): string[] {
   if (labelIds.includes('CATEGORY_UPDATES')) categories.push('updates');
   if (labelIds.includes('CATEGORY_FORUMS')) categories.push('forums');
   if (labelIds.includes('SPAM')) categories.push('spam');
+  if (labelIds.includes('DRAFT')) categories.push('drafts');
   
   // If no category found but email is not spam, default to primary (Gmail's default)
   if (categories.length === 0 && !labelIds.includes('SPAM')) {
@@ -550,7 +551,7 @@ export async function getUserEmailThreads(
     status?: EmailThreadStatus;
     limit?: number;
     unreadOnly?: boolean;
-    category?: string; // Gmail category: primary, social, promotions, updates, forums, spam
+    category?: string; // Gmail category: primary, social, promotions, updates, forums, spam, drafts
     sentOnly?: boolean; // Only return threads where user sent at least one message
   }
 ): Promise<EmailThread[]> {

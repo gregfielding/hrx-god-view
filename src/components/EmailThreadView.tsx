@@ -5,7 +5,7 @@
  * Shows all messages in the thread and allows replying.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Drawer,
   Box,
@@ -20,6 +20,7 @@ import {
   Paper,
   Chip,
   Tooltip,
+  Collapse,
   Slide,
   useTheme,
   useMediaQuery,
@@ -29,14 +30,20 @@ import ReplyIcon from '@mui/icons-material/Reply';
 import ForwardIcon from '@mui/icons-material/Forward';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
+import DeleteIcon from '@mui/icons-material/Delete';
+import MarkEmailReadIcon from '@mui/icons-material/MarkEmailRead';
 import EmailIcon from '@mui/icons-material/Email';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import DownloadIcon from '@mui/icons-material/Download';
+import { isImageAttachment, isPdfAttachment, formatFileSize, getFileIcon, downloadAllAttachments } from '../utils/emailAttachments';
+import ImageIcon from '@mui/icons-material/Image';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useAuth } from '../contexts/AuthContext';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import ContactHoverCard, { ParticipantContact } from './ContactHoverCard';
 import { fetchEmailThreadCached, peekEmailThread } from '../utils/emailThreadCache';
 import EmailBodyRenderer from './common/EmailBodyRenderer';
+import { useThreadMessagesRealtime } from '../hooks/useEmailRealtime';
 
 interface EmailThreadViewProps {
   open: boolean;
@@ -45,6 +52,9 @@ interface EmailThreadViewProps {
   tenantId: string;
   onThreadUpdated?: (threadId: string, unreadCount: number) => void;
   autoOpenReply?: boolean; // If true, automatically open reply drawer when thread loads
+  // Thread navigation props
+  allThreadIds?: string[]; // List of all thread IDs for navigation
+  onNavigateToThread?: (threadId: string) => void; // Callback to navigate to a different thread
 }
 
 interface EmailAttachment {
@@ -94,6 +104,8 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   tenantId,
   onThreadUpdated,
   autoOpenReply = false,
+  allThreadIds = [],
+  onNavigateToThread,
 }) => {
   const { user } = useAuth();
   const theme = useTheme();
@@ -109,6 +121,29 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   const [contactAnchorEl, setContactAnchorEl] = useState<HTMLElement | null>(null);
   const loadingRef = useRef<string | null>(null); // Track which threadId is currently loading
   const [optimisticMessages, setOptimisticMessages] = useState<Map<string, EmailMessage>>(new Map());
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
+
+  const threadAttachments = useMemo(() => {
+    if (!thread?.messages || thread.messages.length === 0) return [];
+    const seen = new Set<string>();
+    const all: EmailAttachment[] = [];
+    for (const msg of thread.messages) {
+      for (const att of msg.attachments || []) {
+        const key = att.id || att.storagePath || `${att.name}:${att.size}:${att.contentType}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(att);
+      }
+    }
+    return all;
+  }, [thread?.messages]);
+  
+  // Real-time messages for the thread
+  const { messages: realtimeMessages, loading: messagesLoading } = useThreadMessagesRealtime(
+    tenantId,
+    threadId,
+    open && !!threadId
+  );
   
   // Note: Email thread caching is handled centrally in `src/utils/emailThreadCache.ts`
 
@@ -116,6 +151,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   useEffect(() => {
     if (open) {
       setThreadWasMarkedAsRead(false);
+      setShowAllRecipients(false);
     }
   }, [open]);
 
@@ -163,10 +199,10 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         return;
       }
 
-      // e archives thread
-      if (e.key === 'e' || e.key === 'E') {
+      // # deletes thread (Gmail-style)
+      if (e.key === '#') {
         e.preventDefault();
-        // Archive functionality would go here
+        void deleteThread();
         return;
       }
     };
@@ -267,6 +303,20 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     }
   }, [open, threadId, loadThread]);
 
+  // Update thread with real-time messages when they arrive
+  useEffect(() => {
+    if (thread && realtimeMessages.length > 0) {
+      // Merge real-time messages with thread
+      setThread(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          messages: realtimeMessages,
+        };
+      });
+    }
+  }, [realtimeMessages, thread?.id]);
+
   // Auto-open reply drawer if requested
   useEffect(() => {
     if (autoOpenReply && thread && !loading && !replyDrawerOpen) {
@@ -298,6 +348,48 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     }
   };
 
+  const toggleReadStatus = async () => {
+    if (!threadId || !tenantId || !user?.uid) return;
+    const shouldMarkRead = (thread?.unreadCount || 0) > 0;
+    try {
+      const API_BASE_URL =
+        process.env.REACT_APP_FUNCTIONS_URL ||
+        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+
+      const response = await fetch(
+        `${API_BASE_URL}/updateEmailThreadApi?threadId=${encodeURIComponent(threadId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            userId: user.uid,
+            read: shouldMarkRead,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to update read status');
+      }
+
+      // Update local UI immediately
+      setThread((prev) =>
+        prev
+          ? {
+              ...prev,
+              unreadCount: shouldMarkRead ? 0 : Math.max(prev.unreadCount || 0, 1),
+            }
+          : prev
+      );
+      if (shouldMarkRead) {
+        setThreadWasMarkedAsRead(true);
+      }
+    } catch (err) {
+      console.error('Failed to toggle read status:', err);
+    }
+  };
+
   const toggleStar = async () => {
     const newStarred = !starred;
     setStarred(newStarred);
@@ -321,6 +413,36 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     } catch (err) {
       console.error('Failed to toggle star:', err);
       setStarred(!newStarred); // Revert on error
+    }
+  };
+
+  const deleteThread = async () => {
+    if (!threadId || !tenantId || !user?.uid) return;
+    try {
+      const API_BASE_URL =
+        process.env.REACT_APP_FUNCTIONS_URL ||
+        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+
+      const response = await fetch(
+        `${API_BASE_URL}/updateEmailThreadApi?threadId=${encodeURIComponent(threadId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            userId: user.uid,
+            status: 'deleted',
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to delete thread');
+      }
+
+      handleClose();
+    } catch (err) {
+      console.error('Failed to delete thread:', err);
     }
   };
 
@@ -376,27 +498,64 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     return thread.messages[thread.messages.length - 1];
   };
 
-  // Format forwarded email body with original headers
-  const getForwardedBody = (): string => {
-    const message = getLatestMessage();
-    if (!message) return '';
+  const escapeHtml = (input: string): string =>
+    String(input || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
 
-    const forwardedContent = `
-<div style="border-left: 3px solid #ccc; padding-left: 10px; margin: 20px 0; color: #666;">
-  <div style="margin-bottom: 10px;">
-    <strong>From:</strong> ${message.from}<br/>
-    <strong>Date:</strong> ${formatDate(message.createdAt)}<br/>
-    <strong>Subject:</strong> ${message.subject || thread?.subject || ''}<br/>
-    ${message.to && message.to.length > 0 ? `<strong>To:</strong> ${message.to.join(', ')}<br/>` : ''}
-    ${message.cc && message.cc.length > 0 ? `<strong>Cc:</strong> ${message.cc.join(', ')}<br/>` : ''}
+  const sanitizeForwardHtml = (html: string): string => {
+    if (!html) return '';
+    let sanitized = html;
+    sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+    sanitized = sanitized.replace(/on\w+="[^"]*"/gi, '');
+    sanitized = sanitized.replace(/on\w+='[^']*'/gi, '');
+    sanitized = sanitized.replace(/javascript:/gi, '');
+    return sanitized;
+  };
+
+  // Format forwarded email body including the entire thread history beneath it
+  const getForwardedBody = (): string => {
+    if (!thread || !thread.messages || thread.messages.length === 0) return '';
+
+    // Newest first so "the email being forwarded" is on top, and the rest is below it
+    const messages = [...thread.messages].sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.()?.getTime() || a.createdAt?.getTime?.() || new Date(a.createdAt).getTime() || 0;
+      const bTime = b.createdAt?.toDate?.()?.getTime() || b.createdAt?.getTime?.() || new Date(b.createdAt).getTime() || 0;
+      return bTime - aTime;
+    });
+
+    const blocks = messages.map((m) => {
+      const subject = m.subject || thread.subject || '';
+      const bodyHtml = m.bodyHtml ? sanitizeForwardHtml(m.bodyHtml) : '';
+      const bodyPlain = m.bodyPlain || m.bodySnippet || '';
+      const body = bodyHtml
+        ? bodyHtml
+        : `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;">${escapeHtml(bodyPlain)}</pre>`;
+
+      return `
+<div style="border-left:3px solid #C7CDD6;padding-left:12px;margin:16px 0;color:#5B6472;">
+  <div style="font-size:12px;margin-bottom:8px;color:#6B7280;">
+    ---------- Forwarded message ----------
   </div>
-  <div style="border-top: 1px solid #ddd; padding-top: 10px; margin-top: 10px;">
-    ${message.bodyHtml || message.bodyPlain || message.bodySnippet || ''}
+  <div style="font-size:12px;line-height:1.45;margin-bottom:10px;">
+    <strong>From:</strong> ${escapeHtml(m.from)}<br/>
+    <strong>Date:</strong> ${escapeHtml(formatDate(m.createdAt))}<br/>
+    <strong>Subject:</strong> ${escapeHtml(subject)}<br/>
+    ${m.to && m.to.length > 0 ? `<strong>To:</strong> ${escapeHtml(m.to.join(', '))}<br/>` : ''}
+    ${m.cc && m.cc.length > 0 ? `<strong>Cc:</strong> ${escapeHtml(m.cc.join(', '))}<br/>` : ''}
+  </div>
+  <div style="border-top:1px solid #E5E7EB;padding-top:10px;margin-top:10px;color:#111827;">
+    ${body}
   </div>
 </div>
-    `.trim();
+      `.trim();
+    });
 
-    return forwardedContent;
+    return blocks.join('\n\n');
   };
 
   const formatDate = (date: any): string => {
@@ -545,6 +704,12 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
 
   if (!thread) return null;
 
+  const recipients = (thread.participants || []).filter(Boolean);
+  const collapsedRecipients = recipients.slice(0, 2);
+  const remainingCount = Math.max(recipients.length - collapsedRecipients.length, 0);
+  const collapsedRecipientsText =
+    collapsedRecipients.join(', ') + (remainingCount > 0 ? `, +${remainingCount}` : '');
+
   return (
     <>
       <Drawer
@@ -599,24 +764,92 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           }}
         >
           {/* Header */}
-          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+          <Box
+            sx={{
+              p: 2,
+              borderBottom: 1,
+              borderColor: 'divider',
+              position: 'sticky',
+              top: 0,
+              zIndex: 2,
+              bgcolor: 'background.paper',
+            }}
+          >
             <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-              <Box sx={{ flex: 1 }}>
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.75 }}>
                   <IconButton size="small" onClick={toggleStar}>
                     {starred ? <StarIcon color="warning" /> : <StarBorderIcon />}
                   </IconButton>
-                  <Typography variant="h6" fontWeight={600}>
-                    {thread.subject}
+                  <Typography
+                    variant="h6"
+                    fontWeight={700}
+                    sx={{
+                      minWidth: 0,
+                      flex: 1,
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {thread.subject || '(no subject)'}
                   </Typography>
                 </Stack>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  {thread.participants.join(', ')}
-                </Typography>
+
+                {/* Recipients (collapsed by default, expandable) */}
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                      minWidth: 0,
+                      flex: 1,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={recipients.join(', ')}
+                  >
+                    {showAllRecipients ? recipients.join(', ') : collapsedRecipientsText}
+                  </Typography>
+                  {recipients.length > 2 && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      onClick={() => setShowAllRecipients((v) => !v)}
+                      sx={{ textTransform: 'none', px: 1, minWidth: 0 }}
+                    >
+                      {showAllRecipients ? 'Hide' : 'Show'}
+                    </Button>
+                  )}
+                </Stack>
+
+                <Collapse in={showAllRecipients && recipients.length > 2} timeout={150}>
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                      {recipients.join(', ')}
+                    </Typography>
+                  </Box>
+                </Collapse>
                 
                 {/* Contact Pills */}
                 {thread.participantContacts && thread.participantContacts.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                  <Box
+                    sx={{
+                      mt: 1,
+                      overflowX: 'auto',
+                      overflowY: 'hidden',
+                      whiteSpace: 'nowrap',
+                      pb: 0.25,
+                      '&::-webkit-scrollbar': { height: 6 },
+                      '&::-webkit-scrollbar-track': { background: 'rgba(0,0,0,0.04)' },
+                      '&::-webkit-scrollbar-thumb': { background: 'rgba(0,0,0,0.18)', borderRadius: 4 },
+                      scrollbarWidth: 'thin',
+                    }}
+                  >
+                    <Stack direction="row" spacing={1} sx={{ width: 'max-content' }}>
                     {thread.participantContacts
                       .filter(contact => contact.contactId || contact.userId) // Only show linked contacts
                       .map((contact, index) => {
@@ -628,11 +861,11 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                             key={`${contact.email}-${index}`}
                             label={
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                <Typography variant="caption" sx={{ fontWeight: 500 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 500, color: isLinked && contact.contactId ? 'white' : 'inherit' }}>
                                   {displayName}
                                 </Typography>
                                 {contact.companyName && (
-                                  <Typography variant="caption" color="text.secondary">
+                                  <Typography variant="caption" sx={{ color: isLinked && contact.contactId ? 'rgba(255, 255, 255, 0.8)' : 'text.secondary' }}>
                                     • {contact.companyName}
                                   </Typography>
                                 )}
@@ -651,6 +884,11 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                             }}
                             sx={{
                               cursor: isLinked ? 'pointer' : 'default',
+                              color: isLinked && contact.contactId ? 'white' : 'inherit',
+                              '& .MuiChip-label': {
+                                color: isLinked && contact.contactId ? 'white' : 'inherit',
+                              },
+                              height: 28,
                               '&:hover': {
                                 bgcolor: isLinked ? 'primary.dark' : 'action.hover',
                               },
@@ -665,12 +903,30 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                           />
                         );
                       })}
-                  </Stack>
+                    </Stack>
+                  </Box>
                 )}
               </Box>
-              <IconButton onClick={handleClose}>
-                <CloseIcon />
-              </IconButton>
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Tooltip title={(thread.unreadCount || 0) > 0 ? 'Mark as read (M)' : 'Mark as unread (M)'}>
+                  <IconButton size="small" onClick={toggleReadStatus}>
+                    <MarkEmailReadIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Forward (F)">
+                  <IconButton size="small" onClick={() => setForwardDrawerOpen(true)}>
+                    <ForwardIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Delete (#)">
+                  <IconButton size="small" onClick={() => void deleteThread()}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <IconButton onClick={handleClose} size="small">
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Stack>
             </Stack>
           </Box>
 
@@ -699,23 +955,41 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             scrollbarWidth: 'thin',
             scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
           }}>
-            <Stack spacing={2}>
-              {(() => {
-                // Merge real messages with optimistic messages
-                const allMessages = [...(thread.messages || [])];
-                optimisticMessages.forEach((msg) => {
-                  // Add optimistic messages at the end (most recent)
-                  allMessages.push(msg);
-                });
-                // Sort by createdAt (most recent first)
-                allMessages.sort((a, b) => {
-                  const aTime = a.createdAt?.toDate?.()?.getTime() || a.createdAt?.getTime?.() || new Date(a.createdAt).getTime() || 0;
-                  const bTime = b.createdAt?.toDate?.()?.getTime() || b.createdAt?.getTime?.() || new Date(b.createdAt).getTime() || 0;
-                  return bTime - aTime;
-                });
-                
-                return allMessages.length > 0 ? (
-                  allMessages.map((message, index) => {
+            {(loading || messagesLoading) && (!thread || !thread.messages || thread.messages.length === 0) && realtimeMessages.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress size={32} />
+              </Box>
+            ) : (
+              <Stack spacing={2}>
+                {(() => {
+                  // Use real-time messages if available, otherwise fall back to thread.messages
+                  const baseMessages = realtimeMessages.length > 0 ? realtimeMessages : (thread.messages || []);
+                  
+                  // Merge real messages with optimistic messages
+                  const allMessages = [...baseMessages];
+                  optimisticMessages.forEach((msg) => {
+                    // Add optimistic messages at the end (most recent)
+                    allMessages.push(msg);
+                  });
+                  
+                  // Deduplicate by message ID
+                  const messageMap = new Map<string, EmailMessage>();
+                  allMessages.forEach(msg => {
+                    if (msg.id && !messageMap.has(msg.id)) {
+                      messageMap.set(msg.id, msg);
+                    }
+                  });
+                  const deduplicatedMessages = Array.from(messageMap.values());
+                  
+                  // Sort by createdAt (oldest first for conversation view)
+                  deduplicatedMessages.sort((a, b) => {
+                    const aTime = a.createdAt?.toDate?.()?.getTime() || a.createdAt?.getTime?.() || new Date(a.createdAt).getTime() || 0;
+                    const bTime = b.createdAt?.toDate?.()?.getTime() || b.createdAt?.getTime?.() || new Date(b.createdAt).getTime() || 0;
+                    return aTime - bTime; // Oldest first for conversation view
+                  });
+                  
+                  return deduplicatedMessages.length > 0 ? (
+                    deduplicatedMessages.map((message, index) => {
                     const isOptimistic = optimisticMessages.has(message.id);
                     return (
                       <Paper 
@@ -805,49 +1079,107 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                       </Box>
                       {message.attachments && message.attachments.length > 0 && (
                         <Box sx={{ mt: 2 }}>
-                          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            Attachments ({message.attachments.length})
-                          </Typography>
-                          <Stack spacing={1}>
-                            {message.attachments.map((attachment) => (
-                              <Paper
-                                key={attachment.id}
-                                variant="outlined"
-                                sx={{
-                                  p: 1.5,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 1,
-                                  '&:hover': { bgcolor: 'action.hover' },
+                          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                            <Typography variant="subtitle2">
+                              Attachments ({message.attachments.length})
+                            </Typography>
+                            {message.attachments.length > 1 && (
+                              <Button
+                                size="small"
+                                startIcon={<DownloadIcon />}
+                                onClick={async () => {
+                                  try {
+                                    await downloadAllAttachments(message.attachments);
+                                  } catch (err) {
+                                    console.error('Error downloading all attachments:', err);
+                                  }
                                 }}
+                                sx={{ textTransform: 'none' }}
                               >
-                                <AttachFileIcon fontSize="small" color="action" />
-                                <Box sx={{ flex: 1, minWidth: 0 }}>
-                                  <Typography variant="body2" noWrap>
-                                    {attachment.name}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {formatFileSize(attachment.size)} • {attachment.contentType}
-                                  </Typography>
-                                </Box>
-                                <IconButton
-                                  size="small"
-                                  onClick={() => {
-                                    if (attachment.downloadUrl) {
-                                      window.open(attachment.downloadUrl, '_blank');
-                                    } else if (attachment.storagePath) {
-                                      // Generate download URL from storage path if downloadUrl not available
-                                      const encodedPath = encodeURIComponent(attachment.storagePath);
-                                      const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                                      window.open(downloadUrl, '_blank');
-                                    }
+                                Download All
+                              </Button>
+                            )}
+                          </Stack>
+                          <Stack spacing={1}>
+                            {message.attachments.map((attachment) => {
+                              const isImage = isImageAttachment(attachment);
+                              const isPdf = isPdfAttachment(attachment);
+                              const fileIcon = getFileIcon(attachment.contentType);
+                              
+                              return (
+                                <Paper
+                                  key={attachment.id}
+                                  variant="outlined"
+                                  sx={{
+                                    p: 1.5,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 1,
+                                    '&:hover': { bgcolor: 'action.hover' },
                                   }}
-                                  title="Download"
                                 >
-                                  <DownloadIcon fontSize="small" />
-                                </IconButton>
-                              </Paper>
-                            ))}
+                                  {isImage && attachment.downloadUrl ? (
+                                    <Box
+                                      component="img"
+                                      src={attachment.downloadUrl}
+                                      alt={attachment.name}
+                                      sx={{
+                                        width: 48,
+                                        height: 48,
+                                        objectFit: 'cover',
+                                        borderRadius: 1,
+                                        cursor: 'pointer',
+                                      }}
+                                      onClick={() => window.open(attachment.downloadUrl, '_blank')}
+                                    />
+                                  ) : (
+                                    <Box
+                                      sx={{
+                                        width: 48,
+                                        height: 48,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        bgcolor: 'action.hover',
+                                        borderRadius: 1,
+                                      }}
+                                    >
+                                      {isPdf ? (
+                                        <PictureAsPdfIcon fontSize="small" color="error" />
+                                      ) : isImage ? (
+                                        <ImageIcon fontSize="small" color="primary" />
+                                      ) : (
+                                        <AttachFileIcon fontSize="small" color="action" />
+                                      )}
+                                    </Box>
+                                  )}
+                                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Typography variant="body2" noWrap>
+                                      {attachment.name}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {formatFileSize(attachment.size)} • {attachment.contentType}
+                                    </Typography>
+                                  </Box>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      if (attachment.downloadUrl) {
+                                        window.open(attachment.downloadUrl, '_blank');
+                                      } else if (attachment.storagePath) {
+                                        // Generate download URL from storage path if downloadUrl not available
+                                        const encodedPath = encodeURIComponent(attachment.storagePath);
+                                        const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                                        window.open(downloadUrl, '_blank');
+                                      }
+                                    }}
+                                    title="Download"
+                                  >
+                                    <DownloadIcon fontSize="small" />
+                                  </IconButton>
+                                </Paper>
+                              );
+                            })}
                           </Stack>
                         </Box>
                       )}
@@ -856,13 +1188,125 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                     );
                   })
                 ) : (
-                  <Typography variant="body2" color="text.secondary" align="center" sx={{ py: 4 }}>
-                    No messages in this thread
-                  </Typography>
+                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 4, minHeight: '200px' }}>
+                    <Typography variant="body2" color="text.secondary" align="center">
+                      No messages found in this thread
+                    </Typography>
+                  </Box>
                 );
               })()}
-            </Stack>
+              </Stack>
+            )}
           </Box>
+
+          {/* Attachment tray (thread-level) */}
+          {threadAttachments.length > 0 && (
+            <Box
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                bgcolor: 'background.paper',
+                px: 2,
+                py: 1,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                flexShrink: 0,
+              }}
+            >
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
+                <AttachFileIcon fontSize="small" color="action" />
+                <Typography variant="body2" sx={{ fontWeight: 600, flexShrink: 0 }}>
+                  Attachments ({threadAttachments.length})
+                </Typography>
+
+                <Box
+                  sx={{
+                    minWidth: 0,
+                    flex: 1,
+                    overflowX: 'auto',
+                    overflowY: 'hidden',
+                    whiteSpace: 'nowrap',
+                    pb: 0.25,
+                    '&::-webkit-scrollbar': { height: 6 },
+                    '&::-webkit-scrollbar-track': { background: 'rgba(0,0,0,0.04)' },
+                    '&::-webkit-scrollbar-thumb': { background: 'rgba(0,0,0,0.18)', borderRadius: 4 },
+                    scrollbarWidth: 'thin',
+                  }}
+                >
+                  <Stack direction="row" spacing={1} sx={{ width: 'max-content' }}>
+                    {threadAttachments.map((attachment) => {
+                      const isImage = isImageAttachment(attachment);
+                      const isPdf = isPdfAttachment(attachment);
+                      const icon = isPdf ? (
+                        <PictureAsPdfIcon fontSize="small" color="error" />
+                      ) : isImage ? (
+                        <ImageIcon fontSize="small" color="primary" />
+                      ) : (
+                        getFileIcon(attachment.contentType)
+                      );
+
+                      return (
+                        <Paper
+                          key={attachment.id || attachment.storagePath || attachment.name}
+                          variant="outlined"
+                          onClick={() => {
+                            if (attachment.downloadUrl) {
+                              window.open(attachment.downloadUrl, '_blank');
+                              return;
+                            }
+                            if (attachment.storagePath) {
+                              const encodedPath = encodeURIComponent(attachment.storagePath);
+                              const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                              window.open(downloadUrl, '_blank');
+                            }
+                          }}
+                          sx={{
+                            px: 1,
+                            py: 0.75,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.75,
+                            cursor: 'pointer',
+                            borderRadius: 999,
+                            maxWidth: 260,
+                            '&:hover': { bgcolor: 'action.hover' },
+                          }}
+                          title={attachment.name}
+                        >
+                          {icon}
+                          <Typography variant="body2" noWrap sx={{ maxWidth: 160 }}>
+                            {attachment.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                            {formatFileSize(attachment.size)}
+                          </Typography>
+                        </Paper>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              </Stack>
+
+              {threadAttachments.length > 1 && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DownloadIcon fontSize="small" />}
+                  onClick={async () => {
+                    try {
+                      await downloadAllAttachments(threadAttachments);
+                    } catch (err) {
+                      console.error('Error downloading all attachments:', err);
+                    }
+                  }}
+                  sx={{ textTransform: 'none', flexShrink: 0 }}
+                >
+                  Download all
+                </Button>
+              )}
+            </Box>
+          )}
 
           {/* Footer */}
           <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>

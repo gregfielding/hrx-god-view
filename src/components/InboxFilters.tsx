@@ -16,11 +16,9 @@ import {
   useTheme,
   useMediaQuery,
 } from '@mui/material';
-import InboxIcon from '@mui/icons-material/Inbox';
 import MailIcon from '@mui/icons-material/Mail';
 import StarIcon from '@mui/icons-material/Star';
 import SendIcon from '@mui/icons-material/Send';
-import ArchiveIcon from '@mui/icons-material/Archive';
 import DeleteIcon from '@mui/icons-material/Delete';
 import HomeIcon from '@mui/icons-material/Home';
 import PeopleIcon from '@mui/icons-material/People';
@@ -28,15 +26,14 @@ import LocalOfferIcon from '@mui/icons-material/LocalOffer';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import ForumIcon from '@mui/icons-material/Forum';
 import BlockIcon from '@mui/icons-material/Block';
+import DraftsIcon from '@mui/icons-material/Drafts';
 
 export type InboxFilter =
-  | 'all'
-  | 'unread'
   | 'starred'
   | 'sent'
-  | 'archived'
+  | 'drafts'
   | 'trash'
-  // Optional Gmail category filters (only when explicitly enabled)
+  // Gmail category filters
   | 'primary'
   | 'social'
   | 'promotions'
@@ -49,8 +46,10 @@ interface InboxFiltersProps {
   onFilterChange: (filter: InboxFilter) => void;
   unreadCount?: number;
   starredCount?: number;
-  showCategories?: boolean; // Only show categories when email tab is active
+  showCategories?: boolean; // Show Gmail categories (Primary/Social/Promotions/Updates/Forums/Spam)
   orientation?: 'vertical' | 'horizontal'; // Layout orientation
+  unreadOnly?: boolean; // Contextual unread toggle within the selected mailbox
+  onUnreadOnlyChange?: (unreadOnly: boolean) => void;
 }
 
 const InboxFilters: React.FC<InboxFiltersProps> = ({
@@ -60,6 +59,8 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
   starredCount = 0,
   showCategories = false,
   orientation = 'vertical',
+  unreadOnly = false,
+  onUnreadOnlyChange,
 }) => {
   const theme = useTheme();
   const isMdAndUp = useMediaQuery(theme.breakpoints.up('md')); // >= 960px
@@ -70,17 +71,6 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
     icon: React.ReactNode;
     count?: number;
   }> = [
-    {
-      id: 'all',
-      label: 'Inbox',
-      icon: <HomeIcon />,
-    },
-    {
-      id: 'unread',
-      label: 'Unread',
-      icon: <MailIcon />,
-      count: unreadCount > 0 ? unreadCount : undefined,
-    },
     {
       id: 'starred',
       label: 'Starred',
@@ -93,9 +83,9 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
       icon: <SendIcon />,
     },
     {
-      id: 'archived',
-      label: 'Archived',
-      icon: <ArchiveIcon />,
+      id: 'drafts',
+      label: 'Drafts',
+      icon: <DraftsIcon />,
     },
     {
       id: 'trash',
@@ -143,6 +133,11 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
   ];
 
   if (orientation === 'horizontal') {
+    const isMailboxView =
+      showCategories &&
+      (['primary', 'social', 'promotions', 'updates', 'forums', 'spam'] as InboxFilter[]).includes(activeFilter);
+    const showUnreadToggle = isMailboxView && typeof onUnreadOnlyChange === 'function';
+
     // Horizontal layout - subtle ghost buttons with segmented control feel
     return (
       <Box sx={{ 
@@ -180,6 +175,47 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
                 {filter.label}
               </Button>
             ))}
+
+            {showUnreadToggle && (
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<MailIcon />}
+                onClick={() => onUnreadOnlyChange(!unreadOnly)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '999px',
+                  fontSize: '14px',
+                  fontWeight: unreadOnly ? 600 : 400,
+                  color: unreadOnly ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                  bgcolor: unreadOnly ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                  px: 1.5,
+                  py: 0.75,
+                  minWidth: 'auto',
+                  '&:hover': {
+                    bgcolor: unreadOnly ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                }}
+              >
+                Unread
+                {unreadCount > 0 && (
+                  <Chip
+                    label={unreadCount > 99 ? '99+' : unreadCount}
+                    size="small"
+                    sx={{
+                      ml: 0.75,
+                      height: '18px',
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                      bgcolor: unreadOnly ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)',
+                      color: unreadOnly ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      '& .MuiChip-label': { px: 0.5 },
+                    }}
+                  />
+                )}
+              </Button>
+            )}
+
             <Divider orientation="vertical" flexItem sx={{ mx: 0.5, height: 20 }} />
           </>
         )}

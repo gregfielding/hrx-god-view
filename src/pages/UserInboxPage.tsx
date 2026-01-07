@@ -4,7 +4,7 @@
  * Unified inbox for all users to view their messages (Email, SMS, Push)
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -42,7 +42,6 @@ import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
 import ReplyIcon from '@mui/icons-material/Reply';
 import EditIcon from '@mui/icons-material/Edit';
-import ArchiveIcon from '@mui/icons-material/Archive';
 import DeleteIcon from '@mui/icons-material/Delete';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
@@ -66,6 +65,16 @@ import StandardTablePagination from '../components/StandardTablePagination';
 import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useNavigate } from 'react-router-dom';
+import { useEmailRealtime } from '../hooks/useEmailRealtime';
+import { useEmailShortcuts } from '../hooks/useEmailShortcuts';
+import { subscribeToToasts, showSuccessToast, showErrorToast, showUndoToast } from '../utils/emailToast';
+import { executeOptimisticUpdate, createStarUpdate, createMarkReadUpdate, createDeleteUpdate } from '../utils/emailOptimisticUpdates';
+import { createDebouncedSearch, searchEmailThreads } from '../utils/emailSearch';
+// Inbox uses the universal right-side drawer (`EmailThreadView`) like other screens.
+import { Snackbar, Alert as MuiAlert } from '@mui/material';
+import { createSwipeHandler, getSwipeTransform, getSwipeActionColor, SwipeAction } from '../utils/emailSwipeActions';
+import EmailThreadSkeleton from '../components/EmailThreadSkeleton';
+import PullToRefresh from '../components/PullToRefresh';
 // Removed unified inbox imports - inbox is now email-only per decoupling spec
 
 interface MessageLog {
@@ -154,7 +163,8 @@ const UserInboxPage: React.FC = () => {
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [replyDrawerOpen, setReplyDrawerOpen] = useState(false);
   const [selectedThread, setSelectedThread] = useState<SmsThread | null>(null);
-  const [emailThreadViewOpen, setEmailThreadViewOpen] = useState(false);
+  const [emailDrawerOpen, setEmailDrawerOpen] = useState(false);
+  const [selectedEmailThreadId, setSelectedEmailThreadId] = useState<string | null>(null);
   const [selectedEmailThread, setSelectedEmailThread] = useState<EmailThread | null>(null);
   const [autoOpenReply, setAutoOpenReply] = useState(false);
   const [messageModalOpen, setMessageModalOpen] = useState(false);
@@ -163,8 +173,8 @@ const UserInboxPage: React.FC = () => {
   const [syncingGmail, setSyncingGmail] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
 
-  // Filter state - default to 'all' so Inbox shows BOTH read and unread (canonical spec)
-  const [activeFilter, setActiveFilter] = useState<InboxFilter>('all');
+  // Filter state - default to Gmail Primary (align with Gmail/Mimestream)
+  const [activeFilter, setActiveFilter] = useState<InboxFilter>('primary');
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null);
@@ -190,7 +200,7 @@ const UserInboxPage: React.FC = () => {
   
   // Safe hover state setter that ignores updates when drawer is open
   const setHoveredThreadIdSafe = (id: string | null) => {
-    if (!emailThreadViewOpen) {
+    if (!emailDrawerOpen) {
       setHoveredThreadId(id);
     }
   };
@@ -198,6 +208,110 @@ const UserInboxPage: React.FC = () => {
   // Pagination state
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+
+  const handleMailboxFilterChange = (filter: InboxFilter) => {
+    setActiveFilter(filter);
+    // Unread is contextual within a mailbox; reset when switching mailbox views.
+    setShowUnreadOnly(false);
+  };
+
+  const getInboxHeaderTitle = (): string => {
+    const mailboxLabelMap: Record<InboxFilter, string> = {
+      primary: 'Inbox: Primary',
+      social: 'Inbox: Social',
+      promotions: 'Inbox: Promotions',
+      updates: 'Inbox: Updates',
+      forums: 'Inbox: Forums',
+      spam: 'Inbox: Spam',
+      starred: 'Starred',
+      sent: 'Sent',
+      drafts: 'Drafts',
+      trash: 'Trash',
+    };
+
+    const base = mailboxLabelMap[activeFilter] ?? 'Inbox';
+    // Only show "(Unread)" when in a mailbox view (like Mimestream)
+    const isMailboxView = ['primary', 'social', 'promotions', 'updates', 'forums', 'spam'].includes(activeFilter);
+    return showUnreadOnly && isMailboxView ? `${base} (Unread)` : base;
+  };
+
+  const getInboxHeaderSubtitle = (): string => {
+    if (activeFilter === 'trash') return 'Deleted messages from your connected inbox.';
+    if (activeFilter === 'sent') return 'Messages you sent from your connected inbox.';
+    if (activeFilter === 'drafts') return 'Draft messages from your connected inbox.';
+    if (activeFilter === 'starred') return 'Starred messages from your connected inbox.';
+    if (activeFilter === 'spam') return 'Spam messages from your connected inbox.';
+    return 'View and manage messages from your connected inbox.';
+  };
+
+  // Inbox uses the universal right-side drawer, not a split preview pane.
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Toast state
+  const [toast, setToast] = useState<{ id: string; message: string; type?: 'success' | 'error' | 'info' | 'warning'; action?: { label: string; onClick: () => void }; duration?: number } | null>(null);
+
+  // Mobile swipe state (track swipe state per thread)
+  const [swipeStates, setSwipeStates] = useState<Map<string, { startX: number; startY: number; currentX: number; currentY: number; isSwiping: boolean; direction: 'left' | 'right' | null }>>(new Map());
+
+  // Real-time email threads (use when not searching)
+  const { 
+    threads: realtimeThreads, 
+    loading: realtimeLoading, 
+    unreadCount: realtimeUnreadCount,
+    error: realtimeError 
+  } = useEmailRealtime({
+    tenantId: effectiveTenantId,
+    userId: user?.uid || '',
+    userEmail: user?.email,
+    status: activeFilter === 'trash' ? 'deleted' : 'active',
+    unreadOnly: showUnreadOnly,
+    category: ['primary', 'social', 'promotions', 'updates', 'forums', 'spam', 'drafts'].includes(activeFilter) ? activeFilter : undefined,
+    sentOnly: activeFilter === 'sent',
+    enabled: !isBackendSearch && !!user?.uid && !!effectiveTenantId,
+  });
+
+  // Subscribe to toast notifications
+  useEffect(() => {
+    const unsubscribe = subscribeToToasts((toast) => {
+      setToast(toast);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Debounced search
+  const debouncedSearch = useMemo(
+    () =>
+      createDebouncedSearch(async (query: string) => {
+        if (!user?.uid || !effectiveTenantId) return [];
+        return await searchEmailThreads({
+          tenantId: effectiveTenantId,
+          userId: user.uid,
+          userEmail: user.email,
+          query,
+          limit: 50,
+        });
+      }, 300),
+    [effectiveTenantId, user?.uid, user?.email]
+  );
+
+  // Use real-time threads when not searching, fallback to loaded threads
+  // Deduplicate when combining real-time and loaded threads
+  const getDisplayThreads = (): EmailThread[] => {
+    if (isBackendSearch) {
+      return searchResults;
+    }
+    
+    if (realtimeThreads.length > 0) {
+      // If we have real-time threads, use them (they're already deduplicated in the hook)
+      return realtimeThreads;
+    }
+    
+    // Fallback to loaded threads
+    return emailThreads;
+  };
+  
+  const displayThreads = getDisplayThreads();
+  const displayLoading = isBackendSearch ? isSearching : (realtimeLoading && emailThreads.length === 0);
 
   // Removed unified inbox - inbox is now email-only per decoupling spec
 
@@ -373,10 +487,10 @@ const UserInboxPage: React.FC = () => {
 
   // Clear hover state when drawer opens to prevent flickering
   useEffect(() => {
-    if (emailThreadViewOpen) {
+    if (emailDrawerOpen) {
       setHoveredThreadId(null);
     }
-  }, [emailThreadViewOpen]);
+  }, [emailDrawerOpen]);
 
   // Reset pagination when tab changes
   useEffect(() => {
@@ -385,11 +499,11 @@ const UserInboxPage: React.FC = () => {
 
   // Close drawer when entering mobile view (drawer will be converted to bottom sheet later)
   useEffect(() => {
-    if (isMobile && emailThreadViewOpen) {
-      setEmailThreadViewOpen(false);
+    if (isMobile && emailDrawerOpen) {
+      setEmailDrawerOpen(false);
       setSelectedEmailThread(null);
     }
-  }, [isMobile, emailThreadViewOpen]);
+  }, [isMobile, emailDrawerOpen]);
 
   // Clear search when switching tabs or filters
   useEffect(() => {
@@ -517,20 +631,18 @@ const UserInboxPage: React.FC = () => {
         limit: '200',
       });
 
-      if (activeFilter === 'unread') {
+      // Contextual unread toggle (e.g., Updates + Unread)
+      if (showUnreadOnly) {
         params.append('unreadOnly', 'true');
-      } else if (activeFilter === 'all') {
-        // 'all' shows all active threads (both read and unread)
-        // No additional params needed - API returns all active threads by default
-      } else if (activeFilter === 'archived') {
-        params.append('status', 'archived');
-      } else if (activeFilter === 'trash') {
+      }
+
+      if (activeFilter === 'trash') {
         params.append('status', 'deleted');
       } else if (activeFilter === 'sent') {
         params.append('sentOnly', 'true');
       } else if (activeFilter === 'starred') {
         // Starred filter will be applied client-side
-      } else if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam'].includes(activeFilter)) {
+      } else if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam', 'drafts'].includes(activeFilter)) {
         // Gmail category filters
         params.append('category', activeFilter);
       }
@@ -563,6 +675,20 @@ const UserInboxPage: React.FC = () => {
           };
         });
         
+        // Deduplicate by thread ID (in case API returns duplicates)
+        const threadMap = new Map<string, EmailThread>();
+        threads.forEach((thread: EmailThread) => {
+          const existing = threadMap.get(thread.id);
+          // Keep the one with the most recent lastMessageAt
+          if (!existing || 
+              (thread.lastMessageAt && existing.lastMessageAt &&
+               (thread.lastMessageAt instanceof Date ? thread.lastMessageAt.getTime() : 0) >
+               (existing.lastMessageAt instanceof Date ? existing.lastMessageAt.getTime() : 0))) {
+            threadMap.set(thread.id, thread);
+          }
+        });
+        threads = Array.from(threadMap.values());
+        
         setEmailThreads(threads);
       }
     } catch (err: any) {
@@ -591,7 +717,10 @@ const UserInboxPage: React.FC = () => {
     setSelectedEmailThread(thread);
     setHoveredThreadId(null); // Clear hover state to prevent flickering
     setAutoOpenReply(false); // Reset auto-reply flag
-    setEmailThreadViewOpen(true);
+    
+    // Always use the universal drawer pattern (same as Dashboard/other screens)
+    setSelectedEmailThreadId(thread.id);
+    setEmailDrawerOpen(true);
   };
 
   const handleReplyToThread = (thread: EmailThread, event: React.MouseEvent) => {
@@ -600,110 +729,153 @@ const UserInboxPage: React.FC = () => {
     setSelectedEmailThread(thread);
     setHoveredThreadId(null);
     setAutoOpenReply(true); // Set flag to auto-open reply
-    setEmailThreadViewOpen(true);
+    // Use universal drawer pattern
+    setSelectedEmailThreadId(thread.id);
+    setEmailDrawerOpen(true);
   };
 
-  const handleArchiveThread = async (threadId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    if (!user?.uid || !effectiveTenantId) return;
-
-    try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-
-      const response = await fetch(
-        `${API_BASE_URL}/archiveEmailThreadApi/${threadId}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            threadId, // Include in body as fallback
-            tenantId: effectiveTenantId,
-            userId: user.uid,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to archive thread');
-      }
-
-      // Reload threads
-      loadEmailThreads();
-    } catch (err: any) {
-      setError(err.message || 'Failed to archive thread');
-    }
-  };
+  // Archive intentionally removed from UI (not needed).
 
   const handleStarThread = async (threadId: string, starred: boolean, event: React.MouseEvent) => {
     event.stopPropagation();
     if (!effectiveTenantId) return;
 
-    try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+    const update = createStarUpdate(threadId, starred);
+    const currentThreads = displayThreads;
 
-      const url = `${API_BASE_URL}/starEmailThreadApi/${threadId}`;
-      console.log('Starring thread:', { threadId, starred, url });
+    const { updated, error } = await executeOptimisticUpdate(
+      currentThreads,
+      update,
+      async () => {
+        const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+          'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
-      const response = await fetch(url, {
+        const url = `${API_BASE_URL}/starEmailThreadApi/${threadId}`;
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-          threadId, // Include in body as fallback
+            threadId,
             tenantId: effectiveTenantId,
             starred,
           }),
-      });
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Star thread error:', { status: response.status, errorData });
-        throw new Error(errorData.error?.message || 'Failed to star thread');
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || 'Failed to star thread');
+        }
+      },
+      (err) => {
+        showErrorToast('Failed to star thread');
       }
+    );
 
-      const result = await response.json();
-      console.log('Star thread success:', result);
-
-      // Update local state
-      setEmailThreads(prev => prev.map(t => 
-        t.id === threadId ? { ...t, starred } : t
-      ));
-    } catch (err: any) {
-      console.error('Star thread exception:', err);
-      setError(err.message || 'Failed to star thread');
+    // Update state
+    if (isBackendSearch) {
+      setSearchResults(updated);
+    } else if (realtimeThreads.length > 0) {
+      setEmailThreads(updated);
+    } else {
+      setEmailThreads(updated);
     }
   };
+
+  // Keyboard shortcuts
+  useEmailShortcuts({
+    enabled: !emailDrawerOpen && !messageDrawerOpen,
+    handlers: {
+      onNavigateNext: () => {
+        const currentIndex = displayThreads.findIndex(t => t.id === selectedEmailThread?.id);
+        if (currentIndex < displayThreads.length - 1) {
+          handleEmailThreadClick(displayThreads[currentIndex + 1]);
+        }
+      },
+      onNavigatePrevious: () => {
+        const currentIndex = displayThreads.findIndex(t => t.id === selectedEmailThread?.id);
+        if (currentIndex > 0) {
+          handleEmailThreadClick(displayThreads[currentIndex - 1]);
+        }
+      },
+      onReply: () => {
+        if (selectedEmailThread) {
+          setAutoOpenReply(true);
+          setSelectedEmailThreadId(selectedEmailThread.id);
+          setEmailDrawerOpen(true);
+        }
+      },
+      // Archive removed
+      onStar: () => {
+        if (selectedEmailThread) {
+          handleStarThread(selectedEmailThread.id, !selectedEmailThread.starred, {} as any);
+        }
+      },
+      onMarkRead: () => {
+        if (selectedEmailThread && selectedEmailThread.unreadCount > 0) {
+          handleMarkAsRead(selectedEmailThread.id, {} as any);
+        }
+      },
+      onFocusSearch: () => {
+        searchInputRef.current?.focus();
+      },
+      onGoToInbox: () => handleMailboxFilterChange('primary'),
+      onGoToStarred: () => setActiveFilter('starred'),
+      onGoToSent: () => setActiveFilter('sent'),
+      // Archived removed
+      onCompose: () => setMessageDrawerOpen(true),
+      onClose: () => {
+        if (emailDrawerOpen) {
+          setEmailDrawerOpen(false);
+          setSelectedEmailThreadId(null);
+          setSelectedEmailThread(null);
+        }
+      },
+    },
+  });
 
   const handleMarkAsRead = async (threadId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     if (!user?.uid || !effectiveTenantId) return;
 
-    try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+    const update = createMarkReadUpdate(threadId);
+    const currentThreads = displayThreads;
 
-      const response = await fetch(
-        `${API_BASE_URL}/updateEmailThreadApi?threadId=${threadId}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenantId: effectiveTenantId,
-            userId: user.uid,
-            read: true,
-          }),
+    const { updated, error } = await executeOptimisticUpdate(
+      currentThreads,
+      update,
+      async () => {
+        const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+          'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+
+        const response = await fetch(
+          `${API_BASE_URL}/updateEmailThreadApi?threadId=${threadId}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: effectiveTenantId,
+              userId: user.uid,
+              read: true,
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error('Failed to mark as read');
         }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to mark as read');
+      },
+      (err) => {
+        showErrorToast('Failed to mark as read');
       }
+    );
 
-      // Reload threads
-      loadEmailThreads();
-    } catch (err: any) {
-      setError(err.message || 'Failed to mark as read');
+    // Update state
+    if (isBackendSearch) {
+      setSearchResults(updated);
+    } else if (realtimeThreads.length > 0) {
+      setEmailThreads(updated);
+    } else {
+      setEmailThreads(updated);
     }
   };
 
@@ -739,40 +911,7 @@ const UserInboxPage: React.FC = () => {
     }
   };
 
-  const handleBulkArchive = async () => {
-    if (selectedThreadIds.size === 0 || !user?.uid || !effectiveTenantId) return;
-
-    setBulkActionLoading(true);
-    try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-
-      const response = await fetch(
-        `${API_BASE_URL}/bulkUpdateEmailThreadsApi`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            threadIds: Array.from(selectedThreadIds),
-            tenantId: effectiveTenantId,
-            userId: user.uid,
-            updates: { status: 'archived' },
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to archive threads');
-      }
-
-      setSelectedThreadIds(new Set());
-      loadEmailThreads();
-    } catch (err: any) {
-      setError(err.message || 'Failed to archive threads');
-    } finally {
-      setBulkActionLoading(false);
-    }
-  };
+  // Bulk archive intentionally removed from UI (not needed).
 
   const handleBulkDelete = async () => {
     if (selectedThreadIds.size === 0 || !user?.uid || !effectiveTenantId) return;
@@ -1282,8 +1421,9 @@ const UserInboxPage: React.FC = () => {
   };
 
   // Use search results if backend search is active, otherwise use normal threads
-  const threadsToFilter = isBackendSearch ? searchResults : emailThreads;
-
+  // Use displayThreads (real-time or loaded) for filtering
+  const threadsToFilter = displayThreads;
+  
   // Filter threads based on active filter (for client-side filtering like starred)
   const filteredEmailThreads = threadsToFilter.filter(thread => {
     // If using backend search, don't apply client-side search filter (already filtered)
@@ -1299,13 +1439,9 @@ const UserInboxPage: React.FC = () => {
     
     // Apply category/system filters
     if (activeFilter === 'starred' && !thread.starred) return false;
-    // Unread filter shows only unread threads. Inbox (all) shows read + unread.
-    if (activeFilter === 'unread') {
-      if (!thread.unreadCount || thread.unreadCount === 0) return false;
-    }
     
     // Apply Gmail category filters
-    if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam'].includes(activeFilter)) {
+    if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam', 'drafts'].includes(activeFilter)) {
       const threadCategories = thread.labels || [];
       // If thread has no labels, default to 'primary' (Gmail's default category)
       // This handles threads created before category extraction was added
@@ -1366,7 +1502,7 @@ const UserInboxPage: React.FC = () => {
     }
   };
 
-  // Handle search
+  // Handle search with debouncing
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
     const hasQuery = query.trim().length > 0;
@@ -1377,16 +1513,28 @@ const UserInboxPage: React.FC = () => {
     const { text, filters } = parseSearchQuery(query);
     setActiveFilters(filters);
 
-    // Use backend search for better results (searches all threads, not just loaded ones)
+    // Use debounced search for better performance
     if (hasQuery) {
-      await performBackendSearch(query);
+      try {
+        setIsSearching(true);
+        const results = await debouncedSearch(query);
+        setSearchResults(results as any);
+        setSearchTotalCount(results.length);
+        setIsBackendSearch(true);
+      } catch (err: any) {
+        console.error('Search error:', err);
+        // Fallback to existing backend search
+        await performBackendSearch(query);
+      } finally {
+        setIsSearching(false);
+      }
     } else {
       // Clear search state and reload normal threads
       setIsBackendSearch(false);
       setSearchResults([]);
       setSearchTotalCount(0);
       setActiveFilters({});
-      loadEmailThreads(); // Reload normal inbox
+      // Real-time will handle updates automatically
     }
   };
 
@@ -1430,8 +1578,9 @@ const UserInboxPage: React.FC = () => {
 
   // Calculate counts for filter badges
   // Sum up total unread messages across all threads (not just count threads)
-  const unreadCount = emailThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
-  const starredCount = emailThreads.filter(t => t.starred).length;
+  // Use real-time unread count if available, otherwise calculate from display threads
+  const unreadCount = realtimeUnreadCount > 0 ? realtimeUnreadCount : displayThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+  const starredCount = displayThreads.filter(t => t.starred).length;
 
   const handleMessageClick = (log: MessageLog) => {
     setSelectedMessage(log);
@@ -1651,6 +1800,7 @@ const UserInboxPage: React.FC = () => {
   }
 
   return (
+    <>
     <Box sx={{ 
       p: 0, 
       display: 'flex', 
@@ -1663,16 +1813,18 @@ const UserInboxPage: React.FC = () => {
       {/* Page Header with Standardized Layout */}
           {activeTab === 'email' && (
         <PageHeader
-          title="Inbox"
-          subtitle="View and manage messages from your connected inbox."
+          title={getInboxHeaderTitle()}
+          subtitle={getInboxHeaderSubtitle()}
           filters={
             <InboxFilters
               activeFilter={activeFilter}
-              onFilterChange={setActiveFilter}
+              onFilterChange={handleMailboxFilterChange}
               unreadCount={unreadCount}
               starredCount={starredCount}
-              showCategories={false}
+              showCategories={true}
               orientation="horizontal"
+              unreadOnly={showUnreadOnly}
+              onUnreadOnlyChange={setShowUnreadOnly}
             />
           }
           rightActions={
@@ -1726,7 +1878,16 @@ const UserInboxPage: React.FC = () => {
 
       {/* Email Inbox - Email Only (per decoupling spec) */}
       {activeTab === 'email' && (
-        <>
+        <Box sx={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {/* Thread List */}
+          <Box sx={{ 
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            borderRight: 'none',
+            borderColor: 'divider',
+            overflow: 'hidden',
+          }}>
           {selectedThreadIds.size > 0 && (
             <Box sx={{ 
               px: 2, 
@@ -1755,16 +1916,6 @@ const UserInboxPage: React.FC = () => {
                   Select All {filteredEmailThreads.length}
                 </Button>
               )}
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<ArchiveIcon />}
-                onClick={handleBulkArchive}
-                disabled={bulkActionLoading}
-                sx={{ textTransform: 'none' }}
-              >
-                Archive
-              </Button>
               <Button
                 size="small"
                 variant="outlined"
@@ -2412,7 +2563,9 @@ const UserInboxPage: React.FC = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {filteredEmailThreads.length === 0 ? (
+                    {displayLoading && filteredEmailThreads.length === 0 ? (
+                      <EmailThreadSkeleton count={rowsPerPage} />
+                    ) : filteredEmailThreads.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} align="center" sx={{ py: 8 }}>
                           <Stack spacing={2} alignItems="center">
@@ -2473,13 +2626,95 @@ const UserInboxPage: React.FC = () => {
                     ) : (
                       filteredEmailThreads
                         .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                        .map((thread) => (
+                        .map((thread) => {
+                          const swipeState = swipeStates.get(thread.id) || { startX: 0, startY: 0, currentX: 0, currentY: 0, isSwiping: false, direction: null };
+                          const swipeDistance = swipeState.isSwiping ? Math.abs(swipeState.currentX - swipeState.startX) : 0;
+                          const swipeTransform = swipeState.isSwiping && swipeState.direction && swipeDistance > 10
+                            ? { transform: `translateX(${swipeState.direction === 'left' ? -swipeDistance : swipeDistance}px)` }
+                            : {};
+
+                          // Handle swipe action
+                          const handleSwipeAction = (action: SwipeAction) => {
+                            if (action === 'delete') {
+                              handleDeleteThread(thread.id, {} as any);
+                            }
+                            // Reset swipe state
+                            setSwipeStates(prev => {
+                              const next = new Map(prev);
+                              next.delete(thread.id);
+                              return next;
+                            });
+                          };
+
+                          return (
                           <TableRow
                             key={thread.id}
                             onMouseEnter={() => setHoveredThreadIdSafe(thread.id)}
                             onMouseLeave={() => setHoveredThreadIdSafe(null)}
-                            onClick={(e) => handleEmailThreadClick(thread, e)}
-                            sx={{ 
+                            onClick={(e) => {
+                              // Don't open if swiping
+                              if (!swipeState.isSwiping) {
+                                handleEmailThreadClick(thread, e);
+                              }
+                            }}
+                            onTouchStart={(e) => {
+                              const touch = e.touches[0];
+                              setSwipeStates(prev => {
+                                const next = new Map(prev);
+                                next.set(thread.id, {
+                                  startX: touch.clientX,
+                                  startY: touch.clientY,
+                                  currentX: touch.clientX,
+                                  currentY: touch.clientY,
+                                  isSwiping: true,
+                                  direction: null,
+                                });
+                                return next;
+                              });
+                            }}
+                            onTouchMove={(e) => {
+                              const touch = e.touches[0];
+                              const currentState = swipeStates.get(thread.id);
+                              if (currentState) {
+                                const deltaX = touch.clientX - currentState.startX;
+                                const deltaY = Math.abs(touch.clientY - currentState.startY);
+                                
+                                // Only track horizontal swipes
+                                if (Math.abs(deltaX) > deltaY && Math.abs(deltaX) > 10) {
+                                  setSwipeStates(prev => {
+                                    const next = new Map(prev);
+                                    next.set(thread.id, {
+                                      ...currentState,
+                                      currentX: touch.clientX,
+                                      currentY: touch.clientY,
+                                      direction: deltaX > 0 ? 'right' : 'left',
+                                    });
+                                    return next;
+                                  });
+                                }
+                              }
+                            }}
+                            onTouchEnd={(e) => {
+                              const currentState = swipeStates.get(thread.id);
+                              if (currentState && currentState.isSwiping && currentState.direction) {
+                                const deltaX = Math.abs(currentState.currentX - currentState.startX);
+                                if (deltaX >= 100) {
+                                  // Trigger action
+                                  if (currentState.direction !== 'left') {
+                                    handleSwipeAction('delete');
+                                  }
+                                } else {
+                                  // Reset if not enough distance
+                                  setSwipeStates(prev => {
+                                    const next = new Map(prev);
+                                    next.delete(thread.id);
+                                    return next;
+                                  });
+                                }
+                              }
+                            }}
+                            sx={{
+                              ...swipeTransform,
                               cursor: 'pointer', 
                               borderRadius: '4px',
                               mb: 0.25,
@@ -2504,7 +2739,7 @@ const UserInboxPage: React.FC = () => {
                                   : 'rgba(0, 0, 0, 0.02)', // Hover: rgba(0,0,0,.02) (per style guide)
                                 borderLeftColor: thread.unreadCount > 0 ? '#0057B8' : 'transparent',
                               },
-                              transition: 'background-color 150ms ease, border-color 150ms ease', // 150ms transition (per style guide)
+                              transition: swipeState.isSwiping ? 'none' : 'background-color 150ms ease, border-color 150ms ease', // 150ms transition (per style guide)
                             }}
                           >
                             <TableCell 
@@ -2804,23 +3039,6 @@ const UserInboxPage: React.FC = () => {
                                     )}
                                   </IconButton>
                                 </Tooltip>
-                                <Tooltip title="Archive (E)">
-                                    <IconButton
-                                      size="small"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      e.preventDefault();
-                                      handleArchiveThread(thread.id, e);
-                                    }}
-                                    sx={{ 
-                                      '&:hover': { 
-                                        bgcolor: 'action.hover',
-                                      } 
-                                    }}
-                                  >
-                                    <ArchiveIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
                                 <Tooltip title="Reply (R)">
                                   <IconButton
                                     size="small"
@@ -2854,8 +3072,29 @@ const UserInboxPage: React.FC = () => {
                                 </Tooltip>
                               </Stack>
                             </TableCell>
+                            {/* Swipe action indicators (mobile) */}
+                            {isMobile && swipeState.isSwiping && swipeState.direction && swipeDistance > 50 && (
+                              <Box
+                                sx={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  bottom: 0,
+                                  ...(swipeState.direction === 'left' ? { right: 0 } : { left: 0 }),
+                                  width: '80px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  bgcolor: getSwipeActionColor('delete'),
+                                  color: 'white',
+                                  zIndex: 1,
+                                }}
+                              >
+                                <DeleteIcon />
+                              </Box>
+                            )}
                           </TableRow>
-                        ))
+                          );
+                        })
                     )}
                   </TableBody>
                 </Table>
@@ -2876,48 +3115,13 @@ const UserInboxPage: React.FC = () => {
                   )}
                 </>
           )}
-        </Box>
+            </Box>
           </Box>
-          </>
+          </Box>
+        </Box>
       )}
 
       {/* SMS tab removed - SMS now has dedicated /text-messages page per decoupling spec */}
-
-      {selectedThread && (
-        <ReplyDrawer
-          open={replyDrawerOpen}
-          onClose={() => {
-            setReplyDrawerOpen(false);
-            setSelectedThread(null);
-          }}
-          threadId={selectedThread.id}
-          tenantId={effectiveTenantId || ''}
-          candidateUserId={user?.uid || ''}
-          onReplySent={() => {
-            loadSmsThreads();
-            setReplyDrawerOpen(false);
-            setSelectedThread(null);
-          }}
-        />
-      )}
-
-      {selectedEmailThread && (
-        <EmailThreadView
-          open={emailThreadViewOpen}
-          onClose={() => {
-            setEmailThreadViewOpen(false);
-            setSelectedEmailThread(null);
-            setAutoOpenReply(false); // Reset auto-reply flag when drawer closes
-          }}
-          threadId={selectedEmailThread.id}
-          tenantId={effectiveTenantId || ''}
-          autoOpenReply={autoOpenReply}
-          onThreadUpdated={(threadId, unreadCount) => {
-            // Reactively update thread read status without reloading
-            updateThreadReadStatus(threadId, unreadCount);
-          }}
-        />
-      )}
 
       {/* Message Detail Modal */}
       {selectedMessage && (
@@ -3046,7 +3250,76 @@ const UserInboxPage: React.FC = () => {
           tenantId={effectiveTenantId || ''}
         />
       )}
+
+      {/* Toast Notifications */}
+      <Snackbar
+        open={!!toast}
+        autoHideDuration={toast?.duration || 5000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <MuiAlert
+          severity={toast?.type || 'info'}
+          onClose={() => setToast(null)}
+          action={toast?.action && (
+            <Button color="inherit" size="small" onClick={toast.action.onClick}>
+              {toast.action.label}
+            </Button>
+          )}
+          sx={{ minWidth: '300px' }}
+        >
+          {toast?.message}
+        </MuiAlert>
+      </Snackbar>
     </Box>
+
+    {/* Drawers - rendered outside containers to avoid overflow/z-index issues */}
+    {selectedThread && (
+      <ReplyDrawer
+        open={replyDrawerOpen}
+        onClose={() => {
+          setReplyDrawerOpen(false);
+          setSelectedThread(null);
+        }}
+        threadId={selectedThread.id}
+        tenantId={effectiveTenantId || ''}
+        candidateUserId={user?.uid || ''}
+        onReplySent={() => {
+          loadSmsThreads();
+          setReplyDrawerOpen(false);
+          setSelectedThread(null);
+        }}
+      />
+    )}
+
+    {/* Universal Email Drawer - same as Dashboard */}
+    {selectedEmailThreadId && (
+      <EmailThreadView
+        open={emailDrawerOpen}
+        onClose={() => {
+          setEmailDrawerOpen(false);
+          setSelectedEmailThreadId(null);
+          setSelectedEmailThread(null);
+          setAutoOpenReply(false);
+        }}
+        threadId={selectedEmailThreadId}
+        tenantId={effectiveTenantId || ''}
+        autoOpenReply={autoOpenReply}
+        onThreadUpdated={(threadId, unreadCount) => {
+          updateThreadReadStatus(threadId, unreadCount);
+        }}
+        allThreadIds={displayThreads.map(t => t.id)}
+        onNavigateToThread={(newThreadId) => {
+          const newThread = displayThreads.find(t => t.id === newThreadId);
+          if (newThread) {
+            setSelectedEmailThread(newThread);
+            setSelectedEmailThreadId(newThread.id);
+            setAutoOpenReply(false);
+          }
+        }}
+      />
+    )}
+    </>
   );
 };
 

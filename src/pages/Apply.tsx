@@ -421,18 +421,18 @@ const Apply: React.FC = () => {
 
             {/* SMS Consent Checkbox */}
             <Box sx={{ mt: 1 }}>
+              <label>Optional:</label>
               <FormControlLabel
                 control={
                   <Checkbox
                     checked={smsConsent}
                     onChange={(e) => setSmsConsent(e.target.checked)}
-                    required
                     disabled={loading}
                   />
                 }
                 label={
                   <Typography variant="body2" sx={{ fontSize: '0.875rem', lineHeight: 1.5 }}>
-                    By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent. See our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>, <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>, and <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
+                    By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment, and you may create your profile without checking this box. See our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>, <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>, and <Link href="/consent" target="_blank" rel="noopener">SMS Consent</Link>.
                   </Typography>
                 }
                 sx={{ alignItems: 'flex-start' }}

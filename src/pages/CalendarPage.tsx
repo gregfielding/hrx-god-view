@@ -18,6 +18,7 @@ import {
   ListItem,
   ListItemButton,
   ListItemText,
+  Chip,
   ToggleButton,
   ToggleButtonGroup,
   useMediaQuery,
@@ -41,6 +42,8 @@ import { useCalendarList } from '../hooks/useCalendarList';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
 import EventModal from '../components/calendar/EventModal';
 import type { CalendarEvent, CalendarView } from '../types/calendar';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 /**
  * Calculate date range for calendar view
@@ -73,6 +76,7 @@ const CalendarPage: React.FC = () => {
   const { user, activeTenant } = useAuth();
   const userId = user?.uid || '';
   const tenantId = activeTenant?.id || '';
+  const userEmail = (user?.email || '').toLowerCase();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('lg')); // < 1024px
   const isDesktop = useMediaQuery(theme.breakpoints.up('lg'));
@@ -89,7 +93,28 @@ const CalendarPage: React.FC = () => {
 
   // Calendar list and selection
   const { calendars, loading: calendarsLoading } = useCalendarList({ userId, enabled: !!userId });
-  const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set(['primary']));
+  const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set());
+  const [calendarPrefsLoaded, setCalendarPrefsLoaded] = useState(false);
+
+  const primaryCalendarId = useMemo(() => {
+    if (!calendars || calendars.length === 0) return '';
+    return calendars.find((c) => c.isPrimary)?.id || calendars[0]?.id || '';
+  }, [calendars]);
+
+  const isOwnCalendar = useCallback(
+    (calendar: any) => {
+      const id = String(calendar?.id || '').toLowerCase();
+      const summary = String(calendar?.summary || '').toLowerCase();
+      // Treat primary (and any calendar that is literally the user's email) as "own"
+      return !!calendar?.isPrimary || (userEmail && (id === userEmail || summary === userEmail));
+    },
+    [userEmail]
+  );
+
+  const visibleCalendars = useMemo(() => {
+    // Hide "own" calendars from the list to prevent duplicates (your primary calendar is always shown on the grid)
+    return (calendars || []).filter((c) => !isOwnCalendar(c));
+  }, [calendars, isOwnCalendar]);
 
   // Event modal state
   const [eventModalOpen, setEventModalOpen] = useState(false);
@@ -109,15 +134,78 @@ const CalendarPage: React.FC = () => {
     enabled: selectedCalendarIds.size > 0 && !!userId,
   });
 
-  // Initialize selected calendars when list loads
+  // Load persisted calendar subscriptions from the user doc
   useEffect(() => {
-    if (calendars.length > 0 && selectedCalendarIds.size === 0) {
-      const primary = calendars.find((c) => c.isPrimary) || calendars[0];
-      if (primary) {
-        setSelectedCalendarIds(new Set([primary.id]));
+    let cancelled = false;
+    async function loadPrefs() {
+      if (!userId) return;
+      try {
+        const snap = await getDoc(doc(db, 'users', userId));
+        const data = snap.data() as any;
+        const saved = (data?.calendarSettings?.subscribedCalendarIds || []) as string[];
+        if (!cancelled) {
+          // We defer applying until calendars have loaded so we can normalize IDs safely.
+          setSelectedCalendarIds(new Set(saved.filter(Boolean)));
+          setCalendarPrefsLoaded(true);
+        }
+      } catch (e) {
+        console.warn('CalendarPage: failed to load calendar subscriptions', e);
+        if (!cancelled) {
+          setCalendarPrefsLoaded(true);
+        }
       }
     }
-  }, [calendars, selectedCalendarIds.size]);
+    void loadPrefs();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  // Normalize selection once calendars are loaded, always include primary, and avoid duplicate "own" calendar IDs
+  useEffect(() => {
+    if (!calendarPrefsLoaded) return;
+    if (!calendars || calendars.length === 0) return;
+    if (!primaryCalendarId) return;
+
+    setSelectedCalendarIds((prev) => {
+      const raw = Array.from(prev);
+
+      // Normalize legacy 'primary' token and email-as-id to the actual primary calendar ID
+      const normalized = raw.map((id) => {
+        const lower = String(id || '').toLowerCase();
+        if (lower === 'primary') return primaryCalendarId;
+        if (userEmail && lower === userEmail) return primaryCalendarId;
+        return id;
+      });
+
+      // Keep only calendars that exist
+      const validIds = new Set((calendars || []).map((c) => c.id));
+      const cleaned = normalized.filter((id) => id && validIds.has(id));
+
+      // Always include primary exactly once
+      const next = new Set<string>([primaryCalendarId, ...cleaned]);
+      return next;
+    });
+  }, [calendarPrefsLoaded, calendars, primaryCalendarId, userEmail]);
+
+  // Persist subscriptions (excluding primary, since it's always implied)
+  useEffect(() => {
+    if (!calendarPrefsLoaded) return;
+    if (!userId) return;
+    if (!primaryCalendarId) return;
+
+    const toSave = Array.from(selectedCalendarIds)
+      .filter((id) => id && id !== primaryCalendarId);
+
+    // Fire-and-forget; this is preference data
+    void setDoc(
+      doc(db, 'users', userId),
+      { calendarSettings: { subscribedCalendarIds: toSave } },
+      { merge: true }
+    ).catch((e) => {
+      console.warn('CalendarPage: failed to persist calendar subscriptions', e);
+    });
+  }, [calendarPrefsLoaded, userId, primaryCalendarId, selectedCalendarIds]);
 
   // Toggle calendar visibility
   const toggleCalendar = useCallback((calendarId: string) => {
@@ -735,7 +823,7 @@ const CalendarPage: React.FC = () => {
           <CircularProgress size={20} />
         ) : (
           <List dense sx={{ py: 0 }}>
-            {calendars.map((calendar) => (
+            {visibleCalendars.map((calendar) => (
               <ListItem key={calendar.id} disablePadding>
                 <ListItemButton
                   onClick={() => toggleCalendar(calendar.id)}
@@ -762,6 +850,15 @@ const CalendarPage: React.FC = () => {
                     primary={calendar.summary}
                     primaryTypographyProps={{ variant: 'body2', noWrap: true }}
                   />
+                  {selectedCalendarIds.has(calendar.id) && (
+                    <Chip
+                      label="Subscribed"
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      sx={{ ml: 1 }}
+                    />
+                  )}
                 </ListItemButton>
               </ListItem>
             ))}

@@ -24,20 +24,86 @@ function extractBodyContent(html: string): string {
   const isFullDocument = /<!DOCTYPE|<\s*html\s+[^>]*>/i.test(html);
   
   if (isFullDocument) {
-    // Extract body content from full HTML document
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    // First, try to extract body content from full HTML document
+    // Use a more robust regex that handles body tags with attributes
+    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
     if (bodyMatch && bodyMatch[1]) {
-      return bodyMatch[1].trim();
+      const bodyContent = bodyMatch[1].trim();
+      // If body content is not empty, return it
+      if (bodyContent.length > 0) {
+        return bodyContent;
+      }
     }
-    // If no body tag, try to extract content between html tags
-    const htmlMatch = html.match(/<html[^>]*>([\s\S]*)<\/html>/i);
+    
+    // If no body tag or body is empty, try to extract content between html tags
+    const htmlMatch = html.match(/<html[^>]*>([\s\S]*?)<\/html>/i);
     if (htmlMatch && htmlMatch[1]) {
-      // Remove head section if present
-      const content = htmlMatch[1].replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
+      // Remove head section if present (including DOCTYPE comments)
+      let content = htmlMatch[1]
+        .replace(/<!DOCTYPE[^>]*>/gi, '')
+        .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '');
+      
+      // Also try to extract body if it exists in the html content
+      const innerBodyMatch = content.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (innerBodyMatch && innerBodyMatch[1]) {
+        content = innerBodyMatch[1].trim();
+      }
+      
+      // Remove script tags but preserve style tags (needed for email styling)
+      content = content.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+      
+      // Only remove style tags that are in the head (not inline styles in body)
+      // We'll keep style tags that appear after the first content element
+      const firstContentIndex = content.search(/<(table|div|p|span|td|tr|img|a|h[1-6])/i);
+      if (firstContentIndex > 0) {
+        // Remove style tags that appear before the first content
+        const beforeContent = content.substring(0, firstContentIndex);
+        const afterContent = content.substring(firstContentIndex);
+        const cleanedBefore = beforeContent.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+        content = cleanedBefore + afterContent;
+      }
+      
       return content.trim();
+    }
+    
+    // If we still have a full document but couldn't extract, try to find the first meaningful content
+    // Look for common email content patterns - be more aggressive
+    const contentPatterns = [
+      /<table[^>]*>[\s\S]*?<\/table>/i,
+      /<div[^>]*>[\s\S]*?<\/div>/i,
+      /<p[^>]*>[\s\S]*?<\/p>/i,
+      /<span[^>]*>[\s\S]*?<\/span>/i,
+    ];
+    
+    for (const pattern of contentPatterns) {
+      const match = html.match(pattern);
+      if (match && match[0]) {
+        // Found some content, extract it and everything after
+        const startIndex = html.indexOf(match[0]);
+        if (startIndex > 0) {
+          // Remove everything before the content (head, DOCTYPE, etc.)
+          let extracted = html.substring(startIndex).trim();
+          // Also remove any remaining DOCTYPE or html/head tags at the start
+          extracted = extracted.replace(/^[\s\S]*?<(table|div|p|span|td|tr|img|a|h[1-6])/i, '<$1');
+          return extracted;
+        }
+      }
+    }
+    
+    // Last resort: try to find content after closing head tag
+    const afterHeadMatch = html.match(/<\/head>[\s\S]*/i);
+    if (afterHeadMatch && afterHeadMatch[0]) {
+      let content = afterHeadMatch[0].replace(/<\/head>/i, '').trim();
+      // Remove html/body tags if present
+      content = content.replace(/<\/?html[^>]*>/gi, '');
+      content = content.replace(/<\/?body[^>]*>/gi, '');
+      if (content.length > 0) {
+        return content;
+      }
     }
   }
   
+  // If it's not a full document or we couldn't extract, return as-is
   return html;
 }
 
@@ -49,6 +115,24 @@ function sanitizeEmailHtml(html: string): string {
   
   // First extract body content if it's a full document
   let sanitized = extractBodyContent(html);
+  
+  // If we still have a full document after extraction, try one more aggressive extraction
+  if (/<!DOCTYPE|<\s*html\s+[^>]*>/i.test(sanitized)) {
+    // Force extract body content one more time
+    const bodyMatch = sanitized.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch && bodyMatch[1]) {
+      sanitized = bodyMatch[1].trim();
+    } else {
+      // If still no body, try to find content after head
+      const afterHead = sanitized.match(/<\/head>[\s\S]*/i);
+      if (afterHead && afterHead[0]) {
+        sanitized = afterHead[0].replace(/<\/head>/i, '').trim();
+        // Remove any remaining html/body wrapper tags
+        sanitized = sanitized.replace(/<\/?html[^>]*>/gi, '');
+        sanitized = sanitized.replace(/<\/?body[^>]*>/gi, '');
+      }
+    }
+  }
   
   // Remove script tags
   sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
@@ -62,6 +146,16 @@ function sanitizeEmailHtml(html: string): string {
   
   // Remove javascript: URLs
   sanitized = sanitized.replace(/javascript:/gi, '');
+  
+  // Final check: if we still have DOCTYPE or html tags, try to strip them
+  if (/<!DOCTYPE|<\s*html\s+[^>]*>/i.test(sanitized)) {
+    // Last resort: find the first actual content element
+    const firstContentMatch = sanitized.match(/<(table|div|p|span|td|tr|img|a|h[1-6]|ul|ol|li)[^>]*>/i);
+    if (firstContentMatch) {
+      const startIndex = sanitized.indexOf(firstContentMatch[0]);
+      sanitized = sanitized.substring(startIndex);
+    }
+  }
   
   return sanitized;
 }
@@ -80,174 +174,124 @@ const EmailBodyRenderer: React.FC<EmailBodyRendererProps> = ({
   useEffect(() => {
     if (hasHtml && iframeRef.current) {
       const iframe = iframeRef.current;
-      
-      // Wait for iframe to be ready
-      const setupIframe = () => {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        
-        if (iframeDoc) {
-          // Write the email HTML to the iframe
-          iframeDoc.open();
-          iframeDoc.write(`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                  * {
-                    box-sizing: border-box;
-                    margin: 0;
-                    padding: 0;
-                  }
-                  html, body {
-                    margin: 0;
-                    padding: 0;
-                    width: 100%;
-                    height: auto;
-                    overflow: visible;
-                  }
-                  body {
-                    padding: 8px;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-                    -webkit-font-smoothing: antialiased;
-                    -moz-osx-font-smoothing: grayscale;
-                    background: transparent;
-                  }
-                  img {
-                    max-width: 100%;
-                    height: auto;
-                  }
-                  a {
-                    color: #1976d2;
-                    text-decoration: underline;
-                  }
-                  a:hover {
-                    color: #1565c0;
-                  }
-                  table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    max-width: 100%;
-                  }
-                  pre {
-                    white-space: pre-wrap;
-                    word-break: break-word;
-                    overflow-x: auto;
-                  }
-                  p, div, span, td, th {
-                    word-break: break-word;
-                    overflow-wrap: break-word;
-                  }
-                  /* Thin, light scrollbar styling per spec */
-                  ::-webkit-scrollbar {
-                    width: 8px;
-                    height: 8px;
-                  }
-                  ::-webkit-scrollbar-track {
-                    background: rgba(0, 0, 0, 0.02);
-                    border-radius: 4px;
-                  }
-                  ::-webkit-scrollbar-thumb {
-                    background: rgba(0, 0, 0, 0.15);
-                    border-radius: 4px;
-                  }
-                  ::-webkit-scrollbar-thumb:hover {
-                    background: rgba(0, 0, 0, 0.25);
-                  }
-                </style>
-              </head>
-              <body>
-                ${sanitizedHtml}
-              </body>
-            </html>
-          `);
-          iframeDoc.close();
-          
-          // Adjust iframe height to content - ensure it's tall enough and not clipped
-          let resizeTimeout: NodeJS.Timeout | null = null;
-          const resizeIframe = () => {
-            if (resizeTimeout) {
-              clearTimeout(resizeTimeout);
-            }
-            resizeTimeout = setTimeout(() => {
-              if (iframeDoc.body) {
-                // Use requestAnimationFrame for smoother resizing
-                requestAnimationFrame(() => {
-                  const scrollHeight = iframeDoc.documentElement.scrollHeight;
-                  const bodyHeight = iframeDoc.body.scrollHeight;
-                  const offsetHeight = iframeDoc.body.offsetHeight;
-                  // Get the maximum height to ensure nothing is clipped
-                  const height = Math.max(scrollHeight, bodyHeight, offsetHeight, 200);
-                  // Add extra padding to prevent clipping
-                  iframe.style.height = `${height + 40}px`;
-                });
+
+      // Build the full document once and use srcDoc (avoids document.write warnings)
+      const srcDoc = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              * { box-sizing: border-box; margin: 0; padding: 0; }
+              html, body { margin: 0; padding: 0; width: 100%; height: auto; overflow: visible; }
+              body {
+                padding: 8px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                background: transparent;
               }
-            }, 10);
-          };
-          
-          // Initial resize with multiple attempts to catch dynamic content
-          setTimeout(resizeIframe, 50);
-          setTimeout(resizeIframe, 200);
-          setTimeout(resizeIframe, 500);
-          setTimeout(resizeIframe, 1000); // Extra delay for slow-loading content
-          
-          // Resize on image load
-          const images = iframeDoc.getElementsByTagName('img');
-          Array.from(images).forEach(img => {
-            if (img.complete) {
-              resizeIframe();
-            } else {
-              img.onload = resizeIframe;
-              img.onerror = resizeIframe;
-            }
+              img { max-width: 100%; height: auto; }
+              a { color: #1976d2; text-decoration: underline; }
+              a:hover { color: #1565c0; }
+              table { border-collapse: collapse; width: 100%; max-width: 100%; }
+              pre { white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+              p, div, span, td, th { word-break: break-word; overflow-wrap: break-word; }
+              /* Thin, light scrollbar styling per spec */
+              ::-webkit-scrollbar { width: 8px; height: 8px; }
+              ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.02); border-radius: 4px; }
+              ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 4px; }
+              ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
+            </style>
+          </head>
+          <body>
+            ${sanitizedHtml}
+          </body>
+        </html>
+      `.trim();
+
+      // Reset fallback when we have HTML and are attempting iframe render
+      setUseFallback(false);
+
+      // Load content
+      iframe.srcdoc = srcDoc;
+
+      let resizeTimeout: NodeJS.Timeout | null = null;
+      let observer: MutationObserver | null = null;
+
+      const getIframeDoc = () => iframe.contentDocument || iframe.contentWindow?.document || null;
+
+      const resizeIframe = () => {
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+          const iframeDoc = getIframeDoc();
+          if (!iframeDoc?.body) return;
+
+          requestAnimationFrame(() => {
+            const scrollHeight = iframeDoc.documentElement?.scrollHeight || 0;
+            const bodyHeight = iframeDoc.body.scrollHeight || 0;
+            const offsetHeight = iframeDoc.body.offsetHeight || 0;
+            const height = Math.max(scrollHeight, bodyHeight, offsetHeight, 200);
+            iframe.style.height = `${height + 40}px`;
           });
-          
-          // Use MutationObserver to watch for content changes
-          const observer = new MutationObserver(() => {
+        }, 10);
+      };
+
+      const setupObservers = () => {
+        const iframeDoc = getIframeDoc();
+        if (!iframeDoc?.body) {
+          setUseFallback(true);
+          return;
+        }
+
+        // Initial resize with multiple attempts to catch dynamic content
+        setTimeout(resizeIframe, 50);
+        setTimeout(resizeIframe, 200);
+        setTimeout(resizeIframe, 500);
+        setTimeout(resizeIframe, 1000);
+
+        // Resize on image load
+        const images = iframeDoc.getElementsByTagName('img');
+        Array.from(images).forEach((img) => {
+          if (img.complete) {
             resizeIframe();
-          });
-          observer.observe(iframeDoc.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            characterData: true,
-          });
-          
-          // Also listen for iframe load event
-          iframe.onload = () => {
-            resizeIframe();
-          };
-          
-          // Cleanup function
-          return () => {
-            if (resizeTimeout) {
-              clearTimeout(resizeTimeout);
-            }
-            observer.disconnect();
-          };
-        } else {
-          // If iframe document is not accessible, use fallback
+          } else {
+            img.onload = resizeIframe;
+            img.onerror = resizeIframe;
+          }
+        });
+
+        // Watch for content changes
+        observer = new MutationObserver(() => resizeIframe());
+        observer.observe(iframeDoc.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+      };
+
+      // Setup after load
+      iframe.onload = () => {
+        try {
+          setupObservers();
+        } catch {
           setUseFallback(true);
         }
       };
-      
-      // Try to setup immediately, or wait for iframe to be ready
-      if (iframe.contentDocument) {
-        setupIframe();
-      } else {
-        const timeout = setTimeout(() => {
-          // If iframe doesn't load within 1 second, use fallback
-          if (!iframe.contentDocument) {
-            setUseFallback(true);
-          }
-        }, 1000);
-        
-        iframe.onload = () => {
-          clearTimeout(timeout);
-          setupIframe();
-        };
-      }
+
+      // Fallback if the iframe never loads/accessible (should be rare with srcDoc)
+      const timeout = setTimeout(() => {
+        if (!getIframeDoc()) setUseFallback(true);
+      }, 1000);
+
+      return () => {
+        clearTimeout(timeout);
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        if (observer) observer.disconnect();
+        iframe.onload = null;
+      };
     }
   }, [hasHtml, sanitizedHtml]);
 

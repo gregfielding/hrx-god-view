@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, setLogLevel, initializeFirestore } from 'firebase/firestore';
+import type { Firestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
@@ -23,19 +24,26 @@ export const db = (() => {
   try {
     const isBrowser = typeof window !== 'undefined';
     if (isBrowser) {
+      // CRA Fast Refresh can re-evaluate modules and accidentally create multiple Firestore
+      // instances. That can trigger rare internal assertion errors in the SDK.
+      // Keep a single instance on window to guarantee singleton behavior in dev.
+      const w = window as any;
+      const existing = w.__HRX_FIRESTORE__ as Firestore | undefined;
+      if (existing) return existing;
+
       const isDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
-      const settings: any = {
-        ignoreUndefinedProperties: true,
-      };
-      if (isDev) {
-        // Force long polling in development to avoid WebChannel terminate noise
-        settings.experimentalForceLongPolling = true;
-        settings.useFetchStreams = false;
-      } else {
-        // Production: default transport; allow fetch streams
+      // NOTE: We intentionally avoid experimentalForceLongPolling here.
+      // It reduces some dev noise, but we've seen it correlate with rare watch-stream
+      // internal assertion errors (ca9/b815). Stability > noise.
+      const settings: any = { ignoreUndefinedProperties: true };
+      if (!isDev) {
+        // Production: allow fetch streams for performance
         settings.useFetchStreams = true;
       }
-      return initializeFirestore(app, settings as any);
+
+      const instance = initializeFirestore(app, settings as any);
+      w.__HRX_FIRESTORE__ = instance;
+      return instance;
     }
     return getFirestore(app);
   } catch {
