@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles } from '@mui/material';
+import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
@@ -44,7 +44,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
 import StartOnboardingDialog from './StartOnboardingDialog';
-import { isOnboardingInProgress } from '../utils/onboardingHelpers';
+import { isOnboardingInProgress, getActiveOnboardingType, cancelOnboarding } from '../utils/onboardingHelpers';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -200,6 +200,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
+  const [showCancelOnboardingDialog, setShowCancelOnboardingDialog] = useState(false);
+  const [cancellingOnboarding, setCancellingOnboarding] = useState(false);
   const [notesCount, setNotesCount] = useState<number>(0);
   const { securityLevel: viewerSecurityLevel, tenantId: authTenantId, activeTenant, user } = useAuth();
   const effectiveTenantId = tenantId || authTenantId || activeTenant?.id || '';
@@ -215,6 +217,28 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   
   // Check if onboarding is in progress
   const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  const activeOnboardingType = getActiveOnboardingType(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  
+  // Handle cancel onboarding
+  const handleCancelOnboarding = async () => {
+    if (!activeOnboardingType || !effectiveTenantId) return;
+    
+    setCancellingOnboarding(true);
+    try {
+      await cancelOnboarding(uid, effectiveTenantId, activeOnboardingType, user?.uid);
+      setShowCancelOnboardingDialog(false);
+      
+      // Refresh onboarding status
+      if (onOnboardingStarted) {
+        await onOnboardingStarted();
+      }
+    } catch (error: any) {
+      console.error('Error cancelling onboarding:', error);
+      // You could show an error snackbar here if needed
+    } finally {
+      setCancellingOnboarding(false);
+    }
+  };
   
   // Keyframe animation for onboarding button - golden shimmer only
   const goldenShimmer = keyframes`
@@ -673,15 +697,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   <Button
                     variant="contained"
                     size="small"
-                    disabled
+                    onClick={() => setShowCancelOnboardingDialog(true)}
                     sx={{
                       fontSize: '0.75rem',
                       py: 0.5,
                       px: 1.5,
-                      ...animatedButtonSx,
+                      backgroundColor: '#ff6b35', // Orange-red
+                      color: '#ffffff', // White text
+                      fontWeight: 600,
+                      '&:hover': {
+                        backgroundColor: '#e55a2b', // Darker orange-red on hover
+                      },
                     }}
                   >
-                    Onboarding
+                    Cancel Onboarding
                   </Button>
                 ) : (
                   <Button
@@ -1649,13 +1678,18 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             onboardingInProgress ? (
               <Button
                 variant="contained"
-                disabled
+                onClick={() => setShowCancelOnboardingDialog(true)}
                 sx={{
                   px: 2,
-                  ...animatedButtonSx,
+                  backgroundColor: '#ff6b35', // Orange-red
+                  color: '#ffffff', // White text
+                  fontWeight: 600,
+                  '&:hover': {
+                    backgroundColor: '#e55a2b', // Darker orange-red on hover
+                  },
                 }}
               >
-                Onboarding
+                Cancel Onboarding
               </Button>
             ) : (
               <Button
@@ -1698,6 +1732,38 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           {copySuccess}
         </Alert>
       </Snackbar>
+
+      {/* Cancel Onboarding Confirmation Dialog */}
+      <Dialog
+        open={showCancelOnboardingDialog}
+        onClose={() => !cancellingOnboarding && setShowCancelOnboardingDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Cancel Onboarding</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to cancel the {activeOnboardingType} onboarding process? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setShowCancelOnboardingDialog(false)}
+            disabled={cancellingOnboarding}
+          >
+            Keep Onboarding
+          </Button>
+          <Button
+            onClick={handleCancelOnboarding}
+            variant="contained"
+            color="error"
+            disabled={cancellingOnboarding}
+            startIcon={cancellingOnboarding ? <CircularProgress size={16} /> : null}
+          >
+            {cancellingOnboarding ? 'Cancelling...' : 'Cancel Onboarding'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Add Note Dialog */}
       <AddUserNoteDialog

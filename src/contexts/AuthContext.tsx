@@ -183,6 +183,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [jobsBoardEnabled, setJobsBoardEnabled] = useState<boolean>(false);
   const lastActivitySentAtRef = useRef<number>(0);
   const isCreatingUserProfileRef = useRef<boolean>(false);
+  const lastUserDataRef = useRef<any>(null);
 
   const LOGIN_PING_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -623,13 +624,33 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setTenantId(userData.activeTenantId || primaryTenantId || undefined);
             setTenantIds(userTenantIds);
             setTenantRoles(tenantRolesMap);
-          // Per-user module flags
-          setCrmSalesEnabled(!!userData.crm_sales);
-          setRecruiterEnabled(!!userData.recruiter);
-          setJobsBoardEnabled(!!userData.jobsBoard);
 
             // Set role/securityLevel based on claims (primary) or Firestore (fallback)
             const activeTenantId = userData.activeTenantId || primaryTenantId;
+            
+            // Per-user module flags - read from tenant-specific location first, then fallback to top-level
+            const tenantData = activeTenantId && userData.tenantIds?.[activeTenantId] ? userData.tenantIds[activeTenantId] : {};
+            
+            // Debug logging for module access
+            if (activeTenantId) {
+              console.log('[AuthContext] Module access check:', {
+                activeTenantId,
+                hasTenantIds: !!userData.tenantIds,
+                tenantIdsType: typeof userData.tenantIds,
+                tenantData,
+                tenantDataRecruiter: tenantData.recruiter,
+                tenantDataCrmSales: tenantData.crm_sales,
+                topLevelRecruiter: userData.recruiter,
+                topLevelCrmSales: userData.crm_sales,
+              });
+            }
+            
+            setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
+            setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
+            setJobsBoardEnabled(!!(tenantData.jobsBoard ?? userData.jobsBoard));
+            
+            // Store userData in a ref so we can access it in the useEffect below
+            lastUserDataRef.current = userData;
             
             if (activeTenantId && claimsRolesMap[activeTenantId]) {
               // Use claims-based role for active tenant
@@ -771,6 +792,28 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       unsubscribeAuth();
     };
   }, []);
+
+  // Update module flags when activeTenant changes (e.g., user switches tenants)
+  useEffect(() => {
+    if (!activeTenant?.id || !lastUserDataRef.current) return;
+    
+    const userData = lastUserDataRef.current;
+    const tenantData = userData.tenantIds?.[activeTenant.id] || {};
+    
+    // Debug logging for module access on tenant switch
+    console.log('[AuthContext] Updating module flags for activeTenant change:', {
+      activeTenantId: activeTenant.id,
+      tenantData,
+      tenantDataRecruiter: tenantData.recruiter,
+      tenantDataCrmSales: tenantData.crm_sales,
+      topLevelRecruiter: userData.recruiter,
+      topLevelCrmSales: userData.crm_sales,
+    });
+    
+    setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
+    setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
+    setJobsBoardEnabled(!!(tenantData.jobsBoard ?? userData.jobsBoard));
+  }, [activeTenant?.id]);
 
   const logout = async () => {
     // Log logout activity before signing out

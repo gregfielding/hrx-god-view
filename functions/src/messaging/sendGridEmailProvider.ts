@@ -9,11 +9,14 @@
 import sgMail from '@sendgrid/mail';
 import { logger } from 'firebase-functions/v2';
 import { getStorage } from 'firebase-admin/storage';
+import * as admin from 'firebase-admin';
 import {
   EmailProvider,
   SendEmailOptions,
   EmailSendResult,
 } from './EmailProvider';
+
+const db = admin.firestore();
 
 export interface SendGridConfig {
   apiKey: string;
@@ -66,6 +69,41 @@ export class SendGridEmailProvider implements EmailProvider {
     const fromEmail = options.fromEmail || this.config.defaultFromEmail;
     const fromName = options.fromName || this.config.defaultFromName || 'HRX One';
     
+    // Get and append email signature (always include if signature exists)
+    let htmlBodyWithSignature = options.htmlBody ?? options.textBody ?? '';
+    let textBodyWithSignature = options.textBody ?? (options.htmlBody ? this.stripHtml(options.htmlBody) : undefined) ?? '';
+    
+    // Try to get signature from sender (check gmailUserId first, then userId)
+    const signatureUserId = options.gmailUserId || options.userId;
+    if (signatureUserId) {
+      try {
+        const userDoc = await db.collection('users').doc(signatureUserId).get();
+        const userData = userDoc.data();
+        const signatureSettings = userData?.emailSignature;
+        
+        // Always include signature if it exists (treat enabled as always true)
+        if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data)) {
+          // Import signature generation utilities
+          const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
+          // Temporarily enable signature for generation
+          const enabledSettings = { ...signatureSettings, enabled: true };
+          const signatureHtml = generateEmailSignature(enabledSettings);
+          
+          if (signatureHtml) {
+            htmlBodyWithSignature = appendSignatureToEmail(htmlBodyWithSignature, signatureHtml);
+            // For plain text, strip HTML tags
+            const textSignature = signatureHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+            if (textSignature) {
+              textBodyWithSignature = (textBodyWithSignature || '').trim() + '\n\n' + textSignature;
+            }
+          }
+        }
+      } catch (sigError: any) {
+        logger.warn('Failed to load email signature for SendGrid:', sigError);
+        // Continue without signature if there's an error
+      }
+    }
+    
     try {
       // Build unsubscribe URL (if tenant has a preference center)
       const unsubscribeUrl = `https://hrxone.com/unsubscribe?tenant=${options.tenantId}&user=${options.userId || ''}&type=${options.messageTypeId}`;
@@ -81,8 +119,8 @@ export class SendGridEmailProvider implements EmailProvider {
         })),
         subject: options.subject,
         // Use HTML if provided, otherwise text
-        html: options.htmlBody ?? options.textBody,
-        text: options.textBody ?? (options.htmlBody ? this.stripHtml(options.htmlBody) : undefined),
+        html: htmlBodyWithSignature || textBodyWithSignature,
+        text: textBodyWithSignature || (htmlBodyWithSignature ? this.stripHtml(htmlBodyWithSignature) : undefined),
         // Custom args for webhook tracking
         customArgs: {
           tenantId: options.tenantId,

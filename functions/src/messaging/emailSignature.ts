@@ -109,16 +109,20 @@ CONFIDENTIALITY NOTICE: This email and any attachments are intended only for the
 }
 
 export function generateEmailSignature(settings: EmailSignatureSettings): string {
-  if (!settings.enabled) {
-    return '';
-  }
+  // Always generate signature if settings exist (enabled flag is now optional/ignored)
+  // This ensures signatures are always included automatically
 
   if (settings.customHtml) {
     let signature = settings.customHtml;
-    if (settings.data.includeConfidentialityNotice) {
+    if (settings.data?.includeConfidentialityNotice) {
       signature += generateConfidentialityNotice();
     }
     return signature;
+  }
+
+  // Check if we have minimum required data to generate a signature
+  if (!settings.data || (!settings.data.fullName && !settings.data.email)) {
+    return '';
   }
 
   let signature = '';

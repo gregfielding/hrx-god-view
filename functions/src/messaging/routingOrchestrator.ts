@@ -794,6 +794,11 @@ async function deliverEmail(
         };
       }
       
+      // For signature lookup, use sender's userId (recruiter ID) if available, otherwise recipient's userId
+      const signatureUserId = context.source === 'recruiter' && context.sourceId 
+        ? context.sourceId 
+        : (senderIdentity.gmailUserId || context.userId);
+      
       // Send direct email (senderIdentity already resolved above)
       const result = await emailProvider.sendEmail({
         tenantId: context.tenantId,
@@ -802,7 +807,7 @@ async function deliverEmail(
         htmlBody,
         textBody,
         messageTypeId: context.messageTypeId,
-        userId: context.userId,
+        userId: signatureUserId, // Use sender's ID for signature lookup
         fromEmail: senderIdentity.emailAddress,
         gmailUserId: senderIdentity.gmailUserId,
       });
@@ -1056,6 +1061,11 @@ async function deliverEmail(
       templateSenderIdentity = await resolveSenderIdentity(context.tenantId, context);
     }
     
+    // For signature lookup, use sender's userId (recruiter ID) if available, otherwise recipient's userId
+    const signatureUserId = context.source === 'recruiter' && context.sourceId 
+      ? context.sourceId 
+      : (templateSenderIdentity.gmailUserId || context.userId);
+    
     const result = await emailProvider.sendEmail({
       tenantId: context.tenantId,
       to: { email: toEmail, name: toName },
@@ -1063,7 +1073,7 @@ async function deliverEmail(
       htmlBody: renderedBody,
       textBody: context.variables?.textBody || stripHtml(renderedBody),
       messageTypeId: context.messageTypeId,
-      userId: context.userId,
+      userId: signatureUserId, // Use sender's ID for signature lookup
       fromEmail: templateSenderIdentity.emailAddress,
       gmailUserId: templateSenderIdentity.gmailUserId,
     });

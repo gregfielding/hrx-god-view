@@ -39,6 +39,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  Tooltip,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -93,6 +94,11 @@ import ContactHeader from '../../components/ContactHeader';
 import { useFavorites } from '../../hooks/useFavorites';
 import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
+import PageHeader from '../../components/PageHeader';
+import FavoriteButton from '../../components/FavoriteButton';
+import { Stack } from '@mui/material';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 interface ContactData {
   id: string;
@@ -294,6 +300,47 @@ const ContactDetails: React.FC = () => {
   // Avatar upload state
   const [avatarLoading, setAvatarLoading] = useState(false);
 
+  // Gmail connection and message drawer state
+  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
+
+  // Check Gmail connection status
+  useEffect(() => {
+    const checkGmailConnection = async () => {
+      if (!user?.uid || !tenantId) {
+        setGmailConnected(false);
+        return;
+      }
+      try {
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+        const result = await getGmailStatus({ userId: user.uid, force: true });
+        const data = result.data as any;
+        const connected = !!data?.connected || !!data?.rateLimited || !!data?.sampled;
+        setGmailConnected(connected);
+      } catch {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data();
+            const tenantIntegration = userData.tenantIds?.[tenantId]?.integrations?.google;
+            const topLevelIntegration = userData.integrations?.google;
+            const isConnected = (tenantIntegration?.accessToken || topLevelIntegration?.accessToken) && 
+                                (tenantIntegration?.email || topLevelIntegration?.email);
+            setGmailConnected(!!isConnected);
+          } else {
+            setGmailConnected(false);
+          }
+        } catch (error) {
+          console.error('Error checking Gmail connection:', error);
+          setGmailConnected(false);
+        }
+      }
+    };
+    checkGmailConnection();
+  }, [user?.uid, tenantId]);
+
   // Tone settings state
   const [toneSettings, setToneSettings] = useState({
     professional: 0.7,
@@ -320,10 +367,6 @@ const ContactDetails: React.FC = () => {
   // Job Orders state
   const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
-  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
-  const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
-  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
-  const [messageDrawerChannel, setMessageDrawerChannel] = useState<'email' | 'sms'>('email');
 
   // Lazy load AI components
   useEffect(() => {
@@ -1538,156 +1581,389 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  return (
-    <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'CRM', href: '/crm' },
-            ...(company ? [{ label: company.companyName || company.name, href: `/crm/companies/${company.id}` }] : []),
-            { label: 'Contacts', onClick: () => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts') },
-            { label: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || 'Contact' },
-          ]}
-        />
+  // Helper functions for contact display
+  const getContactDisplayName = () => {
+    if (contact?.fullName) return contact.fullName;
+    if (contact?.firstName || contact?.lastName) {
+      return `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
+    }
+    return 'Unnamed Contact';
+  };
+
+  const getContactInitials = () => {
+    const name = getContactDisplayName();
+    if (!name) return '?';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return name[0].toUpperCase();
+  };
+
+  const formatContactCreatedDate = () => {
+    if (!contact?.createdAt) return '';
+    try {
+      let date: Date;
+      if (contact.createdAt.toDate) {
+        date = contact.createdAt.toDate();
+      } else if (typeof contact.createdAt === 'number') {
+        date = new Date(contact.createdAt);
+      } else if (contact.createdAt?._seconds) {
+        date = new Date(contact.createdAt._seconds * 1000);
+      } else {
+        date = new Date(contact.createdAt);
+      }
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  // Build metadata subtitle
+  const metadataSubtitle = [
+    contact?.email || '',
+    contact?.id ? `ID: ${contact.id.substring(0, 8)}` : '',
+    formatContactCreatedDate()
+  ].filter(Boolean).join(' • ');
+
+  if (loading) {
+    return (
+      <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+        <CircularProgress />
       </Box>
-      {/* Build navigation links */}
-      {(() => {
-        const links: Array<{ type: 'company' | 'location' | 'deal' | 'jobOrder'; id: string; name: string; companyId?: string }> = [];
-        
-        // Add company link
-        if (company?.id) {
-          links.push({
-            type: 'company',
-            id: company.id,
-            name: company.companyName || company.name || 'Company'
-          });
+    );
+  }
+
+  if (error || !contact) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error">{error || 'Contact not found'}</Alert>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* PageHeader with Record redesign */}
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+              {/* Avatar - 108px × 108px */}
+              <Avatar
+                src={contact.avatar || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: contact.avatar ? 'transparent' : 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {!contact.avatar && getContactInitials()}
+              </Avatar>
+              
+              {/* Three-line content area - matches avatar height */}
+              <Box sx={{ 
+                flex: 1, 
+                minWidth: 0, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                justifyContent: 'space-between', 
+                minHeight: 108 
+              }}>
+                {/* Line 1: Name */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {getContactDisplayName()}
+                  </Typography>
+                  <FavoriteButton
+                    itemId={contact.id}
+                    favoriteType="contacts"
+                    isFavorite={isFavorite}
+                    toggleFavorite={toggleFavorite}
+                    size="medium"
+                  />
+                </Box>
+                
+                {/* Line 2: Contact Action Icons */}
+                <Stack 
+                  direction="row" 
+                  spacing={0.5} 
+                  alignItems="center" 
+                  flexWrap="wrap" 
+                  sx={{ mb: 1 }}
+                >
+                  {contact.email && (
+                    <Tooltip title={gmailConnected ? `Email ${contact.email} (send via HRX)` : `Email ${contact.email} (open mail app)`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (gmailConnected) {
+                            setMessageDrawerChannel('email');
+                            setMessageDrawerOpen(true);
+                          } else {
+                            window.open(`mailto:${contact.email}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <EmailOutlinedIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {(contact.phone || contact.workPhone) && (
+                    <Tooltip title={`Call ${contact.phone || contact.workPhone}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (contact.phone || contact.workPhone) {
+                            window.open(`tel:${contact.phone || contact.workPhone}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <PhoneIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {contact.linkedInUrl && (
+                    <Tooltip title="View LinkedIn Profile">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          let url = contact.linkedInUrl!;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LinkedInIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Stack>
+                
+                {/* Line 3: Metadata subtitle */}
+                {metadataSubtitle && (
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: '14px',
+                      fontWeight: 400,
+                      color: 'rgba(0, 0, 0, 0.55)',
+                    }}
+                  >
+                    {metadataSubtitle}
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </Box>
         }
-        
-        // Add location links
-        const assocLocations = contact?.associations?.locations || [];
-        const locationIds: string[] = [];
-        
-        if (assocLocations.length > 0) {
-          assocLocations.forEach((loc: any) => {
-            const locId = typeof loc === 'string' ? loc : loc?.id;
-            if (locId) locationIds.push(locId);
-          });
-        } else if (contact?.locationId) {
-          locationIds.push(contact.locationId);
+        filters={
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant={tabValue === 0 ? 'contained' : 'text'}
+              onClick={() => setTabValue(0)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 0 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<DashboardIcon fontSize="small" />}
+            >
+              Overview
+            </Button>
+            <Button
+              variant={tabValue === 1 ? 'contained' : 'text'}
+              onClick={() => setTabValue(1)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 1 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<TaskIcon fontSize="small" />}
+            >
+              Tasks
+            </Button>
+            <Button
+              variant={tabValue === 2 ? 'contained' : 'text'}
+              onClick={() => setTabValue(2)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 2 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<NotesIcon fontSize="small" />}
+            >
+              Notes
+            </Button>
+            <Button
+              variant={tabValue === 3 ? 'contained' : 'text'}
+              onClick={() => setTabValue(3)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 3 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<TimelineIcon fontSize="small" />}
+            >
+              Activity
+            </Button>
+            <Button
+              variant={tabValue === 4 ? 'contained' : 'text'}
+              onClick={() => setTabValue(4)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 4 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<EmailIcon fontSize="small" />}
+            >
+              Emails
+            </Button>
+          </Box>
         }
-        
-        locationIds.forEach(locationId => {
-          const location = companyLocations.find(l => l.id === locationId);
-          if (location && company?.id) {
-            links.push({
-              type: 'location',
-              id: locationId,
-              name: location.nickname || location.name || location.title || 'Location',
-              companyId: company.id
-            });
-          }
-        });
-        
-        // Calculate metrics
-        const associatedTasks = associationsData.entities.tasks || [];
-        const completedTasks = associatedTasks.filter((task: any) => task.status === 'completed').length;
-        
-        // Return Contact Header Component
-        if (contact) {
-          return (
-            <ContactHeader
-              contact={contact}
-              tenantId={tenantId}
-              favoriteType="contacts"
-              isFavorite={isFavorite}
-              toggleFavorite={toggleFavorite}
-              navigationLinks={links}
-              metrics={{
-                completedTasks,
-                totalTasks: associatedTasks.length
-              }}
-              onAddNote={() => setShowAddNoteDialog(true)}
-              onAIEnhance={handleAIEnhancement}
-              onLogActivity={() => setShowLogActivityDialog(true)}
-              aiEnhancing={aiEnhancing}
-              onAvatarUpload={async (url: string) => {
-                await handleContactUpdate('avatar', url);
-                showToast('Avatar uploaded successfully!', 'success');
-              }}
-              onAvatarDelete={async () => {
-                await handleContactUpdate('avatar', '');
-                showToast('Avatar deleted successfully!', 'success');
-              }}
-              routePrefix="/crm"
-              companyLocations={companyLocations}
-            />
-          );
+        rightActions={
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts')}
+            >
+              Back
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setShowAddNoteDialog(true)}
+            >
+              Add Note
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={aiEnhancing ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
+              onClick={handleAIEnhancement}
+              disabled={aiEnhancing}
+            >
+              {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<CheckCircleIcon />}
+              onClick={() => setShowLogActivityDialog(true)}
+            >
+              Log Activity
+            </Button>
+          </Box>
         }
-        return null;
-      })()}
+      />
 
       {/* Success/Error Alerts */}
       {aiSuccess && (
-        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setAiSuccess(null)}>
-          {aiSuccess}
-        </Alert>
+        <Box sx={{ px: { xs: 2, md: 3 }, pt: 2 }}>
+          <Alert severity="success" onClose={() => setAiSuccess(null)}>
+            {aiSuccess}
+          </Alert>
+        </Box>
       )}
-
-      {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="Contact details tabs"
-        >
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Overview
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TaskIcon fontSize="small" />
-                Tasks
-              </Box>
-            } 
-          />
-
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <EmailIcon fontSize="small" />
-                Emails
-              </Box>
-            } 
-          />
-        </Tabs>
-      </Paper>
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>

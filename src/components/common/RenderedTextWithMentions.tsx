@@ -181,12 +181,13 @@ export const RenderedTextWithMentions: React.FC<RenderedTextWithMentionsProps> =
                   setHoveredMention(null);
                 }}
                 sx={{
-                  color: 'primary.main',
+                  color: '#1976d2', // Blue link color
                   textDecoration: 'none',
-                  fontWeight: 600,
+                  fontWeight: 500,
                   cursor: 'pointer',
                   '&:hover': {
                     textDecoration: 'underline',
+                    color: '#1565c0', // Darker blue on hover
                   },
                 }}
               >

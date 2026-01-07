@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Box, Typography, Avatar, CircularProgress, Skeleton } from '@mui/material';
+import { Box, Typography, Avatar, CircularProgress, Skeleton, Link } from '@mui/material';
 import { SlackChannelMessage } from '../hooks/useSlackChannelThread';
 import { getChannelColor } from '../utils/slackChannelUtils';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,6 +45,65 @@ function getUserInitials(userName: string): string {
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
   return userName.substring(0, 2).toUpperCase();
+}
+
+/**
+ * Render text with mentions as blue links
+ */
+function renderTextWithMentions(text: string): React.ReactNode {
+  // Match @mentions, #contacts, &workers, %companies, !deals, ^candidates, *locations, ~tasks
+  const MENTION_REGEX = /([@#&%!^*~])([^\s.,!?]+)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+
+  MENTION_REGEX.lastIndex = 0;
+
+  while ((match = MENTION_REGEX.exec(text)) !== null) {
+    const prefix = match[1];
+    const token = match[2];
+    const fullMatch = match[0];
+    const matchIndex = match.index;
+
+    // Add text before the mention
+    if (matchIndex > lastIndex) {
+      parts.push(text.slice(lastIndex, matchIndex));
+    }
+
+    // Render mention as a link (for now, just style it - we can add navigation later)
+    parts.push(
+      <Link
+        key={matchIndex}
+        component="span"
+        onClick={(e) => {
+          e.preventDefault();
+          // TODO: Navigate to user/entity page based on mention type
+          // For now, just prevent default to show it's clickable
+        }}
+        sx={{
+          color: '#1976d2',
+          textDecoration: 'none',
+          fontWeight: 500,
+          cursor: 'pointer',
+          '&:hover': {
+            textDecoration: 'underline',
+            color: '#1565c0',
+          },
+        }}
+      >
+        {fullMatch}
+      </Link>
+    );
+
+    lastIndex = matchIndex + fullMatch.length;
+  }
+
+  // Add remaining text
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? <>{parts}</> : text;
 }
 
 const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, channelId }) => {
@@ -139,16 +198,25 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, 
                   </Box>
                 )}
               </Box>
-              <Typography
-                variant="body2"
+              <Box
+                component="span"
                 sx={{
                   color: 'text.primary',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
+                  '& a': {
+                    color: '#1976d2',
+                    textDecoration: 'none',
+                    fontWeight: 500,
+                    '&:hover': {
+                      textDecoration: 'underline',
+                      color: '#1565c0',
+                    },
+                  },
                 }}
               >
-                {message.text}
-              </Typography>
+                {renderTextWithMentions(message.text)}
+              </Box>
               
               {/* Reactions Bar */}
               {channelId && user?.uid && (

@@ -5,19 +5,14 @@
  * Posts can be sent to Slack channels and/or stored internally.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Card,
-  CardContent,
-  Avatar,
-  TextField,
   Button,
   Select,
   MenuItem,
   FormControl,
   InputLabel,
-  Typography,
   CircularProgress,
   Snackbar,
   Alert,
@@ -25,7 +20,6 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { RichTextInputWithMentions, RichTextValue } from './common/RichTextInputWithMentions';
 import { useSlackChannels } from '../hooks/useSlackChannels';
-import type { FeedPostVisibility } from '../types/feed';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 
@@ -41,8 +35,6 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
   
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<RichTextValue['mentions']>([]);
-  const [targetChannelId, setTargetChannelId] = useState<string>('');
-  const [visibility, setVisibility] = useState<FeedPostVisibility>('tenant');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -54,6 +46,21 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
   const availableChannels = slackChannels.filter(
     ch => !ch.isArchived && ch.status !== 'setup_needed'
   );
+
+  const [targetChannelId, setTargetChannelId] = useState<string>('');
+
+  // Find #general channel and set it as default when channels load
+  useEffect(() => {
+    if (availableChannels.length > 0 && !targetChannelId) {
+      const generalChannel = availableChannels.find(
+        ch => ch.name === 'general' || ch.displayName === '#general' || ch.displayName === 'general'
+      );
+      const defaultChannelId = generalChannel?.slackChannelId || availableChannels[0]?.slackChannelId || '';
+      if (defaultChannelId) {
+        setTargetChannelId(defaultChannelId);
+      }
+    }
+  }, [availableChannels, targetChannelId]);
 
   const handleTextChange = (value: RichTextValue) => {
     setText(value.text);
@@ -72,11 +79,18 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
     try {
       const feedCreatePost = httpsCallable(functions, 'feedCreatePost');
       
+      // Ensure we have a channel selected (should always be #general by default)
+      if (!targetChannelId) {
+        setError('Please select a channel');
+        setPosting(false);
+        return;
+      }
+
       const result = await feedCreatePost({
         tenantId,
         body: text,
-        targetChannelId: targetChannelId || undefined,
-        visibility,
+        targetChannelId: targetChannelId,
+        visibility: 'tenant', // All posts are visible to the team
       });
 
       const data = result.data as any;
@@ -85,7 +99,7 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
         setSuccess(true);
         setText('');
         setMentions([]);
-        setTargetChannelId('');
+        // Keep the channel selected (will reset to #general via useEffect)
         
         // Notify parent component
         if (onPostCreated) {
@@ -105,7 +119,16 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
   const handleCancel = () => {
     setText('');
     setMentions([]);
-    setTargetChannelId('');
+    // Reset to default channel (#general) - will be set by useEffect
+    if (availableChannels.length > 0) {
+      const generalChannel = availableChannels.find(
+        ch => ch.name === 'general' || ch.displayName === '#general' || ch.displayName === 'general'
+      );
+      const defaultChannelId = generalChannel?.slackChannelId || availableChannels[0]?.slackChannelId || '';
+      if (defaultChannelId) {
+        setTargetChannelId(defaultChannelId);
+      }
+    }
     setError(null);
   };
 
@@ -116,81 +139,50 @@ export const DashboardFeedComposer: React.FC<DashboardFeedComposerProps> = ({
 
   return (
     <>
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Box display="flex" gap={2} mb={2}>
-            <Avatar
-              src={user?.photoURL || (user as any)?.avatar}
-              sx={{ width: 40, height: 40 }}
+      <Box>
+        <RichTextInputWithMentions
+          value={text}
+          onChange={handleTextChange}
+          placeholder={`What's happening, ${userDisplayName}?`}
+          fullWidth
+          multiline
+          rows={3}
+          sx={{ mb: 2 }}
+        />
+        
+        <Box display="flex" gap={2} alignItems="center" flexWrap="wrap" justifyContent="flex-end" sx={{ pb: 1 }}>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Channel</InputLabel>
+            <Select
+              value={targetChannelId}
+              onChange={(e) => setTargetChannelId(e.target.value)}
+              label="Channel"
             >
-              {userDisplayName[0]?.toUpperCase() || 'U'}
-            </Avatar>
-            <Box flex={1}>
-              <Typography variant="body2" color="text.secondary" mb={1}>
-                What's happening, {userDisplayName}?
-              </Typography>
-              <RichTextInputWithMentions
-                value={text}
-                onChange={handleTextChange}
-                placeholder="Type @ for users, # for contacts, & for companies, % for deals..."
-                fullWidth
-                multiline
-                rows={3}
-                sx={{ mb: 2 }}
-              />
-              
-              <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                  <InputLabel>Channel</InputLabel>
-                  <Select
-                    value={targetChannelId}
-                    onChange={(e) => setTargetChannelId(e.target.value)}
-                    label="Channel"
-                  >
-                    <MenuItem value="">None (Internal only)</MenuItem>
-                    {availableChannels.map((channel) => (
-                      <MenuItem key={channel.id} value={channel.slackChannelId}>
-                        {channel.displayName}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+              {availableChannels.map((channel) => (
+                <MenuItem key={channel.id} value={channel.slackChannelId}>
+                  {channel.displayName}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
 
-                <FormControl size="small" sx={{ minWidth: 120 }}>
-                  <InputLabel>Visibility</InputLabel>
-                  <Select
-                    value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as FeedPostVisibility)}
-                    label="Visibility"
-                  >
-                    <MenuItem value="tenant">Tenant</MenuItem>
-                    <MenuItem value="team">Team</MenuItem>
-                    <MenuItem value="private">Private</MenuItem>
-                  </Select>
-                </FormControl>
-
-                <Box flex={1} />
-
-                <Button
-                  variant="outlined"
-                  onClick={handleCancel}
-                  disabled={posting || !text.trim()}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handlePost}
-                  disabled={posting || !text.trim()}
-                  startIcon={posting ? <CircularProgress size={16} /> : null}
-                >
-                  {posting ? 'Posting...' : 'Post'}
-                </Button>
-              </Box>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
+          <Button
+            variant="outlined"
+            onClick={handleCancel}
+            disabled={posting || !text.trim()}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handlePost}
+            disabled={posting || !text.trim()}
+            startIcon={posting ? <CircularProgress size={16} /> : null}
+          >
+            {posting ? 'Posting...' : 'Post'}
+          </Button>
+        </Box>
+      </Box>
 
       <Snackbar
         open={!!error}

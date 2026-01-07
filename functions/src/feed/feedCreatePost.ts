@@ -308,6 +308,79 @@ async function parseMentions(
 }
 
 /**
+ * Convert HRX user mentions to Slack format (<@U123456>)
+ */
+async function convertUserMentionsToSlackFormat(
+  text: string,
+  tenantId: string,
+  teamId?: string
+): Promise<string> {
+  const MENTION_REGEX = /(@)([^\s.,!?]+)/g;
+  let convertedText = text;
+  const replacements: Array<{ from: string; to: string }> = [];
+  
+  // Find all @ mentions
+  const matches = Array.from(text.matchAll(MENTION_REGEX));
+  
+  // Process mentions in parallel
+  const mentionPromises = matches.map(async (match) => {
+    const prefix = match[1];
+    const token = match[2];
+    const fullMatch = match[0];
+    
+    // Only convert @ mentions (user mentions)
+    if (prefix !== '@') return null;
+    
+    // Resolve to HRX user
+    const entity = await resolveMentionEntity('@', token, tenantId);
+    if (!entity || entity.type !== 'user') return null;
+    
+    // Get Slack user ID for this HRX user
+    try {
+      // Try to get from slackUsers collection
+      const slackUsersQuery = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('slackUsers')
+        .where('hrxUserId', '==', entity.id)
+        .limit(1)
+        .get();
+      
+      if (!slackUsersQuery.empty) {
+        const slackUserId = slackUsersQuery.docs[0].id;
+        return { from: fullMatch, to: `<@${slackUserId}>` };
+      }
+      
+      // Fallback: try user integrations
+      const userDoc = await db.collection('users').doc(entity.id).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        const slackUserId = userData?.integrations?.slack?.slackUserId ||
+                           userData?.tenantIds?.[tenantId]?.integrations?.slack?.slackUserId;
+        if (slackUserId) {
+          return { from: fullMatch, to: `<@${slackUserId}>` };
+        }
+      }
+    } catch (err) {
+      logger.warn(`Failed to convert mention ${fullMatch} to Slack format:`, err);
+    }
+    
+    return null;
+  });
+  
+  const resolvedReplacements = await Promise.all(mentionPromises);
+  
+  // Apply replacements in reverse order to preserve indices
+  for (const replacement of resolvedReplacements.reverse()) {
+    if (replacement) {
+      convertedText = convertedText.replace(replacement.from, replacement.to);
+    }
+  }
+  
+  return convertedText;
+}
+
+/**
  * Post message to Slack channel
  */
 async function postToSlack(
@@ -340,6 +413,18 @@ async function postToSlack(
       }
     }
     
+    // Get team ID for mention conversion
+    const integrationsDoc = await db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('integrations')
+      .doc('slack')
+      .get();
+    const teamId = integrationsDoc.data()?.workspaceId || integrationsDoc.data()?.teamId;
+    
+    // Convert user mentions to Slack format
+    const slackText = await convertUserMentionsToSlackFormat(text, tenantId, teamId);
+    
     // Post to Slack
     const slackResponse = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
@@ -349,7 +434,7 @@ async function postToSlack(
       },
       body: JSON.stringify({
         channel: channelId,
-        text: text.trim(),
+        text: slackText.trim(),
         metadata: {
           event_type: 'hrx_feed_post',
         },
@@ -390,6 +475,7 @@ export const feedCreatePost = onCall(
   {
     secrets: [SLACK_BOT_TOKEN],
     cors: true,
+    invoker: 'public', // Allow CORS preflight requests
   },
   async (request): Promise<FeedCreatePostResponse> => {
     const userId = request.auth?.uid;
@@ -425,7 +511,17 @@ export const feedCreatePost = onCall(
         throw new HttpsError('permission-denied', 'User does not have access to this tenant');
       }
 
-      // 2. Parse mentions from text
+      // 2. Build feed post document
+      const now = admin.firestore.Timestamp.now();
+      const postRef = db.collection('tenants').doc(tenantId).collection('feed_posts').doc();
+      
+      // 3. Post to Slack immediately (don't wait for mention parsing)
+      let slackResult: { slackChannelId: string; slackTs: string } | null = null;
+      if (targetChannelId) {
+        slackResult = await postToSlack(targetChannelId, body, tenantId);
+      }
+
+      // 4. Parse mentions in parallel (after Slack post)
       const mentions = await parseMentions(body, tenantId);
       
       logger.info('Parsed mentions', {
@@ -434,10 +530,6 @@ export const feedCreatePost = onCall(
         mentionCount: mentions.length,
       });
 
-      // 3. Build feed post document
-      const now = admin.firestore.Timestamp.now();
-      const postRef = db.collection('tenants').doc(tenantId).collection('feed_posts').doc();
-      
       const postData: any = {
         id: postRef.id,
         tenantId,
@@ -454,13 +546,10 @@ export const feedCreatePost = onCall(
         updatedAt: now,
       };
 
-      // 4. Post to Slack if targetChannelId is provided
-      if (targetChannelId) {
-        const slackResult = await postToSlack(targetChannelId, body, tenantId);
-        if (slackResult) {
-          postData.slackChannelId = slackResult.slackChannelId;
-          postData.slackTs = slackResult.slackTs;
-        }
+      // Add Slack metadata if posted
+      if (slackResult) {
+        postData.slackChannelId = slackResult.slackChannelId;
+        postData.slackTs = slackResult.slackTs;
       }
 
       // 5. Save feed post

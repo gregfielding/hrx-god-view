@@ -556,7 +556,7 @@ export const sendEmailReplyApi = onRequest(
         fromEmail: userData?.email || fromEmail,
         fromName: userData?.displayName || userData?.firstName || 'HRX One',
         messageTypeId: 'direct_message',
-        userId: toEmails[0], // First recipient
+        userId: userId, // Use sender's ID for signature lookup
         gmailUserId: userId, // Always use Gmail for individual emails
         threadId: threadData.gmailThreadId, // For Gmail thread replies
         inReplyTo: inReplyToMessageId ? inReplyToMessageId : undefined, // For Gmail In-Reply-To header
@@ -844,7 +844,7 @@ export const sendNewEmailApi = onRequest(
         fromEmail: resolvedFromEmail, // undefined for SendGrid = use verified sender
         fromName: resolvedFromName,
         messageTypeId: 'direct_message',
-        userId: toEmails[0], // First recipient
+        userId: userId, // Use sender's ID for signature lookup
         gmailUserId: userId, // Always use Gmail for individual emails
         // No threadId or inReplyTo for new emails
         attachments: attachments || undefined,

@@ -55,6 +55,7 @@ import { fetchEmailThreadCached } from '../utils/emailThreadCache';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
 import { RenderedTextWithMentions } from './common/RenderedTextWithMentions';
 import type { Mention } from '../types/crossSystemMentions';
+import { DashboardFeedComposer } from './DashboardFeedComposer';
 
 // Source metadata for icons and labels
 const SOURCE_META: Record<
@@ -403,6 +404,10 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
           }}
         >
         <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, overflowY: 'auto', pb: 2 }}>
+          {/* Composer between filters and feed items for mobile */}
+          <Box>
+            <DashboardFeedComposer />
+          </Box>
           {visibleItems.length === 0 ? (
             <Paper
               elevation={0}
@@ -725,6 +730,11 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
               placeholder="Search feed..."
             />
           </Box>
+        </Box>
+
+        {/* Composer between filters and feed items for desktop */}
+        <Box>
+          <DashboardFeedComposer />
         </Box>
 
         <TableContainer

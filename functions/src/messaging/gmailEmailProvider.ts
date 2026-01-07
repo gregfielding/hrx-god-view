@@ -94,7 +94,7 @@ export class GmailEmailProvider implements EmailProvider {
         messageLines.push(`References: <${options.inReplyTo}>`);
       }
 
-      // Get and append email signature if enabled
+      // Get and append email signature (always include if signature exists)
       let htmlBodyWithSignature = options.htmlBody || options.textBody || '';
       let textBodyWithSignature = options.textBody || '';
       
@@ -104,10 +104,13 @@ export class GmailEmailProvider implements EmailProvider {
           const userData = userDoc.data();
           const signatureSettings = userData?.emailSignature;
           
-          if (signatureSettings?.enabled) {
+          // Always include signature if it exists (treat enabled as always true)
+          if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data)) {
             // Import signature generation utilities
             const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
-            const signatureHtml = generateEmailSignature(signatureSettings);
+            // Temporarily enable signature for generation
+            const enabledSettings = { ...signatureSettings, enabled: true };
+            const signatureHtml = generateEmailSignature(enabledSettings);
             
             if (signatureHtml) {
               htmlBodyWithSignature = appendSignatureToEmail(htmlBodyWithSignature, signatureHtml);

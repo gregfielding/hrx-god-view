@@ -44,6 +44,7 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import ReplyDrawer from '../../../components/ReplyDrawer';
 import EmailThreadView from '../../../components/EmailThreadView';
+import EmailBodyRenderer from '../../../components/common/EmailBodyRenderer';
 
 interface MessageLog {
   id: string;
@@ -902,14 +903,35 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ uid, tenantId }) => {
                             borderColor: 'divider',
                             borderRadius: 1,
                             p: 2,
-                            bgcolor: 'background.paper',
+                            // Single scrollbar container with thin, light scrollbar per spec
                             maxHeight: '500px',
-                            overflow: 'auto',
-                            '& img': { maxWidth: '100%' },
-                            '& a': { color: 'primary.main' },
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            // Thin, light scrollbar styling per spec
+                            '&::-webkit-scrollbar': {
+                              width: '8px',
+                              height: '8px',
+                            },
+                            '&::-webkit-scrollbar-track': {
+                              background: 'rgba(0, 0, 0, 0.02)',
+                              borderRadius: '4px',
+                            },
+                            '&::-webkit-scrollbar-thumb': {
+                              background: 'rgba(0, 0, 0, 0.15)',
+                              borderRadius: '4px',
+                              '&:hover': {
+                                background: 'rgba(0, 0, 0, 0.25)',
+                              },
+                            },
+                            // Firefox scrollbar styling
+                            scrollbarWidth: 'thin',
+                            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
                           }}
-                          dangerouslySetInnerHTML={{ __html: messageContent }}
-                        />
+                        >
+                          <EmailBodyRenderer
+                            html={messageContent}
+                          />
+                        </Box>
                       );
                     } else {
                       // Plain text or strip HTML for display

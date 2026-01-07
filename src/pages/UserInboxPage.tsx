@@ -56,6 +56,7 @@ import { functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import ReplyDrawer from '../components/ReplyDrawer';
 import EmailThreadView from '../components/EmailThreadView';
+import EmailBodyRenderer from '../components/common/EmailBodyRenderer';
 import MessageDrawer from '../components/MessageDrawer';
 import InboxFilters, { InboxFilter } from '../components/InboxFilters';
 import InboxSearchBar from '../components/InboxSearchBar';
@@ -2961,12 +2962,37 @@ const UserInboxPage: React.FC = () => {
                 </Typography>
               )}
               <Typography variant="subtitle2">Message Content:</Typography>
-              <Paper variant="outlined" sx={{ p: 2, maxHeight: 500, overflowY: 'auto' }}>
+              <Paper 
+                variant="outlined" 
+                sx={{ 
+                  p: 2, 
+                  maxHeight: 500, 
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  // Thin, light scrollbar styling per spec
+                  '&::-webkit-scrollbar': {
+                    width: '8px',
+                    height: '8px',
+                  },
+                  '&::-webkit-scrollbar-track': {
+                    background: 'rgba(0, 0, 0, 0.02)',
+                    borderRadius: '4px',
+                  },
+                  '&::-webkit-scrollbar-thumb': {
+                    background: 'rgba(0, 0, 0, 0.15)',
+                    borderRadius: '4px',
+                    '&:hover': {
+                      background: 'rgba(0, 0, 0, 0.25)',
+                    },
+                  },
+                  // Firefox scrollbar styling
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+                }}
+              >
                 {selectedMessage.channel === 'email' ? (
-                  <div
-                    dangerouslySetInnerHTML={{
-                      __html: getMessageContent(selectedMessage) || 'No message content available.',
-                    }}
+                  <EmailBodyRenderer
+                    html={getMessageContent(selectedMessage) || ''}
                   />
                 ) : (
                   <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>

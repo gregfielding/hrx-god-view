@@ -36,6 +36,7 @@ import { useAuth } from '../contexts/AuthContext';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import ContactHoverCard, { ParticipantContact } from './ContactHoverCard';
 import { fetchEmailThreadCached, peekEmailThread } from '../utils/emailThreadCache';
+import EmailBodyRenderer from './common/EmailBodyRenderer';
 
 interface EmailThreadViewProps {
   open: boolean;
@@ -674,7 +675,30 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           </Box>
 
           {/* Messages */}
-          <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+          <Box sx={{ 
+            flex: 1, 
+            overflow: 'auto', 
+            p: 2,
+            // Thin, light scrollbar styling per spec - override default black scrollbar
+            '&::-webkit-scrollbar': {
+              width: '8px !important',
+              height: '8px !important',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: 'rgba(0, 0, 0, 0.02) !important',
+              borderRadius: '4px',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(0, 0, 0, 0.15) !important',
+              borderRadius: '4px',
+              '&:hover': {
+                background: 'rgba(0, 0, 0, 0.25) !important',
+              },
+            },
+            // Firefox scrollbar styling
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}>
             <Stack spacing={2}>
               {(() => {
                 // Merge real messages with optimistic messages
@@ -747,13 +771,38 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                       <Divider />
                       <Box
                         sx={{
-                          '& p': { margin: 0 },
-                          '& pre': { whiteSpace: 'pre-wrap' },
+                          p: 2,
+                          bgcolor: 'background.paper',
+                          // Remove maxHeight to prevent clipping - let content flow naturally
+                          // Single scrollbar container with thin, light scrollbar per spec
+                          overflowY: 'auto',
+                          overflowX: 'hidden',
+                          // Thin, light scrollbar styling per spec - ensure it overrides any parent styles
+                          '&::-webkit-scrollbar': {
+                            width: '8px !important',
+                            height: '8px !important',
+                          },
+                          '&::-webkit-scrollbar-track': {
+                            background: 'rgba(0, 0, 0, 0.02) !important',
+                            borderRadius: '4px',
+                          },
+                          '&::-webkit-scrollbar-thumb': {
+                            background: 'rgba(0, 0, 0, 0.15) !important',
+                            borderRadius: '4px',
+                            '&:hover': {
+                              background: 'rgba(0, 0, 0, 0.25) !important',
+                            },
+                          },
+                          // Firefox scrollbar styling
+                          scrollbarWidth: 'thin',
+                          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
                         }}
-                        dangerouslySetInnerHTML={{
-                          __html: message.bodyHtml || message.bodyPlain || message.bodySnippet || '',
-                        }}
-                      />
+                      >
+                        <EmailBodyRenderer
+                          html={message.bodyHtml || ''}
+                          plainText={message.bodyPlain || message.bodySnippet || ''}
+                        />
+                      </Box>
                       {message.attachments && message.attachments.length > 0 && (
                         <Box sx={{ mt: 2 }}>
                           <Typography variant="subtitle2" sx={{ mb: 1 }}>
