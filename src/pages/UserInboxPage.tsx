@@ -264,9 +264,6 @@ const UserInboxPage: React.FC = () => {
     userId: user?.uid || '',
     userEmail: user?.email,
     status: activeFilter === 'trash' ? 'deleted' : 'active',
-    unreadOnly: showUnreadOnly,
-    category: ['primary', 'social', 'promotions', 'updates', 'forums', 'spam', 'drafts'].includes(activeFilter) ? activeFilter : undefined,
-    sentOnly: activeFilter === 'sent',
     enabled: !isBackendSearch && !!user?.uid && !!effectiveTenantId,
   });
 

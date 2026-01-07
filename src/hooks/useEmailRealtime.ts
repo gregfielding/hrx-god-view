@@ -59,9 +59,6 @@ export interface UseEmailRealtimeOptions {
   userId: string;
   userEmail?: string;
   status?: 'active' | 'archived' | 'deleted';
-  unreadOnly?: boolean;
-  category?: string;
-  sentOnly?: boolean;
   limit?: number;
   enabled?: boolean;
 }
@@ -97,9 +94,6 @@ export function useEmailRealtime(
     userId,
     userEmail,
     status = 'active',
-    unreadOnly = false,
-    category,
-    sentOnly = false,
     limit: limitCount = 200,
     enabled = true,
   } = options;
@@ -180,26 +174,6 @@ export function useEmailRealtime(
               fetchedThreads = fetchedThreads.filter((t) => t.status !== 'deleted');
             }
 
-            // Filter unread in memory (to avoid composite index)
-            if (unreadOnly) {
-              fetchedThreads = fetchedThreads.filter((t) => t.unreadCount > 0);
-            }
-
-            // Filter by category in memory
-            if (category) {
-              fetchedThreads = fetchedThreads.filter((t) => {
-                const labels = t.labels || [];
-                return labels.includes(category);
-              });
-            }
-
-            // Filter sent only in memory (check if user sent at least one message)
-            if (sentOnly) {
-              // This would require checking messages, so we'll do a simple check
-              // For now, we'll need to enhance this with message data
-              // For MVP, we can skip this filter or implement it differently
-            }
-
             // Normalize timestamps
             fetchedThreads = fetchedThreads.map((t) => ({
               ...t,
@@ -264,7 +238,7 @@ export function useEmailRealtime(
       setError(err);
       setLoading(false);
     }
-  }, [tenantId, userId, userEmail, status, unreadOnly, category, sentOnly, limitCount, enabled]);
+  }, [tenantId, userId, userEmail, status, limitCount, enabled]);
 
   // Calculate unread count
   const unreadCount = threads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
