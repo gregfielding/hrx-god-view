@@ -388,22 +388,12 @@ export const syncGmailEmails = onCall({
           messageExistsInThread = !messageQuery.empty;
         }
 
-        // Only skip if BOTH email_logs entry exists AND message exists in thread
-        // This ensures we create threads even if email_logs entry exists but thread doesn't
-        if (!existingEmailLog.empty && messageExistsInThread) {
-          skippedCount++;
-          continue; // Skip if already fully synced
-        }
-        
-        // If email_logs exists but thread doesn't, we'll still process it to create the thread
-        if (!existingEmailLog.empty && !messageExistsInThread) {
-          logger.info(`Email ${message.id} exists in email_logs but not in thread, creating thread...`);
-        }
-
-        // Get full message details
+        // Always fetch metadata for this message so we can reconcile read/unread state.
+        // (Gmail label changes are common; skipping here causes unread drift.)
         const messageResponse = await gmail.users.messages.get({
           userId: 'me',
-          id: message.id!
+          id: message.id!,
+          format: 'full',
         });
 
         const messageData = messageResponse.data;
@@ -443,6 +433,12 @@ export const syncGmailEmails = onCall({
         // Determine direction
         const userEmail = userData?.email || '';
         const direction = from.includes(userEmail) ? 'outbound' : 'inbound';
+
+        // Determine read state from Gmail labels.
+        // Gmail uses the UNREAD label on messages; absence means read.
+        const gmailLabelIds = messageData.labelIds || [];
+        const isUnreadInGmail = gmailLabelIds.includes('UNREAD');
+        const effectiveRead = direction === 'outbound' ? true : !isUnreadInGmail;
 
         // Find associated contacts
         const allEmails = [from, to, cc, bcc].flat().filter(Boolean);
@@ -513,9 +509,12 @@ export const syncGmailEmails = onCall({
         };
 
         // Save to Firestore (legacy email_logs for CRM integration)
-        await db.collection('tenants').doc(tenantId)
-          .collection('email_logs')
-          .add(emailLog);
+        // Avoid duplicating legacy email_logs when we are only reconciling read/unread.
+        if (existingEmailLog.empty) {
+          await db.collection('tenants').doc(tenantId)
+            .collection('email_logs')
+            .add(emailLog);
+        }
 
         // Create or find email thread and add message
         try {
@@ -532,23 +531,73 @@ export const syncGmailEmails = onCall({
 
           if (thread.id) {
             try {
-              const messageId = await addMessageToThread(thread.id, tenantId, {
-                direction,
-                from,
-                fromUserId: direction === 'outbound' ? userId : undefined,
-                to: to.split(',').map(e => e.trim()).filter(Boolean),
-                cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
-                subject,
-                bodyHtml,
-                bodyPlain: bodySnippet,
-                bodySnippet: bodySnippet.substring(0, 200),
-                status: 'delivered',
-                providerMessageId: message.id!,
-                gmailMessageId: message.id!,
-                read: direction === 'outbound', // Outbound messages are auto-read
-                createdAt: timestamp, // Use the original email timestamp
-              });
-              logger.info(`Added message ${messageId} to thread ${thread.id} for email ${message.id}`);
+              // If the message already exists in the thread, reconcile its read state.
+              const existingMsgQuery = await db
+                .collection('tenants')
+                .doc(tenantId)
+                .collection('emailThreads')
+                .doc(thread.id)
+                .collection('messages')
+                .where('gmailMessageId', '==', message.id!)
+                .limit(1)
+                .get();
+
+              if (!existingMsgQuery.empty) {
+                const msgDoc = existingMsgQuery.docs[0];
+                const existing = msgDoc.data() as any;
+                if (typeof existing.read === 'boolean' && existing.read !== effectiveRead) {
+                  await msgDoc.ref.update({ read: effectiveRead });
+                  logger.info(
+                    `Reconciled read state for gmailMessageId ${message.id} in thread ${thread.id}: ${existing.read} -> ${effectiveRead}`
+                  );
+                }
+
+                // Recompute thread unreadCount (best-effort) so counts converge even after label changes in Gmail.
+                // This is a lightweight bounded query (inbound unread only).
+                try {
+                  const unreadSnap = await db
+                    .collection('tenants')
+                    .doc(tenantId)
+                    .collection('emailThreads')
+                    .doc(thread.id)
+                    .collection('messages')
+                    .where('direction', '==', 'inbound')
+                    .where('read', '==', false)
+                    .get();
+                  await db
+                    .collection('tenants')
+                    .doc(tenantId)
+                    .collection('emailThreads')
+                    .doc(thread.id)
+                    .set(
+                      {
+                        unreadCount: unreadSnap.size,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                      },
+                      { merge: true }
+                    );
+                } catch (recountErr: any) {
+                  logger.warn(`Failed to recompute unreadCount for thread ${thread.id}:`, recountErr);
+                }
+              } else {
+                const messageId = await addMessageToThread(thread.id, tenantId, {
+                  direction,
+                  from,
+                  fromUserId: direction === 'outbound' ? userId : undefined,
+                  to: to.split(',').map(e => e.trim()).filter(Boolean),
+                  cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
+                  subject,
+                  bodyHtml,
+                  bodyPlain: bodySnippet,
+                  bodySnippet: bodySnippet.substring(0, 200),
+                  status: 'delivered',
+                  providerMessageId: message.id!,
+                  gmailMessageId: message.id!,
+                  read: effectiveRead,
+                  createdAt: timestamp, // Use the original email timestamp
+                });
+                logger.info(`Added message ${messageId} to thread ${thread.id} for email ${message.id}`);
+              }
             } catch (messageError: any) {
               logger.error(`Failed to add message to thread ${thread.id}: ${messageError.message || messageError}`);
               // Continue processing other messages even if this one fails
@@ -588,8 +637,12 @@ export const syncGmailEmails = onCall({
           // when sent through the orchestrator. But we could add logic to find the recipient user.
         }
 
-        newEmails.push(emailLog);
-        syncedCount++;
+        if (existingEmailLog.empty) {
+          newEmails.push(emailLog);
+          syncedCount++;
+        } else {
+          skippedCount++;
+        }
         
         if (syncedCount % 10 === 0) {
           logger.info(`Processed ${syncedCount} emails so far...`);
@@ -645,6 +698,65 @@ export const disconnectGmail = onCall({
     throw new Error(`Failed to disconnect Gmail: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 });
+
+/**
+ * Get Gmail unread count for INBOX (message count, not thread count).
+ * Cached on the user doc to avoid rate limits.
+ */
+export const getGmailUnreadInboxCount = onCall(
+  { cors: true, memory: '256MiB', concurrency: 20 },
+  async (request) => {
+    const { userId, maxAgeMs = 25000 } = request.data || {};
+    if (!userId) {
+      throw new Error('Missing required field: userId');
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData: any = userDoc.data() || {};
+    const cached = userData.gmailUnreadInboxCount;
+    const cachedAt = userData.gmailUnreadInboxCountUpdatedAt;
+
+    const cachedAtMs =
+      cachedAt && typeof cachedAt.toMillis === 'function'
+        ? cachedAt.toMillis()
+        : cachedAt instanceof Date
+          ? cachedAt.getTime()
+          : typeof cachedAt === 'number'
+            ? cachedAt
+            : null;
+
+    if (typeof cached === 'number' && cachedAtMs && Date.now() - cachedAtMs <= Number(maxAgeMs)) {
+      return { success: true, unreadCount: cached, cached: true };
+    }
+
+    const gmailTokens = userData?.gmailTokens;
+    if (!gmailTokens?.access_token) {
+      return { success: true, unreadCount: 0, connected: false };
+    }
+
+    oauth2Client.setCredentials(gmailTokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // INBOX label has messagesUnread which matches Gmail’s sidebar unread count semantics.
+    const labelRes = await gmail.users.labels.get({ userId: 'me', id: 'INBOX' });
+    const unreadCount = Number(labelRes.data.messagesUnread || 0);
+
+    await userRef.set(
+      {
+        gmailUnreadInboxCount: unreadCount,
+        gmailUnreadInboxCountUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return { success: true, unreadCount, cached: false };
+  }
+);
 
 // Add caching for Gmail status to reduce database calls
 const gmailStatusCache = new Map<string, { data: any; timestamp: number }>();

@@ -98,6 +98,65 @@ export async function syncReadStateToGmail(
 }
 
 /**
+ * Sync read state to Gmail at the thread level.
+ * This matches Gmail UI behavior: marking a conversation read clears UNREAD across the thread.
+ */
+export async function syncThreadReadStateToGmail(
+  userId: string,
+  gmailThreadId: string,
+  read: boolean
+): Promise<void> {
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData = userDoc.data();
+    const gmailTokens = userData?.gmailTokens;
+    if (!gmailTokens?.access_token) {
+      logger.warn(`Gmail not connected for user ${userId}`);
+      return;
+    }
+
+    const oauth2Client = new google.auth.OAuth2(
+      clientId.value(),
+      clientSecret.value(),
+      redirectUri.value()
+    );
+    oauth2Client.setCredentials(gmailTokens);
+
+    const expiryDate = gmailTokens.expiry_date;
+    if (expiryDate && Date.now() >= expiryDate - 5 * 60 * 1000) {
+      logger.info(`Refreshing Gmail token for user ${userId}`);
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      await db.collection('users').doc(userId).update({
+        'gmailTokens.access_token': credentials.access_token,
+        'gmailTokens.expiry_date': credentials.expiry_date,
+        'gmailTokens.token_type': credentials.token_type,
+      });
+      oauth2Client.setCredentials(credentials);
+    }
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    await gmail.users.threads.modify({
+      userId: 'me',
+      id: gmailThreadId,
+      requestBody: read
+        ? { removeLabelIds: ['UNREAD'] }
+        : { addLabelIds: ['UNREAD'] },
+    });
+
+    logger.info(
+      `${read ? 'Marked' : 'Marked'} Gmail thread ${gmailThreadId} as ${read ? 'read' : 'unread'}`
+    );
+  } catch (error: any) {
+    logger.error(`Failed to sync thread read state to Gmail for thread ${gmailThreadId}:`, error);
+  }
+}
+
+/**
  * Sync archive state to Gmail
  * Archives/unarchives a Gmail thread when archived in HRX
  */

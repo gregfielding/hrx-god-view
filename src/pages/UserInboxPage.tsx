@@ -628,19 +628,25 @@ const UserInboxPage: React.FC = () => {
         limit: '200',
       });
 
-      // Contextual unread toggle (e.g., Updates + Unread)
-      if (showUnreadOnly) {
-        params.append('unreadOnly', 'true');
-      }
-
+      // Keep server-side scope aligned with realtime listener:
+      // - Active views only show active threads
+      // - Trash maps to deleted
       if (activeFilter === 'trash') {
         params.append('status', 'deleted');
+      } else {
+        params.append('status', 'active');
+      }
+
+      // Gmail-style Unread semantics:
+      // When Unread is toggled, show ALL unread inbox threads (across categories), not only the current category.
+      if (showUnreadOnly) {
+        params.append('unreadOnly', 'true');
       } else if (activeFilter === 'sent') {
         params.append('sentOnly', 'true');
       } else if (activeFilter === 'starred') {
-        // Starred filter will be applied client-side
+        // Starred filter applied client-side
       } else if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam', 'drafts'].includes(activeFilter)) {
-        // Gmail category filters
+        // Gmail category filters (only when not in Unread mode)
         params.append('category', activeFilter);
       }
 

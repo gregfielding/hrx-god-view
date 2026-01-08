@@ -372,11 +372,17 @@ export async function addMessageToThread(
     }
 
     // Create message
+    // IMPORTANT: Preserve provided read state (e.g., from Gmail labelIds). Default only when not provided.
+    const effectiveRead =
+      typeof (message as any).read === 'boolean'
+        ? (message as any).read
+        : message.direction === 'outbound';
+
     const messageData: Omit<EmailMessage, 'id'> = {
       ...message,
       threadId,
       tenantId,
-      read: message.direction === 'outbound', // Outbound messages are auto-read
+      read: effectiveRead,
       createdAt,
     };
 
@@ -390,14 +396,15 @@ export async function addMessageToThread(
 
     // Update thread
     const updates: Partial<EmailThread> = {
-      lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Preserve ordering by using the message timestamp when available
+      lastMessageAt: createdAt instanceof admin.firestore.Timestamp ? createdAt : admin.firestore.FieldValue.serverTimestamp(),
       lastMessageSnippet: message.bodySnippet || message.bodyPlain?.substring(0, 100) || '',
       messageCount: (threadData.messageCount || 0) + 1,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
     // Increment unread count if inbound
-    if (message.direction === 'inbound' && !message.read) {
+    if (message.direction === 'inbound' && !effectiveRead) {
       updates.unreadCount = (threadData.unreadCount || 0) + 1;
     }
 

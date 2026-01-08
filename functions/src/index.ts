@@ -10940,6 +10940,7 @@ export {
   gmailOAuthCallback,
   syncGmailEmails,
   disconnectGmail,
+  getGmailUnreadInboxCount,
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,
@@ -10994,7 +10995,8 @@ export {
   listEvents,
   createEvent,
   updateEvent,
-  deleteEvent
+  deleteEvent,
+  rsvpToEvent
 } from './calendar/calendarApi';
 
 // Gmail-Tasks Integration Functions

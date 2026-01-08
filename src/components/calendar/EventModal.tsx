@@ -85,7 +85,13 @@ const EventModal: React.FC<EventModalProps> = ({
 
     if (mode === 'edit' && initialEvent) {
       setTitle(initialEvent.summary || '');
-      setSelectedCalendarId(initialEvent.calendarId || '');
+      // Avoid MUI Select out-of-range warnings when calendars haven't loaded yet.
+      // We'll re-hydrate the real calendarId once calendars are available.
+      const nextCalendarId =
+        calendars.length > 0 && initialEvent.calendarId
+          ? (calendars.some((c) => c.id === initialEvent.calendarId) ? initialEvent.calendarId : '')
+          : '';
+      setSelectedCalendarId(nextCalendarId);
       setAllDay(initialEvent.isAllDay);
       setLocation(initialEvent.location || '');
       setDescription(initialEvent.description || '');
@@ -379,6 +385,11 @@ const EventModal: React.FC<EventModalProps> = ({
             <FormControl fullWidth disabled={calendarsLoading || isLoading}>
               <InputLabel>Calendar</InputLabel>
               <Select value={selectedCalendarId} onChange={(e) => setSelectedCalendarId(e.target.value)} label="Calendar">
+                {writableCalendars.length === 0 && (
+                  <MenuItem value="" disabled>
+                    {calendarsLoading ? 'Loading calendars…' : 'No writable calendars available'}
+                  </MenuItem>
+                )}
                 {writableCalendars.map((cal) => (
                   <MenuItem key={cal.id} value={cal.id}>
                     {cal.summary}

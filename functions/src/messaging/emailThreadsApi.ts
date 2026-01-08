@@ -29,6 +29,7 @@ import {
   syncReadStateToGmail,
   syncArchiveStateToGmail,
   syncDeleteStateToGmail,
+  syncThreadReadStateToGmail,
 } from './gmailTwoWaySync';
 import { enrichThreadWithContacts } from './contactLinking';
 
@@ -1161,6 +1162,10 @@ export const updateEmailThreadApi = onRequest(
         .collection('emailThreads')
         .doc(threadId);
 
+      const threadDoc = await threadRef.get();
+      const threadData = threadDoc.data() as any;
+      const gmailThreadId: string | undefined = threadData?.gmailThreadId;
+
       const updates: any = {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
@@ -1168,9 +1173,20 @@ export const updateEmailThreadApi = onRequest(
       if (read !== undefined) {
         if (read) {
           await markThreadRead(threadId, tenantId, userId);
+          // Best-effort: also mark Gmail thread read
+          if (gmailThreadId) {
+            syncThreadReadStateToGmail(userId, gmailThreadId, true).catch((err) => {
+              logger.warn('Failed to sync Gmail thread read state:', err);
+            });
+          }
         } else {
           // Mark as unread (would need to implement)
           updates.unreadCount = admin.firestore.FieldValue.increment(1);
+          if (gmailThreadId) {
+            syncThreadReadStateToGmail(userId, gmailThreadId, false).catch((err) => {
+              logger.warn('Failed to sync Gmail thread unread state:', err);
+            });
+          }
         }
       }
 

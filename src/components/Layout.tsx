@@ -299,36 +299,28 @@ const Layout: React.FC = React.memo(function Layout() {
 
     const loadUnreadCount = async () => {
       try {
-        const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+        // Preferred semantics: match Gmail's unread INBOX message count
+        const { functions } = await import('../firebase');
+        const { httpsCallable } = await import('firebase/functions');
+        const getUnread = httpsCallable(functions, 'getGmailUnreadInboxCount');
+        const result = await getUnread({ userId: user.uid });
+        const data = result.data as any;
+        if (data?.success && typeof data.unreadCount === 'number') {
+          setInboxUnreadCount(data.unreadCount > 99 ? 99 : data.unreadCount);
+          return;
+        }
+        // Fallback: if callable fails, keep old behavior via REST thread count
+        const API_BASE_URL =
+          process.env.REACT_APP_FUNCTIONS_URL ||
           'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-
         const response = await fetch(
           `${API_BASE_URL}/listEmailThreadsApi?tenantId=${encodeURIComponent(activeTenant.id)}&userId=${encodeURIComponent(user.uid)}&unreadOnly=true&limit=100`
         );
-
         if (response.ok) {
-          const data = await response.json();
-          if (data.success) {
-            // When unreadOnly=true, the backend filters for unread threads
-            // But add a safety check to verify each thread actually has unreadCount > 0
-            const threadsWithUnread = (data.threads || [])
-              .filter((thread: any) => (thread.unreadCount || 0) > 0);
-            const unreadThreadCount = threadsWithUnread.length;
-            const totalReturned = (data.threads || []).length;
-            
-            // If we got exactly the limit back, there might be more unread threads
-            // Show 99+ to indicate there are many unread threads
-            const displayCount = (totalReturned >= 100 && unreadThreadCount >= 100) ? 99 : unreadThreadCount;
-            
-            // Always set the count, even if it's 0, to ensure UI updates
-            setInboxUnreadCount(displayCount);
-            console.log('[Inbox Count] Unread threads:', unreadThreadCount, 'Display count:', displayCount, 'Total returned:', totalReturned);
-          } else {
-            // If API call failed, reset to 0
-            setInboxUnreadCount(0);
-          }
+          const fallback = await response.json().catch(() => ({}));
+          const threadsWithUnread = (fallback.threads || []).filter((t: any) => (t.unreadCount || 0) > 0);
+          setInboxUnreadCount(Math.min(99, threadsWithUnread.length));
         } else {
-          // If response not ok, reset to 0
           setInboxUnreadCount(0);
         }
       } catch (err) {
