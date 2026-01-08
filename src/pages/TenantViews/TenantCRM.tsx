@@ -251,13 +251,15 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     companyId: '',
     companyName: '',
     linkedinUrl: '',
-    leadSource: '',
+    locationId: '',
     contactType: 'Unknown',
     tags: [] as string[],
     isActive: true,
     notes: ''
   });
   const [savingContact, setSavingContact] = useState(false);
+  const [companyLocations, setCompanyLocations] = useState<any[]>([]);
+  const [loadingCompanyLocations, setLoadingCompanyLocations] = useState(false);
   
   // Company form state
   const [companyForm, setCompanyForm] = useState({
@@ -1704,10 +1706,54 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
 
   const handleCloseDialog = () => {
     setShowAddDialog(false);
+    // Reset contact form and locations when dialog closes
+    setContactForm({
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      jobTitle: '',
+      companyId: '',
+      companyName: '',
+      linkedinUrl: '',
+      locationId: '',
+      contactType: 'Unknown',
+      tags: [] as string[],
+      isActive: true,
+      notes: ''
+    });
+    setCompanyLocations([]);
   };
 
   const handleContactFormChange = (field: string, value: string | boolean | string[]) => {
     setContactForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  // Load company locations when company is selected
+  const loadCompanyLocationsForContact = async (companyId: string) => {
+    if (!companyId || !tenantId) {
+      setCompanyLocations([]);
+      setContactForm(prev => ({ ...prev, locationId: '' }));
+      return;
+    }
+    
+    setLoadingCompanyLocations(true);
+    try {
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
+      const locationsSnapshot = await getDocs(locationsRef);
+      const locationsData = locationsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCompanyLocations(locationsData);
+      // Clear location selection when company changes
+      setContactForm(prev => ({ ...prev, locationId: '' }));
+    } catch (error) {
+      console.error('Error loading company locations:', error);
+      setCompanyLocations([]);
+    } finally {
+      setLoadingCompanyLocations(false);
+    }
   };
 
   const handleTagsChange = (newTags: string[]) => {
@@ -1730,6 +1776,21 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     try {
       const associations: any = {};
       if (contactForm.companyId) associations.companies = [contactForm.companyId];
+      
+      // Handle location associations (same format as ContactDetails)
+      let locationId = '';
+      let locationName = '';
+      if (contactForm.locationId) {
+        const selectedLocation = companyLocations.find(loc => loc.id === contactForm.locationId);
+        if (selectedLocation) {
+          // Save in associations.locations array (supports multiple locations)
+          associations.locations = [contactForm.locationId];
+          // Also save in legacy format for backward compatibility
+          locationId = contactForm.locationId;
+          locationName = selectedLocation.name || selectedLocation.nickname || selectedLocation.title || 'Unknown Location';
+        }
+      }
+      
       const contactData = {
         firstName: contactForm.firstName,
         lastName: contactForm.lastName,
@@ -1738,7 +1799,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         phone: contactForm.phone,
         jobTitle: contactForm.jobTitle,
         linkedinUrl: contactForm.linkedinUrl,
-        leadSource: contactForm.leadSource,
+        locationId, // Legacy format - first location
+        locationName, // Legacy format - first location name
         contactType: contactForm.contactType,
         tags: contactForm.tags,
         isActive: contactForm.isActive,
@@ -1764,7 +1826,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         companyId: '',
         companyName: '',
         linkedinUrl: '',
-        leadSource: '',
+        locationId: '',
         contactType: 'Unknown',
         tags: [],
         isActive: true,
@@ -2397,9 +2459,16 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                 options={allCompanies}
                 getOptionLabel={(option) => option.companyName || option.name || ''}
                 value={allCompanies.find(c => c.id === contactForm.companyId) || null}
-                onChange={(event, newValue) => {
+                onChange={async (event, newValue) => {
                   handleContactFormChange('companyId', newValue?.id || '');
                   handleContactFormChange('companyName', newValue?.companyName || newValue?.name || '');
+                  // Load locations for the selected company
+                  if (newValue?.id) {
+                    await loadCompanyLocationsForContact(newValue.id);
+                  } else {
+                    setCompanyLocations([]);
+                    handleContactFormChange('locationId', '');
+                  }
                 }}
                 loading={loadingAllCompanies}
                 renderInput={(params) => (
@@ -2432,20 +2501,25 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
             </Grid>
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
-                <InputLabel>Lead Source</InputLabel>
+                <InputLabel>Location</InputLabel>
                 <Select
-                  value={contactForm.leadSource}
-                  label="Lead Source"
-                  onChange={(e) => handleContactFormChange('leadSource', e.target.value)}
+                  value={contactForm.locationId}
+                  label="Location"
+                  onChange={(e) => handleContactFormChange('locationId', e.target.value)}
+                  disabled={!contactForm.companyId || loadingCompanyLocations || companyLocations.length === 0}
                 >
-                  <MenuItem value="">None</MenuItem>
-                  <MenuItem value="website">Website</MenuItem>
-                  <MenuItem value="referral">Referral</MenuItem>
-                  <MenuItem value="cold_call">Cold Call</MenuItem>
-                  <MenuItem value="email">Email</MenuItem>
-                  <MenuItem value="social_media">Social Media</MenuItem>
-                  <MenuItem value="trade_show">Trade Show</MenuItem>
-                  <MenuItem value="other">Other</MenuItem>
+                  {companyLocations.length === 0 && contactForm.companyId ? (
+                    <MenuItem value="" disabled>
+                      {loadingCompanyLocations ? 'Loading locations...' : 'No locations found'}
+                    </MenuItem>
+                  ) : (
+                    <MenuItem value="">None</MenuItem>
+                  )}
+                  {companyLocations.map((location) => (
+                    <MenuItem key={location.id} value={location.id}>
+                      {location.nickname || location.name || location.title || 'Unnamed Location'}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
             </Grid>
