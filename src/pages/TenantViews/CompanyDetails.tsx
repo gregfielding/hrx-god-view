@@ -2324,7 +2324,7 @@ const LinkForActivity: React.FC<{ it: CompanyActivityItem; tenantId: string }> =
       href = `/crm/deals/${dealId}`;
       label = 'View Deal';
     } else if (contactId) {
-      href = `/crm/contacts/${contactId}`;
+      href = `/contacts/${contactId}`;
       label = 'View Contact';
     }
   }
@@ -3764,10 +3764,10 @@ const CompanyDashboardTab: React.FC<{
                     <Box
                       key={contact.id}
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                      onClick={() => navigate(`/contacts/${contact.id}`)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
                     >
                       <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                         {contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
@@ -6388,7 +6388,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               {filteredAndSortedContacts.map((contact: any, index: number) => (
                 <TableRow 
                   key={contact.id}
-                  onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                  onClick={() => navigate(`/contacts/${contact.id}`)}
                   sx={{
                     height: '48px',
                     cursor: 'pointer',

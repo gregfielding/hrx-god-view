@@ -102,7 +102,7 @@ const ContactHoverCard: React.FC<ContactHoverCardProps> = ({
               </Stack>
               {contact.companyId && (
                 <Link
-                  href={`/crm/companies/${contact.companyId}`}
+                  href={`/companies/${contact.companyId}`}
                   target="_blank"
                   rel="noopener"
                   sx={{
@@ -128,7 +128,7 @@ const ContactHoverCard: React.FC<ContactHoverCardProps> = ({
           <Stack spacing={0.5}>
             {contact.contactId && (
               <Link
-                href={`/crm/contacts/${contact.contactId}`}
+                href={`/contacts/${contact.contactId}`}
                 target="_blank"
                 rel="noopener"
                 sx={{

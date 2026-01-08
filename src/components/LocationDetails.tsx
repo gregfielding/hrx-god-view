@@ -365,7 +365,7 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
   };
 
   const handleViewContact = (contact: CRMContact) => {
-    navigate(`/crm/contacts/${contact.id}`);
+    navigate(`/contacts/${contact.id}`);
   };
 
   const handleViewDeal = (deal: CRMDeal) => {

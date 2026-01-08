@@ -779,7 +779,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                           clickable
                         onClick={(e) => {
                           e.stopPropagation();
-                          window.open(`/crm/contacts/${option.id}`, '_blank');
+                          window.open(`/contacts/${option.id}`, '_blank');
                         }}
                           sx={{ 
                             cursor: 'pointer',

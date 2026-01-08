@@ -1885,8 +1885,8 @@ const DealDetails: React.FC = () => {
                           <MUILink
                             underline="hover"
                             color="primary"
-                            href={`/crm/contacts/${contact.id}`}
-                            onClick={(e) => { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); }}
+                            href={`/contacts/${contact.id}`}
+                            onClick={(e) => { e.preventDefault(); navigate(`/contacts/${contact.id}`); }}
                           >
                             <Typography variant="body2" color="primary">
                               {(contact.fullName || contact.name || 'Contact')}
@@ -2507,10 +2507,10 @@ const DealDetails: React.FC = () => {
                         <Box
                           key={contact.id}
                           sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/crm/contacts/${contact.id}`)}
+                          onClick={() => navigate(`/contacts/${contact.id}`)}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${contact.id}`); } }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
                         >
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                             {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}

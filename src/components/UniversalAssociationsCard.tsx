@@ -803,7 +803,7 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
         navigate(`/crm/companies/${entity.companyId}/locations/${entity.id}`);
         break;
       case 'contact':
-        navigate(`/crm/contacts/${entity.id}`);
+        navigate(`/contacts/${entity.id}`);
         break;
       case 'deal':
         navigate(`/crm/deals/${entity.id}`);

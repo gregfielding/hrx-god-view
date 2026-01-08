@@ -3688,7 +3688,7 @@ const ContactsTab: React.FC<{
               contact={contact}
               isFavorite={isFavorite}
               toggleFavorite={toggleFavorite}
-              onRowClick={() => navigate(`/crm/contacts/${contact.id}`)}
+              onRowClick={() => navigate(`/contacts/${contact.id}`)}
               getAvatarColor={getAvatarColor}
               getAvatarTextColor={getAvatarTextColor}
               getInitials={getInitials}

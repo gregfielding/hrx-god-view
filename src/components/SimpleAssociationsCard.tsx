@@ -724,9 +724,9 @@ const SimpleAssociationsCard: React.FC<SimpleAssociationsCardProps> = ({
 
   const handleEntityClick = (entity: any, type: string) => {
     const routeMap: { [key: string]: string } = {
-      'companies': `/crm/companies/${entity.id}`,
+      'companies': `/companies/${entity.id}`,
       'deals': `/crm/deals/${entity.id}`,
-      'contacts': `/crm/contacts/${entity.id}`,
+      'contacts': `/contacts/${entity.id}`,
       'salespeople': `/crm/salespeople/${entity.id}`,
       'tasks': `/crm/tasks/${entity.id}`,
       'locations': `/crm/locations/${entity.id}`

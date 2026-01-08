@@ -406,7 +406,7 @@ const LinkForActivity: React.FC<{ it: LocationActivityItem; tenantId: string; co
       href = `/crm/deals/${dealId}`;
       label = 'View Deal';
     } else if (contactId) {
-      href = `/crm/contacts/${contactId}`;
+      href = `/contacts/${contactId}`;
       label = 'View Contact';
     }
   }
@@ -1490,10 +1490,10 @@ const LocationDetails: React.FC = () => {
                         <Box
                           key={c.id}
                           sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/crm/contacts/${c.id}`)}
+                          onClick={() => navigate(`/contacts/${c.id}`)}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/contacts/${c.id}`); } }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${c.id}`); } }}
                         >
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                             {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}

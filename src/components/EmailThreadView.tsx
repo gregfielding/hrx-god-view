@@ -895,7 +895,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                             }}
                             onClick={() => {
                               if (contact.contactId) {
-                                window.open(`/crm/contacts/${contact.contactId}`, '_blank');
+                                window.open(`/contacts/${contact.contactId}`, '_blank');
                               } else if (contact.userId) {
                                 window.open(`/users/${contact.userId}`, '_blank');
                               }
