@@ -132,7 +132,9 @@ import SalespersonActivityView from '../../components/SalespersonActivityView';
 
 
 
-const TenantCRM: React.FC = () => {
+type TenantCRMStandaloneTab = 'contacts' | 'companies' | 'opportunities';
+
+const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ standaloneTab }) => {
   const { tenantId, role, accessRole, orgType, currentUser, activeTenant } = useAuth();
   const { cacheState, updateCacheState, hasCachedState } = useCRMCache();
   const navigate = useNavigate();
@@ -142,6 +144,13 @@ const TenantCRM: React.FC = () => {
   const didRestoreTabFromCacheRef = useRef(false);
   const isLockingTabRef = useRef(false);
   const [tabValue, setTabValue] = useState(() => {
+    const standaloneTabMap: Record<TenantCRMStandaloneTab, number> = {
+      contacts: 1,
+      companies: 2,
+      opportunities: 3,
+    };
+    if (standaloneTab) return standaloneTabMap[standaloneTab];
+
     // Initialize tab value from URL on first load
     const tabParam = searchParams.get('tab');
     if (tabParam) {
@@ -167,6 +176,7 @@ const TenantCRM: React.FC = () => {
   
   // Initialize tab value from URL or cache (only on mount, not on every URL change)
   useEffect(() => {
+    if (standaloneTab) return;
     // Only run this on initial mount when we don't have a URL tab param
     const tabParam = searchParams.get('tab');
     if (!tabParam && hasCachedState && cacheState.activeTab !== tabValue) {
@@ -1540,6 +1550,7 @@ const TenantCRM: React.FC = () => {
   // Remove the separate useEffects for filter changes - they're now handled in the main useEffect above
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    if (standaloneTab) return;
     console.log('🔄 handleTabChange called:', { newValue, currentTabValue: tabValue, isUserTabChange });
     
     // Lock current content height to prevent layout flash between tabs
@@ -1859,67 +1870,75 @@ const TenantCRM: React.FC = () => {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <Box sx={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: 'background.default' }}>
         <PageHeader
-          title="CRM"
-          subtitle="Manage contacts, companies, opportunities, and pipeline"
+          title={standaloneTab === 'contacts' ? 'Contacts' : 'CRM'}
+          subtitle={
+            standaloneTab === 'contacts'
+              ? 'Manage contacts, owners, and pipelines'
+              : 'Manage contacts, companies, opportunities, and pipeline'
+          }
         filters={
-          <Box 
-            display="flex" 
-            gap={0.5} 
-            sx={{ 
-              flexWrap: 'nowrap', 
-              overflowX: 'auto', 
-              overflowY: 'hidden', 
-              WebkitOverflowScrolling: 'touch', 
-              scrollbarWidth: 'thin',
-              '&::-webkit-scrollbar': { height: '6px' },
-              '&::-webkit-scrollbar-track': { 
-                background: 'rgba(0, 0, 0, 0.02)', 
-                borderRadius: '4px' 
-              },
-              '&::-webkit-scrollbar-thumb': { 
-                background: 'rgba(0, 0, 0, 0.15)', 
-                borderRadius: '4px',
-                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' }
-              }
-            }}
-          >
-            {[
-              { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
-              { label: 'Contacts', value: 1, icon: <PersonIcon fontSize="small" /> },
-              { label: 'Companies', value: 2, icon: <BusinessIcon fontSize="small" /> },
-              { label: 'Opportunities', value: 3, icon: <DealIcon fontSize="small" /> },
-              { label: 'Pipeline', value: 4, icon: <PipelineIcon fontSize="small" /> },
-              { label: 'Prospect', value: 5, icon: <FilterAltIcon fontSize="small" /> },
-              { label: 'Activity', value: 6, icon: <TrendingUpIcon fontSize="small" /> },
-            ].map((t) => {
-              const isActive = tabValue === t.value;
-              return (
-                <Button
-                  key={t.value}
-                  startIcon={t.icon}
-                  onClick={() => handleTabChange({} as any, t.value)}
-                  variant="text"
-                  sx={{
-                    textTransform: 'none',
-                    borderRadius: '999px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? 500 : 400,
-                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                    px: 1.5,
-                    py: 0.75,
-                    minWidth: 'auto',
-                    whiteSpace: 'nowrap',
-                    '&:hover': {
-                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                    },
-                  }}
-                >
-                  {t.label}
-                </Button>
-              );
-            })}
-          </Box>
+          standaloneTab
+            ? undefined
+            : (
+              <Box 
+                display="flex" 
+                gap={0.5} 
+                sx={{ 
+                  flexWrap: 'nowrap', 
+                  overflowX: 'auto', 
+                  overflowY: 'hidden', 
+                  WebkitOverflowScrolling: 'touch', 
+                  scrollbarWidth: 'thin',
+                  '&::-webkit-scrollbar': { height: '6px' },
+                  '&::-webkit-scrollbar-track': { 
+                    background: 'rgba(0, 0, 0, 0.02)', 
+                    borderRadius: '4px' 
+                  },
+                  '&::-webkit-scrollbar-thumb': { 
+                    background: 'rgba(0, 0, 0, 0.15)', 
+                    borderRadius: '4px',
+                    '&:hover': { background: 'rgba(0, 0, 0, 0.25)' }
+                  }
+                }}
+              >
+                {[
+                  { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
+                  { label: 'Contacts', value: 1, icon: <PersonIcon fontSize="small" /> },
+                  { label: 'Companies', value: 2, icon: <BusinessIcon fontSize="small" /> },
+                  { label: 'Opportunities', value: 3, icon: <DealIcon fontSize="small" /> },
+                  { label: 'Pipeline', value: 4, icon: <PipelineIcon fontSize="small" /> },
+                  { label: 'Prospect', value: 5, icon: <FilterAltIcon fontSize="small" /> },
+                  { label: 'Activity', value: 6, icon: <TrendingUpIcon fontSize="small" /> },
+                ].map((t) => {
+                  const isActive = tabValue === t.value;
+                  return (
+                    <Button
+                      key={t.value}
+                      startIcon={t.icon}
+                      onClick={() => handleTabChange({} as any, t.value)}
+                      variant="text"
+                      sx={{
+                        textTransform: 'none',
+                        borderRadius: '999px',
+                        fontSize: '14px',
+                        fontWeight: isActive ? 500 : 400,
+                        color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                        bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                        px: 1.5,
+                        py: 0.75,
+                        minWidth: 'auto',
+                        whiteSpace: 'nowrap',
+                        '&:hover': {
+                          bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                        },
+                      }}
+                    >
+                      {t.label}
+                    </Button>
+                  );
+                })}
+              </Box>
+            )
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>

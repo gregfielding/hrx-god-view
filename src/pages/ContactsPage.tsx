@@ -1,8 +1,8 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
 import { Box, Typography } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import RecruiterContacts from './RecruiterContacts';
+import TenantCRM from './TenantViews/TenantCRM';
 
 /**
  * Canonical Contacts route.
@@ -13,7 +13,8 @@ import RecruiterContacts from './RecruiterContacts';
 const ContactsPage: React.FC = () => {
   const { crmSalesEnabled, recruiterEnabled } = useAuth();
 
-  if (crmSalesEnabled) return <Navigate to="/crm?tab=contacts" replace />;
+  // Standalone master table view
+  if (crmSalesEnabled) return <TenantCRM standaloneTab="contacts" />;
   if (recruiterEnabled) return <RecruiterContacts />;
 
   return (
