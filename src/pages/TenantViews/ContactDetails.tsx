@@ -1689,7 +1689,7 @@ const ContactDetails: React.FC = () => {
                 minHeight: 108 
               }}>
                 {/* Line 1: Name */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0 }}>
                   <Typography
                     variant="h6"
                     sx={{
@@ -1715,7 +1715,7 @@ const ContactDetails: React.FC = () => {
                   spacing={0.5} 
                   alignItems="center" 
                   flexWrap="wrap" 
-                  sx={{ mb: 1 }}
+                  sx={{ mb: 0.5 }}
                 >
                   {contact.email && (
                     <Tooltip title={gmailConnected ? `Email ${contact.email} (send via HRX)` : `Email ${contact.email} (open mail app)`}>
@@ -1811,7 +1811,7 @@ const ContactDetails: React.FC = () => {
                   spacing={2}
                   alignItems="center"
                   flexWrap="wrap"
-                  sx={{ mt: 0.5 }}
+                  sx={{ mt: 0 }}
                 >
                   {/* Company */}
                   {(company?.id || contact.companyId) && (
@@ -2072,7 +2072,7 @@ const ContactDetails: React.FC = () => {
             <Button
               variant="outlined"
               startIcon={<ArrowBackIcon />}
-              onClick={() => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/crm?tab=contacts')}
+              onClick={() => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/contacts')}
             >
               Back
             </Button>

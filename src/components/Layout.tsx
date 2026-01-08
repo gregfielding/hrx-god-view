@@ -141,6 +141,16 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'Inbox';
     }
     
+    // Contacts routes (check before CRM to avoid conflicts)
+    if (pathname.startsWith('/contacts')) {
+      return 'Contacts';
+    }
+    
+    // Companies routes (check before CRM to avoid conflicts)
+    if (pathname.startsWith('/companies')) {
+      return 'Companies';
+    }
+    
     // Jobs Board routes
     if (pathname.includes('/recruiter/jobs-board')) {
       return 'Recruiter';

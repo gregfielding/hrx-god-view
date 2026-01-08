@@ -5,7 +5,7 @@
  * Slides in from the right, takes ~40% of desktop screen.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Drawer,
   Box,
@@ -115,6 +115,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [recipientInputValue, setRecipientInputValue] = useState('');
   const [draftId, setDraftId] = useState<string | undefined>(undefined);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const prevOpenRef = useRef(false); // Track previous open state to detect when drawer first opens
 
   // Create auto-save function for drafts
   const autoSaveDraft = useMemo(
@@ -164,8 +165,28 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   }, [open, user?.uid, effectiveTenantId, threadId, defaultSubject, defaultBody]);
 
   // Pre-load sender information and check Twilio number when drawer opens
+  // CRITICAL: Only reset form fields when drawer FIRST opens (not on every prop change)
   useEffect(() => {
-    if (open && user?.uid) {
+    const isOpening = open && !prevOpenRef.current; // Drawer is opening (was closed, now open)
+    const isClosing = !open && prevOpenRef.current; // Drawer is closing (was open, now closed)
+    
+    // Update ref to track current state
+    prevOpenRef.current = open;
+    
+    if (isOpening && user?.uid) {
+      // Only reset form fields when drawer FIRST opens, not on subsequent prop changes
+      setChannels(defaultChannels || (initialChannel ? [initialChannel] : ['email']));
+      setSubject(defaultSubject || '');
+      setMessageBody(defaultBody || '');
+      setCc('');
+      setBcc('');
+      setAttachments([]);
+      setError(null);
+      setSuccess(false);
+      setInternalRecipients(recipients);
+      setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
+      setRecipientOptions([]);
+      
       // Immediately set Gmail sender option (will be updated if not connected)
       const initialOptions: SenderOption[] = [{
         id: 'gmail',
@@ -226,18 +247,25 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       };
       
       checkSenderInfo();
+    } else if (isClosing) {
+      // Reset draft state when drawer closes
+      setDraftId(undefined);
+      setDraftLoaded(false);
+    }
+    
+    // Update recipients if they change while drawer is open (but don't reset form fields)
+    // Only update if recipients actually changed (compare by IDs/emails)
+    if (open && !isOpening) {
+      const currentRecipientIds = new Set(internalRecipients.map(r => r.userId || r.email || r.name).filter(Boolean));
+      const newRecipientIds = new Set(recipients.map(r => r.userId || r.email || r.name).filter(Boolean));
+      const recipientsChanged = 
+        currentRecipientIds.size !== newRecipientIds.size ||
+        [...newRecipientIds].some(id => !currentRecipientIds.has(id));
       
-      setChannels(defaultChannels || (initialChannel ? [initialChannel] : ['email']));
-      setSubject(defaultSubject || '');
-      setMessageBody(defaultBody || '');
-      setCc('');
-      setBcc('');
-      setAttachments([]);
-      setError(null);
-      setSuccess(false);
-      setInternalRecipients(recipients);
-      setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
-      setRecipientOptions([]);
+      if (recipientsChanged) {
+        setInternalRecipients(recipients);
+        setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
+      }
     }
   }, [open, initialChannel, defaultChannels, defaultSubject, defaultBody, user?.uid, effectiveTenantId, recipients]);
 
