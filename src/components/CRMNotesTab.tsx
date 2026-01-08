@@ -2,11 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  TextField,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -17,11 +13,6 @@ import {
   IconButton,
   Chip,
   Avatar,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Alert,
   Snackbar,
   Tooltip,
@@ -35,15 +26,10 @@ import {
 import {
   Visibility as ViewIcon,
   Delete as DeleteIcon,
-  Note as NoteIcon,
-  Add as AddIcon,
-  AttachFile as AttachFileIcon,
 } from '@mui/icons-material';
-import { doc, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, serverTimestamp } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { doc, collection, getDocs, query, orderBy, where, deleteDoc } from 'firebase/firestore';
 
-import { db, storage } from '../firebase';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
 
@@ -84,27 +70,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   const [viewNoteDialog, setViewNoteDialog] = useState<{ open: boolean; note: Note | null }>({ open: false, note: null });
   const [userRole, setUserRole] = useState<'hrx' | 'agency' | 'customer'>('customer');
   
-  // Form state
-  const [newNote, setNewNote] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [noteCategory, setNoteCategory] = useState<Note['category']>('general');
-  const [notePriority, setNotePriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
-  
-  // Job order specific tags
-  const jobOrderTags = [
-    'Staffing', 'Compliance', 'Performance', 'Client Feedback', 'Scheduling',
-    'Payroll', 'Onboarding', 'Training', 'Safety', 'Quality', 'Attendance'
-  ];
-  
-  // CRM specific tags
-  const crmTags = [
-    'Lead', 'Prospect', 'Customer', 'Meeting', 'Follow-up', 'Proposal',
-    'Negotiation', 'Closing', 'Contract', 'Renewal', 'Issue', 'Opportunity'
-  ];
-  
-  const availableTags = entityType === 'jobOrder' ? jobOrderTags : crmTags;
+  // Form state removed - using Add Note dialog from layout instead
 
 
 
@@ -196,89 +162,7 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
 
 
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const filesArray = Array.from(event.target.files);
-      setSelectedFiles(prev => [...prev, ...filesArray]);
-    }
-  };
-
-  const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSubmitNote = async () => {
-    if (!newNote.trim() || !currentUser) return;
-
-    setUploading(true);
-    setLoading(true);
-    try {
-      // Upload files if any
-      const uploadedFiles = [];
-      for (const file of selectedFiles) {
-        try {
-          const fileName = `${Date.now()}_${file.name}`;
-          const storagePath = entityType === 'jobOrder' 
-            ? `job_orders/${entityId}/notes/${fileName}`
-            : `${entityType}_notes/${entityId}/${fileName}`;
-          const storageRef = ref(storage, storagePath);
-          await uploadBytes(storageRef, file);
-          const downloadURL = await getDownloadURL(storageRef);
-          uploadedFiles.push({
-            name: file.name,
-            url: downloadURL,
-            type: file.type,
-          });
-        } catch (error) {
-          console.error('Error uploading file:', error);
-          setSuccessMessage('Error uploading file(s)');
-          setShowSuccess(true);
-          return;
-        }
-      }
-
-      // Create note document
-      const noteData = {
-        content: newNote.trim(),
-        authorId: currentUser.uid,
-        authorName: currentUser.displayName || currentUser.email || 'Unknown',
-        authorRole: userRole,
-        timestamp: serverTimestamp(),
-        files: uploadedFiles.length > 0 ? uploadedFiles : undefined,
-        category: noteCategory,
-        priority: notePriority,
-        tags: selectedTags.length > 0 ? selectedTags : undefined,
-        aiReviewed: false,
-        entityId,
-        entityType,
-        tenantId,
-      };
-
-      const collectionName = entityType === 'jobOrder' ? 'job_order_notes' : `${entityType}_notes`;
-      const notesRef = collection(db, 'tenants', tenantId, collectionName);
-      await addDoc(notesRef, noteData);
-
-      // Reset form
-      setNewNote('');
-      setSelectedFiles([]);
-      setNoteCategory('general');
-      setNotePriority('medium');
-      setSelectedTags([]);
-
-      // Reload notes
-      await loadNotes();
-
-      setSuccessMessage('Note added successfully');
-      setShowSuccess(true);
-    } catch (error) {
-      console.error('Error adding note:', error);
-      setSuccessMessage('Error adding note');
-      setShowSuccess(true);
-    } finally {
-      setUploading(false);
-      setLoading(false);
-    }
-  };
+  // Form functions removed - using Add Note dialog from layout instead
 
   const handleDeleteNote = async (noteId: string) => {
     if (window.confirm('Are you sure you want to delete this note?')) {
@@ -336,332 +220,199 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      {/* Add Note Form Card */}
-      <Card>
-        <CardHeader 
-          title="Add New Note" 
-          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-        />
-        <CardContent sx={{ p: 2 }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
-            {entityType === 'location' 
-              ? 'Add notes about this location. Location notes and company notes tagged for this location will be shown together.'
-              : entityType === 'deal'
-              ? 'Add notes, observations, and feedback about this deal. All notes trigger AI review for insights.'
-              : entityType === 'jobOrder'
-              ? 'Add notes, observations, and feedback about this job order. All notes trigger AI review for insights.'
-              : `Add notes, observations, and feedback about this ${entityType}. All notes trigger AI review for insights.`}
-          </Typography>
-          
-          <Grid container spacing={2}>
-          <Grid item xs={12}>
-            <TextField
-              label="Note Content"
-              multiline
-              rows={4}
-              fullWidth
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              placeholder={`Enter your note, observation, or feedback about this ${entityType === 'jobOrder' ? 'job order' : entityType}...`}
-              variant="outlined"
-            />
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <FormControl fullWidth>
-              <InputLabel>Category</InputLabel>
-              <Select
-                value={noteCategory}
-                onChange={(e) => setNoteCategory(e.target.value as Note['category'])}
-                label="Category"
-              >
-                {entityType === 'jobOrder' ? (
-                  <>
-                    <MenuItem value="general">General</MenuItem>
-                    <MenuItem value="staffing">Staffing</MenuItem>
-                    <MenuItem value="compliance">Compliance</MenuItem>
-                    <MenuItem value="performance">Performance</MenuItem>
-                    <MenuItem value="client_feedback">Client Feedback</MenuItem>
-                    <MenuItem value="other">Other</MenuItem>
-                  </>
-                ) : (
-                  <>
-                    <MenuItem value="general">General</MenuItem>
-                    <MenuItem value="sales">Sales</MenuItem>
-                    <MenuItem value="meeting">Meeting</MenuItem>
-                    <MenuItem value="follow_up">Follow-up</MenuItem>
-                    <MenuItem value="proposal">Proposal</MenuItem>
-                    <MenuItem value="negotiation">Negotiation</MenuItem>
-                    <MenuItem value="closing">Closing</MenuItem>
-                    <MenuItem value="other">Other</MenuItem>
-                  </>
-                )}
-              </Select>
-            </FormControl>
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <FormControl fullWidth>
-              <InputLabel>Priority</InputLabel>
-              <Select
-                value={notePriority}
-                onChange={(e) => setNotePriority(e.target.value as any)}
-                label="Priority"
-              >
-                <MenuItem value="low">Low</MenuItem>
-                <MenuItem value="medium">Medium</MenuItem>
-                <MenuItem value="high">High</MenuItem>
-                <MenuItem value="urgent">Urgent</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Tags (optional)
-            </Typography>
-            <Box display="flex" flexWrap="wrap" gap={1}>
-              {availableTags.map((tag) => (
-                <Chip
-                  key={tag}
-                  label={tag}
-                  onClick={() => {
-                    if (selectedTags.includes(tag)) {
-                      setSelectedTags(selectedTags.filter(t => t !== tag));
-                    } else {
-                      setSelectedTags([...selectedTags, tag]);
-                    }
-                  }}
-                  color={selectedTags.includes(tag) ? 'primary' : 'default'}
-                  variant={selectedTags.includes(tag) ? 'filled' : 'outlined'}
-                  size="small"
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease-in-out',
-                    '&:hover': {
-                      transform: 'translateY(-1px)',
-                      boxShadow: 1
-                    }
-                  }}
-                />
-              ))}
-            </Box>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Box display="flex" flexDirection="column" gap={1.5}>
-              <Box display="flex" alignItems="center" gap={2}>
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<AttachFileIcon />}
-                  size="small"
-                >
-                  Attach Files
-                  <input
-                    type="file"
-                    hidden
-                    multiple
-                    onChange={handleFileSelect}
-                  />
-                </Button>
-                {selectedFiles.length > 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    {selectedFiles.length} file(s) selected
-                  </Typography>
-                )}
-              </Box>
-              
-              {selectedFiles.length > 0 && (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  {selectedFiles.map((file, index) => (
-                    <Chip
-                      key={index}
-                      label={file.name}
-                      onDelete={() => removeFile(index)}
-                      size="small"
-                      variant="outlined"
-                      sx={{ 
-                        maxWidth: 200,
-                        '& .MuiChip-label': {
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis'
-                        }
-                      }}
-                    />
+    <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      {/* Notes Table with Fixed Header */}
+      <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {loading ? (
+          <TableContainer 
+            component={Paper} 
+            sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              overflowX: 'auto',
+              borderRadius: 0,
+              border: '1px solid #EAEEF4',
+              boxShadow: 'none',
+              // Inbox-standard scrollbar
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: 'rgba(0, 0, 0, 0.25)',
+                },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader sx={{ minWidth: 1200 }}>
+              <TableHead>
+                <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+                  {['Content', 'Author', 'Date', 'Actions'].map((header) => (
+                    <TableCell key={header} sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'text.secondary',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                      py: 1,
+                      backgroundColor: 'background.paper',
+                    }}>
+                      {header}
+                    </TableCell>
                   ))}
-                </Box>
-              )}
-            </Box>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
-              <Button
-                variant="contained"
-                onClick={handleSubmitNote}
-                disabled={!newNote.trim() || uploading || loading}
-                startIcon={<AddIcon />}
-                size="medium"
-                sx={{ minWidth: 200 }}
-              >
-                {uploading ? 'Uploading...' : loading ? 'Adding Note...' : 'Add Note & Trigger AI Review'}
-              </Button>
-            </Box>
-          </Grid>
-        </Grid>
-        </CardContent>
-      </Card>
-
-      {/* Notes History Card */}
-      <Card>
-        <CardHeader 
-          title={`${entityType === 'contact' ? 'Contact' : entityType === 'location' ? 'Location' : entityType === 'deal' ? 'Deal' : entityType === 'jobOrder' ? 'Job Order' : 'Company'} Notes History (${notes.length})`} 
-          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-        />
-        <CardContent sx={{ p: 2 }}>
-          {loading ? (
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <TableRow key={`skeleton-${index}`} sx={{ bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA' }}>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Skeleton variant="text" width="100%" height={20} />
+                      <Skeleton variant="text" width="60%" height={16} sx={{ mt: 0.5 }} />
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Skeleton variant="circular" width={32} height={32} />
+                        <Skeleton variant="text" width={100} height={20} />
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Skeleton variant="text" width={120} height={20} />
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5 }}>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Skeleton variant="circular" width={32} height={32} />
+                        <Skeleton variant="circular" width={32} height={32} />
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : notes.length === 0 ? (
+          <Box textAlign="center" py={8} sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Box>
-              <TableContainer 
-                component={Paper} 
-                variant="outlined"
-                sx={{
-                  borderRadius: 1,
-                  border: '1px solid',
-                  borderColor: 'divider'
-                }}
-              >
-                <Table>
-                  <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.50' }}>
-                      {['Content', 'Author', 'Date', 'Actions'].map((header) => (
-                        <TableCell key={header} sx={{
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          color: 'text.secondary',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          borderBottom: '1px solid',
-                          borderColor: 'divider',
-                          py: 1.5
-                        }}>
-                          {header}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {Array.from({ length: 3 }).map((_, index) => (
-                      <TableRow key={`skeleton-${index}`}>
-                        <TableCell sx={{ py: 2 }}>
-                          <Skeleton variant="text" width="100%" height={20} />
-                          <Skeleton variant="text" width="60%" height={16} sx={{ mt: 0.5 }} />
-                        </TableCell>
-                        <TableCell sx={{ py: 2 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Skeleton variant="circular" width={32} height={32} />
-                            <Skeleton variant="text" width={100} height={20} />
-                          </Box>
-                        </TableCell>
-                        <TableCell sx={{ py: 2 }}>
-                          <Skeleton variant="text" width={120} height={20} />
-                        </TableCell>
-                        <TableCell sx={{ py: 2 }}>
-                          <Box sx={{ display: 'flex', gap: 1 }}>
-                            <Skeleton variant="circular" width={32} height={32} />
-                            <Skeleton variant="circular" width={32} height={32} />
-                          </Box>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Box>
-          ) : notes.length === 0 ? (
-            <Box textAlign="center" py={4}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                 No notes yet
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Add the first note above
+                Use the "Add Note" button to create your first note
               </Typography>
             </Box>
-          ) : (
-            <TableContainer 
-              component={Paper} 
-              variant="outlined"
-              sx={{
-                overflowX: 'auto',
-                borderRadius: 1,
-                border: '1px solid',
-                borderColor: 'divider'
-              }}
-            >
-              <Table sx={{ minWidth: 1200 }}>
-                <TableHead>
-                  <TableRow sx={{ bgcolor: 'grey.50' }}>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Content
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Author
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Date
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {notes.map((note) => (
-                    <TableRow 
-                      key={note.id}
-                      sx={{
-                        '&:hover': {
-                          bgcolor: 'grey.50'
-                        }
-                      }}
-                    >
+          </Box>
+        ) : (
+          <TableContainer 
+            component={Paper}
+            sx={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              overflowX: 'auto',
+              borderRadius: 0,
+              border: '1px solid #EAEEF4',
+              boxShadow: 'none',
+              // Inbox-standard scrollbar
+              '&::-webkit-scrollbar': {
+                width: '8px',
+                height: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: 'rgba(0, 0, 0, 0.25)',
+                },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Table stickyHeader sx={{ minWidth: 1200 }}>
+              <TableHead>
+                <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Content
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Author
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Date
+                  </TableCell>
+                  <TableCell sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    py: 1,
+                    backgroundColor: 'background.paper',
+                  }}>
+                    Actions
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {notes.map((note, index) => (
+                  <TableRow 
+                    key={note.id}
+                    sx={{
+                      bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                      '&:hover': {
+                        bgcolor: 'action.hover'
+                      }
+                    }}
+                  >
                       <TableCell 
                         sx={{ py: 1, px: 2, cursor: 'pointer' }}
                         onClick={() => setViewNoteDialog({ open: true, note })}
@@ -784,12 +535,11 @@ const CRMNotesTab: React.FC<CRMNotesTabProps> = ({ entityId, entityType, entityN
                       </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+      </Box>
 
       {/* View Note Dialog */}
       <Dialog

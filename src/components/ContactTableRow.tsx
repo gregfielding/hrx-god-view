@@ -6,6 +6,7 @@ import {
   Typography,
   Avatar,
   Chip,
+  Checkbox,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -43,6 +44,8 @@ interface ContactTableRowProps {
   getRoleLabel?: (role: string) => string;
   getRoleColor?: (role: string) => 'primary' | 'success' | 'warning' | 'info' | 'secondary' | 'default';
   rowIndex?: number; // For alternating row colors
+  selected?: boolean;
+  onSelect?: (e: React.MouseEvent) => void;
 }
 
 const ContactTableRow: React.FC<ContactTableRowProps> = ({
@@ -61,6 +64,8 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
   getRoleLabel,
   getRoleColor,
   rowIndex = 0,
+  selected = false,
+  onSelect,
 }) => {
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -110,14 +115,17 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
     <TableRow 
       hover
       onClick={() => onRowClick(contact)}
+      selected={selected}
       sx={{ 
-        // Inbox-standard row height
-        height: '44px',
+        // Compact row height
+        height: '36px',
         cursor: 'pointer',
-        bgcolor: rowIndex % 2 === 0 ? 'background.paper' : '#FAFAFA',
+        bgcolor: selected 
+          ? 'action.selected' 
+          : (rowIndex % 2 === 0 ? 'background.paper' : '#FAFAFA'),
         transition: 'background-color 0.15s ease',
         '&:hover': {
-          bgcolor: 'action.hover'
+          bgcolor: selected ? 'action.selected' : 'action.hover'
         },
         '&:focus-visible': {
           outline: '2px solid',
@@ -130,6 +138,32 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
         }
       }}
     >
+      {onSelect && (
+        <TableCell
+          padding="checkbox"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(e);
+          }}
+          sx={{
+            position: 'sticky',
+            left: 0,
+            zIndex: 2,
+            bgcolor: selected 
+              ? 'action.selected' 
+              : (rowIndex % 2 === 0 ? 'background.paper' : '#FAFAFA'),
+            width: '48px',
+            minWidth: '48px',
+            maxWidth: '48px',
+          }}
+        >
+          <Checkbox
+            checked={selected}
+            size="small"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </TableCell>
+      )}
       {columns.favorites && (
         <TableCell 
           onClick={handleFavoriteClick}
@@ -138,7 +172,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
             minWidth: '56px',
             maxWidth: '56px',
             px: 1.5,
-            py: 0.5,
+            py: 0.25,
             position: 'sticky',
             left: 0,
             zIndex: 2,
@@ -162,7 +196,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.name && (
-        <TableCell sx={{ pl: 2, pr: 2, py: 1.5 }}>
+        <TableCell sx={{ pl: 2, pr: 2, py: 0.75 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Avatar 
               src={contact.avatar || contact.logoUrl}
@@ -196,7 +230,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.jobTitle && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           <Typography 
             variant="body2" 
             color="text.secondary" 
@@ -213,7 +247,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.title && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           <Typography 
             variant="body2" 
             color="text.secondary" 
@@ -230,7 +264,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.role && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           {contact.role && getRoleLabel && getRoleColor ? (
             <Chip
               label={getRoleLabel(contact.role)}
@@ -251,7 +285,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.contactInfo && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           {contact.email || contact.phone ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
               {contact.email && (
@@ -295,7 +329,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.company && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           {getCompanyName() !== '-' ? (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <BusinessIcon sx={{ color: 'text.disabled', fontSize: 14, flexShrink: 0 }} />
@@ -323,7 +357,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.location && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           {getLocationName() !== '-' ? (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <LocationOnIcon sx={{ color: 'text.disabled', fontSize: 14, flexShrink: 0 }} />
@@ -351,7 +385,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       )}
 
       {columns.lastActivity && (
-        <TableCell sx={{ px: 1.5, py: 1.5 }}>
+        <TableCell sx={{ px: 1.5, py: 0.75 }}>
           <Typography 
             variant="body2" 
             color={lastActivity ? "text.secondary" : "text.disabled"}

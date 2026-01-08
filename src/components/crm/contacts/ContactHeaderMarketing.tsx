@@ -86,7 +86,7 @@ export const ContactHeaderMarketing: React.FC<ContactHeaderMarketingProps> = ({ 
       spacing={1}
       alignItems="center"
       flexWrap="wrap"
-      sx={{ mt: 1 }}
+      sx={{ mt: 0.5 }}
     >
       <Typography
         variant="subtitle2"

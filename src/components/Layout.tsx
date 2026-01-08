@@ -831,7 +831,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Text Messages': <SmsIcon />,
       'Tasks': <DoneAllIcon />,
       'Calendar': <CalendarMonthIcon />,
-      'Slack Channels': <SlackHashIcon active={location.pathname.startsWith('/slack')} />,
+      // Slack Channels removed - now combined with Mentions in top bar
       'Notifications': <NotificationsIcon />,
       'Privacy & Notifications': <NotificationsIcon />,
       'Modules': <AppsIcon />,
@@ -1522,22 +1522,16 @@ const Layout: React.FC = React.memo(function Layout() {
                 </Tooltip>
               )}
               
-              {/* @ Mentions Icon - Always visible, badge shows when there are unread mentions */}
-              <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Mentions'}>
+              {/* # Slack & Mentions Icon - Always visible, badge shows when there are unread mentions */}
+              <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
                 <IconButton
                   onClick={() => navigate('/slack?tab=mentions')}
                   sx={{
                     backgroundColor: 'transparent !important',
                     color: 'rgba(255,255,255,.8)',
-                    '& svg': {
-                      fill: 'rgba(255,255,255,.8) !important',
-                    },
                     '&:hover': { 
                       backgroundColor: 'transparent !important',
                       color: '#FFFFFF',
-                      '& svg': {
-                        fill: '#FFFFFF',
-                      },
                     },
                   }}
                 >
@@ -1546,7 +1540,10 @@ const Layout: React.FC = React.memo(function Layout() {
                     color="secondary"
                     invisible={mentionsUnreadCount === 0}
                   >
-                    <AlternateEmailIcon />
+                    <SlackHashIcon 
+                      active={location.pathname.startsWith('/slack')} 
+                      size={20}
+                    />
                   </Badge>
                 </IconButton>
               </Tooltip>

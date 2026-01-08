@@ -11,6 +11,7 @@ import {
   Skeleton,
   Box,
   Typography,
+  Checkbox,
 } from '@mui/material';
 import StandardTablePagination from './StandardTablePagination';
 
@@ -45,6 +46,10 @@ interface ContactTableProps {
   useOuterScroll?: boolean;
   /** Optional: when true, render the container without rounded corners (square top edge). */
   square?: boolean;
+  /** Selection support (Inbox standard) */
+  selectedContactIds?: Set<string>;
+  onSelectContact?: (contactId: string) => void;
+  onSelectAll?: () => void;
 }
 
 const ContactTable: React.FC<ContactTableProps> = ({
@@ -59,6 +64,9 @@ const ContactTable: React.FC<ContactTableProps> = ({
   stickyHeaderOffset = 0,
   useOuterScroll = false,
   square = false,
+  selectedContactIds = new Set(),
+  onSelectContact,
+  onSelectAll,
 }) => {
   // Standardized column widths
   const getColumnWidth = (columnKey: string): number | string | undefined => {
@@ -193,6 +201,33 @@ const ContactTable: React.FC<ContactTableProps> = ({
             }}
           >
             <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+              {onSelectAll && (
+                <TableCell
+                  padding="checkbox"
+                  sx={{
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 13,
+                    bgcolor: 'background.paper',
+                    width: '48px',
+                    minWidth: '48px',
+                    maxWidth: '48px',
+                  }}
+                >
+                  <Checkbox
+                    indeterminate={
+                      selectedContactIds.size > 0 &&
+                      selectedContactIds.size < contacts.length
+                    }
+                    checked={
+                      contacts.length > 0 &&
+                      contacts.every(c => selectedContactIds.has(c.id))
+                    }
+                    onChange={onSelectAll}
+                    size="small"
+                  />
+                </TableCell>
+              )}
               {columns.favorites && renderHeaderCell('', undefined, 'favorites')}
               {columns.name && renderHeaderCell('Contact Name', 'fullName', 'name')}
               {(columns.jobTitle || columns.title) && renderHeaderCell('Job Title', 'jobTitle', 'jobTitle')}
@@ -210,7 +245,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
                 <TableRow
                   key={`skeleton-${index}`}
                   sx={{
-                    height: '48px',
+                    height: '36px',
                     bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
                     '& td': {
                       borderBottom: '1px solid',
@@ -218,15 +253,20 @@ const ContactTable: React.FC<ContactTableProps> = ({
                     },
                   }}
                 >
+                  {onSelectAll && (
+                    <TableCell padding="checkbox" sx={{ width: '48px', minWidth: '48px', maxWidth: '48px' }}>
+                      <Skeleton variant="rectangular" width={20} height={20} sx={{ borderRadius: 1 }} />
+                    </TableCell>
+                  )}
                   {columns.favorites && (
-                    <TableCell sx={{ width: 60, minWidth: 60, maxWidth: 60, px: 1, py: 1.5 }}>
+                    <TableCell sx={{ width: 60, minWidth: 60, maxWidth: 60, px: 1, py: 0.75 }}>
                       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                         <Skeleton variant="circular" width={24} height={24} />
                       </Box>
                     </TableCell>
                   )}
                   {columns.name && (
-                    <TableCell sx={{ pl: 2, pr: 2, py: 1.5 }}>
+                    <TableCell sx={{ pl: 2, pr: 2, py: 0.75 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                         <Skeleton variant="circular" width={32} height={32} />
                         <Skeleton variant="text" width={140} height={20} />
@@ -234,17 +274,17 @@ const ContactTable: React.FC<ContactTableProps> = ({
                     </TableCell>
                   )}
                   {(columns.jobTitle || columns.title) && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Skeleton variant="text" width={100} height={20} />
                     </TableCell>
                   )}
                   {columns.role && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Skeleton variant="rectangular" width={80} height={24} sx={{ borderRadius: 1 }} />
                     </TableCell>
                   )}
                   {columns.contactInfo && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                         <Skeleton variant="text" width={140} height={16} />
                         <Skeleton variant="text" width={100} height={16} />
@@ -252,17 +292,17 @@ const ContactTable: React.FC<ContactTableProps> = ({
                     </TableCell>
                   )}
                   {columns.company && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Skeleton variant="text" width={120} height={20} />
                     </TableCell>
                   )}
                   {columns.location && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Skeleton variant="text" width={100} height={20} />
                     </TableCell>
                   )}
                   {columns.lastActivity && (
-                    <TableCell sx={{ px: 1.5, py: 1.5 }}>
+                    <TableCell sx={{ px: 1.5, py: 0.75 }}>
                       <Skeleton variant="text" width={90} height={20} />
                     </TableCell>
                   )}

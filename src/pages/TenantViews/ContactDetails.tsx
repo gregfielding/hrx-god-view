@@ -1689,7 +1689,7 @@ const ContactDetails: React.FC = () => {
                 minHeight: 108 
               }}>
                 {/* Line 1: Name */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                   <Typography
                     variant="h6"
                     sx={{

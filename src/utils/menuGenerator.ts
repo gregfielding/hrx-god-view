@@ -154,15 +154,7 @@ export async function generateMenuItems(
       // Available to all security levels
     });
 
-    // Slack Channels - requires security level 5+ (per decoupling spec)
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
-      menuItems.push({
-        text: 'Slack Channels',
-        to: '/slack',
-        icon: 'chat',
-        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
-      });
-    }
+    // Slack Channels removed - now combined with Mentions in top bar
 
     // Tasks - requires security level 5+ (Worker, Manager, Admin)
     if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {

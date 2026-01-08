@@ -92,6 +92,7 @@ import {
   MoreVert as MoreVertIcon,
   FileDownload as FileDownloadIcon,
   ContentCopy as ContentCopyIcon,
+  StarBorder as StarBorderIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -106,6 +107,7 @@ import InboxSearchBar from '../../components/InboxSearchBar';
 import ContactTable from '../../components/ContactTable';
 import ContactTableRow from '../../components/ContactTableRow';
 import CompanyTable from '../../components/CompanyTable';
+import StandardTablePagination from '../../components/StandardTablePagination';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import { AssociationUtils } from '../../utils/associationUtils';
 import CRMImportDialog from '../../components/CRMImportDialog';
@@ -846,7 +848,9 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     setContactsLoading(true);
     try {
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-      const constraints: any[] = [orderBy('createdAt', 'desc'), limit(contactsPageSize)];
+      // Load all contacts for client-side pagination (no limit, or use a very large limit)
+      // Firestore max limit is 10,000, but we'll use a reasonable large number
+      const constraints: any[] = [orderBy('createdAt', 'desc'), limit(1000)];
 
       // If a Contacts state filter is active, fetch by state from both direct contact.state AND associated company locations
       if (contactsStateFilter && contactsStateFilter !== 'all') {
@@ -1036,9 +1040,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
           return;
         }
         
-        // Then, load recent contacts and filter client-side for association to those companies
+        // Then, load ALL contacts and filter client-side for association to those companies
         // Note: We avoid legacy companyId queries; associations.companies is the source of truth
-        const q = query(contactsRef, orderBy('createdAt', 'desc'), limit(contactsPageSize * 5));
+        // Load all contacts for client-side pagination
+        const q = query(contactsRef, orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
         const allCandidates = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
         const filtered = allCandidates.filter((c: any) => {
@@ -1052,10 +1057,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
           
           return isAssociated;
         });
-        const page = filtered.slice(0, contactsPageSize);
-        setContacts(prev => append ? [...prev, ...page] : page);
-        setContactsHasMore(filtered.length > page.length);
-        setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+        // No need to slice - return all filtered contacts for client-side pagination
+        setContacts(prev => append ? [...prev, ...filtered] : filtered);
+        setContactsHasMore(false); // All contacts loaded
+        setContactsLastDoc(null); // Not needed for client-side pagination
         
         setContactsLoading(false);
         return;
@@ -1139,12 +1144,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
             return bDate.getTime() - aDate.getTime();
           });
           
-          const limitedData = filteredData.slice(0, contactsPageSize);
-          
-          setContacts(prev => append ? [...prev, ...limitedData] : limitedData);
-          // For search results, we don't have a proper lastDoc since we're using merged data
-          // Set hasMore based on whether we found all results
-          setContactsHasMore(filteredData.length > contactsPageSize);
+          // Return all filtered results for client-side pagination
+          setContacts(prev => append ? [...prev, ...filteredData] : filteredData);
+          // All search results loaded, no more to fetch
+          setContactsHasMore(false);
         } else {
           if (!append) {
             setContacts([]);
@@ -1153,20 +1156,17 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         }
         
       } else {
-        // No search query - use normal pagination
-        if (startDoc) {
-          constraints.push(startAfter(startDoc));
-        }
-
-        const q = query(contactsRef, ...constraints);
+        // No search query - load ALL contacts for client-side pagination
+        // Since we now use frontend pagination, we need all data loaded
+        const q = query(contactsRef, orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
           const contactsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
           
           setContacts(prev => append ? [...prev, ...contactsData] : contactsData);
-          setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-          setContactsHasMore(snapshot.size === contactsPageSize);
+          setContactsLastDoc(null); // Not needed for client-side pagination
+          setContactsHasMore(false); // All contacts loaded, no more to fetch
         } else {
           if (!append) {
             setContacts([]);
@@ -1870,10 +1870,74 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <Box sx={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: 'background.default' }}>
         <PageHeader
-          title={standaloneTab === 'contacts' ? 'Contacts' : 'CRM'}
+          title={
+            standaloneTab === 'contacts' ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontSize: { xs: '20px', md: '24px' },
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  Contacts
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+                  <InboxSearchBar
+                    value={search}
+                    onChange={setSearch}
+                    onSearch={setSearch}
+                    placeholder="Search contacts..."
+                  />
+                  <FavoritesFilter
+                    favoriteType="contacts"
+                    showFavoritesOnly={contactsShowFavoritesOnly}
+                    onToggle={setContactsShowFavoritesOnly}
+                    showText={false}
+                    size="small"
+                    sx={{
+                      minWidth: '32px',
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      '&:hover': {
+                        backgroundColor: contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover',
+                      },
+                    }}
+                  />
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => handleAddNew('contact')}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '24px',
+                      px: 3,
+                      py: 1,
+                      height: '40px',
+                      fontWeight: 500,
+                      fontSize: '14px',
+                      bgcolor: '#0057B8',
+                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                      '&:hover': {
+                        bgcolor: '#004a9f',
+                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                      },
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Add Contact
+                  </Button>
+                </Box>
+              </Box>
+            ) : (
+              'CRM'
+            )
+          }
           subtitle={
             standaloneTab === 'contacts'
-              ? 'Manage contacts, owners, and pipelines'
+              ? undefined
               : 'Manage contacts, companies, opportunities, and pipeline'
           }
         filters={
@@ -1941,73 +2005,75 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
             )
         }
         rightActions={
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
-              <InboxSearchBar
-                value={search}
-                onChange={setSearch}
-                onSearch={setSearch}
-                placeholder={
-                  tabValue === 1 ? 'Search contacts...' : tabValue === 2 ? 'Search companies...' : 'Search opportunities...'
-                }
-              />
-            )}
-
-            {/* Favorites filter (Contacts + Companies) */}
-            {(tabValue === 1 || tabValue === 2) && (
-              <FavoritesFilter
-                favoriteType={tabValue === 1 ? 'contacts' : 'companies'}
-                showFavoritesOnly={tabValue === 1 ? contactsShowFavoritesOnly : companiesShowFavoritesOnly}
-                onToggle={tabValue === 1 ? setContactsShowFavoritesOnly : setCompaniesShowFavoritesOnly}
-                showText={false}
-                size="small"
-                sx={{
-                  minWidth: '32px',
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  '&:hover': {
-                    backgroundColor:
-                      tabValue === 1
-                        ? (contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover')
-                        : (companiesShowFavoritesOnly ? 'primary.dark' : 'action.hover'),
-                  },
-                }}
-              />
-            )}
-
-            {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => {
-                  if (tabValue === 3) {
-                    setOpportunityDialogOpen(true);
-                    return;
+          standaloneTab === 'contacts' ? undefined : (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+                <InboxSearchBar
+                  value={search}
+                  onChange={setSearch}
+                  onSearch={setSearch}
+                  placeholder={
+                    tabValue === 1 ? 'Search contacts...' : tabValue === 2 ? 'Search companies...' : 'Search opportunities...'
                   }
-                  handleAddNew(tabValue === 1 ? 'contact' : 'company');
-                }}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  px: 2.5,
-                  py: 1,
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                  '&:hover': {
-                    bgcolor: '#004a9f',
-                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                  },
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {tabValue === 1 ? 'Add Contact' : tabValue === 2 ? 'Add Company' : 'Add Opportunity'}
-              </Button>
-            )}
-          </Box>
+                />
+              )}
+
+              {/* Favorites filter (Contacts + Companies) */}
+              {(tabValue === 1 || tabValue === 2) && (
+                <FavoritesFilter
+                  favoriteType={tabValue === 1 ? 'contacts' : 'companies'}
+                  showFavoritesOnly={tabValue === 1 ? contactsShowFavoritesOnly : companiesShowFavoritesOnly}
+                  onToggle={tabValue === 1 ? setContactsShowFavoritesOnly : setCompaniesShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor:
+                        tabValue === 1
+                          ? (contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover')
+                          : (companiesShowFavoritesOnly ? 'primary.dark' : 'action.hover'),
+                    },
+                  }}
+                />
+              )}
+
+              {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    if (tabValue === 3) {
+                      setOpportunityDialogOpen(true);
+                      return;
+                    }
+                    handleAddNew(tabValue === 1 ? 'contact' : 'company');
+                  }}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '24px',
+                    px: 2.5,
+                    py: 1,
+                    height: '40px',
+                    fontWeight: 500,
+                    fontSize: '14px',
+                    bgcolor: '#0057B8',
+                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                    '&:hover': {
+                      bgcolor: '#004a9f',
+                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                    },
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {tabValue === 1 ? 'Add Contact' : tabValue === 2 ? 'Add Company' : 'Add Opportunity'}
+                </Button>
+              )}
+            </Box>
+          )
         }
       />
       </Box>
@@ -2021,6 +2087,24 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
           overflowY: 'auto',
           overflowX: 'hidden',
           pb: 2,
+          // Inbox-standard lighter, thinner scrollbar
+          '&::-webkit-scrollbar': {
+            width: '8px',
+            height: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': {
+              background: 'rgba(0, 0, 0, 0.25)',
+            },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
       {tabValue === 0 && (
@@ -3079,6 +3163,18 @@ const ContactsTab: React.FC<{
   const filtersRef = useRef<HTMLDivElement | null>(null);
   const [filtersHeight, setFiltersHeight] = useState<number>(0);
   const [isScrolled, setIsScrolled] = useState(false);
+  
+  // Selection state (Inbox standard)
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set());
+  
+  // Pagination state (Inbox standard)
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
+
+  // Reset pagination when search or filters change
+  useEffect(() => {
+    setPage(0);
+  }, [search, selectedCompanyFilter, locationStateFilter, showFavoritesOnly, contactFilter]);
 
   // Measure filters height (used to offset sticky table header only when scrolled)
   useEffect(() => {
@@ -3334,6 +3430,75 @@ const ContactsTab: React.FC<{
     
     return filtered;
   }, [contacts, selectedCompanyFilter, locationStateFilter, sortField, sortDirection, companies, locations, lastActivities, showFavoritesOnly, isFavorite]);
+
+  // Paginated contacts (Inbox standard)
+  const paginatedContacts = React.useMemo(() => {
+    return filteredContacts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  }, [filteredContacts, page, rowsPerPage]);
+
+  // Selection handlers (Inbox standard)
+  const handleSelectContact = (contactId: string) => {
+    setSelectedContactIds(prev => {
+      const next = new Set(prev);
+      if (next.has(contactId)) {
+        next.delete(contactId);
+      } else {
+        next.add(contactId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    const currentVisibleIds = new Set(paginatedContacts.map(c => c.id));
+    const allCurrentVisibleSelected = currentVisibleIds.size > 0 && Array.from(currentVisibleIds).every(id => selectedContactIds.has(id));
+    
+    if (allCurrentVisibleSelected) {
+      // Deselect all visible
+      setSelectedContactIds(prev => {
+        const next = new Set(prev);
+        currentVisibleIds.forEach(id => next.delete(id));
+        return next;
+      });
+    } else {
+      // Select all visible
+      setSelectedContactIds(prev => {
+        const next = new Set(prev);
+        currentVisibleIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const handleSelectAllContacts = () => {
+    if (selectedContactIds.size === filteredContacts.length) {
+      setSelectedContactIds(new Set());
+    } else {
+      setSelectedContactIds(new Set(filteredContacts.map(c => c.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedContactIds.size === 0 || !tenantId) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedContactIds.size} contact(s)?`)) return;
+    
+    // TODO: Implement bulk delete
+    console.log('Bulk delete contacts:', Array.from(selectedContactIds));
+    setSelectedContactIds(new Set());
+  };
+
+  const handleBulkStar = async () => {
+    if (selectedContactIds.size === 0) return;
+    
+    // TODO: Implement bulk star
+    const contactIds = Array.from(selectedContactIds);
+    contactIds.forEach(id => {
+      if (!isFavorite(id)) {
+        toggleFavorite(id);
+      }
+    });
+    setSelectedContactIds(new Set());
+  };
 
   // Load all companies for the filter dropdown
   const loadAllCompanies = React.useCallback(async () => {
@@ -3641,6 +3806,57 @@ const ContactsTab: React.FC<{
         </Box>
       </Box>
       
+      {/* Selection Footer (Inbox standard) */}
+      {selectedContactIds.size > 0 && (
+        <Box sx={{ 
+          px: 2, 
+          py: 1.5, 
+          bgcolor: 'action.selected', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 1.5,
+          flexShrink: 0,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}>
+          <Typography variant="body2" sx={{ fontWeight: 500, mr: 1 }}>
+            {selectedContactIds.size} selected
+          </Typography>
+          {(() => {
+            const currentVisibleIds = new Set(paginatedContacts.map(c => c.id));
+            return filteredContacts.length > paginatedContacts.length && selectedContactIds.size < filteredContacts.length;
+          })() && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={handleSelectAllContacts}
+              sx={{ textTransform: 'none', mr: 1 }}
+            >
+              Select All {filteredContacts.length}
+            </Button>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteIcon />}
+            onClick={handleBulkDelete}
+            sx={{ textTransform: 'none' }}
+          >
+            Delete
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<StarBorderIcon />}
+            onClick={handleBulkStar}
+            sx={{ textTransform: 'none' }}
+          >
+            Star
+          </Button>
+        </Box>
+      )}
+
       {/* Contacts Table */}
       <Box
         sx={{
@@ -3655,7 +3871,7 @@ const ContactsTab: React.FC<{
         }}
       >
         <ContactTable
-          contacts={filteredContacts}
+          contacts={paginatedContacts}
           loading={loading}
           columns={{
             favorites: true,
@@ -3674,6 +3890,19 @@ const ContactsTab: React.FC<{
           stickyHeaderOffset={isScrolled ? filtersHeight : 0}
           useOuterScroll
           square
+          selectedContactIds={selectedContactIds}
+          onSelectContact={handleSelectContact}
+          onSelectAll={handleSelectAll}
+          pagination={{
+            count: filteredContacts.length,
+            page,
+            rowsPerPage,
+            onPageChange: (_, newPage) => setPage(newPage),
+            onRowsPerPageChange: (e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            },
+          }}
           renderRow={(contact, index) => {
           const getInitials = (contact: any) => {
             if (contact.fullName) {
@@ -3706,36 +3935,16 @@ const ContactsTab: React.FC<{
               lastActivity={lastActivities[contact.id] ? { timestamp: lastActivities[contact.id].timestamp } : undefined}
               formatRelativeTime={formatRelativeTime}
               rowIndex={index}
+              selected={selectedContactIds.has(contact.id)}
+              onSelect={(e) => {
+                e.stopPropagation();
+                handleSelectContact(contact.id);
+              }}
             />
           );
         }}
         />
       </Box>
-
-      {/* Load More Button */}
-      {hasMore && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-          <Button
-            variant="outlined"
-            onClick={onLoadMore}
-            disabled={loading}
-            startIcon={loading ? <CircularProgress size={16} /> : null}
-            sx={{
-              borderRadius: '8px',
-              textTransform: 'none',
-              fontWeight: 500,
-              borderColor: '#E5E7EB',
-              color: '#6B7280',
-              '&:hover': {
-                borderColor: '#D1D5DB',
-                backgroundColor: '#F9FAFB',
-              }
-            }}
-          >
-            {loading ? 'Loading...' : 'Load More Contacts'}
-          </Button>
-        </Box>
-      )}
 
       {/* Empty State */}
       {filteredContacts.length === 0 && !loading && (

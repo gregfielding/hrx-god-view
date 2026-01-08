@@ -159,8 +159,8 @@ const Dashboard: React.FC = () => {
               {(
               [
                 { label: 'My Job Orders', onClick: () => navigate('/recruiter/my-orders'), kind: 'candidates' as const },
-                { label: 'New Job Post', onClick: () => navigate('/recruiter/jobs-board?new=1'), kind: 'candidates' as const },
-                { label: 'Add Contact', onClick: () => navigate('/crm?tab=contacts'), kind: 'crm' as const },
+                { label: 'Tasks', onClick: () => navigate('/crm?tab=tasks'), kind: 'tasks' as const },
+                { label: 'Calendar', onClick: () => navigate('/calendar'), kind: 'crm' as const },
                 { label: 'Add Company', onClick: () => navigate('/crm?tab=companies'), kind: 'crm' as const },
                 { label: 'Open Tasks', onClick: () => navigate('/crm?tab=tasks'), kind: 'tasks' as const },
                 { label: 'Open CRM', onClick: () => navigate('/crm'), kind: 'crm' as const },
