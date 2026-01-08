@@ -13,8 +13,6 @@ import {
   Group as GroupIcon,
   Badge as BadgeIcon,
   Assignment as AssignmentIcon,
-  Business as BusinessIcon,
-  Contacts as ContactsIcon,
   Add as AddIcon,
   Person as PersonIcon,
 } from '@mui/icons-material';
@@ -28,8 +26,6 @@ export type RecruiterTab =
   | 'job-orders'
   | 'my-orders'
   | 'users'
-  | 'companies'
-  | 'contacts'
   | 'user-groups'
   | 'jobs-board'
   | 'reports';
@@ -59,8 +55,6 @@ const RecruiterDashboard: React.FC = () => {
     if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
     if (path.includes('/users')) return 'users';
-    if (path.includes('/companies')) return 'companies';
-    if (path.includes('/contacts')) return 'contacts';
     if (path.includes('/user-groups')) return 'user-groups';
     if (path.includes('/jobs-board')) return 'jobs-board';
     if (path.includes('/reports')) return 'reports';
@@ -107,16 +101,6 @@ const RecruiterDashboard: React.FC = () => {
       id: 'users' as RecruiterTab,
       label: 'All Users',
       icon: <BadgeIcon fontSize="small" />,
-    },
-    {
-      id: 'companies' as RecruiterTab,
-      label: 'Companies',
-      icon: <BusinessIcon fontSize="small" />,
-    },
-    {
-      id: 'contacts' as RecruiterTab,
-      label: 'Contacts',
-      icon: <ContactsIcon fontSize="small" />,
     },
     {
       id: 'user-groups' as RecruiterTab,
@@ -179,8 +163,6 @@ const RecruiterDashboard: React.FC = () => {
             activeTab === 'job-orders' ||
             activeTab === 'my-orders' ||
             activeTab === 'users' ||
-            activeTab === 'companies' ||
-            activeTab === 'contacts' ||
             activeTab === 'user-groups' ||
             activeTab === 'jobs-board' ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -191,11 +173,7 @@ const RecruiterDashboard: React.FC = () => {
                         ? 'jobOrders'
                         : activeTab === 'users'
                           ? 'users'
-                          : activeTab === 'companies'
-                            ? 'companies'
-                            : activeTab === 'contacts'
-                              ? 'contacts'
-                              : 'jobPosts'
+                          : 'jobPosts'
                     }
                     showFavoritesOnly={showFavoritesOnly}
                     onToggle={setShowFavoritesOnly}
@@ -221,13 +199,9 @@ const RecruiterDashboard: React.FC = () => {
                       ? 'Search job orders...'
                       : activeTab === 'users'
                         ? 'Search users...'
-                        : activeTab === 'companies'
-                          ? 'Search companies...'
-                          : activeTab === 'contacts'
-                            ? 'Search contacts...'
-                            : activeTab === 'user-groups'
-                              ? 'Search user groups...'
-                              : 'Search job posts...'
+                        : activeTab === 'user-groups'
+                          ? 'Search user groups...'
+                          : 'Search job posts...'
                   }
                 />
 
@@ -254,58 +228,6 @@ const RecruiterDashboard: React.FC = () => {
                     }}
                   >
                     New Order
-                  </Button>
-                )}
-
-                {activeTab === 'companies' && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => navigate('/recruiter/companies?new=1')}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Add Company
-                  </Button>
-                )}
-
-                {activeTab === 'contacts' && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => navigate('/crm/contacts')}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Add Contact
                   </Button>
                 )}
 

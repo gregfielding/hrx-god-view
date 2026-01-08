@@ -30,6 +30,62 @@ const oauth2Client = new google.auth.OAuth2(
 );
 
 /**
+ * Gmail message bodies are base64url encoded. Normalize to base64 before decoding.
+ */
+function decodeGmailBody(data?: string): string {
+  if (!data) return '';
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  try {
+    return Buffer.from(normalized, 'base64').toString();
+  } catch {
+    // Best effort: return empty to fall back to snippet
+    return '';
+  }
+}
+
+/**
+ * Recursively find the first part matching one of the desired mime types.
+ */
+function findFirstMimePart(payload: any, mimeTypes: string[]): any | null {
+  if (!payload) return null;
+  if (payload.mimeType && mimeTypes.includes(payload.mimeType) && payload.body?.data) {
+    return payload;
+  }
+  const parts: any[] = Array.isArray(payload.parts) ? payload.parts : [];
+  for (const part of parts) {
+    const found = findFirstMimePart(part, mimeTypes);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Extract HTML/plain bodies from a Gmail message payload.
+ * Prefer HTML when present, but always return a reasonable plainText fallback.
+ */
+function extractBodiesFromPayload(messageData: any): { bodyHtml: string; bodyPlain: string } {
+  const payload = messageData?.payload;
+  let bodyHtml = '';
+  let bodyPlain = '';
+
+  // Single-part bodies can live on payload.body.data
+  if (payload?.body?.data && payload?.mimeType) {
+    if (payload.mimeType === 'text/html') bodyHtml = decodeGmailBody(payload.body.data);
+    if (payload.mimeType === 'text/plain') bodyPlain = decodeGmailBody(payload.body.data);
+  }
+
+  // Multipart: recursively locate parts
+  const htmlPart = findFirstMimePart(payload, ['text/html']);
+  const plainPart = findFirstMimePart(payload, ['text/plain']);
+  if (!bodyHtml && htmlPart?.body?.data) bodyHtml = decodeGmailBody(htmlPart.body.data);
+  if (!bodyPlain && plainPart?.body?.data) bodyPlain = decodeGmailBody(plainPart.body.data);
+
+  // Fallback to Gmail snippet (still truncated, but better than empty)
+  if (!bodyPlain) bodyPlain = String(messageData?.snippet || '');
+  return { bodyHtml, bodyPlain };
+}
+
+/**
  * Get Gmail OAuth URL for user authentication
  */
 export const getGmailAuthUrl = onCall({
@@ -414,21 +470,9 @@ export const syncGmailEmails = onCall({
         const subject = headers.find(h => h.name === 'Subject')?.value || '';
         const date = headers.find(h => h.name === 'Date')?.value || '';
 
-        // Extract body
-        let bodySnippet = messageData.snippet || '';
-        let bodyHtml = '';
-
-        if (messageData.payload?.body?.data) {
-          bodySnippet = Buffer.from(messageData.payload.body.data, 'base64').toString();
-        } else if (messageData.payload?.parts) {
-          for (const part of messageData.payload.parts) {
-            if (part.mimeType === 'text/html' && part.body?.data) {
-              bodyHtml = Buffer.from(part.body.data, 'base64').toString();
-            } else if (part.mimeType === 'text/plain' && part.body?.data) {
-              bodySnippet = Buffer.from(part.body.data, 'base64').toString();
-            }
-          }
-        }
+        // Extract bodies (recursive multipart-safe)
+        const { bodyHtml, bodyPlain } = extractBodiesFromPayload(messageData);
+        const bodySnippet = bodyPlain || String(messageData.snippet || '');
 
         // Determine direction
         const userEmail = userData?.email || '';
@@ -496,8 +540,8 @@ export const syncGmailEmails = onCall({
           cc: cc.split(',').map(e => e.trim()).filter(Boolean),
           bcc: bcc.split(',').map(e => e.trim()).filter(Boolean),
           timestamp,
-          bodySnippet: bodySnippet.substring(0, 250),
-          bodyHtml,
+          bodySnippet: String(bodySnippet).substring(0, 250),
+          bodyHtml: bodyHtml || undefined,
           direction,
           contactId: contactMap.size > 0 ? Array.from(contactMap.values())[0].id : null,
           companyId: contactMap.size > 0 ? Array.from(contactMap.values())[0].companyId : null,
@@ -545,11 +589,25 @@ export const syncGmailEmails = onCall({
               if (!existingMsgQuery.empty) {
                 const msgDoc = existingMsgQuery.docs[0];
                 const existing = msgDoc.data() as any;
+                const updates: any = {};
                 if (typeof existing.read === 'boolean' && existing.read !== effectiveRead) {
-                  await msgDoc.ref.update({ read: effectiveRead });
+                  updates.read = effectiveRead;
                   logger.info(
                     `Reconciled read state for gmailMessageId ${message.id} in thread ${thread.id}: ${existing.read} -> ${effectiveRead}`
                   );
+                }
+                // Backfill missing bodies (fixes truncated/cut-off renders for multipart emails)
+                if ((!existing.bodyHtml || String(existing.bodyHtml).trim().length < 20) && bodyHtml) {
+                  updates.bodyHtml = bodyHtml;
+                }
+                if ((!existing.bodyPlain || String(existing.bodyPlain).trim().length < 20) && bodyPlain) {
+                  updates.bodyPlain = bodyPlain;
+                }
+                if ((!existing.bodySnippet || String(existing.bodySnippet).trim().length < 20) && bodySnippet) {
+                  updates.bodySnippet = String(bodySnippet).substring(0, 200);
+                }
+                if (Object.keys(updates).length > 0) {
+                  await msgDoc.ref.update(updates);
                 }
 
                 // Recompute thread unreadCount (best-effort) so counts converge even after label changes in Gmail.
@@ -587,9 +645,9 @@ export const syncGmailEmails = onCall({
                   to: to.split(',').map(e => e.trim()).filter(Boolean),
                   cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : undefined,
                   subject,
-                  bodyHtml,
-                  bodyPlain: bodySnippet,
-                  bodySnippet: bodySnippet.substring(0, 200),
+                  bodyHtml: bodyHtml || undefined,
+                  bodyPlain,
+                  bodySnippet: String(bodyPlain || bodySnippet).substring(0, 200),
                   status: 'delivered',
                   providerMessageId: message.id!,
                   gmailMessageId: message.id!,

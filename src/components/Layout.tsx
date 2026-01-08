@@ -47,6 +47,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
+import PersonIcon from '@mui/icons-material/Person';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -806,6 +807,8 @@ const Layout: React.FC = React.memo(function Layout() {
       'Team Access': <RecordVoiceOverIcon />,
       'Recruiter': <RecordVoiceOverIcon />,
       'Workforce': <PeopleIcon />,
+      'Contacts': <PersonIcon />,
+      'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,

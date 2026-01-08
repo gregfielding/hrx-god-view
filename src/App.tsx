@@ -137,6 +137,8 @@ import UserInboxPage from './pages/UserInboxPage';
 import MessagesPage from './pages/MessagesPage';
 import TextMessagesPage from './pages/TextMessagesPage';
 import SlackPage from './pages/SlackPage';
+import ContactsPage from './pages/ContactsPage';
+import CompaniesPage from './pages/CompaniesPage';
 
 import InsightReports from './pages/InsightReports';
 
@@ -413,6 +415,10 @@ function App() {
             </CRMAccessGuard>
           </ProtectedRoute>
         } />
+
+        {/* Canonical navigation routes (avoid Contacts/Companies duplication across modules) */}
+        <Route path="contacts" element={<ProtectedRoute requiredSecurityLevel="3"><ContactsPage /></ProtectedRoute>} />
+        <Route path="companies" element={<ProtectedRoute requiredSecurityLevel="3"><CompaniesPage /></ProtectedRoute>} />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>
@@ -880,10 +886,11 @@ function App() {
           <Route path="users" element={<RecruiterUsers />} />
           <Route path="users/:uid" element={<UserProfile />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
-          <Route path="companies" element={<RecruiterCompanies />} />
+          {/* Steer list pages to canonical routes */}
+          <Route path="companies" element={<Navigate to="/companies" replace />} />
           <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
           <Route path="companies/:companyId/locations/:locationId" element={<RecruiterLocationDetails />} />
-          <Route path="contacts" element={<RecruiterContacts />} />
+          <Route path="contacts" element={<Navigate to="/contacts" replace />} />
           <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
           <Route path="user-groups" element={<RecruiterUserGroups />} />
           <Route path="user-groups/:groupId" element={<RecruiterUserGroupDetails />} />

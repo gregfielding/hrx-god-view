@@ -197,6 +197,22 @@ export async function generateMenuItems(
         icon: 'people',
         requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
       },
+      // Canonical Contacts/Companies (avoid duplication across Recruiter + CRM)
+      // Show for security levels 5+ (Recruiter/Manager/Admin/Worker types)
+      ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
+        {
+          text: 'Contacts',
+          to: '/contacts',
+          icon: 'contacts',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+        {
+          text: 'Companies',
+          to: '/companies',
+          icon: 'companies',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin', 'Worker'] as ClaimsRole[],
+        },
+      ] : []),
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{
         text: 'Customers',
