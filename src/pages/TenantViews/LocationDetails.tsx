@@ -1044,7 +1044,7 @@ const LocationDetails: React.FC = () => {
         <BreadcrumbNav
           items={[
             { label: 'CRM', href: '/crm' },
-            { label: 'Companies', onClick: () => navigate('/crm?tab=companies') },
+            { label: 'Companies', onClick: () => navigate('/companies') },
             { label: company?.companyName || company?.name || 'Company', href: `/crm/companies/${companyId}` },
             { label: location.name },
           ]}

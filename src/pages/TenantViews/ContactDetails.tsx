@@ -1149,7 +1149,7 @@ const ContactDetails: React.FC = () => {
       await deleteDoc(contactRef);
       
       // Navigate back to contacts list
-      navigate('/crm?tab=contacts');
+      navigate('/contacts');
     } catch (err: any) {
       console.error('Error deleting contact:', err);
       setError('Failed to delete contact. Please try again.');

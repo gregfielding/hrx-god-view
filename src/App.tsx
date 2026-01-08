@@ -418,7 +418,31 @@ function App() {
 
         {/* Canonical navigation routes (avoid Contacts/Companies duplication across modules) */}
         <Route path="contacts" element={<ProtectedRoute requiredSecurityLevel="3"><ContactsPage /></ProtectedRoute>} />
+        <Route
+          path="contacts/:contactId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <CRMCacheProvider>
+                  <ContactDetails />
+                </CRMCacheProvider>
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
         <Route path="companies" element={<ProtectedRoute requiredSecurityLevel="3"><CompaniesPage /></ProtectedRoute>} />
+        <Route
+          path="companies/:companyId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <CRMCacheProvider>
+                  <CompanyDetails />
+                </CRMCacheProvider>
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>

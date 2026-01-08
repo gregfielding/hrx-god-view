@@ -983,7 +983,7 @@ const CompanyDetails: React.FC = () => {
       await deleteDoc(companyRef);
       
       // Navigate back to companies list
-      navigate('/crm?tab=companies');
+      navigate('/companies');
     } catch (err: any) {
       console.error('Error deleting company:', err);
       setError('Failed to delete company. Please try again.');
@@ -1007,7 +1007,7 @@ const CompanyDetails: React.FC = () => {
         <Typography variant="h6" color="error" gutterBottom>
           {error || 'Company not found'}
         </Typography>
-        <Button variant="outlined" onClick={() => navigate('/crm?tab=companies')}>
+        <Button variant="outlined" onClick={() => navigate('/companies')}>
           Back to Companies
         </Button>
       </Box>
@@ -1020,7 +1020,7 @@ const CompanyDetails: React.FC = () => {
         <BreadcrumbNav
           items={[
             { label: 'CRM', href: '/crm' },
-            { label: 'Companies', href: '/crm?tab=companies', onClick: () => navigate('/crm?tab=companies') },
+            { label: 'Companies', href: '/companies', onClick: () => navigate('/companies') },
             { label: company?.companyName || company?.name || 'Company' },
           ]}
         />
