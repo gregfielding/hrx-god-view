@@ -111,7 +111,8 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       hover
       onClick={() => onRowClick(contact)}
       sx={{ 
-        height: '48px',
+        // Inbox-standard row height
+        height: '44px',
         cursor: 'pointer',
         bgcolor: rowIndex % 2 === 0 ? 'background.paper' : '#FAFAFA',
         transition: 'background-color 0.15s ease',
@@ -133,11 +134,15 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
         <TableCell 
           onClick={handleFavoriteClick}
           sx={{ 
-            width: 60,
-            minWidth: 60,
-            maxWidth: 60,
-            px: 1,
-            py: 1.5
+            width: '56px',
+            minWidth: '56px',
+            maxWidth: '56px',
+            px: 1.5,
+            py: 0.5,
+            position: 'sticky',
+            left: 0,
+            zIndex: 2,
+            bgcolor: rowIndex % 2 === 0 ? 'background.paper' : '#FAFAFA',
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>

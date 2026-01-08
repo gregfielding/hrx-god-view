@@ -801,8 +801,91 @@ export const sendNewEmailApi = onRequest(
         return;
       }
 
-      // For individual emails (forward, reply, compose), always use Gmail
-      // SendGrid is only for bulk/automated emails
+      const shouldUseSendGrid = senderIdentity === 'sendgrid';
+
+      // If caller explicitly requests SendGrid (system sender), allow it for new emails.
+      // This is used by the UI when "System" sender is selected.
+      if (shouldUseSendGrid) {
+        const emailProvider = getEmailProvider({
+          id: 'system',
+          type: 'system',
+          emailProvider: 'sendgrid',
+          enabled: true,
+        });
+
+        // Prepare recipients
+        const toEmails = Array.isArray(to) ? to : [to];
+        const ccEmails = cc ? (Array.isArray(cc) ? cc : [cc]) : [];
+        const bccEmails = bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : [];
+
+        const resolvedFromName = userData?.displayName || userData?.firstName || 'HRX One';
+
+        const emailResult = await emailProvider.sendEmail({
+          tenantId,
+          to: toEmails.map(email => ({ email, name: email.split('@')[0] })),
+          cc: ccEmails.length > 0 ? ccEmails.map(email => ({ email, name: email.split('@')[0] })) : undefined,
+          bcc: bccEmails.length > 0 ? bccEmails.map(email => ({ email, name: email.split('@')[0] })) : undefined,
+          subject,
+          htmlBody: bodyHtml || bodyPlain,
+          textBody: bodyPlain,
+          // fromEmail undefined => SendGrid provider uses verified sender
+          fromName: resolvedFromName,
+          messageTypeId: 'direct_message',
+          userId: userId, // Use sender's ID for signature lookup
+          // gmailUserId intentionally omitted for SendGrid
+          attachments: attachments || undefined,
+        });
+
+        if (!emailResult.success) {
+          response.status(500).json({
+            success: false,
+            error: { code: 'EMAIL_SEND_FAILED', message: emailResult.errorMessage || 'Failed to send email' },
+          });
+          return;
+        }
+
+        // Create a new thread for this email (same as Gmail path; this is our internal thread)
+        const newThread = await findOrCreateEmailThread(
+          tenantId,
+          {
+            subject,
+            from: fromEmail,
+            to: toEmails,
+            cc: ccEmails.length > 0 ? ccEmails : undefined,
+            gmailLabelIds: [],
+          },
+          {
+            userId,
+          }
+        );
+
+        const messageId = await addMessageToThread(newThread.id!, tenantId, {
+          direction: 'outbound',
+          from: fromEmail,
+          fromUserId: userId,
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          bcc: bccEmails.length > 0 ? bccEmails : undefined,
+          subject,
+          bodyHtml,
+          bodyPlain,
+          bodySnippet: bodyPlain.substring(0, 200),
+          attachments: attachments || [],
+          status: emailResult.providerMessageId ? 'sent' : 'failed',
+          providerMessageId: emailResult.providerMessageId,
+          read: true,
+        });
+
+        response.status(200).json({
+          success: true,
+          messageId,
+          threadId: newThread.id!,
+          providerMessageId: emailResult.providerMessageId,
+        });
+        return;
+      }
+
+      // Default: Gmail for individual emails
       if (!userData?.gmailTokens?.access_token) {
         response.status(400).json({
           success: false,
@@ -814,7 +897,6 @@ export const sendNewEmailApi = onRequest(
         return;
       }
 
-      // Use Gmail provider for individual emails
       const emailProvider = getEmailProvider({
         id: `gmail_${userId}`,
         type: 'gmail',

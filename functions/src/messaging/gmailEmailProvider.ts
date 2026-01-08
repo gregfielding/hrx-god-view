@@ -98,9 +98,11 @@ export class GmailEmailProvider implements EmailProvider {
       let htmlBodyWithSignature = options.htmlBody || options.textBody || '';
       let textBodyWithSignature = options.textBody || '';
       
-      if (options.gmailUserId) {
+      // Signature should come from the sender (options.userId), falling back to gmailUserId.
+      const signatureUserId = options.userId || options.gmailUserId;
+      if (signatureUserId) {
         try {
-          const userDoc = await db.collection('users').doc(options.gmailUserId).get();
+          const userDoc = await db.collection('users').doc(signatureUserId).get();
           const userData = userDoc.data();
           const signatureSettings = userData?.emailSignature;
           

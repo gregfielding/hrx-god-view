@@ -22,6 +22,12 @@ interface CompanyTableProps {
   loading: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  /** Optional: pixels to offset the sticky table header from the top (e.g., height of a sticky filter row above). */
+  stickyHeaderOffset?: number;
+  /** Optional: when true, do not make the TableContainer the scroll container (let a parent handle scrolling). */
+  useOuterScroll?: boolean;
+  /** Optional: when true, render the container without rounded corners (square top edge). */
+  square?: boolean;
   pagination?: {
     count: number;
     page: number;
@@ -61,6 +67,9 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
   loading,
   hasMore = false,
   onLoadMore,
+  stickyHeaderOffset = 0,
+  useOuterScroll = false,
+  square = false,
   pagination,
   columns,
   sortField,
@@ -140,6 +149,10 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
         align={align}
         sx={{
           ...(width && { width, minWidth: width, ...(columnKey === 'favorites' && { maxWidth: width }) }),
+          // Sticky header cells (outer-scroll friendly)
+          position: 'sticky',
+          top: stickyHeaderOffset,
+          zIndex: 12,
           bgcolor: '#FFFFFF',
           fontSize: '0.75rem',
           fontWeight: 600,
@@ -162,16 +175,17 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
       <TableContainer
         component={Paper}
         sx={{
-          borderRadius: 2,
+          borderRadius: square ? 0 : 2,
           border: '1px solid #EAEEF4',
+          borderTop: square ? 'none' : '1px solid #EAEEF4',
           boxShadow: 'none',
           position: 'relative',
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
-          overflowY: 'auto',
-          overflowX: 'auto',
+          overflowY: useOuterScroll ? 'visible' : 'auto',
+          overflowX: useOuterScroll ? 'visible' : 'auto',
           width: '100%',
           // Scrollbar styling per Inbox Standard
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },
@@ -191,9 +205,6 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
         <Table size="small" stickyHeader sx={{ width: '100%' }}>
           <TableHead
             sx={{
-              position: 'sticky',
-              top: 0,
-              zIndex: 10,
               backgroundColor: '#FFFFFF',
             }}
           >

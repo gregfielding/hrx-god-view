@@ -57,6 +57,7 @@ import {
   Task as TaskIcon,
   CloudUpload as UploadIcon,
   Business as BusinessIcon,
+  AttachMoney as DealIcon,
   SmartToy as AIIcon,
   Timeline as TimelineIcon,
   Dashboard as DashboardIcon,
@@ -99,6 +100,7 @@ import FavoriteButton from '../../components/FavoriteButton';
 import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
 
 interface ContactData {
   id: string;
@@ -204,6 +206,18 @@ interface ContactData {
     company?: any;
     fetchedAt?: any;
   };
+
+  // --- Marketing fields (Mailchimp-ready) ---
+  industrySegment?: CrmContactIndustrySegment;
+  marketingTags?: string[];
+  marketingNotes?: string;
+  marketingEnabled?: boolean;
+  mailchimp?: {
+    subscriberId?: string;
+    lastSyncedAt?: any;
+    lastStatus?: 'subscribed' | 'unsubscribed' | 'cleaned' | 'pending' | 'archived';
+    lastError?: string;
+  };
 }
 
 interface TabPanelProps {
@@ -223,7 +237,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`contact-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 0 }}>{children}</Box>}
+      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -1600,31 +1614,32 @@ const ContactDetails: React.FC = () => {
     return name[0].toUpperCase();
   };
 
-  const formatContactCreatedDate = () => {
-    if (!contact?.createdAt) return '';
+  // Build associated salespeople list (prefer explicit associations, fallback to activeSalespeople)
+  const associatedSalespeople = (() => {
+    const ids = (contact?.associations?.salespeople || []) as any[];
+    if (ids.length > 0) {
+      const byId = new Map((salespeople || []).map((sp: any) => [sp.id, sp]));
+      return ids.map((id) => byId.get(id)).filter(Boolean);
+    }
+    return (contact?.activeSalespeople || []) as any[];
+  })();
+
+  const handleUpdateMarketing = async (update: {
+    industrySegment?: CrmContactIndustrySegment;
+    marketingTags?: string[];
+    marketingEnabled?: boolean;
+  }) => {
+    if (!tenantId || !contact) return;
     try {
-      let date: Date;
-      if (contact.createdAt.toDate) {
-        date = contact.createdAt.toDate();
-      } else if (typeof contact.createdAt === 'number') {
-        date = new Date(contact.createdAt);
-      } else if (contact.createdAt?._seconds) {
-        date = new Date(contact.createdAt._seconds * 1000);
-      } else {
-        date = new Date(contact.createdAt);
-      }
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    } catch {
-      return '';
+      const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contact.id);
+      await updateDoc(contactRef, update as any);
+      setContact((prev) => (prev ? ({ ...prev, ...update } as any) : prev));
+      logger.info('contact_marketing_updated', { contactId: contact.id, ...update });
+    } catch (e) {
+      console.error('Failed to update marketing fields', e);
+      setLocalError('Failed to update marketing fields');
     }
   };
-
-  // Build metadata subtitle
-  const metadataSubtitle = [
-    contact?.email || '',
-    contact?.id ? `ID: ${contact.id.substring(0, 8)}` : '',
-    formatContactCreatedDate()
-  ].filter(Boolean).join(' • ');
 
   if (loading) {
     return (
@@ -1790,19 +1805,150 @@ const ContactDetails: React.FC = () => {
                   )}
                 </Stack>
                 
-                {/* Line 3: Metadata subtitle */}
-                {metadataSubtitle && (
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontSize: '14px',
-                      fontWeight: 400,
-                      color: 'rgba(0, 0, 0, 0.55)',
-                    }}
-                  >
-                    {metadataSubtitle}
-                  </Typography>
-                )}
+                {/* Line 3: Connections (replaces email/ID/date row) */}
+                <Stack
+                  direction="row"
+                  spacing={2}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  sx={{ mt: 0.5 }}
+                >
+                  {/* Company */}
+                  {(company?.id || contact.companyId) && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          cursor: 'pointer',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                        onClick={() => {
+                          const id = company?.id || contact.companyId;
+                          if (id) navigate(`/crm/companies/${id}`);
+                        }}
+                      >
+                        {company?.companyName || company?.name || contact.companyName || 'Company'}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Locations */}
+                  {selectedLocations.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <LocationIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {selectedLocations.slice(0, 2).map((loc: any, idx: number) => (
+                          <React.Fragment key={loc.id || idx}>
+                            <Typography
+                              component="span"
+                              sx={{
+                                color: 'rgb(74, 144, 226)',
+                                cursor: company?.id ? 'pointer' : 'default',
+                                fontWeight: 600,
+                                '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
+                              }}
+                              onClick={() => {
+                                if (company?.id) navigate(`/crm/companies/${company.id}/locations/${loc.id}`);
+                              }}
+                            >
+                              {loc.nickname || loc.name || loc.title || 'Location'}
+                            </Typography>
+                            {idx < Math.min(2, selectedLocations.length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {selectedLocations.length > 2 ? ` +${selectedLocations.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Deals */}
+                  {(associationsData.entities.deals || []).length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <DealIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {(associationsData.entities.deals || []).slice(0, 2).map((d: any, idx: number) => (
+                          <React.Fragment key={d.id || idx}>
+                            <Typography
+                              component="span"
+                              sx={{
+                                color: 'rgb(74, 144, 226)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                '&:hover': { textDecoration: 'underline' },
+                              }}
+                              onClick={() => navigate(`/crm/deals/${d.id}`)}
+                            >
+                              {d.name || d.title || 'Deal'}
+                            </Typography>
+                            {idx < Math.min(2, (associationsData.entities.deals || []).length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {(associationsData.entities.deals || []).length > 2 ? ` +${(associationsData.entities.deals || []).length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Job Orders */}
+                  {jobOrders.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <WorkIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {jobOrders.slice(0, 2).map((jo: any, idx: number) => (
+                          <React.Fragment key={jo.id || idx}>
+                            <Typography
+                              component="span"
+                              sx={{
+                                color: 'rgb(74, 144, 226)',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                '&:hover': { textDecoration: 'underline' },
+                              }}
+                              onClick={() => navigate(`/crm/job-orders/${jo.id}`)}
+                            >
+                              {jo.jobOrderName || jo.jobTitle || 'Job Order'}
+                            </Typography>
+                            {idx < Math.min(2, jobOrders.length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {jobOrders.length > 2 ? ` +${jobOrders.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {/* Salespeople */}
+                  {associatedSalespeople.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <PersonIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                        {associatedSalespeople.slice(0, 2).map((sp: any, idx: number) => (
+                          <React.Fragment key={sp.id || idx}>
+                            <Typography component="span" sx={{ fontWeight: 600 }}>
+                              {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Salesperson'}
+                            </Typography>
+                            {idx < Math.min(2, associatedSalespeople.length) - 1 ? ', ' : ''}
+                          </React.Fragment>
+                        ))}
+                        {associatedSalespeople.length > 2 ? ` +${associatedSalespeople.length - 2}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+                </Stack>
+
+                {/* Line 4: Marketing (tags + segment) */}
+                <ContactHeaderMarketing
+                  contact={{
+                    companyName: contact.companyName,
+                    jobTitle: contact.jobTitle || contact.title,
+                    marketingTags: contact.marketingTags || [],
+                    industrySegment: contact.industrySegment,
+                    marketingEnabled: contact.marketingEnabled,
+                  }}
+                  onUpdateMarketing={handleUpdateMarketing}
+                />
               </Box>
             </Box>
           </Box>

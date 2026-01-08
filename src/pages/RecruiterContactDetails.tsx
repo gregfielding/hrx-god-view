@@ -38,6 +38,7 @@ import {
   Email as EmailIcon,
   LocationOn as LocationIcon,
   Business as BusinessIcon,
+  AttachMoney as DealIcon,
   Dashboard as DashboardIcon,
   Person as PersonIcon,
   Notes as NotesIcon,
@@ -894,6 +895,13 @@ const RecruiterContactDetails: React.FC = () => {
     );
   }
 
+  const associatedSalespeople = (() => {
+    const ids = (contact?.associations?.salespeople || []) as any[];
+    if (ids.length === 0) return [];
+    const byId = new Map((salespeople || []).map((sp: any) => [sp.id, sp]));
+    return ids.map((id) => byId.get(id)).filter(Boolean);
+  })();
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <PageHeader
@@ -953,29 +961,132 @@ const RecruiterContactDetails: React.FC = () => {
                 </Typography>
               )}
 
-              {/* Line 3: Company link */}
-              {company?.id && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.75, flexWrap: 'wrap' }}>
-                  <BusinessIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
-                  <Typography
-                    component="a"
-                    href={`/recruiter/companies/${company.id}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate(`/recruiter/companies/${company.id}`);
-                    }}
-                    sx={{
-                      fontSize: '0.875rem',
-                      color: 'rgb(74, 144, 226)',
-                      fontWeight: 600,
-                      textDecoration: 'none',
-                      '&:hover': { textDecoration: 'underline' },
-                    }}
-                  >
-                    {company.companyName || company.name || 'Company'}
-                  </Typography>
-                </Box>
-              )}
+              {/* Line 3: Connections (replaces email/company row pattern) */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.75, flexWrap: 'wrap' }}>
+                {/* Company */}
+                {(company?.id || contact.companyId) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                    <Typography
+                      sx={{
+                        fontSize: '0.875rem',
+                        color: 'rgb(74, 144, 226)',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        textDecoration: 'none',
+                        '&:hover': { textDecoration: 'underline' },
+                      }}
+                      onClick={() => {
+                        const id = company?.id || contact.companyId;
+                        if (id) navigate(`/recruiter/companies/${id}`);
+                      }}
+                    >
+                      {company?.companyName || company?.name || contact.companyName || 'Company'}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Locations */}
+                {selectedLocations.length > 0 && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <LocationIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      {selectedLocations.slice(0, 2).map((loc: any, idx: number) => (
+                        <React.Fragment key={loc.id || idx}>
+                          <Typography
+                            component="span"
+                            sx={{
+                              color: 'rgb(74, 144, 226)',
+                              cursor: company?.id ? 'pointer' : 'default',
+                              fontWeight: 600,
+                              '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
+                            }}
+                            onClick={() => {
+                              if (company?.id) navigate(`/recruiter/companies/${company.id}/locations/${loc.id}`);
+                            }}
+                          >
+                            {loc.nickname || loc.name || loc.title || 'Location'}
+                          </Typography>
+                          {idx < Math.min(2, selectedLocations.length) - 1 ? ', ' : ''}
+                        </React.Fragment>
+                      ))}
+                      {selectedLocations.length > 2 ? ` +${selectedLocations.length - 2}` : ''}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Deals */}
+                {(associationsData.entities.deals || []).length > 0 && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <DealIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      {(associationsData.entities.deals || []).slice(0, 2).map((d: any, idx: number) => (
+                        <React.Fragment key={d.id || idx}>
+                          <Typography
+                            component="span"
+                            sx={{
+                              color: 'rgb(74, 144, 226)',
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                              '&:hover': { textDecoration: 'underline' },
+                            }}
+                            onClick={() => navigate(`/recruiter/deals/${d.id}`)}
+                          >
+                            {d.name || d.title || 'Deal'}
+                          </Typography>
+                          {idx < Math.min(2, (associationsData.entities.deals || []).length) - 1 ? ', ' : ''}
+                        </React.Fragment>
+                      ))}
+                      {(associationsData.entities.deals || []).length > 2 ? ` +${(associationsData.entities.deals || []).length - 2}` : ''}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Job Orders */}
+                {jobOrders.length > 0 && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <WorkIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      {jobOrders.slice(0, 2).map((jo: any, idx: number) => (
+                        <React.Fragment key={jo.id || idx}>
+                          <Typography
+                            component="span"
+                            sx={{
+                              color: 'rgb(74, 144, 226)',
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                              '&:hover': { textDecoration: 'underline' },
+                            }}
+                            onClick={() => navigate(`/recruiter/job-orders/${jo.id}`)}
+                          >
+                            {jo.jobOrderName || jo.jobTitle || 'Job Order'}
+                          </Typography>
+                          {idx < Math.min(2, jobOrders.length) - 1 ? ', ' : ''}
+                        </React.Fragment>
+                      ))}
+                      {jobOrders.length > 2 ? ` +${jobOrders.length - 2}` : ''}
+                    </Typography>
+                  </Box>
+                )}
+
+                {/* Salespeople */}
+                {associatedSalespeople.length > 0 && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <PersonIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      {associatedSalespeople.slice(0, 2).map((sp: any, idx: number) => (
+                        <React.Fragment key={sp.id || idx}>
+                          <Typography component="span" sx={{ fontWeight: 600 }}>
+                            {sp.displayName || `${sp.firstName || ''} ${sp.lastName || ''}`.trim() || sp.email || 'Salesperson'}
+                          </Typography>
+                          {idx < Math.min(2, associatedSalespeople.length) - 1 ? ', ' : ''}
+                        </React.Fragment>
+                      ))}
+                      {associatedSalespeople.length > 2 ? ` +${associatedSalespeople.length - 2}` : ''}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
 
               {/* Line 4: Social / contact icons */}
               {(contact.linkedInUrl || contact.website) && (

@@ -39,6 +39,12 @@ interface ContactTableProps {
     onPageChange: (event: React.MouseEvent<HTMLButtonElement> | null, page: number) => void;
     onRowsPerPageChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   };
+  /** Optional: pixels to offset the sticky table header from the top (e.g., height of a sticky filter row above). */
+  stickyHeaderOffset?: number;
+  /** Optional: when true, do not make the TableContainer the scroll container (let a parent handle scrolling). */
+  useOuterScroll?: boolean;
+  /** Optional: when true, render the container without rounded corners (square top edge). */
+  square?: boolean;
 }
 
 const ContactTable: React.FC<ContactTableProps> = ({
@@ -50,6 +56,9 @@ const ContactTable: React.FC<ContactTableProps> = ({
   onSort,
   renderRow,
   pagination,
+  stickyHeaderOffset = 0,
+  useOuterScroll = false,
+  square = false,
 }) => {
   // Standardized column widths
   const getColumnWidth = (columnKey: string): number | string | undefined => {
@@ -110,14 +119,30 @@ const ContactTable: React.FC<ContactTableProps> = ({
       <TableCell 
         sx={{ 
           ...(width && { width, minWidth: width, ...(columnKey === 'favorites' && { maxWidth: width }) }),
-          bgcolor: '#FFFFFF',
-          fontSize: '0.75rem',
-          fontWeight: 600, 
-          color: '#374151',
+          // Make header cells sticky relative to the outer scroll container (CRM uses outer scroll, not TableContainer scroll)
+          position: 'sticky',
+          top: stickyHeaderOffset,
+          zIndex: 12,
+          // Inbox-standard table header styling
+          padding: '4px 12px',
+          fontSize: '11px',
+          fontWeight: 500,
           textTransform: 'uppercase',
-          letterSpacing: '0.05em',
-          py: 1.75,
-          ...(columnKey === 'favorites' && { px: 1 }),
+          letterSpacing: '0.5px',
+          color: 'rgba(0, 0, 0, 0.85)',
+          height: '32px',
+          bgcolor: 'background.paper',
+          ...(columnKey === 'favorites' && {
+            width: '56px',
+            minWidth: '56px',
+            maxWidth: '56px',
+            padding: '4px 12px',
+            position: 'sticky',
+            top: stickyHeaderOffset,
+            left: 0,
+            zIndex: 13, // keep above other sticky header cells
+            bgcolor: 'background.paper',
+          }),
           ...(columnKey === 'name' && { pl: 2 })
         }}
       >
@@ -132,16 +157,21 @@ const ContactTable: React.FC<ContactTableProps> = ({
         component={Paper}
         elevation={0}
         sx={{
-          borderRadius: 2,
+          borderRadius: square ? 0 : 2, // Square corners when used under sticky filter row
           border: '1px solid #EAEEF4',
+          borderTop: square ? 'none' : '1px solid #EAEEF4', // Remove top border when square to connect with filter row
           position: 'relative',
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
-          overflowY: 'auto',
-          overflowX: 'auto',
+          overflowY: useOuterScroll ? 'visible' : 'auto',
+          overflowX: useOuterScroll ? 'visible' : 'auto',
           width: '100%',
+          mt: 0, // Ensure no top margin
+          pt: 0, // Ensure no top padding
+          marginTop: 0, // Explicitly set to 0
+          paddingTop: 0, // Explicitly set to 0
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },
           '&::-webkit-scrollbar-track': {
             background: 'rgba(0, 0, 0, 0.02)',
@@ -159,13 +189,10 @@ const ContactTable: React.FC<ContactTableProps> = ({
         <Table size="small" stickyHeader sx={{ minWidth: 1200, width: '100%' }}>
           <TableHead
             sx={{
-              position: 'sticky',
-              top: 0,
-              zIndex: 10,
-              backgroundColor: '#FFFFFF',
+              backgroundColor: 'background.paper',
             }}
           >
-            <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+            <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
               {columns.favorites && renderHeaderCell('', undefined, 'favorites')}
               {columns.name && renderHeaderCell('Contact Name', 'fullName', 'name')}
               {(columns.jobTitle || columns.title) && renderHeaderCell('Job Title', 'jobTitle', 'jobTitle')}

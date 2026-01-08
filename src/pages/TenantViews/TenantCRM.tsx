@@ -197,6 +197,8 @@ const TenantCRM: React.FC = () => {
   const [contactFilter, setContactFilter] = useState<'all' | 'my'>(cacheState.contactFilter);
   const [dealFilter, setDealFilter] = useState<'all' | 'my'>(cacheState.dealFilter);
   const [contactsStateFilter, setContactsStateFilter] = useState<string>(cacheState.contactsStateFilter || 'all');
+  const [contactsShowFavoritesOnly, setContactsShowFavoritesOnly] = useState(false);
+  const [companiesShowFavoritesOnly, setCompaniesShowFavoritesOnly] = useState(false);
   const [companyPins, setCompanyPins] = useState<any[]>([]);
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoMessage, setInfoMessage] = useState('');
@@ -217,6 +219,7 @@ const TenantCRM: React.FC = () => {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [dialogType, setDialogType] = useState<'contact' | 'company' | 'deal' | 'task'>('contact');
+  const [opportunityDialogOpen, setOpportunityDialogOpen] = useState(false);
   
   // State for filters
   const [filters, setFilters] = useState({
@@ -1851,13 +1854,35 @@ const TenantCRM: React.FC = () => {
       </Box>
     );
   }
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-      <PageHeader
-        title="CRM"
-        subtitle="Manage contacts, companies, opportunities, and pipeline"
+      <Box sx={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: 'background.default' }}>
+        <PageHeader
+          title="CRM"
+          subtitle="Manage contacts, companies, opportunities, and pipeline"
         filters={
-          <Box display="flex" gap={0.5} sx={{ flexWrap: 'wrap' }}>
+          <Box 
+            display="flex" 
+            gap={0.5} 
+            sx={{ 
+              flexWrap: 'nowrap', 
+              overflowX: 'auto', 
+              overflowY: 'hidden', 
+              WebkitOverflowScrolling: 'touch', 
+              scrollbarWidth: 'thin',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { 
+                background: 'rgba(0, 0, 0, 0.02)', 
+                borderRadius: '4px' 
+              },
+              '&::-webkit-scrollbar-thumb': { 
+                background: 'rgba(0, 0, 0, 0.15)', 
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' }
+              }
+            }}
+          >
             {[
               { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
               { label: 'Contacts', value: 1, icon: <PersonIcon fontSize="small" /> },
@@ -1909,11 +1934,40 @@ const TenantCRM: React.FC = () => {
               />
             )}
 
+            {/* Favorites filter (Contacts + Companies) */}
+            {(tabValue === 1 || tabValue === 2) && (
+              <FavoritesFilter
+                favoriteType={tabValue === 1 ? 'contacts' : 'companies'}
+                showFavoritesOnly={tabValue === 1 ? contactsShowFavoritesOnly : companiesShowFavoritesOnly}
+                onToggle={tabValue === 1 ? setContactsShowFavoritesOnly : setCompaniesShowFavoritesOnly}
+                showText={false}
+                size="small"
+                sx={{
+                  minWidth: '32px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  '&:hover': {
+                    backgroundColor:
+                      tabValue === 1
+                        ? (contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover')
+                        : (companiesShowFavoritesOnly ? 'primary.dark' : 'action.hover'),
+                  },
+                }}
+              />
+            )}
+
             {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
-                onClick={() => handleAddNew(tabValue === 1 ? 'contact' : tabValue === 2 ? 'company' : 'deal')}
+                onClick={() => {
+                  if (tabValue === 3) {
+                    setOpportunityDialogOpen(true);
+                    return;
+                  }
+                  handleAddNew(tabValue === 1 ? 'contact' : 'company');
+                }}
                 sx={{
                   textTransform: 'none',
                   borderRadius: '24px',
@@ -1937,6 +1991,7 @@ const TenantCRM: React.FC = () => {
           </Box>
         }
       />
+      </Box>
 
       {/* Tab Panels */}
       <Box
@@ -1980,6 +2035,8 @@ const TenantCRM: React.FC = () => {
           contactFilter={contactFilter}
           onContactFilterChange={handleContactFilterChange}
           locationStateFilter={contactsStateFilter}
+          showFavoritesOnly={contactsShowFavoritesOnly}
+          scrollContainerRef={contentRef}
           onLocationStateFilterChange={(newFilter) => {
             console.log('🔄 Contacts state filter changing:', { 
               from: contactsStateFilter, 
@@ -2031,6 +2088,9 @@ const TenantCRM: React.FC = () => {
             onUpdatePipelineTotals={handleUpdatePipelineTotals}
             locationStateFilter={companyLocationState}
             onLocationStateFilterChange={handleCompanyLocationStateChange}
+            showFavoritesOnly={companiesShowFavoritesOnly}
+            onShowFavoritesOnlyChange={setCompaniesShowFavoritesOnly}
+            scrollContainerRef={contentRef}
           />
         </Box>
       )}
@@ -2047,12 +2107,15 @@ const TenantCRM: React.FC = () => {
             pipelineStages={pipelineStages}
             search={search}
             onSearchChange={setSearch}
-            onAddNew={() => handleAddNew('deal')}
+            onAddNew={() => setOpportunityDialogOpen(true)}
             dealFilter={dealFilter}
             onDealFilterChange={handleDealFilterChange}
             currentUser={currentUser}
             salesTeam={salesTeam}
             tenantId={tenantId}
+            opportunityDialogOpen={opportunityDialogOpen}
+            onOpportunityDialogOpenChange={setOpportunityDialogOpen}
+            scrollContainerRef={contentRef}
           />
         </Box>
       )}
@@ -2983,8 +3046,10 @@ const ContactsTab: React.FC<{
   contactFilter: 'all' | 'my';
   onContactFilterChange: (newFilter: 'all' | 'my') => void;
   locationStateFilter: string;
+  showFavoritesOnly: boolean;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   onLocationStateFilterChange: (newFilter: string) => void;
-}> = ({ contacts, companies, locations, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, contactFilter, onContactFilterChange, locationStateFilter, onLocationStateFilterChange }) => {
+}> = ({ contacts, companies, locations, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, contactFilter, onContactFilterChange, locationStateFilter, showFavoritesOnly, scrollContainerRef, onLocationStateFilterChange }) => {
   const navigate = useNavigate();
   const { currentUser, tenantId } = useAuth();
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState<string | null>(null);
@@ -2992,10 +3057,33 @@ const ContactsTab: React.FC<{
   const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
   const [lastActivities, setLastActivities] = useState<{[key: string]: any}>({});
   const [runningCleanup, setRunningCleanup] = useState(false);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
+  const [filtersHeight, setFiltersHeight] = useState<number>(0);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  // Measure filters height (used to offset sticky table header only when scrolled)
+  useEffect(() => {
+    const update = () => {
+      setFiltersHeight(filtersRef.current?.offsetHeight ?? 0);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  // Track scroll state so we don't reserve space above the table header at scrollTop=0
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const onScroll = () => setIsScrolled(el.scrollTop > 0);
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true } as any);
+    return () => el.removeEventListener('scroll', onScroll as any);
+  }, [scrollContainerRef]);
   
   // Favorites
   const { isFavorite, toggleFavorite } = useFavorites('contacts');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
   // Function to run the cleanup
   const runCleanup = async () => {
@@ -3333,24 +3421,39 @@ const ContactsTab: React.FC<{
     return colors[index];
   };
   return (
-    <Box>
-      {/* Header with search and actions */}
-      {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
-          Contacts ({filteredContacts.length})
-        </Typography>
-      </Box> */}
-
+    <Box sx={{ 
+      flex: 1, 
+      minHeight: 0, 
+      display: 'flex', 
+      flexDirection: 'column', 
+      // Important: avoid overflow:'hidden' here; it breaks position:sticky for descendants
+      // because it becomes the nearest "scrolling ancestor" even though it doesn't scroll.
+      overflow: 'visible'
+    }}>
       {/* Filter & Toolbar Area - Consolidated with card background */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
+      <Box ref={filtersRef} sx={{ 
+        // Tight layout (no extra outer spacing)
+        mt: 0,
+        mb: 0,
+        // Keep internal padding for controls, but avoid extra vertical whitespace
+        px: 1.5,
+        py: 1.25,
         backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
+        borderRadius: 0, // Standard: square / tight (matches Inbox-style tables)
         border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
+        borderBottom: '1px solid #EAEEF4', // Match table border color for seamless connection
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        position: 'sticky',
+        top: 0, // Stick to top of scroll container (PageHeader takes its own space above)
+        zIndex: 15,
+        '&::-webkit-scrollbar': { height: '6px' },
+        '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+        '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
+        scrollbarWidth: 'thin',
+        scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
       }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
           {/* Contact Filter Toggle */}
           <ToggleButtonGroup
             value={contactFilter}
@@ -3496,63 +3599,7 @@ const ContactsTab: React.FC<{
             </IconButton>
           </Box>
           
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search contacts..."
-            value={search}
-            onChange={e => onSearchChange(e.target.value)}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="contacts"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {search && (
-                    <IconButton
-                      size="small"
-                      onClick={() => onSearchChange('')}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
-          
-          <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+          <Box sx={{ ml: 'auto', display: 'flex', gap: 1, flexShrink: 0 }}>
             <Button
               variant="outlined"
               color="secondary"
@@ -3565,52 +3612,50 @@ const ContactsTab: React.FC<{
                 fontWeight: 500,
                 fontSize: '0.875rem',
                 px: 2.5,
-                py: 0.75
+                py: 0.75,
+                whiteSpace: 'nowrap'
               }}
             >
               {runningCleanup ? 'Running...' : 'Fix Company Links'}
-            </Button>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={onAddNew}
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                textTransform: 'none',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                px: 2.5,
-                py: 0.75
-              }}
-            >
-              Add Contact
             </Button>
           </Box>
         </Box>
       </Box>
       
-      {/* Divider */}
-      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
-
       {/* Contacts Table */}
-      <ContactTable
-        contacts={filteredContacts}
-        loading={loading}
-        columns={{
-          favorites: true,
-          name: true,
-          jobTitle: true,
-          contactInfo: true,
-          company: true,
-          location: true,
-          lastActivity: true,
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          // Important: avoid overflow:'hidden' for sticky table header behavior (Inbox standard)
+          overflow: 'visible',
+          mt: 0,
+          pt: 0,
         }}
-        sortField={sortField}
-        sortDirection={sortDirection}
-        onSort={handleSort}
-        renderRow={(contact, index) => {
+      >
+        <ContactTable
+          contacts={filteredContacts}
+          loading={loading}
+          columns={{
+            favorites: true,
+            name: true,
+            jobTitle: true,
+            contactInfo: true,
+            company: true,
+            location: true,
+            lastActivity: true,
+          }}
+          sortField={sortField}
+          sortDirection={sortDirection}
+          onSort={handleSort}
+          // Key: avoid "reserved space" above the header at scrollTop=0.
+          // Offset the sticky header only after the user scrolls, using the actual filter row height.
+          stickyHeaderOffset={isScrolled ? filtersHeight : 0}
+          useOuterScroll
+          square
+          renderRow={(contact, index) => {
           const getInitials = (contact: any) => {
             if (contact.fullName) {
               return contact.fullName.charAt(0).toUpperCase();
@@ -3645,7 +3690,8 @@ const ContactsTab: React.FC<{
             />
           );
         }}
-      />
+        />
+      </Box>
 
       {/* Load More Button */}
       {hasMore && (
@@ -3736,17 +3782,36 @@ const CompaniesTab: React.FC<{
   onUpdatePipelineTotals: (companyId: string) => Promise<void>;
   locationStateFilter: string;
   onLocationStateFilterChange: (state: string) => void;
-}> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals, locationStateFilter, onLocationStateFilterChange }) => {
+  showFavoritesOnly: boolean;
+  onShowFavoritesOnlyChange: (next: boolean) => void;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+}> = ({ companies, contacts, deals, salesTeam, search, onSearchChange, onAddNew, loading, hasMore, onLoadMore, companyFilter, onCompanyFilterChange, tenantId, onUpdatePipelineTotals, locationStateFilter, onLocationStateFilterChange, showFavoritesOnly, onShowFavoritesOnlyChange, scrollContainerRef }) => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   
   // Favorites
   const { isFavorite, toggleFavorite } = useFavorites('companies');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  
-  // Local search state to prevent global tab effects while typing
-  const [localCompanySearch, setLocalCompanySearch] = useState(search);
-  React.useEffect(() => { setLocalCompanySearch(search); }, [search]);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
+  const [filtersHeight, setFiltersHeight] = useState<number>(0);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  // Measure filters height (used to offset sticky table header only when scrolled)
+  useEffect(() => {
+    const update = () => setFiltersHeight(filtersRef.current?.offsetHeight ?? 0);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  // Track scroll state so we don't reserve space above the table header at scrollTop=0
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => setIsScrolled(el.scrollTop > 0);
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true } as any);
+    return () => el.removeEventListener('scroll', onScroll as any);
+  }, [scrollContainerRef]);
   const [showCompanyDialog, setShowCompanyDialog] = useState(false);
   const [editingCompany, setEditingCompany] = useState<any>(null);
   const [companyForm, setCompanyForm] = useState({
@@ -4084,15 +4149,31 @@ const CompaniesTab: React.FC<{
       </Box> */}
 
       {/* Filter & Toolbar Area - Consolidated with card background */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Box
+        ref={filtersRef}
+        sx={{ 
+          // Tight + sticky (Inbox/Contacts standard)
+          mt: 0,
+          mb: 0,
+          px: 1.5,
+          py: 1.25,
+          backgroundColor: '#F9FAFB',
+          borderRadius: 0,
+          border: '1px solid #E5E7EB',
+          borderBottom: '1px solid #EAEEF4',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          position: 'sticky',
+          top: 0,
+          zIndex: 15,
+          '&::-webkit-scrollbar': { height: '6px' },
+          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+          '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
           {/* Company Filter Toggle */}
           <ToggleButtonGroup
             value={companyFilter}
@@ -4135,72 +4216,6 @@ const CompaniesTab: React.FC<{
             </ToggleButton>
           </ToggleButtonGroup>
 
-          <TextField
-            size="small"
-            variant="outlined"
-            placeholder="Search by company name, URL, or city..."
-            value={localCompanySearch}
-            onChange={e => setLocalCompanySearch(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e as React.KeyboardEvent<HTMLInputElement>).key === 'Enter') {
-                onSearchChange(localCompanySearch);
-              }
-            }}
-            onBlur={() => {
-              if (localCompanySearch !== search) {
-                onSearchChange(localCompanySearch);
-              }
-            }}
-            sx={{ 
-              width: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: <SearchIcon sx={{ mr: 1, color: '#9CA3AF', fontSize: '18px' }} />,
-              endAdornment: (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <FavoritesFilter
-                    favoriteType="companies"
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '32px',
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover'
-                      }
-                    }}
-                  />
-                  {localCompanySearch && (
-                    <IconButton
-                      size="small"
-                      onClick={() => { setLocalCompanySearch(''); onSearchChange(''); }}
-                      sx={{ mr: 0.5, p: 0.5 }}
-                    >
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  )}
-                </Box>
-              ),
-            }}
-          />
-
           {/* State Filter */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
@@ -4238,32 +4253,9 @@ const CompaniesTab: React.FC<{
               <ClearIcon fontSize="small" />
             </IconButton>
           </Box>
-
-          <Box sx={{ ml: 'auto' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={onAddNew}
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                textTransform: 'none',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                px: 2.5,
-                py: 0.75
-              }}
-            >
-              Add Company
-            </Button>
-          </Box>
         </Box>
       </Box>
       
-      {/* Divider */}
-      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
-
       {/* Companies Table */}
       <CompanyTable
         companies={filteredCompanies}
@@ -4292,6 +4284,9 @@ const CompaniesTab: React.FC<{
         getCompanyPipelineValue={getCompanyPipelineValue}
         getCompanySalespeople={getCompanySalespeople}
         formatCurrency={formatCurrency}
+        stickyHeaderOffset={isScrolled ? filtersHeight : 0}
+        useOuterScroll
+        square
         emptyStateMessage="No companies found"
         emptyStateAction={
           filteredCompanies.length === 0 && !loading ? (
@@ -4452,7 +4447,10 @@ const CompaniesTab: React.FC<{
   currentUser: any;
   salesTeam: any[];
   tenantId: string;
-  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId }) => {
+  opportunityDialogOpen: boolean;
+  onOpportunityDialogOpenChange: (next: boolean) => void;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef }) => {
   const navigate = useNavigate();
   const [showDealDialog, setShowDealDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any>(null);
@@ -4471,8 +4469,9 @@ const CompaniesTab: React.FC<{
 
   const [showDealWizard, setShowDealWizard] = useState(false);
   
-  // New opportunity dialog state
-  const [showNewOpportunityDialog, setShowNewOpportunityDialog] = useState(false);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
+  const [filtersHeight, setFiltersHeight] = useState<number>(0);
+  const [isScrolled, setIsScrolled] = useState(false);
   const [newOpportunityForm, setNewOpportunityForm] = useState({
     name: '',
     companyId: '',
@@ -4525,6 +4524,24 @@ const CompaniesTab: React.FC<{
   
   // Salesperson filter state
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
+
+  // Measure filters height (used to offset sticky table header only when scrolled)
+  useEffect(() => {
+    const update = () => setFiltersHeight(filtersRef.current?.offsetHeight ?? 0);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  // Track scroll state so we don't reserve space above the table header at scrollTop=0
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => setIsScrolled(el.scrollTop > 0);
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true } as any);
+    return () => el.removeEventListener('scroll', onScroll as any);
+  }, [scrollContainerRef]);
 
   // Helpers to normalize salesperson identity/display for dropdown + filtering
   const getSalespersonKey = (sp: any): string => {
@@ -4915,7 +4932,7 @@ const CompaniesTab: React.FC<{
       const docRef = await addDoc(opportunitiesRef, opportunityData);
 
       // Close dialog and reset form
-      setShowNewOpportunityDialog(false);
+      onOpportunityDialogOpenChange(false);
       setNewOpportunityForm({
         name: '',
         companyId: '',
@@ -4944,15 +4961,31 @@ const CompaniesTab: React.FC<{
       </Box> */}
 
       {/* Filter & Toolbar Area - Consolidated with card background */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Box
+        ref={filtersRef}
+        sx={{ 
+          // Tight + sticky (Inbox/Contacts standard)
+          mt: 0,
+          mb: 0,
+          px: 1.5,
+          py: 1.25,
+          backgroundColor: '#F9FAFB',
+          borderRadius: 0,
+          border: '1px solid #E5E7EB',
+          borderBottom: '1px solid #EAEEF4',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          position: 'sticky',
+          top: 0,
+          zIndex: 15,
+          '&::-webkit-scrollbar': { height: '6px' },
+          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+          '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
           {/* Deal Filter Toggle */}
           <ToggleButtonGroup
             value={dealFilter}
@@ -5027,71 +5060,37 @@ const CompaniesTab: React.FC<{
               })}
             </Select>
           </FormControl>
-          
-          <TextField
-            placeholder="Search opportunities..."
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            size="small"
-            sx={{ 
-              minWidth: 280,
-              height: 36,
-              '& .MuiOutlinedInput-root': {
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& fieldset': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover fieldset': {
-                  borderColor: '#D1D5DB',
-                },
-              }
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon sx={{ color: '#9CA3AF', fontSize: '18px' }} />
-                </InputAdornment>
-              ),
-            }}
-          />
-          
-          <Box sx={{ ml: 'auto' }}>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={() => setShowNewOpportunityDialog(true)}
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                textTransform: 'none',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                px: 2.5,
-                py: 0.75
-              }}
-            >
-              Add New Opportunity
-            </Button>
-          </Box>
         </Box>
       </Box>
       
-      {/* Divider */}
-      <Box sx={{ height: '1px', backgroundColor: '#E5E7EB', mb: 2 }} />
-
       {/* Deals Table */}
         <TableContainer component={Paper} sx={{ 
           overflowX: 'auto',
-          borderRadius: '8px',
-          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
+          overflowY: 'visible',
+          borderRadius: 0,
+          border: '1px solid #EAEEF4',
+          borderTop: 'none',
+          boxShadow: 'none',
+          mt: 0,
+          pt: 0,
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+          '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }} data-testid="customers-list">
           <Table sx={{ minWidth: 1520 }} data-testid="customers-table">
-          <TableHead>
-            <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+          <TableHead
+            sx={{
+              '& .MuiTableCell-root': {
+                bgcolor: '#FFFFFF',
+                position: 'sticky',
+                top: isScrolled ? filtersHeight : 0,
+                zIndex: 12,
+              },
+            }}
+          >
+            <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
               <TableCell sx={{ 
                 width: 250,
                 fontSize: '0.75rem',
@@ -5592,7 +5591,7 @@ const CompaniesTab: React.FC<{
       />
 
       {/* New Opportunity Dialog */}
-      <Dialog open={showNewOpportunityDialog} onClose={() => setShowNewOpportunityDialog(false)} maxWidth="md" fullWidth>
+      <Dialog open={opportunityDialogOpen} onClose={() => onOpportunityDialogOpenChange(false)} maxWidth="md" fullWidth>
         <DialogTitle>Create New Opportunity</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -5654,7 +5653,7 @@ const CompaniesTab: React.FC<{
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowNewOpportunityDialog(false)}>Cancel</Button>
+          <Button onClick={() => onOpportunityDialogOpenChange(false)}>Cancel</Button>
           <Button 
             onClick={handleCreateNewOpportunity} 
             variant="contained"
