@@ -345,28 +345,51 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     logger.info('Ignoring HRX-tagged message', { channel: event.channel, eventId: payload.event_id });
     return;
   }
+  
+  // Handle bot messages - allow non-HRX bots through
   if (event.subtype === 'bot_message') {
     const botName = ((event as any)?.bot_profile?.name || (event as any)?.username || '').toString().toLowerCase();
     if (botName.includes('hrx')) {
       logger.info('Ignoring HRX bot_message', { channel: event.channel, botName, eventId: payload.event_id });
       return;
     }
+    // Allow non-HRX bot messages through (e.g., Slack Email app, other integrations)
+    // They will be processed below
   }
 
-  // Skip other subtypes that aren't regular messages
-  // (e.g., 'message_changed', 'message_deleted', 'channel_join', etc.)
-  if (event.subtype && !['', 'thread_broadcast'].includes(event.subtype)) {
-    logger.info('Ignoring message subtype', { subtype: event.subtype, channel: event.channel });
+  // Skip subtypes that aren't messages we want to process
+  // Allow: '', 'thread_broadcast', 'bot_message', 'file_share'
+  // Skip: 'message_changed', 'message_deleted', 'channel_join', 'channel_leave', etc.
+  const allowedSubtypes = ['', 'thread_broadcast', 'bot_message', 'file_share'];
+  if (event.subtype && !allowedSubtypes.includes(event.subtype)) {
+    logger.info('Ignoring message subtype', { subtype: event.subtype, channel: event.channel, eventId: payload.event_id });
     return;
   }
 
   // Some app/bot messages may not include event.user; allow them through with a synthetic user id.
   const slackUserId = event.user || (event as any)?.bot_id || (event as any)?.username || 'unknown';
 
-  // Skip if no text (e.g., file-only messages)
+  // Skip if no text (e.g., file-only messages without text)
+  // Note: file_share messages may have text in event.text or in event.files
   if (!event.text || event.text.trim().length === 0) {
-    logger.info('Ignoring message with no text', { channel: event.channel });
-    return;
+    // For file_share messages, check if there are files
+    if (event.subtype === 'file_share' && (event as any)?.files && (event as any).files.length > 0) {
+      // Use file name or fallback text for file-only messages
+      const fileText = (event as any).files.map((f: any) => f.name || f.title || 'File').join(', ');
+      (event as any).text = `[File: ${fileText}]`; // Add synthetic text for file-only messages
+      logger.info('Processing file_share message without text', { 
+        channel: event.channel, 
+        files: (event as any).files.length,
+        eventId: payload.event_id 
+      });
+    } else {
+      logger.info('Ignoring message with no text', { 
+        channel: event.channel, 
+        subtype: event.subtype,
+        eventId: payload.event_id 
+      });
+      return;
+    }
   }
 
   // Determine if this is a thread reply
