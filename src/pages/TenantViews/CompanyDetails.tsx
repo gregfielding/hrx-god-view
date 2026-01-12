@@ -94,6 +94,11 @@ import SalesCoach from '../../components/SalesCoach';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import CompanyHeader from '../../components/CompanyHeader';
 import { useFavorites } from '../../hooks/useFavorites';
+import PageHeader from '../../components/PageHeader';
+import FavoriteButton from '../../components/FavoriteButton';
+import { Stack, Tooltip } from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import {
   collection,
   doc,
@@ -1013,42 +1018,411 @@ const CompanyDetails: React.FC = () => {
       </Box>
     );
   }
+  // Helper functions for Record Page Standard
+  const getCompanyDisplayName = () => {
+    return company?.companyName || company?.name || 'Company';
+  };
+
+  const getCompanyInitials = () => {
+    const name = getCompanyDisplayName();
+    return getInitials(name);
+  };
+
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'CRM', href: '/crm' },
-            { label: 'Companies', href: '/companies', onClick: () => navigate('/companies') },
-            { label: company?.companyName || company?.name || 'Company' },
-          ]}
-        />
-      </Box>
-      {/* Company Header */}
-      <CompanyHeader
-        company={company}
-        tenantId={tenantId!}
-        routePrefix="crm"
-        favoriteType="companies"
-        isFavorite={isFavorite}
-        toggleFavorite={toggleFavorite}
-        metrics={{
-          contactsCount: contacts.length,
-          dealsCount: deals.length,
-        }}
-        onAddNote={() => setShowAddNoteDialog(true)}
-        onLogActivity={() => setShowLogActivityDialog(true)}
-        onAIEnhance={handleEnhanceWithAI}
-        aiEnhancing={aiLoading}
-        onAvatarUpload={handleLogoUpload}
-        onAvatarDelete={handleLogoDelete}
-        getIndustryByCode={getIndustryByCode}
-        CompanyNameDisplay={CompanyNameDisplay}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* PageHeader with Record Page Standard */}
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+              {/* Avatar - 108px × 108px */}
+              <Avatar
+                src={company?.logo || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {!company?.logo && getCompanyInitials()}
+              </Avatar>
+              
+              {/* Three-line content area - matches avatar height */}
+              <Box sx={{ 
+                flex: 1, 
+                minWidth: 0, 
+                display: 'flex', 
+                flexDirection: 'column', 
+                justifyContent: 'space-between', 
+                minHeight: 108 
+              }}>
+                {/* Line 1: Company Name */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0 }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {getCompanyDisplayName()}
+                  </Typography>
+                  <FavoriteButton
+                    itemId={company.id}
+                    favoriteType="companies"
+                    isFavorite={isFavorite}
+                    toggleFavorite={toggleFavorite}
+                    size="medium"
+                  />
+                </Box>
+                
+                {/* Line 2: Contact Action Icons */}
+                <Stack 
+                  direction="row" 
+                  spacing={0.5} 
+                  alignItems="center" 
+                  flexWrap="wrap" 
+                  sx={{ mb: 0.5 }}
+                >
+                  {company?.website && (
+                    <Tooltip title={`Visit ${company.website}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          const url = ensureUrlProtocol(company.website);
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LanguageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {company?.phone && (
+                    <Tooltip title={`Call ${company.phone}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          if (company.phone) {
+                            window.open(`tel:${company.phone}`, '_blank');
+                          }
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <PhoneIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {company?.linkedin && (
+                    <Tooltip title="View LinkedIn Profile">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          let url = company.linkedin;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LinkedInIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  <Tooltip title="Add Note">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <NotesIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="AI Enhance">
+                    <IconButton
+                      size="small"
+                      onClick={handleEnhanceWithAI}
+                      disabled={aiLoading}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <AIIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+                
+                {/* Line 3: Metadata subtitle */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  {company?.website && (
+                    <Typography
+                      component="span"
+                      variant="body2"
+                      sx={{
+                        fontSize: '14px',
+                        fontWeight: 400,
+                        color: 'rgba(0, 0, 0, 0.55)',
+                      }}
+                    >
+                      {company.website.replace(/^https?:\/\//, '').replace(/^www\./, '')}
+                    </Typography>
+                  )}
+                  {company?.id && (
+                    <>
+                      <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 400,
+                          color: 'rgba(0, 0, 0, 0.55)',
+                        }}
+                      >
+                        ID: {company.id.slice(0, 8)}...
+                      </Typography>
+                    </>
+                  )}
+                  {company?.createdAt && (
+                    <>
+                      <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 400,
+                          color: 'rgba(0, 0, 0, 0.55)',
+                        }}
+                      >
+                        Created {formatDate(company.createdAt)}
+                      </Typography>
+                    </>
+                  )}
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant={tabValue === 0 ? 'contained' : 'text'}
+              onClick={() => setTabValue(0)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 0 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<DashboardIcon fontSize="small" />}
+            >
+              Overview
+            </Button>
+            <Button
+              variant={tabValue === 1 ? 'contained' : 'text'}
+              onClick={() => setTabValue(1)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 1 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<PlaceIcon fontSize="small" />}
+            >
+              Locations {locations.length > 0 && `(${locations.length})`}
+            </Button>
+            <Button
+              variant={tabValue === 2 ? 'contained' : 'text'}
+              onClick={() => setTabValue(2)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 2 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<PersonIcon fontSize="small" />}
+            >
+              Contacts {contacts.length > 0 && `(${contacts.length})`}
+            </Button>
+            <Button
+              variant={tabValue === 3 ? 'contained' : 'text'}
+              onClick={() => setTabValue(3)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 3 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<OpportunitiesIcon fontSize="small" />}
+            >
+              Opportunities {deals.length > 0 && `(${deals.length})`}
+            </Button>
+            <Button
+              variant={tabValue === 4 ? 'contained' : 'text'}
+              onClick={() => setTabValue(4)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 4 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<TimelineIcon fontSize="small" />}
+            >
+              Activity
+            </Button>
+            <Button
+              variant={tabValue === 5 ? 'contained' : 'text'}
+              onClick={() => setTabValue(5)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 5 ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<NotesIcon fontSize="small" />}
+            >
+              Notes {notesCount > 0 && `(${notesCount})`}
+            </Button>
+          </Box>
+        }
+        rightActions={
+          <Button
+            variant="outlined"
+            startIcon={<ArrowBackIcon />}
+            onClick={() => navigate('/companies')}
+            sx={{ textTransform: 'none' }}
+          >
+            Back
+          </Button>
+        }
       />
       {/* Pattern Alerts */}
       {featureFlags.patternAlerts && patternAlerts.length > 0 && (
-        <Box sx={{ mb: 2 }}>
+        <Box sx={{ mb: 2, px: { xs: 2, md: 3 } }}>
           {patternAlerts.map((alert) => (
             <Alert 
               key={alert.id}
@@ -1080,172 +1454,41 @@ const CompanyDetails: React.FC = () => {
 
       {/* Collapsible Company Context Drawer */}
       <Collapse in={companyContextOpen} timeout="auto" unmountOnExit>
-        <Card sx={{ mb: 3, border: '1px solid', borderColor: 'primary.main' }}>
-          <CardHeader 
-            title="Company Context" 
-            action={
-              <IconButton onClick={() => setCompanyContextOpen(false)}>
-                <CloseIcon />
-              </IconButton>
-            }
-            sx={{ p: 2, pb: 1 }}
-            titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-          />
-          <CardContent sx={{ p: 2, pt: 0 }}>
-            <FastAssociationsCard
-              entityType="company"
-              entityId={company.id}
-              tenantId={tenantId}
-              entityName={company.companyName || company.name}
-              showAssociations={{
-                companies: false,
-                locations: true,
-                contacts: true,
-                salespeople: true,
-                deals: true,
-                tasks: false
-              }}
+        <Box sx={{ px: { xs: 2, md: 3 }, mb: 2 }}>
+          <Card sx={{ border: '1px solid', borderColor: 'primary.main' }}>
+            <CardHeader 
+              title="Company Context" 
+              action={
+                <IconButton onClick={() => setCompanyContextOpen(false)}>
+                  <CloseIcon />
+                </IconButton>
+              }
+              sx={{ p: 2, pb: 1 }}
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-          </CardContent>
-        </Card>
+            <CardContent sx={{ p: 2, pt: 0 }}>
+              <FastAssociationsCard
+                entityType="company"
+                entityId={company.id}
+                tenantId={tenantId}
+                entityName={company.companyName || company.name}
+                showAssociations={{
+                  companies: false,
+                  locations: true,
+                  contacts: true,
+                  salespeople: true,
+                  deals: true,
+                  tasks: false
+                }}
+              />
+            </CardContent>
+          </Card>
+        </Box>
       </Collapse>
 
-      {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="Company details tabs"
-        >
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Overview
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PlaceIcon fontSize="small" />
-                Locations
-                {locations.length > 0 && (
-                  <Badge badgeContent={locations.length} color="primary" />
-                )}
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PersonIcon fontSize="small" />
-                Contacts
-                {contacts.length > 0 && (
-                  <Badge badgeContent={contacts.length} color="primary" />
-                )}
-              </Box>
-            } 
-          />
-          {company.centralizedVendorProcess && (
-            <Tab 
-              label={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <BusinessIcon fontSize="small" />
-                  Vendor Process
-                </Box>
-              } 
-            />
-          )}
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <OpportunitiesIcon fontSize="small" />
-                Opportunities
-                {/* <Badge badgeContent={deals.length} color="primary" /> */}
-              </Box>
-            } 
-          />
-          {/* <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <AIIcon fontSize="small" />
-                Sales Coach
-              </Box>
-            } 
-          /> */}
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-                {notesCount > 0 && (
-                  <Badge badgeContent={notesCount} color="primary" />
-                )}
-              </Box>
-            } 
-          />
-
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <CompareIcon fontSize="small" />
-                Similar
-              </Box>
-            } 
-          />
-
-          {/* <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <SettingsIcon fontSize="small" />
-                Order Defaults
-              </Box>
-            } 
-          /> */}
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <WorkIcon fontSize="small" />
-                Job Orders
-                {jobOrders.length > 0 && (
-                  <Badge badgeContent={jobOrders.length} color="primary" />
-                )}
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NewspaperIcon fontSize="small" />
-                News
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <PersonIcon fontSize="small" />
-                Decision Makers
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            } 
-          />
-        </Tabs>
-      </Paper>
-
-      {/* Tab Panels */}
+      {/* Tab Content Area (standard: scroll + 16px bottom padding) */}
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', px: { xs: 2, md: 3 }, pb: 2 }}>
+        {/* Tab Panels */}
       {tabValue === 0 && (
         <CompanyDashboardTab 
   company={company} 
@@ -1315,28 +1558,29 @@ const CompanyDetails: React.FC = () => {
         <CompanyActivityTab company={company} tenantId={tenantId} />
       )}
 
-      {/* Delete Company Button - Bottom of page */}
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        mt: 9,
-        pb: 3 
-      }}>
-        <Button 
-          variant="outlined" 
-          color="error"
-          sx={{ 
-            borderColor: 'error.main',
-            '&:hover': {
-              borderColor: 'error.dark',
-              backgroundColor: 'error.light'
-            }
-          }}
-          startIcon={<DeleteIcon />}
-          onClick={() => setDeleteDialogOpen(true)}
-        >
-          Delete Company
-        </Button>
+        {/* Delete Company Button - Bottom of page */}
+        <Box sx={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          mt: 9,
+          pb: 3 
+        }}>
+          <Button 
+            variant="outlined" 
+            color="error"
+            sx={{ 
+              borderColor: 'error.main',
+              '&:hover': {
+                borderColor: 'error.dark',
+                backgroundColor: 'error.light'
+              }
+            }}
+            startIcon={<DeleteIcon />}
+            onClick={() => setDeleteDialogOpen(true)}
+          >
+            Delete Company
+          </Button>
+        </Box>
       </Box>
 
       {/* Success/Error Snackbars */}

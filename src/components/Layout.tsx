@@ -1535,7 +1535,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {/* # Slack & Mentions Icon - Always visible, badge shows when there are unread mentions */}
               <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
                 <IconButton
-                  onClick={() => navigate('/slack?tab=mentions')}
+                  onClick={() => navigate('/slack')}
                   sx={{
                     backgroundColor: 'transparent !important',
                     color: 'rgba(255,255,255,.8)',
