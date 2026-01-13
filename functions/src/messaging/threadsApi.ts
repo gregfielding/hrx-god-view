@@ -331,32 +331,18 @@ export const sendThreadMessageApi = onRequest(
         if (!result.success) {
           response.status(200).json({
             success: false,
-            warning: 'Message failed to send',
+            warning: 'Message failed to queue',
           });
           return;
         }
 
-        // Get the created message
-        const { messages } = await getThreadWithMessages(threadId as string, { limit: 1 });
-        const message = messages[0];
-
-        const messageDTO = {
-          id: message.id,
-          threadId: message.threadId,
-          direction: message.direction,
-          fromType: message.fromType,
-          fromUserId: message.fromUserId,
-          body: message.body,
-          language: message.language,
-          status: message.status,
-          createdAt: message.createdAt instanceof admin.firestore.Timestamp
-            ? message.createdAt.toDate().toISOString()
-            : new Date().toISOString(),
-        };
-
+        // With queueing, message is created asynchronously by the queue worker
+        // Return requestId so client can track status
         response.status(200).json({
           success: true,
-          message: messageDTO,
+          requestId: result.requestId,
+          status: 'queued',
+          message: 'Message queued for sending. It will appear in the thread once processed.',
         });
       } catch (error: any) {
         // Check if it's an opt-out error
@@ -433,8 +419,9 @@ export const createThreadApi = onRequest(
         try {
           const result = await sendOutboundMessage(thread.id, recruiterId, initialMessageBody);
           if (result.success) {
-            const { messages } = await getThreadWithMessages(thread.id, { limit: 1 });
-            firstMessage = messages[0];
+            // With queueing, message is created asynchronously
+            // For now, we'll skip fetching the message immediately
+            // Client should use real-time listeners to see when message appears
           }
         } catch (error: any) {
           logger.warn(`Failed to send initial message in thread ${thread.id}:`, error);

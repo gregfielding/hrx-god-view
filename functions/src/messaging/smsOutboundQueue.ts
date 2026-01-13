@@ -1,0 +1,568 @@
+/**
+ * SMS Outbound Queue System
+ * 
+ * Implements Cloud Tasks queueing for all outbound SMS sends.
+ * Ensures reliable delivery, retries, and compliance enforcement.
+ * 
+ * Based on: hrx-semi-programmatic-sms-inbox-spec.md + implementation plan
+ */
+
+import * as admin from 'firebase-admin';
+import { logger } from 'firebase-functions/v2';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onRequest } from 'firebase-functions/v2/https';
+import { CloudTasksClient } from '@google-cloud/tasks';
+import crypto from 'crypto';
+import { getTenantSmsConsent } from './tenantConsent';
+import { getSmsProvider } from './smsProviderFactory';
+import { createInboundMessage, SmsThread, SmsMessage } from './twoWayMessaging';
+import { logMessage } from './messageLogging';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+const db = admin.firestore();
+const tasksClient = new CloudTasksClient();
+
+const PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
+const LOCATION = process.env.FUNCTIONS_REGION || 'us-central1';
+const SMS_QUEUE = process.env.SMS_QUEUE_NAME || 'sms-outbound';
+
+export type OutboundRequestSource = 'manual' | 'automation' | 'ai_sent';
+export type OutboundRequestStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'canceled';
+
+export interface SmsOutboundRequest {
+  id?: string;
+  tenantId: string;
+  threadId?: string;
+  toPhoneE164: string;
+  fromPhoneE164?: string;
+  fromMessagingServiceSid?: string;
+  body: string;
+  bodyRaw?: string; // Original template before resolution
+  templateId?: string;
+  source: OutboundRequestSource;
+  requestedByUid?: string;
+  status: OutboundRequestStatus;
+  attemptCount: number;
+  lastError?: {
+    code?: string;
+    message: string;
+    timestamp?: admin.firestore.Timestamp;
+  };
+  createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  scheduledFor?: admin.firestore.Timestamp;
+  idempotencyKey: string;
+  metadata?: {
+    dealId?: string;
+    companyId?: string;
+    contactId?: string;
+    campaignId?: string;
+    applicationId?: string;
+    assignmentId?: string;
+    locationId?: string;
+  };
+  twilioMessageSid?: string;
+  sentAt?: admin.firestore.Timestamp;
+}
+
+/**
+ * Generate idempotency key for outbound request
+ */
+export function generateIdempotencyKey(
+  tenantId: string,
+  threadId: string | undefined,
+  toPhoneE164: string,
+  body: string,
+  scheduledFor: admin.firestore.Timestamp | undefined,
+  requestedByUid: string | undefined
+): string {
+  // Round scheduledFor to nearest minute for idempotency
+  const scheduledForRounded = scheduledFor
+    ? Math.floor(scheduledFor.toMillis() / 60000) * 60000
+    : 0;
+  
+  const keyString = `${tenantId}|${threadId || ''}|${toPhoneE164}|${body}|${scheduledForRounded}|${requestedByUid || ''}`;
+  return crypto.createHash('sha256').update(keyString).digest('hex');
+}
+
+/**
+ * Create an outbound SMS request
+ * This is the entry point for all outbound sends (manual, automation, AI)
+ */
+export async function createOutboundRequest(
+  params: {
+    tenantId: string;
+    threadId?: string;
+    toPhoneE164: string;
+    fromPhoneE164?: string;
+    fromMessagingServiceSid?: string;
+    body: string;
+    bodyRaw?: string;
+    templateId?: string;
+    source: OutboundRequestSource;
+    requestedByUid?: string;
+    scheduledFor?: admin.firestore.Timestamp;
+    metadata?: SmsOutboundRequest['metadata'];
+  }
+): Promise<string> {
+  try {
+    const idempotencyKey = generateIdempotencyKey(
+      params.tenantId,
+      params.threadId,
+      params.toPhoneE164,
+      params.body,
+      params.scheduledFor,
+      params.requestedByUid
+    );
+    
+    // Check if request with same idempotency key already exists
+    const existingQuery = await db
+      .collection('tenants')
+      .doc(params.tenantId)
+      .collection('smsOutboundRequests')
+      .where('idempotencyKey', '==', idempotencyKey)
+      .where('status', 'in', ['queued', 'sending', 'sent'])
+      .limit(1)
+      .get();
+    
+    if (!existingQuery.empty) {
+      const existing = existingQuery.docs[0];
+      logger.info(`Duplicate outbound request detected (idempotency key: ${idempotencyKey}), returning existing request ${existing.id}`);
+      return existing.id;
+    }
+    
+    const requestData: Omit<SmsOutboundRequest, 'id'> = {
+      tenantId: params.tenantId,
+      threadId: params.threadId,
+      toPhoneE164: params.toPhoneE164,
+      fromPhoneE164: params.fromPhoneE164,
+      fromMessagingServiceSid: params.fromMessagingServiceSid,
+      body: params.body,
+      bodyRaw: params.bodyRaw,
+      templateId: params.templateId,
+      source: params.source,
+      requestedByUid: params.requestedByUid,
+      status: 'queued',
+      attemptCount: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      scheduledFor: params.scheduledFor,
+      idempotencyKey,
+      metadata: params.metadata,
+    };
+    
+    const requestRef = await db
+      .collection('tenants')
+      .doc(params.tenantId)
+      .collection('smsOutboundRequests')
+      .add(requestData);
+    
+    logger.info(`Created outbound SMS request ${requestRef.id} for ${params.toPhoneE164} (source: ${params.source})`);
+    
+    return requestRef.id;
+  } catch (error: any) {
+    logger.error('Error creating outbound SMS request:', error);
+    throw error;
+  }
+}
+
+/**
+ * Firestore trigger: Enqueue Cloud Task when outbound request is created
+ */
+export const enqueueSmsOutbound = onDocumentCreated(
+  {
+    document: 'tenants/{tenantId}/smsOutboundRequests/{requestId}',
+    region: LOCATION,
+  },
+  async (event) => {
+    const requestData = event.data?.data() as SmsOutboundRequest | undefined;
+    const requestId = event.params.requestId;
+    const tenantId = event.params.tenantId;
+    
+    if (!requestData) {
+      logger.error(`No data found for outbound request ${requestId}`);
+      return;
+    }
+    
+    // Only enqueue if status is 'queued'
+    if (requestData.status !== 'queued') {
+      logger.info(`Skipping enqueue for request ${requestId} with status ${requestData.status}`);
+      return;
+    }
+    
+    try {
+      const parent = tasksClient.queuePath(PROJECT, LOCATION, SMS_QUEUE);
+      const taskName = `${parent}/tasks/sms-${requestId}-${Date.now()}`;
+      
+      // Calculate delay if scheduledFor is in the future
+      const now = Date.now();
+      const scheduledForMs = requestData.scheduledFor?.toMillis() || now;
+      const delaySeconds = Math.max(0, Math.floor((scheduledForMs - now) / 1000));
+      
+      const task: any = {
+        name: taskName,
+        httpRequest: {
+          httpMethod: 'POST' as const,
+          url: `https://${LOCATION}-${PROJECT}.cloudfunctions.net/processSmsOutbound`,
+          // Note: For v2 functions, URL format is: https://{LOCATION}-{PROJECT}.cloudfunctions.net/{FUNCTION_NAME}
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: Buffer.from(JSON.stringify({
+            tenantId,
+            requestId,
+          })).toString('base64'),
+        },
+        scheduleTime: delaySeconds > 0 ? {
+          seconds: Math.floor(Date.now() / 1000) + delaySeconds,
+        } : undefined,
+        retryConfig: {
+          maxAttempts: 10,
+          minBackoff: { seconds: 30 },
+          maxBackoff: { seconds: 3600 },
+          maxDoublings: 5,
+        },
+      };
+      
+      await tasksClient.createTask({ parent, task });
+      logger.info(`Enqueued Cloud Task for SMS outbound request ${requestId}`);
+    } catch (error: any) {
+      logger.error(`Error enqueueing Cloud Task for request ${requestId}:`, error);
+      
+      // Mark request as failed if we can't even enqueue
+      await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('smsOutboundRequests')
+        .doc(requestId)
+        .update({
+          status: 'failed',
+          lastError: {
+            message: `Failed to enqueue task: ${error.message}`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        });
+    }
+  }
+);
+
+/**
+ * Cloud Task worker: Process outbound SMS send
+ * This is the enforcement point for compliance, consent, quiet hours, footer injection
+ */
+export const processSmsOutbound = onRequest(
+  {
+    region: LOCATION,
+    cors: true,
+    invoker: 'private', // Only callable by Cloud Tasks
+  },
+  async (request, response) => {
+    const startTime = Date.now();
+    const { tenantId, requestId } = request.body as { tenantId: string; requestId: string };
+    
+    if (!tenantId || !requestId) {
+      response.status(400).json({ error: 'Missing tenantId or requestId' });
+      return;
+    }
+    
+    logger.info(`Processing SMS outbound request ${requestId} for tenant ${tenantId}`);
+    
+    const requestRef = db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('smsOutboundRequests')
+      .doc(requestId);
+    
+    try {
+      // Load request doc
+      const requestDoc = await requestRef.get();
+      if (!requestDoc.exists) {
+        logger.error(`Outbound request ${requestId} not found`);
+        response.status(404).json({ error: 'Request not found' });
+        return;
+      }
+      
+      const requestData = requestDoc.data() as SmsOutboundRequest;
+      
+      // Hard stop if status not queued (idempotent)
+      if (requestData.status !== 'queued') {
+        logger.info(`Request ${requestId} already processed (status: ${requestData.status}), skipping`);
+        response.status(200).json({ success: true, skipped: true });
+        return;
+      }
+      
+      // Mark as sending (transaction to prevent double-processing)
+      await db.runTransaction(async (transaction) => {
+        const currentDoc = await transaction.get(requestRef);
+        const currentData = currentDoc.data() as SmsOutboundRequest;
+        
+        if (currentData.status !== 'queued') {
+          throw new Error(`Request ${requestId} status changed to ${currentData.status}, aborting`);
+        }
+        
+        transaction.update(requestRef, {
+          status: 'sending',
+          attemptCount: admin.firestore.FieldValue.increment(1),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+      
+      // Enforce compliance at send time
+      const complianceCheck = await checkCompliance(requestData);
+      if (!complianceCheck.allowed) {
+        await requestRef.update({
+          status: 'failed',
+          lastError: {
+            code: complianceCheck.errorCode,
+            message: complianceCheck.reason,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        });
+        logger.warn(`Compliance check failed for request ${requestId}: ${complianceCheck.reason}`);
+        response.status(200).json({ success: false, error: complianceCheck.reason });
+        return;
+      }
+      
+      // Apply footer injection if needed
+      const finalBody = applyFooter(requestData.body, requestData.templateId);
+      
+      // Send via Twilio provider
+      const smsProvider = getSmsProvider();
+      const sendResult = await smsProvider.sendSms({
+        tenantId: requestData.tenantId,
+        to: requestData.toPhoneE164,
+        from: requestData.fromPhoneE164,
+        body: finalBody,
+        messageTypeId: requestData.templateId || 'manual_sms',
+        userId: requestData.requestedByUid,
+        threadId: requestData.threadId,
+      });
+      
+      if (!sendResult.success) {
+        // Retryable error - throw to trigger Cloud Tasks retry
+        const isRetryable = isRetryableError(sendResult.errorCode);
+        
+        await requestRef.update({
+          status: isRetryable ? 'queued' : 'failed', // Reset to queued for retry
+          lastError: {
+            code: sendResult.errorCode,
+            message: sendResult.errorMessage || 'Unknown error',
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        });
+        
+        if (isRetryable) {
+          logger.warn(`Retryable error sending SMS for request ${requestId}, will retry: ${sendResult.errorMessage}`);
+          throw new Error(`Retryable error: ${sendResult.errorMessage}`);
+        } else {
+          logger.error(`Non-retryable error sending SMS for request ${requestId}: ${sendResult.errorMessage}`);
+          response.status(200).json({ success: false, error: sendResult.errorMessage });
+          return;
+        }
+      }
+      
+      // Success - write side effects in transaction
+      await db.runTransaction(async (transaction) => {
+        // Create message in thread if threadId exists
+        if (requestData.threadId) {
+          const threadRef = db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('smsThreads')
+            .doc(requestData.threadId);
+          
+          const messageData: Omit<SmsMessage, 'id'> = {
+            tenantId,
+            threadId: requestData.threadId,
+            direction: 'outbound',
+            fromType: requestData.requestedByUid ? 'recruiter' : 'system',
+            fromUserId: requestData.requestedByUid,
+            source: requestData.source,
+            body: finalBody,
+            language: null,
+            providerMessageId: sendResult.providerMessageId,
+            status: 'sent',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          };
+          
+          const messageRef = threadRef.collection('messages').doc();
+          transaction.set(messageRef, messageData);
+          
+          // Update thread rollups
+          transaction.update(threadRef, {
+            lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastOutboundAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastMessageSnippet: finalBody.substring(0, 100),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        
+        // Update request status
+        transaction.update(requestRef, {
+          status: 'sent',
+          twilioMessageSid: sendResult.providerMessageId,
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      });
+      
+      // Log to unified message log
+      await logMessage({
+        userId: requestData.requestedByUid || 'system',
+        tenantId,
+        threadId: requestData.threadId,
+        messageTypeId: requestData.templateId || 'manual_sms',
+        channel: 'sms',
+        direction: 'outbound',
+        fromIdentity: requestData.requestedByUid ? 'recruiter' : 'system',
+        fromUserId: requestData.requestedByUid,
+        contentSent: finalBody,
+        language: null,
+        status: 'sent',
+        providerMessageId: sendResult.providerMessageId,
+      });
+      
+      const durationMs = Date.now() - startTime;
+      logger.info(`Successfully processed SMS outbound request ${requestId} in ${durationMs}ms`, {
+        tenantId,
+        requestId,
+        threadId: requestData.threadId,
+        source: requestData.source,
+        durationMs,
+        result: 'sent',
+      });
+      
+      response.status(200).json({ success: true });
+    } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      logger.error(`Error processing SMS outbound request ${requestId}:`, error, {
+        tenantId,
+        requestId,
+        durationMs,
+        result: 'error',
+      });
+      
+      // Update request with error (if not already updated)
+      try {
+        const currentDoc = await requestRef.get();
+        const currentData = currentDoc.data() as SmsOutboundRequest;
+        if (currentData.status === 'sending') {
+          await requestRef.update({
+            status: 'queued', // Reset to queued for retry
+            lastError: {
+              message: error.message || 'Unknown error',
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          });
+        }
+      } catch (updateError: any) {
+        logger.error(`Error updating request ${requestId} after failure:`, updateError);
+      }
+      
+      // Re-throw to trigger Cloud Tasks retry
+      response.status(500).json({ error: error.message });
+    }
+  }
+);
+
+/**
+ * Check compliance before sending
+ */
+async function checkCompliance(request: SmsOutboundRequest): Promise<{
+  allowed: boolean;
+  reason?: string;
+  errorCode?: string;
+}> {
+  // 1. Check STOP list / suppression
+  // Find user by phone number
+  const usersQuery = await db.collection('users')
+    .where('phoneE164', '==', request.toPhoneE164)
+    .limit(1)
+    .get();
+  
+  if (!usersQuery.empty) {
+    const userDoc = usersQuery.docs[0];
+    const userData = userDoc.data();
+    
+    // Check if SMS is blocked
+    if (userData?.smsBlockedSystem === true) {
+      return {
+        allowed: false,
+        reason: 'User has opted out of SMS messages (STOP)',
+        errorCode: 'SMS_BLOCKED',
+      };
+    }
+    
+    // Check tenant-scoped consent
+    const tenantConsent = await getTenantSmsConsent(request.tenantId, userDoc.id);
+    if (tenantConsent) {
+      if (tenantConsent.smsBlockedSystem === true) {
+        return {
+          allowed: false,
+          reason: 'User has opted out of SMS messages (STOP)',
+          errorCode: 'SMS_BLOCKED',
+        };
+      }
+      
+      if (tenantConsent.smsOptIn === false) {
+        return {
+          allowed: false,
+          reason: 'User has not consented to SMS messages',
+          errorCode: 'SMS_NOT_CONSENTED',
+        };
+      }
+    }
+  }
+  
+  // 2. Check quiet hours (stub for now - can be implemented later)
+  // const quietHoursCheck = checkQuietHours(request.toPhoneE164, request.tenantId);
+  // if (!quietHoursCheck.allowed) {
+  //   return quietHoursCheck;
+  // }
+  
+  return { allowed: true };
+}
+
+/**
+ * Apply footer injection if needed
+ */
+function applyFooter(body: string, templateId: string | undefined): string {
+  // Check if footer already exists
+  if (body.includes('Reply STOP') || body.includes('STOP to opt out')) {
+    return body;
+  }
+  
+  // For now, append footer to all transactional messages
+  // TODO: Check template settings for autoAppendOptOutFooter
+  const footer = '\n\nReply STOP to opt out.';
+  
+  // Check message length (SMS has 160 char limit per segment)
+  if (body.length + footer.length <= 160) {
+    return body + footer;
+  }
+  
+  // If adding footer would exceed limit, truncate body slightly
+  const maxBodyLength = 160 - footer.length - 3; // Leave room for "..."
+  if (body.length > maxBodyLength) {
+    return body.substring(0, maxBodyLength) + '...' + footer;
+  }
+  
+  return body + footer;
+}
+
+/**
+ * Determine if error is retryable
+ */
+function isRetryableError(errorCode: string | undefined): boolean {
+  if (!errorCode) return true; // Unknown errors are retryable
+  
+  // Non-retryable errors (permanent failures)
+  const nonRetryableCodes = [
+    'SMS_BLOCKED',
+    'SMS_NOT_CONSENTED',
+    'INVALID_PHONE_NUMBER',
+    'TWILIO_CONFIG_MISSING',
+  ];
+  
+  return !nonRetryableCodes.includes(errorCode);
+}

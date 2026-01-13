@@ -964,6 +964,149 @@ service cloud.firestore {
         allow create: if isHRX() || isTenantAdmin(tenantId);
       }
 
+      // --- SMS OUTBOUND REQUESTS (Tenant Subcollection) ---
+      match /smsOutboundRequests/{requestId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Create: Internal users can create outbound requests
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == tenantId &&
+                         request.resource.data.status == 'queued';
+        
+        // Update: Only backend (Cloud Tasks worker) can update requests
+        allow update: if false; // Cloud Tasks worker uses Admin SDK
+        
+        // Delete: Only admins can delete requests
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+      }
+      
+      // --- SMS THREADS (Tenant Subcollection) ---
+      match /smsThreads/{threadId} {
+        // Read: Internal users (security level >= 5) assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Create: Internal users can create threads (for outbound messages)
+        allow create: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == tenantId;
+        
+        // Update: Internal users can update threads (assignment, status, etc.)
+        // But deny client writes to inbound-specific fields (handled by webhook)
+        allow update: if isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         isInternal(tenantId) &&
+                         request.resource.data.tenantId == resource.data.tenantId &&
+                         // Prevent client from writing inbound message fields
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastInboundAt', 'lastInboundMessageSnippet']);
+        
+        // Delete: Only admins can delete threads
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Messages subcollection
+        match /messages/{messageId} {
+          // Read: Internal users assigned to tenant
+          allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+          
+          // Create: Internal users can create outbound messages
+          // Inbound messages are created by webhook (Admin SDK), so deny client creates with inbound direction
+          allow create: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) && 
+                           isInternal(tenantId) &&
+                           request.resource.data.tenantId == tenantId &&
+                           request.resource.data.threadId == threadId &&
+                           // Only allow outbound messages from client
+                           request.resource.data.direction == 'outbound';
+          
+          // Update: Internal users can update their own outbound messages (status, etc.)
+          // Deny updates to inbound messages (handled by webhook)
+          allow update: if isAuthenticated() && 
+                           isAssignedToTenant(tenantId) && 
+                           isInternal(tenantId) &&
+                           resource.data.direction == 'outbound' &&
+                           request.resource.data.tenantId == resource.data.tenantId &&
+                           request.resource.data.threadId == resource.data.threadId;
+          
+          // Delete: Only admins can delete messages
+          allow delete: if isHRX() || isTenantAdmin(tenantId);
+        }
+      }
+      
+      // --- SMS TEMPLATES (Tenant Subcollection) ---
+      match /smsTemplates/{templateId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers (security level >= 6) can create/update/delete templates
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6) &&
+                         request.resource.data.tenantId == tenantId);
+      }
+      
+      // --- SMS CONSENTS (Tenant Subcollection) ---
+      match /smsConsents/{userId} {
+        // Read: Internal users assigned to tenant (can read consents for their tenant)
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers can update consents (STOP/HELP handled by webhook with Admin SDK)
+        // Users can read their own consent
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Write: Only backend (webhook) or admins can write
+        allow write: if isHRX() || isTenantAdmin(tenantId);
+        
+        // Consent events subcollection
+        match /events/{eventId} {
+          // Read: Internal users assigned to tenant
+          allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+          
+          // Write: Only backend (webhook) can write events
+          allow write: if false; // Webhook uses Admin SDK
+        }
+      }
+      
+      // --- MESSAGE LOGS (Tenant Subcollection - Unified) ---
+      match /messageLogs/{logId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only backend (Cloud Functions) can write logs
+        allow write: if false; // Cloud Functions use Admin SDK
+      }
+      
+      // --- MESSAGE TEMPLATES (Tenant Subcollection - Unified Template System) ---
+      match /messageTemplates/{templateId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Write: Only admins/managers (security level >= 6) can create/update/delete templates
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6) &&
+                         request.resource.data.tenantId == tenantId);
+      }
+      
+      // --- RECRUITER NUMBERS (Tenant Subcollection) ---
+      match /recruiterNumbers/{recruiterId} {
+        // Read: Internal users assigned to tenant
+        allow read: if isAuthenticated() && isAssignedToTenant(tenantId) && isInternal(tenantId);
+        
+        // Users can read their own number assignment
+        allow read: if isAuthenticated() && request.auth.uid == recruiterId;
+        
+        // Write: Only admins/managers can assign numbers
+        allow write: if isHRX() || 
+                        (isAuthenticated() && 
+                         isAssignedToTenant(tenantId) && 
+                         hasSecurityLevel(tenantId, 6));
+      }
+
       // --- JOB ORDERS (Tenant Subcollection) ---
       match /job_orders/{jobOrderId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -1565,6 +1708,40 @@ service cloud.firestore {
     function isHighSecurityLevel() {
       let user = getUser();
       return user.securityLevel == "6" || user.securityLevel == "7";
+    }
+    
+    // SMS-specific helpers
+    // Check if user is internal (security level >= 5) for the given tenant
+    function isInternal(tenantId) {
+      return isHRX() || hasSecurityLevel(tenantId, 5);
+    }
+    
+    // Check if user has at least the specified security level for the tenant
+    function hasSecurityLevel(tenantId, minLevel) {
+      // HRX always has access
+      if (isHRX()) {
+        return true;
+      }
+      
+      let user = getUser();
+      
+      // Check tenant-specific security level first
+      if (user.tenantIds != null && 
+          tenantId in user.tenantIds && 
+          user.tenantIds[tenantId].securityLevel != null) {
+        let tenantLevel = user.tenantIds[tenantId].securityLevel;
+        // Handle both string and number formats
+        let levelNum = tenantLevel is string ? int(tenantLevel) : tenantLevel;
+        return levelNum >= minLevel;
+      }
+      
+      // Fallback to root security level
+      if (user.securityLevel != null) {
+        let levelNum = user.securityLevel is string ? int(user.securityLevel) : user.securityLevel;
+        return levelNum >= minLevel;
+      }
+      
+      return false;
     }
   }
 }

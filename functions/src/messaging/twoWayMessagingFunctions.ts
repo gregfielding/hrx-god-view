@@ -45,7 +45,9 @@ export const sendRecruiterMessage = onCall(async (request) => {
   try {
     const recruiterId = request.auth.uid;
     const result = await sendOutboundMessage(threadId, recruiterId, body, { language });
-    return { success: result.success, messageId: result.messageId, twilioMessageId: result.twilioMessageId };
+    // With queueing, message is created asynchronously by the queue worker
+    // Return requestId so client can track status
+    return { success: result.success, requestId: result.requestId };
   } catch (error: any) {
     logger.error('Error sending recruiter message:', error);
     if (error instanceof HttpsError) {

@@ -26,6 +26,10 @@ export async function enqueueOnce(
   queue: string = DEFAULT_QUEUE,
   delaySeconds = 15
 ): Promise<void> {
+  if (!PROJECT) {
+    throw new Error('GCLOUD_PROJECT or GCP_PROJECT environment variable not set');
+  }
+  
   const parent = tasksClient.queuePath(PROJECT, LOCATION, queue);
   // Names must be unique; use deterministic name to dedupe
   const name = `${parent}/tasks/${taskName}`;

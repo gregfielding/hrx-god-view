@@ -728,8 +728,8 @@ const UserProfilePage = () => {
   // Create breadcrumb path based on current route
   const pathname = window.location.pathname;
   // Check if this is a recruiter route - more robust check
-  const isRecruiterRoute = pathname.includes('/recruiter/users/') || 
-                          (pathname.includes('/recruiter/users') && pathname.split('/').length > 3);
+  const isRecruiterRoute = pathname.includes('/users/') || 
+                          (pathname.includes('/users') && pathname.split('/').length > 3);
   // Check if this is a workforce route (from Company Directory)
   const isWorkforceRoute = pathname.includes('/workforce/users/');
   const useRecordHeader = isWorkforceRoute || isRecruiterRoute;
@@ -742,7 +742,7 @@ const UserProfilePage = () => {
   if (isRecruiterRoute) {
     breadcrumbPath = [
       { label: 'Recruiter', href: '/recruiter' },
-      { label: 'All Users', href: '/recruiter/users' },
+      { label: 'All Users', href: '/users' },
       { label: displayName },
     ];
   } else if (isWorkforceRoute) {
@@ -780,7 +780,7 @@ const UserProfilePage = () => {
           showBackButton={(isRecruiterRoute || user?.uid !== uid) && !isWorkforceRoute}
           onBack={() => {
             if (isRecruiterRoute) {
-              navigate('/recruiter/users');
+              navigate('/users');
             } else {
               navigate(-1);
             }
@@ -1353,7 +1353,7 @@ const UserProfilePage = () => {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Button
                     startIcon={<ArrowBackIcon />}
-                    onClick={() => navigate('/recruiter/users')}
+                    onClick={() => navigate('/users')}
                     variant="outlined"
                     sx={{
                       textTransform: 'none',

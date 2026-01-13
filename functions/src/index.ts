@@ -11236,6 +11236,10 @@ export { sendUnifiedMessage } from './messaging/routingFunctions';
 export { handleInboundSms } from './messaging/inboundSmsWebhook';
 export { processInboundSms, handleStopKeyword, handleHelpKeyword, handleStartKeyword } from './messaging/stopHelpHandler';
 
+// Unified Messaging Framework - SMS Outbound Queue
+export { enqueueSmsOutbound, processSmsOutbound, createOutboundRequest } from './messaging/smsOutboundQueue';
+export { testCreateOutboundRequest, testCheckRequestStatus, testIdempotency } from './messaging/testSmsQueueCallable';
+
 // Unified Messaging Framework - Template Engine
 export {
   getMessageTemplate,

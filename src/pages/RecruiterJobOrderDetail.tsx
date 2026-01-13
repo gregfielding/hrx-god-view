@@ -311,7 +311,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleViewApplicant = (uid: string) => {
     // Open in new tab
-    window.open(`/recruiter/users/${uid}`, '_blank');
+    window.open(`/users/${uid}`, '_blank');
   };
 
   const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
@@ -3188,10 +3188,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       <Box
                         key={recruiter.id}
                         sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/recruiter/users/${recruiter.id}`)}
+                        onClick={() => navigate(`/users/${recruiter.id}`)}
                         role="button"
                         tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/users/${recruiter.id}`); } }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/users/${recruiter.id}`); } }}
                       >
                         <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                           {recruiter.displayName?.charAt(0) || 'R'}

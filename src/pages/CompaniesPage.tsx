@@ -1,12 +1,29 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, TextField, InputAdornment, Button } from '@mui/material';
-import { Search as SearchIcon, Add as AddIcon } from '@mui/icons-material';
+import { 
+  Box, 
+  TextField, 
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Grid,
+  Autocomplete,
+  CircularProgress,
+  Alert,
+  Snackbar,
+  Typography
+} from '@mui/material';
+import { Add as AddIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, where, orderBy, limit, getDocs, startAfter } from 'firebase/firestore';
-import { db } from '../firebase';
+import { collection, query, where, orderBy, limit, getDocs, startAfter, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db, functions } from '../firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import PageHeader from '../components/PageHeader';
 import CompanyTable from '../components/CompanyTable';
+import InboxSearchBar from '../components/InboxSearchBar';
+import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import ToggleButton from '@mui/material/ToggleButton';
@@ -36,6 +53,20 @@ const CompaniesPage: React.FC = () => {
   const [companiesHasMore, setCompaniesHasMore] = useState(true);
   const [companiesPageSize] = useState(20);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  // Add Company Dialog state
+  const [showAddCompanyDialog, setShowAddCompanyDialog] = useState(false);
+  const [companyForm, setCompanyForm] = useState({
+    name: '',
+    website: '',
+    parentCompany: ''
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [loadingAllCompanies, setLoadingAllCompanies] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   
   // Favorites
   const { isFavorite, toggleFavorite } = useFavorites('companies');
@@ -97,6 +128,101 @@ const CompaniesPage: React.FC = () => {
       setCompaniesLoading(false);
     }
   }, [tenantId, currentUser, locationStateFilter, companiesPageSize]);
+
+  // Load all companies for parent company autocomplete
+  useEffect(() => {
+    if (!tenantId || !showAddCompanyDialog) return;
+    
+    const loadAllCompanies = async () => {
+      setLoadingAllCompanies(true);
+      try {
+        const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+        const snapshot = await getDocs(companiesRef);
+        setAllCompanies(snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) })));
+      } catch (error) {
+        console.error('Error loading all companies:', error);
+      } finally {
+        setLoadingAllCompanies(false);
+      }
+    };
+    
+    loadAllCompanies();
+  }, [tenantId, showAddCompanyDialog]);
+
+  // Handle company form changes
+  const handleCompanyFormChange = (field: string, value: any) => {
+    setCompanyForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  // Handle close dialog
+  const handleCloseDialog = () => {
+    if (!savingCompany) {
+      setShowAddCompanyDialog(false);
+      setCompanyForm({ name: '', website: '', parentCompany: '' });
+      setError('');
+    }
+  };
+
+  // Handle save company
+  const handleSaveCompany = async () => {
+    if (!tenantId || !currentUser) return;
+    
+    if (!companyForm.name) {
+      setError('Company name is required');
+      return;
+    }
+
+    setSavingCompany(true);
+    setError('');
+    try {
+      const { parentCompany, ...rest } = companyForm as any;
+      const companyData = {
+        ...rest,
+        companyName: companyForm.name, // Use companyName for consistency
+        tenantId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        // Add the current user as an associated salesperson
+        associations: {
+          salespeople: [currentUser.uid]
+        },
+        parentCompany: parentCompany || null,
+        // Legacy fields for backward compatibility
+        salesOwnerId: currentUser.uid || null,
+        accountOwnerId: currentUser.uid || null,
+        salesOwnerName: currentUser.displayName || currentUser.email || 'Unknown',
+        accountOwnerName: currentUser.displayName || currentUser.email || 'Unknown'
+      };
+
+      const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+      const newDocRef = await addDoc(companiesRef, companyData);
+      const newCompanyId = newDocRef.id;
+
+      // If parent company selected, call function to register child on parent
+      if (parentCompany) {
+        try {
+          const fn = httpsCallable(getFunctions(), 'registerChildCompany');
+          await fn({ tenantId, parentCompanyId: parentCompany, childCompanyId: newCompanyId });
+        } catch (e) {
+          console.warn('registerChildCompany failed', e);
+        }
+      }
+
+      // Reset form and close dialog
+      setCompanyForm({ name: '', website: '', parentCompany: '' });
+      setShowAddCompanyDialog(false);
+      setSuccess(true);
+      setSuccessMessage('Company added successfully!');
+      
+      // Reload companies
+      loadCompanies('', null, false, companyFilter === 'my');
+    } catch (err: any) {
+      console.error('Error adding company:', err);
+      setError(err.message || 'Failed to add company');
+    } finally {
+      setSavingCompany(false);
+    }
+  };
 
   // Load contacts and deals for calculations
   useEffect(() => {
@@ -332,34 +458,68 @@ const CompaniesPage: React.FC = () => {
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PageHeader
-        title="Companies"
-        subtitle="Manage your company relationships"
-        rightActions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => navigate('/crm?tab=companies')}
-            sx={{ textTransform: 'none' }}
-          >
-            Add Company
-          </Button>
-        }
-        filters={
-          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', width: '100%' }}>
-            <TextField
-              placeholder="Search companies..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              size="small"
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon fontSize="small" />
-                  </InputAdornment>
-                ),
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+            <Typography
+              variant="h6"
+              sx={{
+                fontSize: { xs: '20px', md: '24px' },
+                fontWeight: 600,
+                lineHeight: 1.2,
               }}
-              sx={{ flex: 1, maxWidth: 400 }}
-            />
+            >
+              Companies
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+              <InboxSearchBar
+                value={search}
+                onChange={setSearch}
+                onSearch={setSearch}
+                placeholder="Search companies..."
+              />
+              
+              {/* Favorites filter */}
+              <FavoritesFilter
+                favoriteType="companies"
+                showFavoritesOnly={showFavoritesOnly}
+                onToggle={setShowFavoritesOnly}
+                showText={false}
+                size="small"
+                sx={{
+                  minWidth: '32px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  '&:hover': {
+                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              />
+
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddCompanyDialog(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  px: 3,
+                  py: 1,
+                  height: '40px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#0057B8',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                  '&:hover': {
+                    bgcolor: '#004a9f',
+                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                  },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Add Company
+              </Button>
+            </Box>
           </Box>
         }
       />
@@ -513,6 +673,85 @@ const CompaniesPage: React.FC = () => {
           }
         />
       </Box>
+
+      {/* Add Company Dialog */}
+      <Dialog open={showAddCompanyDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Company</DialogTitle>
+        <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+              {error}
+            </Alert>
+          )}
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Company Name"
+                value={companyForm.name}
+                onChange={(e) => handleCompanyFormChange('name', e.target.value)}
+                required
+                disabled={savingCompany}
+                error={!!error && !companyForm.name.trim()}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Website"
+                value={companyForm.website}
+                onChange={(e) => handleCompanyFormChange('website', e.target.value)}
+                placeholder="https://example.com"
+                disabled={savingCompany}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Autocomplete
+                options={allCompanies}
+                getOptionLabel={(option) => option.companyName || option.name || ''}
+                value={allCompanies.find((c) => c.id === companyForm.parentCompany) || null}
+                onChange={(event, newValue) => {
+                  handleCompanyFormChange('parentCompany', newValue?.id || '');
+                }}
+                loading={loadingAllCompanies}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                disabled={savingCompany}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Parent Company"
+                    placeholder="Select a parent company (optional)"
+                  />
+                )}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog} disabled={savingCompany}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleSaveCompany} 
+            variant="contained" 
+            disabled={savingCompany || !companyForm.name}
+          >
+            {savingCompany ? <CircularProgress size={20} /> : 'Save Company'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success/Error Snackbars */}
+      <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
+        <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
+          {error}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
+        <Alert severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

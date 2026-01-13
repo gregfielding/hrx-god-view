@@ -1176,49 +1176,6 @@ const CompanyDetails: React.FC = () => {
                       </IconButton>
                     </Tooltip>
                   )}
-                  <Tooltip title="Add Note">
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowAddNoteDialog(true)}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <NotesIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="AI Enhance">
-                    <IconButton
-                      size="small"
-                      onClick={handleEnhanceWithAI}
-                      disabled={aiLoading}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <AIIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
                 </Stack>
                 
                 {/* Line 3: Metadata subtitle */}
@@ -1410,14 +1367,41 @@ const CompanyDetails: React.FC = () => {
           </Box>
         }
         rightActions={
-          <Button
-            variant="outlined"
-            startIcon={<ArrowBackIcon />}
-            onClick={() => navigate('/companies')}
-            sx={{ textTransform: 'none' }}
-          >
-            Back
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/companies')}
+              sx={{ textTransform: 'none' }}
+            >
+              Back
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setShowAddNoteDialog(true)}
+              sx={{ textTransform: 'none' }}
+            >
+              Add Note
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={aiLoading ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
+              onClick={handleEnhanceWithAI}
+              disabled={aiLoading}
+              sx={{ textTransform: 'none' }}
+            >
+              {aiLoading ? 'Enhancing...' : 'AI Enhance'}
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<CheckCircleIcon />}
+              onClick={() => setShowLogActivityDialog(true)}
+              sx={{ textTransform: 'none' }}
+            >
+              Log Activity
+            </Button>
+          </Box>
         }
       />
       {/* Pattern Alerts */}

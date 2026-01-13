@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
 
@@ -156,6 +156,48 @@ function UserGroupDetailsWrapper() {
   const { activeTenant } = useAuth();
   if (!activeTenant?.id || !groupId) return null;
   return <UserGroupDetails tenantId={activeTenant.id} groupId={groupId} />;
+}
+
+function UsersRedirect() {
+  const { uid } = useParams();
+  return <Navigate to={`/users/${uid}`} replace />;
+}
+
+function UsersPageWrapper() {
+  const [search, setSearch] = useState('');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  return (
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <Box
+        sx={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          pb: 2,
+        }}
+      >
+        <Outlet context={{
+          activeTab: 'users' as const,
+          search,
+          setSearch,
+          showFavoritesOnly,
+          setShowFavoritesOnly,
+        }} />
+      </Box>
+    </Box>
+  );
 }
 
 function CRMAccessGuard({ children }: { children: React.ReactNode }) {
@@ -362,7 +404,8 @@ function App() {
         <Route path="profile" element={<ProfileRedirect />} />
 
         {/* Admin/Manager only routes */}
-        <Route path="users" element={
+        {/* TenantUsers route moved to /tenant/users to avoid conflict with /users */}
+        <Route path="tenant/users" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <TenantUsers />
           </ProtectedRoute>
@@ -443,6 +486,16 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="users" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <UsersPageWrapper />
+            </RecruiterAccessGuard>
+          </ProtectedRoute>
+        }>
+          <Route index element={<RecruiterUsers />} />
+          <Route path=":uid" element={<UserProfile />} />
+        </Route>
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>
@@ -907,8 +960,8 @@ function App() {
           <Route path="my-orders" element={<RecruiterJobOrders />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
-          <Route path="users" element={<RecruiterUsers />} />
-          <Route path="users/:uid" element={<UserProfile />} />
+          <Route path="users" element={<Navigate to="/users" replace />} />
+          <Route path="users/:uid" element={<UsersRedirect />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
           {/* Steer list pages to canonical routes */}
           <Route path="companies" element={<Navigate to="/companies" replace />} />

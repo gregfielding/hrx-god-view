@@ -1805,6 +1805,9 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         tags: contactForm.tags,
         isActive: contactForm.isActive,
         notes: contactForm.notes,
+        // Set companyId and companyName directly for queries (CompanyDetails queries by companyId)
+        companyId: contactForm.companyId || null,
+        companyName: contactForm.companyName || null,
         associations,
         tenantId,
         createdAt: serverTimestamp(),

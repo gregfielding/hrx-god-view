@@ -164,7 +164,12 @@ const Layout: React.FC = React.memo(function Layout() {
       return 'Company Setup';
     }
     
-    // Recruiter user record routes - check if path includes /recruiter/users/ anywhere
+    // User record routes - check if path includes /users/ anywhere (excluding /recruiter/users/)
+    if (pathname.includes('/users/') && !pathname.includes('/recruiter/users/') && pathname.split('/users/').length > 1) {
+      return 'User Details';
+    }
+    
+    // Legacy recruiter user record routes - redirect handled in App.tsx
     if (pathname.includes('/recruiter/users/') && pathname.split('/recruiter/users/').length > 1) {
       return 'User Details';
     }
@@ -817,6 +822,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Team Access': <RecordVoiceOverIcon />,
       'Recruiter': <RecordVoiceOverIcon />,
       'Workforce': <PeopleIcon />,
+      'Users': <GroupsIcon />,
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,

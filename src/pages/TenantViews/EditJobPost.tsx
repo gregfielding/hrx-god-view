@@ -710,7 +710,7 @@ const EditJobPost: React.FC = () => {
                                 backgroundColor: 'action.selected',
                               },
                             }}
-                            onClick={() => navigate(`/recruiter/users/${user.id}`)}
+                            onClick={() => navigate(`/users/${user.id}`)}
                           >
                             <TableCell onClick={(event) => event.stopPropagation()}>
                               {!['5', '6', '7'].includes(user.securityLevel) && (

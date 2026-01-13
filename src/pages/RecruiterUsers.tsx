@@ -35,6 +35,9 @@ import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
 import StandardTablePagination from '../components/StandardTablePagination';
+import PageHeader from '../components/PageHeader';
+import InboxSearchBar from '../components/InboxSearchBar';
+import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
@@ -79,10 +82,33 @@ const RecruiterUsers: React.FC = () => {
   const navigate = useNavigate();
   const { activeTenant } = useAuth();
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
-  const searchTerm = outletCtx?.search || '';
-  const showFavoritesOnly = outletCtx?.showFavoritesOnly || false;
-
+  const [localSearch, setLocalSearch] = useState('');
+  const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
+  
+  // All hooks must be called at the top level, before any conditional returns
   const isFetchingRef = useRef(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
+  
+  // Use outlet context if available, otherwise use local state
+  const searchTerm = outletCtx?.search !== undefined ? outletCtx.search : localSearch;
+  const showFavoritesOnly = outletCtx?.showFavoritesOnly !== undefined ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
+  
+  const handleSearchChange = (value: string) => {
+    if (outletCtx?.setSearch) {
+      outletCtx.setSearch(value);
+    } else {
+      setLocalSearch(value);
+    }
+  };
+  
+  const handleFavoritesToggle = (value: boolean) => {
+    if (outletCtx?.setShowFavoritesOnly) {
+      outletCtx.setShowFavoritesOnly(value);
+    } else {
+      setLocalShowFavoritesOnly(value);
+    }
+  };
 
   const [users, setUsers] = useState<RecruiterUser[]>([]);
   const [groups, setGroups] = useState<TenantUserGroup[]>([]);
@@ -399,24 +425,32 @@ const RecruiterUsers: React.FC = () => {
         );
       })
       .sort((a, b) => {
-        const dir = sortDirection === 'asc' ? 1 : -1;
         switch (sortBy) {
           case 'recentlyUpdated': {
-            return (getUpdatedMillis(b) - getUpdatedMillis(a)) * dir;
+            // For desc (newest first): (b - a) gives positive when b is newer, which puts b before a ✓
+            // For asc (oldest first): (a - b) gives negative when b is newer, which puts a before b ✓
+            const diff = getUpdatedMillis(b) - getUpdatedMillis(a);
+            return sortDirection === 'desc' ? diff : -diff;
           }
           case 'lastLogin': {
-            return (getLoginMillis(b) - getLoginMillis(a)) * dir;
+            const diff = getLoginMillis(b) - getLoginMillis(a);
+            return sortDirection === 'desc' ? diff : -diff;
           }
-          case 'accountCreated':
-            return (getCreatedMillis(b) - getCreatedMillis(a)) * dir;
-          case 'name':
-            return (
-              `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`) * dir
-            );
+          case 'accountCreated': {
+            // For desc (newest first): (b - a) gives positive when b is newer, which puts b before a ✓
+            // For asc (oldest first): (a - b) gives negative when b is newer, which puts a before b ✓
+            const diff = getCreatedMillis(b) - getCreatedMillis(a);
+            return sortDirection === 'desc' ? diff : -diff;
+          }
+          case 'name': {
+            const nameCompare = `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+            return sortDirection === 'asc' ? nameCompare : -nameCompare;
+          }
           case 'aiScore': {
             const aScore = a.aiJobFitScore ?? a.aiProfileScore ?? -1;
             const bScore = b.aiJobFitScore ?? b.aiProfileScore ?? -1;
-            return ((bScore ?? -1) - (aScore ?? -1)) * dir;
+            const diff = (bScore ?? -1) - (aScore ?? -1);
+            return sortDirection === 'desc' ? diff : -diff;
           }
           default:
             return 0;
@@ -461,165 +495,229 @@ const RecruiterUsers: React.FC = () => {
   }
 
   return (
-    <Box
-      sx={{
-        flex: 1,
-        minHeight: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        px: { xs: 2, md: 3 },
-        pt: 2,
-      }}
-    >
-      {/* Initial loading indicator, but keep header and filters visible */}
-      {loading && users.length === 0 && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 80, mb: 2 }}>
-          <CircularProgress size={24} />
-        </Box>
-      )}
-      {/* Filter & Toolbar Area */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Role</InputLabel>
-          <Select
-            label="Role"
-            value={securityLevelFilter}
-            onChange={(event: SelectChangeEvent<SecurityLevel>) =>
-              setSecurityLevelFilter(event.target.value as SecurityLevel)
-            }
-          >
-            <MenuItem value="all">All Roles</MenuItem>
-            <MenuItem value="4">Staff</MenuItem>
-            <MenuItem value="3">Candidate</MenuItem>
-            <MenuItem value="2">Applicant</MenuItem>
-            <MenuItem value="1">Dismissed</MenuItem>
-            <MenuItem value="0">Suspended</MenuItem>
-          </Select>
-        </FormControl>
-
-        <Autocomplete
-          size="small"
-          options={groups}
-          getOptionLabel={(option) => option.title || option.id || 'Unnamed Group'}
-          value={groupFilter === 'all' ? null : groups.find(g => g.id === groupFilter) || null}
-          onChange={(_, newValue) => setGroupFilter(newValue ? newValue.id : 'all')}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="User Group"
-              placeholder="Search groups..."
-              sx={{ minWidth: 160 }}
-            />
-          )}
-        />
-
-        <Autocomplete
-          size="small"
-          options={uniqueSkills}
-          value={skillFilter === 'all' ? null : skillFilter}
-          onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Primary Skill"
-              placeholder="Search skills..."
-              sx={{ minWidth: 160 }}
-            />
-          )}
-        />
-
-        {/* State Filter */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-            <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
-            <Select
-              value={stateFilter}
-              onChange={(e) => setStateFilter(String(e.target.value))}
-              label="State Filter"
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+            <Typography
+              variant="h6"
               sx={{
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& .MuiOutlinedInput-notchedOutline': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover .MuiOutlinedInput-notchedOutline': {
-                  borderColor: '#D1D5DB',
-                },
+                fontSize: { xs: '20px', md: '24px' },
+                fontWeight: 600,
+                lineHeight: 1.2,
               }}
             >
-              <MenuItem value="all">All States</MenuItem>
-              {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
-                <MenuItem key={st} value={st}>{st}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <IconButton
-            size="small"
-            aria-label="Clear state filter"
-            onClick={() => setStateFilter('all')}
-            disabled={stateFilter === 'all'}
-            sx={{ height: 36, width: 36, p: 0.75 }}
-          >
-            <ClearIcon fontSize="small" />
-          </IconButton>
-        </Box>
-
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel>Sort By</InputLabel>
-          <Select
-            label="Sort By"
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
-          >
-            <MenuItem value="accountCreated">Account Creation (Newest)</MenuItem>
-            <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
-            <MenuItem value="lastLogin">Last Login</MenuItem>
-            <MenuItem value="aiScore">AI Score</MenuItem>
-            <MenuItem value="name">Name (A-Z)</MenuItem>
-          </Select>
-        </FormControl>
-        </Box>
-      </Box>
-
-      <TableContainer
-        component={Paper}
-        elevation={0}
+              Users
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+              <InboxSearchBar
+                value={searchTerm}
+                onChange={handleSearchChange}
+                onSearch={handleSearchChange}
+                placeholder="Search users..."
+              />
+              
+              {/* Favorites filter */}
+              <FavoritesFilter
+                favoriteType="users"
+                showFavoritesOnly={showFavoritesOnly}
+                onToggle={handleFavoritesToggle}
+                showText={false}
+                size="small"
+                sx={{
+                  minWidth: '32px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  '&:hover': {
+                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              />
+            </Box>
+          </Box>
+        }
+      />
+      
+      <Box
+        ref={contentRef}
         sx={{
-          borderRadius: 2,
-          border: '1px solid #EAEEF4',
-          position: 'relative',
           flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
           minHeight: 0,
           overflowY: 'auto',
-          overflowX: 'auto',
-          width: '100%',
-          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
-          '&::-webkit-scrollbar-track': {
-            background: 'rgba(0, 0, 0, 0.02)',
-            borderRadius: '4px',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(0, 0, 0, 0.15)',
-            borderRadius: '4px',
-            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
-          },
-          scrollbarWidth: 'thin',
-          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
+        {/* Filter & Toolbar Area */}
+        <Box
+          ref={filtersRef}
+          sx={{ 
+            mt: 0,
+            mb: 0,
+            px: 1.5,
+            py: 1.25,
+            backgroundColor: '#F9FAFB',
+            borderRadius: 0,
+            border: '1px solid #E5E7EB',
+            borderBottom: '1px solid #EAEEF4',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            position: 'sticky',
+            top: 0,
+            zIndex: 15,
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+              <InputLabel sx={{ fontSize: '0.875rem' }}>Role</InputLabel>
+              <Select
+                label="Role"
+                value={securityLevelFilter}
+                onChange={(event: SelectChangeEvent<SecurityLevel>) =>
+                  setSecurityLevelFilter(event.target.value as SecurityLevel)
+                }
+                sx={{
+                  height: 36,
+                  borderRadius: '6px',
+                  backgroundColor: 'white',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <MenuItem value="all">All Roles</MenuItem>
+                <MenuItem value="4">Staff</MenuItem>
+                <MenuItem value="3">Candidate</MenuItem>
+                <MenuItem value="2">Applicant</MenuItem>
+                <MenuItem value="1">Dismissed</MenuItem>
+                <MenuItem value="0">Suspended</MenuItem>
+              </Select>
+            </FormControl>
+
+            <Autocomplete
+              size="small"
+              options={groups}
+              getOptionLabel={(option) => option.title || option.id || 'Unnamed Group'}
+              value={groupFilter === 'all' ? null : groups.find(g => g.id === groupFilter) || null}
+              onChange={(_, newValue) => setGroupFilter(newValue ? newValue.id : 'all')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="User Group"
+                  placeholder="Search groups..."
+                  sx={{ minWidth: 160 }}
+                />
+              )}
+            />
+
+            <Autocomplete
+              size="small"
+              options={uniqueSkills}
+              value={skillFilter === 'all' ? null : skillFilter}
+              onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Primary Skill"
+                  placeholder="Search skills..."
+                  sx={{ minWidth: 160 }}
+                />
+              )}
+            />
+
+            {/* State Filter */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
+                <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
+                <Select
+                  value={stateFilter}
+                  onChange={(e) => setStateFilter(String(e.target.value))}
+                  label="State Filter"
+                  sx={{
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <MenuItem value="all">All States</MenuItem>
+                  {['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map((st) => (
+                    <MenuItem key={st} value={st}>{st}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <IconButton
+                size="small"
+                aria-label="Clear state filter"
+                onClick={() => setStateFilter('all')}
+                disabled={stateFilter === 'all'}
+                sx={{ height: 36, width: 36, p: 0.75 }}
+              >
+                <ClearIcon fontSize="small" />
+              </IconButton>
+            </Box>
+
+            <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+              <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
+              <Select
+                label="Sort By"
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+                sx={{
+                  height: 36,
+                  borderRadius: '6px',
+                  backgroundColor: 'white',
+                  fontSize: '0.875rem',
+                }}
+              >
+                <MenuItem value="accountCreated">Account Creation (Newest)</MenuItem>
+                <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
+                <MenuItem value="lastLogin">Last Login</MenuItem>
+                <MenuItem value="aiScore">AI Score</MenuItem>
+                <MenuItem value="name">Name (A-Z)</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+        </Box>
+
+        {/* Initial loading indicator */}
+        {loading && users.length === 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200, py: 4 }}>
+            <CircularProgress size={24} />
+          </Box>
+        )}
+
+        {!loading || users.length > 0 ? (
+          <>
+          <TableContainer
+            component={Paper}
+            elevation={0}
+            sx={{
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              position: 'relative',
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'auto',
+              width: '100%',
+              px: 2, // 16px padding left and right
+              '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(0, 0, 0, 0.02)',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
         <Table size="small" stickyHeader sx={{ width: '100%' }}>
           <TableHead
             sx={{
@@ -627,11 +725,15 @@ const RecruiterUsers: React.FC = () => {
               top: 0,
               zIndex: 10,
               backgroundColor: 'background.paper',
+              borderRadius: 0,
+              '& .MuiTableCell-root': {
+                borderRadius: 0,
+              },
             }}
           >
-            <TableRow sx={{ backgroundColor: 'background.paper' }}>
-                <TableCell sx={{ width: 60, bgcolor: '#FFFFFF' }} />
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+            <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
+                <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   <TableSortLabel
                     active={sortBy === 'name'}
                     direction={sortBy === 'name' ? sortDirection : 'asc'}
@@ -640,28 +742,28 @@ const RecruiterUsers: React.FC = () => {
                     Person
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Contact
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Role
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   <TableSortLabel
                     active={sortBy === 'aiScore'}
                     direction={sortBy === 'aiScore' ? sortDirection : 'desc'}
                     onClick={() => handleSort('aiScore')}
                   >
-                    Profile Score
+                    Score
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Groups
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Skills
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200 }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200, borderRadius: 0 }}>
                   <TableSortLabel
                     active={sortBy === 'lastLogin'}
                     direction={sortBy === 'lastLogin' ? sortDirection : 'desc'}
@@ -684,7 +786,7 @@ const RecruiterUsers: React.FC = () => {
                     backgroundColor: 'action.selected',
                   },
                 }}
-                onClick={() => navigate(`/recruiter/users/${user.id}`)}
+                onClick={() => navigate(`/users/${user.id}`)}
               >
                   <TableCell onClick={(event) => event.stopPropagation()}>
                     <FavoriteButton
@@ -807,16 +909,19 @@ const RecruiterUsers: React.FC = () => {
         </Table>
       </TableContainer>
 
-      <StandardTablePagination
-        count={filteredUsers.length}
-        page={page}
-        onPageChange={(_, newPage) => setPage(newPage)}
-        rowsPerPage={rowsPerPage}
-        onRowsPerPageChange={(e) => {
-          setRowsPerPage(parseInt(e.target.value, 10));
-          setPage(0);
-        }}
-      />
+          <StandardTablePagination
+            count={filteredUsers.length}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
+          />
+          </>
+        ) : null}
+      </Box>
     </Box>
   );
 };

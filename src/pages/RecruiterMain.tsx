@@ -13,7 +13,7 @@ const RecruiterMain: React.FC = () => {
   const getActiveTab = () => {
     if (location.pathname === '/recruiter' || location.pathname === '/recruiter/') return 0;
     if (location.pathname.startsWith('/recruiter/job-orders')) return 1;
-    if (location.pathname.startsWith('/recruiter/users')) return 2;
+    if (location.pathname.startsWith('/recruiter/users') || location.pathname.startsWith('/users')) return 2;
     if (location.pathname.startsWith('/recruiter/companies')) return 3;
     if (location.pathname.startsWith('/recruiter/contacts')) return 4;
     if (location.pathname.startsWith('/recruiter/user-groups')) return 5;

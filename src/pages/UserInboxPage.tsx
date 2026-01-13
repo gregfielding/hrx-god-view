@@ -2455,8 +2455,12 @@ const UserInboxPage: React.FC = () => {
                     top: 0,
                     zIndex: 10,
                     backgroundColor: 'background.paper',
+                    borderRadius: 0,
+                    '& .MuiTableCell-root': {
+                      borderRadius: 0,
+                    },
                   }}>
-                    <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+                    <TableRow sx={{ height: '32px', backgroundColor: 'background.paper', borderRadius: 0 }}>
                       <TableCell 
                         padding="checkbox" 
                         width="32px" 
@@ -2470,6 +2474,7 @@ const UserInboxPage: React.FC = () => {
                           position: 'sticky',
                           left: 0,
                           zIndex: 11,
+                          borderRadius: 0,
                         }}
                       >
                         <Checkbox
@@ -2551,6 +2556,7 @@ const UserInboxPage: React.FC = () => {
                           textAlign: 'left', 
                           height: '32px',
                           backgroundColor: 'background.paper',
+                          borderRadius: 0,
                         }}
                       >
                         Date
@@ -2561,6 +2567,7 @@ const UserInboxPage: React.FC = () => {
                           padding: '4px 12px', 
                           height: '32px',
                           backgroundColor: 'background.paper',
+                          borderRadius: 0,
                         }}
                       ></TableCell>
                     </TableRow>
